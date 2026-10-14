@@ -16,8 +16,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M1 Local foundation | ✅ done |
 | M2 Queue and worker | ✅ done |
 | M3 Websites and sessions | ✅ done |
-| M4 ChatGPT extension vertical slice | ⏳ next |
-| M5 Single Article + content pipeline | ☐ |
+| M4 ChatGPT extension vertical slice | ✅ done (fixture-verified; live ChatGPT not verified here) |
+| M5 Single Article + content pipeline | ⏳ next |
 | M6 WordPress drafts | ☐ |
 | M7 Links and general writer | ☐ |
 | M8 Images and templates | ☐ |
@@ -116,3 +116,34 @@ Integration tests run against `tests/fixtures/fake-wordpress.ts` (a fake WordPre
 
 **Not verified here**
 - No real WordPress site was reachable from the build container, so the live login/sync flow has only been exercised against the fixture. The selectors live in `src/wordpress/selectors.ts` and can be overridden in Settings → Advanced.
+
+---
+
+## M4 — ChatGPT Manifest V3 extension vertical slice ✅ (fixture-verified)
+
+**Working**
+- `extension/` (load unpacked): `manifest.json` (v3.0.0; permissions only storage, tabs, notifications, alarms; hosts only chatgpt.com + localhost/127.0.0.1), `background.js`, `content.js`, `adapter.js` (all ChatGPT selectors/heuristics in one file), `popup.html`/`popup.js`, icons.
+- Pairing: Settings / Automation Chrome → create a `bas_…` key (shown once, only SHA-256 hash stored; rotate invalidates old key) → paste into the popup. The extension sends it as a Bearer credential only to the configured localhost origin.
+- Agent endpoint `POST /api/extension/agent` (+ `/upload`, `/media/:id`): loopback Host only, chrome-extension Origin only, key check, 4 MB limit (12 MB images, magic-byte validated, re-encoded with sharp), Zod-validated actions hello / claim / progress / complete / fail (LOGIN | HUMAN_CHECK | CONVERSATION_LOST | USAGE_LIMIT | CANCELLED | ERROR) / release / report429, per-install rate limit, version-drift detection (no work handed out, no reload loops).
+- Content-script algorithm: validates the conversation (ignores placeholder IDs), detects ready composer / login / challenge / usage limit / lost conversation / offline, recovers an already-submitted prompt (normalized SHA-256; evidence-based so regenerations are never "recovered" from an older identical prompt), types prompts as text paragraph by paragraph and verifies the full composer contents (no "Pasted text" files), attaches files only when asked, sends once, captures the real `/c/<id>` URL, waits for true completion (stop button gone + 3 stable reads + composer ready), clicks "Continue generating" (max 3), excludes tool/planning blocks, converts the final answer to Markdown (headings, tables, lists, emphasis, links) and never accepts an error/limit notice as an answer.
+- Background: polls every 30 s idle / 1–3 s while busy, opens at most one tab per tick (1–5 tabs, only tabs it created), reuses a tab already showing the needed conversation, persistent outbox for results, checkpoints in `chrome.storage.session`, resume after content-script reload or service-worker restart, release on tab close, desktop notifications for login/human checks (never automated), badge states, pause-new-claims switch, reloads an idle tab whose page never loaded (bounded).
+- Shared account budget server-side: backoff schedule + Retry-After + halved concurrency on 429/usage limits; time in backoff/human checks does not count toward generation timeouts.
+- Automation Chrome page: five checked steps (Chrome installed, dedicated profile running — detected from the profile lock, extension loaded, paired, ChatGPT signed in), worker-run launcher with a dedicated `data/chatgpt-chrome` profile (only background-throttling flags; no security flags, no WebDriver/CDP), copyable extension path, live status, graceful "pause new claims" drain, and a **Send test prompt** button (one stored prompt → one saved answer).
+
+**Commands run (all passed)**
+```
+npx tsc --noEmit
+npx vitest run                                          # 9 files, 47 tests
+npx vitest run --config vitest.integration.config.ts     # 18 tests (14 extension + 4 WordPress)
+npm run build
+npm run start:all + real extension in Chromium + fake ChatGPT → test prompt COMPLETED through the real Next.js route
+```
+Extension integration tests load the **actual unpacked extension** into Chromium against `tests/fixtures/fake-chatgpt` (a FAKE ChatGPT page routed onto https://chatgpt.com/ by Playwright — not live ChatGPT): handshake/claim/progress/complete, alternate DOM, late answer, multipart + Continue generating, tool/planning preamble, 20 000-character multi-line prompt, two simultaneous tabs, page reload mid-generation (recovered, sent once), stale conversation → CONVERSATION_LOST, login → paused (never automated), human check (waits, then pauses), usage limit → backoff + refused claims, tab closed while owning a job (released, reconciled, sent once), file attachment, missing DOM markers → error with debug snapshot.
+
+**Found and fixed during M4**
+- Concurrent progress reports could overwrite the sticky "prompt sent" evidence → per-job ordered handling in the extension + write-locked merge on the server.
+- A usage-limit notice in the answer area was accepted as the answer → error/limit notices are now rejected explicitly.
+- React-style re-renders detached the answer anchor → the anchor is re-resolved by turn index on every check.
+
+**Not verified here (needs the owner)**
+- Live ChatGPT: no signed-in ChatGPT session exists in the build container. The live "one stored prompt → one real response" check is the **Send test prompt** button on the Automation Chrome page; selectors may need tuning in `extension/adapter.js` if ChatGPT's DOM differs.

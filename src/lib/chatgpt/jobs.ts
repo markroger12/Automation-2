@@ -24,6 +24,8 @@ export interface ChatGPTJobPayload {
   newChat: boolean;
   attachments: { mediaAssetId: string; name: string; mime: string }[];
   expectImages: boolean;
+  /** Deliberate re-send of an identical prompt (regeneration): recover only with evidence. */
+  fresh?: boolean;
   timeoutSec: number;
   language: string;
 }
@@ -60,6 +62,7 @@ export async function createChatGPTRequest(
     newChat: boolean;
     attachments?: ChatGPTJobPayload['attachments'];
     expectImages?: boolean;
+    fresh?: boolean;
     timeoutSec: number;
     conversationSwitch?: boolean;
   },
@@ -90,6 +93,7 @@ export async function createChatGPTRequest(
     newChat: input.newChat || !isRealConversationUrl(input.task.conversationUrl),
     attachments: input.attachments ?? [],
     expectImages: Boolean(input.expectImages),
+    fresh: Boolean(input.fresh),
     timeoutSec: input.timeoutSec,
     language: input.task.language,
   };
@@ -189,6 +193,24 @@ export async function reportChatGPTProgress(
   input: { jobId: string; tabId: string; progress: ChatGPTJobProgress },
   client: Tx = db,
 ): Promise<{ ok: boolean; cancel: boolean; leaseUntil: Date | null; error?: string }> {
+  // Read-modify-write of the sticky "sent" evidence must be atomic: take the
+  // SQLite write lock first so concurrent progress reports cannot lose it.
+  if ('$transaction' in client && typeof (client as typeof db).$transaction === 'function') {
+    return (client as typeof db).$transaction(
+      async (tx) => {
+        await tx.$executeRaw`UPDATE "QueueJob" SET "heartbeatAt" = "heartbeatAt" WHERE "id" = ${input.jobId}`;
+        return reportChatGPTProgressLocked(input, tx);
+      },
+      { timeout: 15_000, maxWait: 15_000 },
+    );
+  }
+  return reportChatGPTProgressLocked(input, client);
+}
+
+async function reportChatGPTProgressLocked(
+  input: { jobId: string; tabId: string; progress: ChatGPTJobProgress },
+  client: Tx,
+): Promise<{ ok: boolean; cancel: boolean; leaseUntil: Date | null; error?: string }> {
   const { job, error } = await ownedJob(input.jobId, input.tabId, client);
   if (!job || error) return { ok: false, cancel: true, leaseUntil: null, error: error ?? 'Unknown job' };
   const task = job.taskId ? await client.articleTask.findUnique({ where: { id: job.taskId }, select: { cancelRequested: true } }) : null;
@@ -237,7 +259,14 @@ export async function completeChatGPTJob(
   const conversationUrl = isRealConversationUrl(input.conversationUrl) ? input.conversationUrl : null;
   await client.queueJob.update({
     where: { id: job.id },
-    data: { status: 'COMPLETED', finishedAt: new Date(), leaseUntil: null, conversationUrl, result: JSON.stringify({ length: text.length, recovered: Boolean(input.recovered) }) },
+    data: {
+      status: 'COMPLETED',
+      finishedAt: new Date(),
+      leaseUntil: null,
+      conversationUrl,
+      // Diagnostic jobs (no task) keep their short answer on the job itself.
+      result: JSON.stringify({ length: text.length, recovered: Boolean(input.recovered), ...(job.relatedId ? {} : { text: text.slice(0, 4000) }) }),
+    },
   });
   if (job.relatedId) {
     await client.chatGPTResponse.update({
@@ -267,13 +296,29 @@ export async function completeChatGPTJob(
 }
 
 export async function failChatGPTJob(
-  input: { jobId: string; tabId: string; code: ExtensionFailCode; message: string; retryAfterSec?: number | null },
+  input: { jobId: string; tabId: string; code: ExtensionFailCode; message: string; retryAfterSec?: number | null; uncertain?: boolean; diagnostics?: Record<string, unknown> },
   client: Tx = db,
 ): Promise<{ ok: boolean; outcome?: string; error?: string }> {
   const { job, error } = await ownedJob(input.jobId, input.tabId, client);
   if (!job || error) return { ok: false, error: error ?? 'Unknown job' };
   const payload = parsePayload<ChatGPTJobPayload>(job);
   const message = input.message.slice(0, 1000);
+  if (input.diagnostics) {
+    // Keep the page debug snapshot (URL, variant, composer/send/stop state…) for Diagnostics.
+    const previous = job.progress ? (JSON.parse(job.progress) as ChatGPTJobProgress) : {};
+    await client.queueJob.update({
+      where: { id: job.id },
+      data: { progress: JSON.stringify({ ...previous, failureSnapshot: Object.fromEntries(Object.entries(input.diagnostics).slice(0, 40)) }).slice(0, 20_000) },
+    });
+  }
+  if (input.uncertain) {
+    // The extension cannot prove whether the prompt was sent/answered: never resend blindly.
+    await client.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: new Date(), leaseUntil: null, error: message, errorCode: 'UNCERTAIN' } });
+    if (job.relatedId) await client.chatGPTResponse.update({ where: { id: job.relatedId }, data: { status: 'FAILED', error: `UNCERTAIN: ${message}` } });
+    if (job.taskId) await wakeArticleJob(job.taskId, client);
+    await log({ level: 'warn', category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `Uncertain prompt state, paused for review: ${message}` }, client);
+    return { ok: true, outcome: 'uncertain' };
+  }
   const settings = await getSettings(client);
   const release = (runAt: Date, countAttempt: boolean) =>
     client.queueJob.update({

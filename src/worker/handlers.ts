@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { log, errorMessage } from '@/lib/log';
 import { registerControlHandler } from './control';
+import { launchAutomationChrome } from '@/lib/automation-chrome';
 import { deleteProfile, detectEditor, interactiveLogin, openAdminWindow, resetSession, syncCategories, testSession } from '@/wordpress/session';
 
 async function site(websiteId: unknown) {
@@ -41,6 +42,11 @@ export function registerBuiltInControlHandlers(): void {
   registerControlHandler('wp.detect-editor', async (job, payload) => ({ editor: await detectEditor(await site(payload.websiteId ?? job.websiteId)) }));
   registerControlHandler('wp.open-browser', async (job, payload, { heartbeat }) => openAdminWindow(await site(payload.websiteId ?? job.websiteId), heartbeat));
   registerControlHandler('wp.reset-session', async (job, payload) => resetSession(await site(payload.websiteId ?? job.websiteId)));
+  registerControlHandler('chrome.launch', async () => {
+    const result = launchAutomationChrome();
+    await log({ category: 'extension', message: `Automation Chrome launched (PID ${result.pid ?? '?'}).` });
+    return result;
+  });
   registerControlHandler('wp.delete-profile', async (job, payload) => {
     const s = await site(payload.websiteId ?? job.websiteId);
     const result = await deleteProfile(s);

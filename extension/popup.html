@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Blog Automation Studio</title>
+    <style>
+      :root { color-scheme: light dark; font-family: 'Segoe UI', system-ui, sans-serif; }
+      body { width: 340px; margin: 0; padding: 14px; font-size: 13px; }
+      h1 { font-size: 14px; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; }
+      .muted { opacity: 0.7; font-size: 12px; }
+      label { display: block; margin-top: 10px; font-weight: 600; }
+      input { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px; border: 1px solid #c8cdd5; border-radius: 6px; font: inherit; }
+      button { margin-top: 10px; padding: 6px 10px; border-radius: 6px; border: 1px solid #c8cdd5; background: #fff; cursor: pointer; font: inherit; }
+      button.primary { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+      .row { display: flex; gap: 6px; flex-wrap: wrap; }
+      .status { margin-top: 10px; padding: 8px; border-radius: 6px; background: rgba(79, 70, 229, 0.08); }
+      .bad { background: rgba(220, 38, 38, 0.1); }
+      .warn { background: rgba(217, 119, 6, 0.12); }
+      ul { padding-left: 16px; margin: 6px 0 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Blog Automation Studio <span class="muted" id="version"></span></h1>
+    <div id="status" class="status">Loading…</div>
+    <label for="server">Dashboard address</label>
+    <input id="server" placeholder="http://localhost:3000" />
+    <label for="key">Connection key</label>
+    <input id="key" type="password" placeholder="bas_… (from Settings → ChatGPT extension)" autocomplete="off" />
+    <div class="muted" id="keyInfo"></div>
+    <div class="row">
+      <button class="primary" id="save">Save &amp; connect</button>
+      <button id="test">Test connection</button>
+    </div>
+    <div class="row">
+      <button id="pause">Pause new claims</button>
+      <button id="open">Open ChatGPT tab</button>
+    </div>
+    <div id="tabs" class="muted"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -149,6 +149,9 @@ export function createContext(deps: ContextDeps): PipelineContext {
           }
         }
         if (latest.status === 'PENDING') return { status: 'waiting', prompt };
+        if (latest.status === 'FAILED' && (latest.error ?? '').startsWith('UNCERTAIN')) {
+          throw new UncertainSideEffectError(`ChatGPT could not prove whether the ${row.key} prompt was answered: ${latest.error}`, { operationId: latest.operationId, conversationUrl: latest.conversationUrl });
+        }
         if (latest.status === 'FAILED' && !(latest.error ?? '').startsWith('CONVERSATION_LOST')) {
           throw new TransientError(`ChatGPT could not complete ${row.key}: ${latest.error ?? 'unknown error'}`);
         }
@@ -176,6 +179,8 @@ export function createContext(deps: ContextDeps): PipelineContext {
         newChat,
         attachments: options.attachments,
         expectImages: options.expectImages,
+        // Regenerations and conversation switches must never "recover" an older identical answer.
+        fresh: Boolean(options.fresh) || ops.length > 0 || Boolean(parseJson<Record<string, unknown>>(row.privateState, {}).regenerated),
         timeoutSec: deps.config.generationTimeoutSec,
         conversationSwitch: Boolean(lost),
       });

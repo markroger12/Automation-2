@@ -77,7 +77,8 @@ export const advancedSettingsSchema = z.object({
   operationLeaseSeconds: z.number().int().min(30).max(3600).default(120),
   chatgptClaimLeaseSeconds: z.number().int().min(60).max(3600).default(180),
   backoffScheduleSec: z.array(z.number().int().min(1).max(3600)).min(1).max(12).default([4, 30, 60, 120, 240, 300]),
-  humanCheckPauseMinutes: z.number().int().min(1).max(60).default(10),
+  humanCheckPauseMinutes: z.number().min(0.1).max(60).default(10),
+  composerReadyTimeoutSec: z.number().int().min(5).max(300).default(60),
   extensionIdlePollSec: z.number().int().min(5).max(120).default(30),
   extensionBusyPollSec: z.number().int().min(1).max(30).default(3),
 });

@@ -13,4 +13,6 @@ if (!process.env.BAS_TEST_ISOLATED) {
   process.env.BAS_DATA_DIR = dir;
   process.env.DATABASE_URL = `file:${path.join(dir, 'app.db').split(path.sep).join('/')}`;
   process.env.BAS_TEST_ISOLATED = '1';
+  // No test may reach the internet; tests that need HTTP install a local fake network.
+  process.env.BAS_TEST_NO_NETWORK = '1';
 }

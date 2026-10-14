@@ -15,6 +15,7 @@ import { siteRef } from '@/wordpress/session';
 import { WpClient } from '@/wordpress/client';
 import { contentHash, editorContent, saveDraft, sameArticle, type DraftInput, type EditorKind } from '@/wordpress/drafts';
 import { inspectInEditor, type EditorInspection } from '@/wordpress/editor';
+import { prepareArticleMedia } from '@/wordpress/media';
 import { fieldsMatch, LOCAL_FIXABLE, type LocalFixId, type RankMathRecommendation } from '@/wordpress/rank-math';
 import type { PipelineContext, PipelineStage, StageResult } from '../pipeline/types';
 import { articleHtml, assembleForTask, bind, bodyForAssembly, metaFromIntro, seoReportFor, waiting } from './common';
@@ -114,9 +115,12 @@ export function wordpressDraft(manifest: StageManifest): PipelineStage {
       const settings = await getSettings();
       const timeoutMs = settings.browser.navigationTimeoutSec * 1000;
       await ctx.progress(ctx.task.wpPostId ? `Reopening WordPress draft #${ctx.task.wpPostId}…` : 'Saving the WordPress draft…');
+      let mediaWarnings: string[] = [];
       const outcome = await withWordPress(site, 'draft', async (context) => {
         const client = await WpClient.connect(context, siteRef(site), { timeoutMs, taskId: ctx.taskId });
-        const input = draftInput(ctx, site, html, knownEditor(site), await featuredMedia(client, ctx));
+        const media = await prepareArticleMedia(client, html, ctx.taskId);
+        mediaWarnings = media.warnings;
+        const input = draftInput(ctx, site, media.html, knownEditor(site), await featuredMedia(client, ctx));
         input.options.timeoutMs = Math.max(timeoutMs, 90_000);
         return saveDraft(client, input, async (data) => {
           await ctx.updateTask(data);
@@ -126,7 +130,7 @@ export function wordpressDraft(manifest: StageManifest): PipelineStage {
       await ctx.log(`WordPress draft #${outcome.postId} ${outcome.action}; verified status “${outcome.status}”.`, 'info', { warnings: outcome.warnings });
       return {
         outcome: 'completed',
-        data: { ...outcome, editor: knownEditor(site), warnings: outcome.warnings },
+        data: { ...outcome, editor: knownEditor(site), warnings: [...outcome.warnings, ...mediaWarnings] },
         message: `Draft #${outcome.postId} ${outcome.action === 'unchanged' ? 'already up to date' : outcome.action}`,
       };
     },
@@ -220,7 +224,8 @@ async function setRankMathFields(client: WpClient, ctx: PipelineContext) {
 
 /** Push the task's current article to the existing draft (conflict-checked and verified). */
 async function pushContent(client: WpClient, ctx: PipelineContext, site: Website, editor: EditorKind) {
-  return saveDraft(client, draftInput(ctx, site, articleHtml(ctx), editor, null), async (data) => {
+  const media = await prepareArticleMedia(client, articleHtml(ctx), ctx.taskId);
+  return saveDraft(client, draftInput(ctx, site, media.html, editor, null), async (data) => {
     await ctx.updateTask(data);
   });
 }

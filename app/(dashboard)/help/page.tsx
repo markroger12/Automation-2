@@ -54,6 +54,18 @@ export default function HelpPage() {
             <li>If ChatGPT asks for a login or human check, the task pauses and you complete it manually.</li>
           </ol>
         </Card>
+        <Card title="5 · Images (optional)">
+          <ol className="list-decimal space-y-2 pl-5 text-sm">
+            <li>
+              <strong>Image Template</strong> → choose the website → upload your logo, pick a preset or design your own featured image. The preview is the real output; press <strong>Save templates</strong>.
+            </li>
+            <li>Body images are clean photo crops unless you start a body template.</li>
+            <li>
+              On an article&apos;s <strong>Images</strong> tab you can upload your own photos (used first) or mark a collected photo “Don&apos;t use”, then <strong>Regenerate images</strong>.
+            </li>
+            <li>If no usable image exists the draft continues without it, or waits for review when the website requires images.</li>
+          </ol>
+        </Card>
         <Card title="Backups & restore">
           <ul className="list-disc space-y-2 pl-5 text-sm">
             <li>

@@ -55,6 +55,8 @@
       '[aria-hidden="true"]',
     ],
     attachmentChip: ['[data-testid*="attachment"]', '[data-testid*="file-tile"]', '[class*="attachment"]'],
+    // Images ChatGPT generated in an answer (not avatars or icons).
+    generatedImage: ['img[src*="/backend-api/estuary/content"]', 'img[src*="oaiusercontent.com"]', 'img[src*="oaidalleapiprodscus"]', 'img[alt^="Generated image"]', 'img[alt^="Generiertes Bild"]'],
     fileInput: ['input[type="file"]'],
     loginButton: ['[data-testid="login-button"]', 'a[href*="/auth/login"]', 'button[data-testid="log-in-button"]'],
     challenge: ['iframe[src*="challenges.cloudflare.com"]', '#challenge-stage', '#cf-challenge-running', '#challenge-form', '[data-testid="human-verification"]'],
@@ -256,6 +258,26 @@
   }
 
   /** Generic fallback: the page's own visible conversation representation (last turn after the user turn). */
+  /** Generated images in the answer(s) after a user turn, de-duplicated by URL. */
+  function generatedImagesAfter(userEl) {
+    const scopes = assistantAfter(userEl);
+    if (!scopes.length) {
+      const generic = genericAnswerAfter(userEl);
+      if (generic) scopes.push(generic);
+    }
+    const seen = new Set();
+    const out = [];
+    for (const scope of scopes) {
+      for (const img of qsAll(SELECTORS.generatedImage, scope)) {
+        const src = img.currentSrc || img.src;
+        if (!src || seen.has(src)) continue;
+        seen.add(src);
+        out.push(img);
+      }
+    }
+    return out;
+  }
+
   function genericAnswerAfter(userEl) {
     const turns = qsAll(SELECTORS.turn).filter((t) => userEl.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING && !t.contains(userEl));
     const last = turns[turns.length - 1];
@@ -456,6 +478,7 @@
     assistantAfter,
     finalAnswerElement,
     genericAnswerAfter,
+    generatedImagesAfter,
     toMarkdown,
     composerText,
     clearComposer,

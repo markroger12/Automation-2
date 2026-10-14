@@ -19,7 +19,11 @@ import zlib from 'node:zlib';
 
 export type Lookup = (hostname: string) => Promise<{ address: string; family: 4 | 6 }[]>;
 
-const systemLookup: Lookup = async (hostname) => (await dns.promises.lookup(hostname, { all: true, verbatim: true })).map((a) => ({ address: a.address, family: a.family === 6 ? 6 : 4 }));
+const systemLookup: Lookup = async (hostname) => {
+  // Automated tests never reach the internet (they install their own fake network when needed).
+  if (process.env.BAS_TEST_NO_NETWORK === '1') throw new Error(`network disabled in tests (${hostname})`);
+  return (await dns.promises.lookup(hostname, { all: true, verbatim: true })).map((a) => ({ address: a.address, family: a.family === 6 ? 6 : 4 }));
+};
 
 let testLookup: Lookup | null = null;
 let testTrusted: string[] = [];
@@ -89,6 +93,8 @@ export interface FetchedPage {
   status: number;
   contentType: string;
   body: string;
+  /** Raw (decompressed) bytes, for binary downloads such as images. */
+  buffer: Buffer;
   redirects: string[];
   bytes: number;
 }
@@ -101,6 +107,8 @@ export interface SafeFetchOptions {
   /** Hosts the caller owns (its own website). They may resolve to private addresses. */
   trustedHosts?: string[];
   method?: 'GET' | 'HEAD';
+  userAgent?: string;
+  accept?: string;
   /** Decide whether a redirect may be followed (checked before contacting the new host). */
   allowRedirect?: (from: URL, to: URL) => boolean;
 }
@@ -139,8 +147,8 @@ function requestOnce(url: URL, pinned: { address: string; family: 4 | 6 }, opts:
           else cb(null, pinned.address, pinned.family);
         }) as unknown as net.LookupFunction,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; BlogAutomationStudio-LinkCheck/3.0)',
-          Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
+          'User-Agent': opts.userAgent ?? 'Mozilla/5.0 (compatible; BlogAutomationStudio-LinkCheck/3.0)',
+          Accept: opts.accept ?? 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
           'Accept-Language': opts.acceptLanguage ?? 'en-US,en;q=0.8',
           'Accept-Encoding': 'gzip, deflate, br',
         },
@@ -211,6 +219,7 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions = {}):
       status: res.status,
       contentType: String(res.headers['content-type'] ?? ''),
       body: body.toString('utf8'),
+      buffer: body,
       redirects,
       bytes: body.length,
     };

@@ -161,6 +161,7 @@ export interface EffectiveTaskConfig {
   imagesRequired: boolean;
   imageOutputSize: '1200x675' | '1920x1080';
   imageMaxBytes: number;
+  celebrityPhotoReview: boolean;
   manualTitleApproval: boolean;
   manualArticleApproval: boolean;
   reviewThreshold: number;
@@ -199,6 +200,7 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     imagesRequired: pick(site.seo.imagesRequired, global.seo.imagesRequired),
     imageOutputSize: pick(site.seo.imageOutputSize, global.seo.imageOutputSize),
     imageMaxBytes: global.seo.imageMaxBytes,
+    celebrityPhotoReview: global.seo.celebrityPhotoReview,
     manualTitleApproval: pick(options.manualTitleApproval, site.workflow.manualTitleApproval, global.workflow.manualTitleApproval),
     manualArticleApproval: pick(options.manualArticleApproval, site.workflow.manualArticleApproval, global.workflow.manualArticleApproval),
     reviewThreshold: pick(options.reviewThreshold, site.seo.reviewThreshold, global.seo.reviewThreshold),

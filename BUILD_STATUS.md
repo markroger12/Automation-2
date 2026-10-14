@@ -20,8 +20,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M5 Single Article + content pipeline | ✅ done (scripted-ChatGPT verified; tasks stop at Needs Review until M6) |
 | M6 WordPress drafts | ✅ done (real WordPress 6.5/6.7 verified; real Rank Math not available here) |
 | M7 Links and general writer | ✅ done (local fake-web + real WordPress index verified; live third-party sites not checked here) |
-| M8 Images and templates | ⏳ next |
-| M9 Retire 2.0 + editorial tools | ☐ |
+| M8 Images and templates | ✅ done (fake ChatGPT/Commons + real WordPress 6.5/6.7 verified; live ChatGPT images and live Commons not verified here) |
+| M9 Retire 2.0 + editorial tools | ⏳ next |
 | M10 Bulk campaigns and workflow | ☐ |
 | M11 Plagiarism evidence and hardening | ☐ |
 | M12–M16 3.0 upgrades | ☐ |
@@ -267,3 +267,44 @@ Link verification tests run over real HTTP against a local **fake web** (named h
 
 **Not verified here**
 - Live third-party sites (Wikipedia, IMDb, official pages): this container reaches the internet only through a proxy that the link checker does not use, so live link verification runs on the owner's machine. ChatGPT's real link suggestions have not been run through the checker here.
+
+## M8 — Images and branded templates ✅
+
+**Working**
+- **IMAGES stage** (both writers, optional per site/article; failures never block the text):
+  - **General (Tigram)**: an editable IMAGE_PLAN prompt in the article conversation (featured + two body images with alt text), then one IMAGE_GENERATION ask per slot in new chats (asked together, then awaited). The extension (v3.1.0) captures the generated image from the page (same-origin, or from ChatGPT's two image CDNs through the background worker) and uploads it to `/api/extension/upload` (12 MB cap, magic bytes checked).
+  - **Celebrity**: owner uploads first, then a bounded **Wikimedia Commons** gallery (no API key): logos/signatures/maps/posters, small and oddly shaped files, and files not naming the person are skipped; downloads use the SSRF-safe fetcher (12 MB cap, private hosts blocked); images are normalised through sharp buffers (metadata stripped); exact duplicates are removed by SHA-256 and near-duplicate crops by perceptual hash (dHash). An optional ChatGPT photo check marks watermarks and collages and suggests alt text (it never identifies anyone). A re-run reuses photos already downloaded for the article; photos the owner marked “Don't use” never come back.
+  - **Owner uploads** (Images tab) fill the slots before anything searched or generated, in upload order (featured, body 1, body 2); for general articles nothing is generated for an uploaded slot.
+  - **Rendering**: one production renderer (`src/images/render.ts`, sharp) composes the site template on a true 1920×1080 canvas: photo slots with smart crop (attention) or a focus point, fixed photos, logo with optional plate, text with `{{title}}`/`{{site}}`/`{{keyword}}` (auto-fit down to 60 %, then an ellipsis), rectangles/circles with borders, sanitized SVG, rotation, opacity and clipping. Output is 1200×675 or 1920×1080 WebP within the byte budget (quality steps, then smaller size). File names come from the slug (`slug.webp`, `slug-1.webp`, `slug-2.webp`). Never the same photo twice across slots; a two-photo design with one photo falls back to the single-photo preset.
+  - **Placement**: body image 1 before the second article H2 (after the Quick Bio in celebrity articles, never before the FAQs or conclusion), body image 2 one paragraph before the FAQ section. Featured image and body images are uploaded to the WordPress Media Library **once** with alt text (IDs persisted, re-used on re-saves, re-uploaded only if deleted in WordPress); body images become core image blocks (`wp-image-N`), the featured image is set as featured media.
+  - Missing images: a note and a text-only draft, or NEEDS_REVIEW when the site requires images.
+- **Image Template Designer** (`/image-templates`, per website): true 1920×1080 canvas with separate featured/body templates (body defaults to a clean photo crop), drag/resize (8 handles, Shift keeps the ratio)/rotate (Shift: 15° steps), layer list (order, hide, lock), undo/redo (Ctrl+Z / Ctrl+Shift+Z, typing coalesced into one step), snapping to canvas and layer edges/centres (Alt bypasses), arrow-key nudge (Shift: 10 px), duplicate/delete, zoom/fit/100 %, presets (single photo · corner logo, split photo · centre divider and logo, body photo · corner logo), accent and background colour, logo upload (PNG/JPEG/WebP/GIF; SVG sanitized and rasterized), fixed-photo library, JSON export and import (own format or Polotno-like: pages scaled proportionally, transforms kept, image URLs never fetched, SVG sanitized, nothing executed). The **live preview is rendered by the production renderer** (debounced); **Check final size** encodes with the site's real output size and byte budget. Saves are validated server-side (schema, unique layer IDs, SVG sanitized, asset references must belong to the site) and audited. Unsaved changes are flagged and guarded.
+- **Article Images tab**: rendered slots (size, bytes, WordPress media ID, alt text), notes, owner uploads (multipart, CSRF-checked, max 8 × 12 MB), collected photos with source URL (provenance only), “Don't use”, **Regenerate images** (re-assembles and updates the same WordPress draft), link to the template.
+- No image-rights/licensing checks or approval gate (owner decision).
+
+**Commands run (all passed)**
+```
+npx tsc --noEmit                                          # 0 errors
+npx vitest run                                            # 15 files, 108 tests (new: renderer pixels, sanitizer, Polotno import, editor math/history, placement)
+npx vitest run --config vitest.integration.config.ts       # 6 files, 38 tests (new: 6 image tests incl. designer API, uploads, re-runs; extension image capture)
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress              # 7/7 on WordPress 6.7-alpha-58716, 7/7 on WordPress 6.5.5 (each from a fresh disposable database)
+npm run build                                             # compiled
+npm run start     # UI smoke, throwaway data dir, real Chromium: designer — logo upload, drag 80→150, undo/redo/nudge, live preview,
+                  # final size 1200×675 WebP 20 KB of 342 KB, save + reload, body template, Polotno import; Images tab — 2 uploads,
+                  # “Don't use”, Regenerate disabled while queued; no console errors
+```
+Image integration tests use the real engine with scripted ChatGPT answers, a **fake Wikimedia Commons** (local HTTP server; `commons.wikimedia.org`/`upload.wikimedia.org` resolved to 127.0.0.1 by a test-only lookup) and the fake WordPress: three generated images rendered, placed and uploaded once (no duplicate media on re-save); Commons gallery with logo/small/duplicate/near-duplicate crop skipped and distinct photos per slot; text-only fallback and NEEDS_REVIEW when images are required; validated template save (unknown asset refused, SVG scripts removed), SVG logo rasterized, CSRF enforced on uploads, preview and final render; pipeline uses the saved template's fixed photo and logo; owner upload used first after regeneration, Commons photos reused (nothing downloaded twice), removed photo never used again; general article with three uploads generates nothing.
+
+**Found and fixed during M8**
+- A regenerated celebrity article lost its whole Commons gallery: the photos downloaded on the first run were treated as “exact duplicates” of themselves → photos already stored for the article are reused; only repeats within one run are duplicates.
+- Body image 1 in celebrity articles was placed one section too late (before the third H2) → now before the second article H2 as the spec says (the Quick Bio is the first).
+- Designer canvas stuck at 10 % zoom after switching to a body template (the size observer stayed on the unmounted canvas) → callback ref re-attaches.
+- The test fixture photos shared one composition, so the perceptual hash rightly called them near-duplicates → structurally distinct fixtures.
+- The extension permission test predated image capture → it now lists the two ChatGPT image CDN hosts explicitly (still no wildcard hosts).
+- The very first 6.5.5 e2e attempt after restarting the disposable servers failed in its setup step (error not captured); the rerun from a fresh database passed 7/7, and so did 6.7.
+
+**Not verified here**
+- Live ChatGPT image generation and capture: verified only against the fake ChatGPT page; the generated-image selector may need adjusting on the live site (it lives in `extension/adapter.js`). Reload the extension (3.1.0) in Automation Chrome.
+- Live Wikimedia Commons (this container reaches the internet only through a proxy that the fetcher does not use).
+- Optional **face detection** is not implemented (no local model); framing uses sharp's attention-based smart crop and optional focus points. Optional **quality enhancement** has a setting but no local tool; when enabled the stage notes that originals were used.
+

@@ -22,11 +22,11 @@ let fake: FakeChatGptConfig = {};
 let browser: Awaited<ReturnType<typeof launchWithExtension>> | null = null;
 let siteId: string;
 
-async function request(prompt: string, opts: { conversationUrl?: string | null; newChat?: boolean; attachments?: { mediaAssetId: string; name: string; mime: string }[] } = {}) {
+async function request(prompt: string, opts: { conversationUrl?: string | null; newChat?: boolean; expectImages?: boolean; attachments?: { mediaAssetId: string; name: string; mime: string }[] } = {}) {
   const task = await createTask(client, siteId, { keyword: prompt.slice(0, 30) });
   if (opts.conversationUrl) await client.articleTask.update({ where: { id: task.id }, data: { conversationUrl: opts.conversationUrl } });
   const fresh = await client.articleTask.findUniqueOrThrow({ where: { id: task.id } });
-  const res = await jobs.createChatGPTRequest({ task: fresh, stageKey: 'TITLES', attempt: 1, operationId: `${task.id}:TITLES:a1`, prompt, newChat: opts.newChat ?? !opts.conversationUrl, timeoutSec: 120, attachments: opts.attachments });
+  const res = await jobs.createChatGPTRequest({ task: fresh, stageKey: 'TITLES', attempt: 1, operationId: `${task.id}:TITLES:a1`, prompt, newChat: opts.newChat ?? !opts.conversationUrl, timeoutSec: 120, attachments: opts.attachments, expectImages: opts.expectImages });
   return { taskId: task.id, ...res };
 }
 
@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.0.0');
+    expect(ext?.version).toBe('3.1.0');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -298,5 +298,17 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const snapshot = JSON.parse(job.progress ?? '{}').failureSnapshot;
     expect(snapshot).toEqual(expect.objectContaining({ composerFound: false, url: 'https://chatgpt.com/' }));
     expect((await fakeStats()).sends).toBe(0);
+  });
+  it('image answers: waits for the generated image, uploads it to the dashboard and completes with the image', async () => {
+    fake = { variant: 'standard', mode: 'normal', answers: ['IMAGE: Here is your illustration.'], chunkMs: 60 };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Create one clean editorial illustration based on this approved image brief: a desk with a laptop', { expectImages: true });
+    const done = await responseDone(req.responseId, 90_000);
+    expect(done.status).toBe('COMPLETED');
+    const assets = await client.mediaAsset.findMany({ where: { responseId: req.responseId } });
+    expect(assets).toHaveLength(1);
+    expect(assets[0].origin).toBe('CHATGPT');
+    expect(assets[0].width).toBe(1024);
+    expect(assets[0].sourceUrl).toContain('/backend-api/estuary/content?id=file_');
   });
 });

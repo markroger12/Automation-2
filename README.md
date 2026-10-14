@@ -70,6 +70,13 @@ npm run test:e2e:wordpress
 
 The test types these credentials itself (simulating you in the login window); the app never stores them.
 
+## Images
+
+- **Image Template** (sidebar) — a per-website designer on a true 1920×1080 canvas for the featured image and, optionally, body images. Drag/resize/rotate, layers, undo/redo (Ctrl+Z / Ctrl+Shift+Z), snapping (hold Alt to bypass), arrow-key nudge, zoom/fit, presets (single photo with corner logo, split photo with centre logo), logo upload (PNG/JPEG/WebP or SVG, which is sanitized and rasterized), fixed photos, accent colour, and Polotno-style JSON import (image URLs are never fetched; nothing in the file is executed). The live preview is drawn by the same renderer the article pipeline uses; **Check final size** shows the real output size against your byte budget (Settings → SEO).
+- **Article → Images tab** — rendered images with alt text, the photos that were collected, your own uploads (used before anything searched or generated) and “Don’t use” for any source photo. **Regenerate images** re-renders and updates the same WordPress draft.
+- Celebrity articles collect a bounded photo gallery from Wikimedia Commons (12 MB cap, private hosts blocked, exact and near-duplicates removed); general articles ask ChatGPT for an image plan and three images through the extension. Missing images never block the text: the draft continues without them, or waits for review if the site requires images. No image-rights or licensing checks are performed (owner decision); the source URL is stored for reference only.
+- After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture).
+
 ## Data folder (`data\`, git-ignored)
 
 | Path | Contents |

@@ -56,3 +56,26 @@ export async function api<T = unknown>(url: string, init: { method?: string; bod
   }
   return data as T;
 }
+
+/** Upload files (multipart) with the CSRF header; the browser sets the length and boundary. */
+export async function upload<T = unknown>(url: string, form: FormData): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers: { Accept: 'application/json', [CSRF_HEADER]: csrfToken() }, body: form, credentials: 'same-origin', cache: 'no-store' });
+  } catch {
+    throw new ApiClientError(0, 'NETWORK', 'Cannot reach the local server. Is `npm run dev:all` still running?');
+  }
+  const data = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+  if (!res.ok) throw new ApiClientError(res.status, data?.error?.code ?? 'HTTP_' + res.status, data?.error?.message ?? `Upload failed (${res.status}).`);
+  return data as T;
+}
+
+/** POST JSON and receive a binary body (e.g. a rendered preview) plus its headers. */
+export async function apiBlob(url: string, body: unknown, signal?: AbortSignal): Promise<{ blob: Blob; headers: Headers }> {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', [CSRF_HEADER]: csrfToken() }, body: JSON.stringify(body), credentials: 'same-origin', cache: 'no-store', signal });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+    throw new ApiClientError(res.status, data?.error?.code ?? 'HTTP_' + res.status, data?.error?.message ?? `Request failed (${res.status}).`);
+  }
+  return { blob: await res.blob(), headers: res.headers };
+}

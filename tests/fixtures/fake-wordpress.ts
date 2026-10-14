@@ -52,6 +52,7 @@ export interface FakeWp {
   requests: { method: string; path: string; body: string }[];
   posts: Map<number, FakePost>;
   tags: { id: number; name: string; slug: string }[];
+  media: Map<number, { id: number; bytes: number; mime: string; filename: string; alt: string; url: string }>;
   close(): Promise<void>;
   /** Forget all sessions (simulates an expired login). */
   logoutAll(): void;
@@ -218,6 +219,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
   const requests: FakeWp['requests'] = [];
   const posts = new Map<number, FakePost>();
   const tags: FakeWp['tags'] = [];
+  const media: FakeWp['media'] = new Map();
   let nextId = 100;
   const t = (en: string, de: string) => (options.language === 'de' ? de : en);
 
@@ -310,7 +312,8 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       const write = method !== 'GET';
       const authed = loggedIn && req.headers['x-wp-nonce'] === NONCE;
       if (write && !authed) return json(loggedIn ? 403 : 401, { code: loggedIn ? 'rest_cookie_invalid_nonce' : 'rest_not_logged_in', message: 'Sorry, you are not allowed to do that.' });
-      const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+      let data: Record<string, unknown> = {};
+      if (body && /json/.test(String(req.headers['content-type'] ?? ''))) data = JSON.parse(body) as Record<string, unknown>;
       if (restRoute === '/' || restRoute === '') return json(200, { name: 'Fake WP', namespaces: ['oembed/1.0', 'wp/v2', ...(options.rankMath ? ['rankmath/v1'] : [])] });
       if (restRoute === '/wp/v2/categories') {
         const perPage = Number(url.searchParams.get('per_page') ?? '10');
@@ -369,6 +372,20 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
         if (typeof data.featured_media === 'number') post.featured_media = data.featured_media;
         post.modified_gmt = nowGmt();
         return json(200, restPost(post));
+      }
+      if (restRoute === '/wp/v2/media' && method === 'POST') {
+        const filename = /filename="([^"]+)"/.exec(String(req.headers['content-disposition'] ?? ''))?.[1] ?? 'upload.bin';
+        const id = nextId++;
+        const item = { id, bytes: Number(req.headers['content-length'] ?? body.length), mime: String(req.headers['content-type'] ?? ''), filename, alt: '', url: `${baseUrl}/wp-content/uploads/${filename}` };
+        media.set(id, item);
+        return json(201, { id, source_url: item.url, mime_type: item.mime, alt_text: '' });
+      }
+      const mediaOne = /^\/wp\/v2\/media\/(\d+)$/.exec(restRoute);
+      if (mediaOne) {
+        const item = media.get(Number(mediaOne[1]));
+        if (!item) return json(404, { code: 'rest_post_invalid_id' });
+        if (method === 'POST' && typeof data.alt_text === 'string') item.alt = data.alt_text;
+        return json(200, { id: item.id, source_url: item.url, alt_text: item.alt });
       }
       if (restRoute === '/rankmath/v1/updateMeta' && options.rankMath) {
         const post = posts.get(Number(data.objectID));
@@ -446,6 +463,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     requests,
     posts,
     tags,
+    media,
     addPost,
     redirects,
     logoutAll: () => sessions.clear(),

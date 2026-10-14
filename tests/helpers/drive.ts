@@ -6,7 +6,9 @@ import { cannedAnswer } from './fake-answers';
  * answers ChatGPT jobs with scripted canned text through the same bridge the
  * extension uses (no live ChatGPT).
  */
-export function makeDriver(client: PrismaClient, answer: (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => string = cannedAnswer) {
+export type ScriptedAnswer = string | { text: string; images?: Buffer[] };
+
+export function makeDriver(client: PrismaClient, answer: (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => ScriptedAnswer = cannedAnswer) {
   const respond = async () => {
     const jobs = await import('@/lib/chatgpt/jobs');
     let answered = 0;
@@ -15,10 +17,22 @@ export function makeDriver(client: PrismaClient, answer: (stageKey: string, prom
       if (!('job' in claim)) break;
       const p = claim.payload;
       const task = await client.articleTask.findUniqueOrThrow({ where: { id: p.taskId } });
+      const a = answer(p.stageKey, p.prompt, task.language === 'de' ? 'de' : 'en', task.keyword);
+      const text = typeof a === 'string' ? a : a.text;
+      // Generated images arrive like the extension uploads them: stored and linked to the response.
+      const images: { mediaAssetId: string }[] = [];
+      if (typeof a !== 'string' && a.images?.length) {
+        const { storeImage } = await import('@/images/store');
+        for (const buffer of a.images) {
+          const { asset } = await storeImage({ buffer, taskId: p.taskId, websiteId: task.websiteId, role: 'GALLERY', origin: 'CHATGPT', responseId: claim.job.relatedId, sourceUrl: 'https://chatgpt.com/backend-api/estuary/content?id=file_test' });
+          images.push({ mediaAssetId: asset.id });
+        }
+      }
       await jobs.completeChatGPTJob({
         jobId: claim.job.id,
         tabId: `t${answered}`,
-        text: answer(p.stageKey, p.prompt, task.language === 'de' ? 'de' : 'en', task.keyword),
+        text,
+        images,
         conversationUrl: 'https://chatgpt.com/c/11111111-2222-4333-8444-555555555555',
       });
       answered++;

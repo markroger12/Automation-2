@@ -76,13 +76,14 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     }
   }
 
+  const activeImages = task.mediaAssets.filter((m) => m.status !== 'REJECTED').length;
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'titles', label: 'Titles' },
     { id: 'research', label: 'Research' },
     { id: 'editor', label: 'Editor' },
     { id: 'seo', label: 'SEO' },
-    { id: 'images', label: 'Images', badge: task.mediaAssets.length ? <Chip>{task.mediaAssets.length}</Chip> : undefined },
+    { id: 'images', label: 'Images', badge: activeImages ? <Chip>{activeImages}</Chip> : undefined },
     { id: 'links', label: 'Links' },
     { id: 'wordpress', label: 'WordPress', badge: task.wpPostId ? <Chip>#{task.wpPostId}</Chip> : undefined },
     { id: 'stages', label: 'Stages' },

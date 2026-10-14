@@ -10,6 +10,7 @@ import type { AnyNode, Element } from 'domhandler';
  */
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const attr = (s: string) => esc(s).replace(/"/g, '&quot;');
 const attrJson = (attrs: Record<string, unknown>) => (Object.keys(attrs).length ? ` ${JSON.stringify(attrs)}` : '');
 
 function block(name: string, attrs: Record<string, unknown>, inner: string): string {
@@ -139,6 +140,12 @@ function nodeToBlock($: CheerioAPI, node: AnyNode): string | null {
     case 'figure': {
       const table = $(el).children('table').toArray() as Element[];
       if (table.length === 1 && $(el).children().length === 1) return tableBlock($, table[0], safeClass($(table[0]).attr('class'))) ?? fallback();
+      const img = $(el).children('img').first();
+      const wpId = Number(img.attr('data-wp-id') ?? /wp-image-(\d+)/.exec(img.attr('class') ?? '')?.[1]);
+      if (img.length && $(el).children().length === 1 && wpId > 0 && img.attr('src')) {
+        const alt = img.attr('alt') ?? '';
+        return block('image', { id: wpId, sizeSlug: 'full', linkDestination: 'none' }, `<figure class="wp-block-image size-full"><img src="${attr(img.attr('src')!)}" alt="${attr(alt)}" class="wp-image-${wpId}"/></figure>`);
+      }
       return fallback();
     }
     default:
@@ -171,6 +178,12 @@ export function htmlForClassic(html: string): string {
       continue;
     }
     if (node.type !== 'tag') continue;
+    $(node)
+      .find('img[data-wp-id]')
+      .each((_, img) => {
+        const id = $(img).attr('data-wp-id');
+        $(img).attr('class', `aligncenter size-full wp-image-${id}`).removeAttr('data-wp-id').removeAttr('data-bas-media');
+      });
     parts.push($.html(node).replace(/\s*\n\s*/g, ' '));
   }
   return parts.join('\n\n');

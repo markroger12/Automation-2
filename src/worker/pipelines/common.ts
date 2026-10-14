@@ -108,7 +108,7 @@ export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
     const { placeLinks } = await import('@/lib/links/place');
     bodyHtml = placeLinks(bodyHtml, internal.contextual.map((c) => ({ anchor: c.anchor, url: c.url, kind: 'int' as const })), { keyword: ctx.task.focusKeyword ?? ctx.task.keyword }).html;
   }
-  const images = ctx.stageJson<{ slots?: AssemblyImage[] }>('IMAGES')?.slots ?? [];
+  const images = (ctx.stageJson<{ slots?: { slot: string; html?: string }[] }>('IMAGES')?.slots ?? []).filter((x): x is AssemblyImage => (x.slot === 'BODY1' || x.slot === 'BODY2') && Boolean(x.html));
   const quickBio = parseJson<{ attribute: string; details: string }[]>(ctx.task.quickBio, []);
   const { confirmedFullName } = await import('@/modules/celebrity-writer/parsers');
   return assembleArticle({

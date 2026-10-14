@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Code2, Columns2, Eye, RefreshCcw, Save, Undo2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
+import { ImagesTab } from './images-tab';
 import { Button, CopyButton, useToast } from '@/components/client';
 import { Field, Input, Textarea } from '@/components/form';
 import { Alert, Card, Chip, EmptyState, KeyValue, cx, formatDateTime } from '@/components/ui';
@@ -18,7 +19,7 @@ export function ArticleExtraTabs({ tab, task, onChanged }: Props) {
   if (tab === 'research') return <ResearchTab task={task} />;
   if (tab === 'editor') return <EditorTab task={task} onChanged={onChanged} />;
   if (tab === 'seo') return <SeoTab task={task} onChanged={onChanged} />;
-  return <ImagesTab task={task} />;
+  return <ImagesTab task={task} onChanged={onChanged} />;
 }
 
 function TitlesTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged: () => Promise<void> }) {
@@ -460,24 +461,6 @@ function SeoTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged: ()
           </ul>
         </Card>
       ) : null}
-    </div>
-  );
-}
-
-function ImagesTab({ task }: { task: SerializedTaskDetail }) {
-  return task.mediaAssets.length === 0 ? (
-    <Card>
-      <EmptyState title="No images" description="Images are optional; missing images are reported as review reasons, never faked." />
-    </Card>
-  ) : (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {task.mediaAssets.map((m) => (
-        <Card key={m.id} title={m.role} description={`${m.width ?? '?'}×${m.height ?? '?'} · ${m.status}`}>
-          <img src={`/api/media/${m.id}`} alt={m.altText ?? ''} className="mb-2 w-full rounded" loading="lazy" />
-          <p className="text-sm">{m.altText ?? 'No alt text'}</p>
-          {m.sourceUrl ? <p className="text-muted mt-1 text-xs break-all">Source (technical provenance): {m.sourceUrl}</p> : null}
-        </Card>
-      ))}
     </div>
   );
 }

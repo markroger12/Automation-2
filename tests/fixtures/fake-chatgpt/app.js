@@ -119,7 +119,9 @@
         }
         if (t.error) return `<div data-testid="conversation-turn-${i}"><div role="alert" class="text-token-text-error">${esc(t.error)}</div></div>`;
         const tool = t.tool ? `<div data-testid="tool-call-block">Searching the web for sources…</div><details><summary>Thought for 3s</summary><div class="markdown">Planning: I will search first.</div></details>` : '';
-        const content = `${tool}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>`;
+        const isLast = i === turns.length - 1;
+        const img = t.image ? (isLast && window.__generating ? '<div class="image-placeholder">Creating image…</div>' : `<img alt="Generated image" src="${t.image}" width="1024" height="576">`) : '';
+        const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>`;
         return std
           ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="assistant">${content}</div></div>`
           : `<article data-turn="assistant">${content}</article>`;
@@ -213,8 +215,14 @@
       return;
     }
     const index = turns.filter((t) => t.role === 'user').length - 1;
-    const full = answerFor(text, S.sends - 1 + index * 0);
-    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0 });
+    let full = answerFor(text, S.sends - 1 + index * 0);
+    // "IMAGE:" answers simulate image generation: a placeholder while generating, then the image.
+    let image = null;
+    if (full.startsWith('IMAGE:')) {
+      image = `/backend-api/estuary/content?id=file_${S.sends}&sig=test`;
+      full = full.slice(6).trim();
+    }
+    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0, image });
     save(id, turns);
     window.__generating = true;
     render();

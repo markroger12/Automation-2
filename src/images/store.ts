@@ -96,3 +96,35 @@ export async function storeImage(input: StoreImageInput) {
   });
   return { asset, duplicate: false };
 }
+
+/** Store an already-encoded rendered image (featured/body) without re-encoding it. */
+export async function storeRendered(input: { buffer: Buffer; mime: 'image/webp' | 'image/jpeg'; taskId: string; websiteId: string; role: string; altText: string; sourceUrl?: string | null; notes?: string | null; slug?: string | null }) {
+  const sha256 = sha256Buffer(input.buffer);
+  const meta = await sharp(input.buffer).metadata();
+  const dir = path.join(dataPaths.media(), input.taskId);
+  fs.mkdirSync(dir, { recursive: true });
+  const ext = input.mime === 'image/jpeg' ? 'jpg' : 'webp';
+  // File name from the slug with a numbered suffix (e.g. tom-kaulitz-heidi-klum-1.webp), made unique on disk.
+  const stem = (input.slug ?? 'image').replace(/[^a-z0-9-]+/gi, '-').slice(0, 60) || 'image';
+  const n = input.role === 'FEATURED' ? 0 : input.role === 'BODY1' ? 1 : input.role === 'BODY2' ? 2 : 9;
+  let file = path.join(dir, `${stem}${n ? `-${n}` : ''}.${ext}`);
+  if (fs.existsSync(file)) file = path.join(dir, `${stem}${n ? `-${n}` : ''}-${randomUUID().slice(0, 6)}.${ext}`);
+  fs.writeFileSync(file, input.buffer);
+  return db.mediaAsset.create({
+    data: {
+      taskId: input.taskId,
+      websiteId: input.websiteId,
+      role: input.role,
+      origin: 'RENDERED',
+      sourceUrl: input.sourceUrl ?? null,
+      filePath: toDataRelative(file),
+      sha256,
+      width: meta.width ?? null,
+      height: meta.height ?? null,
+      bytes: input.buffer.length,
+      mime: input.mime,
+      altText: input.altText,
+      notes: input.notes ?? null,
+    },
+  });
+}

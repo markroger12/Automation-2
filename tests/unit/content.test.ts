@@ -91,12 +91,31 @@ describe('assembly order and placement', () => {
       ],
     });
     const h = r.html;
-    const order = ['Intro paragraph', '<h2>Quick Bio</h2>', '<h2>Early Life</h2>', 'alt="one"', '<h2>Career</h2>', 'alt="two"', '<h2>Frequently Asked Questions</h2>', '<h2>Conclusion</h2>', 'data-bas-internal-link'];
+    // Body image 1 sits before the second article H2 (Quick Bio is the first), body image 2 one paragraph before the FAQs.
+    const order = ['Intro paragraph', '<h2>Quick Bio</h2>', 'alt="one"', '<h2>Early Life</h2>', '<h2>Career</h2>', 'alt="two"', '<h2>Frequently Asked Questions</h2>', '<h2>Conclusion</h2>', 'data-bas-internal-link'];
     const idx = order.map((s) => h.indexOf(s));
     expect(idx.every((v) => v >= 0)).toBe(true);
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);
     expect(r.structure.removedSections).toEqual(['FAQ']);
     expect((h.match(/data-bas-internal-link/g) ?? []).length).toBe(1);
+  });
+
+  it('places Tigram body images before the second H2 and one paragraph before the FAQs, never right before them', () => {
+    const images = [
+      { slot: 'BODY1' as const, html: '<figure><img src="https://x/1.webp" alt="one"></figure>' },
+      { slot: 'BODY2' as const, html: '<figure><img src="https://x/2.webp" alt="two"></figure>' },
+    ];
+    const tigram = '<p>Intro.</p><h2>Step one</h2><p>A.</p><h2>Step two</h2><p>B1.</p><p>B2.</p><h2>FAQ</h2><h3>Q?</h3><p>x</p><h2>Conclusion</h2><p>End.</p>';
+    const h = assembleArticle({ bodyHtml: tigram, language: 'en', moduleKey: 'tigram-writer', images }).html;
+    const order = ['<h2>Step one</h2>', 'alt="one"', '<h2>Step two</h2>', 'B1.', 'alt="two"', 'B2.', '<h2>Frequently Asked Questions</h2>'];
+    const idx = order.map((x) => h.indexOf(x));
+    expect(idx.every((v) => v >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+    // A single content section: image 1 goes after its first paragraph, not before the FAQs.
+    const one = assembleArticle({ bodyHtml: '<p>Intro.</p><h2>Only</h2><p>A.</p><p>B.</p><h2>FAQ</h2><h3>Q?</h3><p>x</p><h2>Conclusion</h2><p>End.</p>', language: 'en', moduleKey: 'tigram-writer', images }).html;
+    expect(one.indexOf('alt="one"')).toBeGreaterThan(one.indexOf('A.'));
+    expect(one.indexOf('alt="two"')).toBeLessThan(one.indexOf('B.'));
+    expect(one).not.toMatch(/<\/figure>\s*<h2>Frequently Asked Questions/);
   });
 
   it('re-assembly never duplicates the internal-link line', () => {

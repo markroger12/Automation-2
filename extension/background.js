@@ -14,9 +14,9 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.0.0';
+const EXTENSION_VERSION = '3.1.0';
 const DEFAULT_SERVER = 'http://localhost:3000';
-const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'multi-tab', 'continue-generating', 'outbox'];
+const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'multi-tab', 'continue-generating', 'outbox'];
 
 let cfg = null;
 let serverCfg = {
@@ -413,7 +413,7 @@ chrome.runtime.onConnect.addListener((port) => {
         pageLogin = true;
         chrome.notifications.clear(`bas-human-${tabId}`);
       } else if (msg.type === 'complete') {
-        await outboxPush('complete', { tabId: String(tabId), jobId, text: msg.text, html: msg.html || null, conversationUrl: msg.conversationUrl || null, recovered: Boolean(msg.recovered), elapsedMs: msg.elapsedMs });
+        await outboxPush('complete', { tabId: String(tabId), jobId, text: msg.text, html: msg.html || null, images: Array.isArray(msg.images) && msg.images.length ? msg.images : undefined, conversationUrl: msg.conversationUrl || null, recovered: Boolean(msg.recovered), elapsedMs: msg.elapsedMs });
         await finishTab(tabId, jobId);
         setTimeout(() => void tick(), 500);
       } else if (msg.type === 'fail') {
@@ -469,6 +469,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           let bin = '';
           for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
           return sendResponse({ ok: true, base64: btoa(bin) });
+        } catch (e) {
+          return sendResponse({ ok: false, error: e.message });
+        }
+      }
+      case 'fetch-image': {
+        // Generated images on ChatGPT's image CDN only (host permissions limit this further).
+        try {
+          const url = new URL(msg.url);
+          const allowed = url.protocol === 'https:' && (/\.oaiusercontent\.com$/.test(url.hostname) || url.hostname === 'oaidalleapiprodscus.blob.core.windows.net' || url.hostname === 'chatgpt.com');
+          if (!allowed) return sendResponse({ ok: false, error: 'not an image host of ChatGPT' });
+          const res = await fetch(url.toString(), { credentials: 'include' });
+          if (!res.ok) return sendResponse({ ok: false, error: 'HTTP ' + res.status });
+          const buf = new Uint8Array(await res.arrayBuffer());
+          if (buf.length > 12 * 1024 * 1024) return sendResponse({ ok: false, error: 'image too large' });
+          let bin = '';
+          for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+          return sendResponse({ ok: true, base64: btoa(bin), mime: res.headers.get('content-type') || 'image/png' });
+        } catch (e) {
+          return sendResponse({ ok: false, error: e.message });
+        }
+      }
+      case 'upload-image': {
+        try {
+          const res = await api('upload', { tabId: String(tabId), jobId: msg.jobId, name: msg.name, mime: msg.mime, dataBase64: msg.dataBase64, sourceUrl: msg.sourceUrl }, '/api/extension/upload');
+          return sendResponse({ ok: true, mediaAssetId: res.mediaAssetId });
         } catch (e) {
           return sendResponse({ ok: false, error: e.message });
         }

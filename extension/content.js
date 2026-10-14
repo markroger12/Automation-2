@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.0.0';
+  const EXTENSION_VERSION = '3.1.0';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -162,10 +162,11 @@
    * { text, html }. The anchor is re-resolved on every check because the page
    * re-renders (React) and replaces DOM nodes.
    */
-  async function waitForAnswer(userIndex, config) {
+  async function waitForAnswer(userIndex, config, expectImages) {
     const timeoutMs = (config.generationTimeoutSec || 600) * 1000;
     const started = Date.now();
     let lastText = '';
+    let lastImages = '';
     let stable = 0;
     let continues = 0;
     let lastProgress = 0;
@@ -215,17 +216,60 @@
           continue;
         }
       }
-      if (!generating && text && text === lastText) stable++;
+      // Image answers: wait until every generated image has fully loaded and stopped changing.
+      const images = expectImages && userEl ? A.generatedImagesAfter(userEl) : [];
+      const imagesReady = images.length > 0 && images.every((img) => img.complete && img.naturalWidth >= 256);
+      const imageSig = images.map((img) => `${img.currentSrc || img.src}:${img.naturalWidth}`).join('|');
+      const settled = expectImages ? (imagesReady && imageSig === lastImages) || (!images.length && text && text === lastText && Date.now() - started > 45000) : text && text === lastText;
+      if (!generating && settled) stable++;
       else stable = 0;
       lastText = text;
+      lastImages = imageSig;
       if (Date.now() - lastProgress > 5000) {
         lastProgress = Date.now();
         progress(generating ? `generating (${text.length} chars so far)` : text ? 'checking that the answer is complete' : 'waiting for the answer to start');
       }
       const composerReady = Boolean(A.findComposer()) && !A.findStopButton();
-      if (stable >= 3 && composerReady) return { text, html: answerEl ? answerEl.innerHTML : null };
+      if (stable >= 3 && composerReady) return { text, html: answerEl ? answerEl.innerHTML : null, images: imagesReady ? images : [] };
       await sleep(1000);
     }
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /** Read each generated image (same-origin fetch, or via the background for the image CDN) and upload it to the dashboard. */
+  async function uploadImages(job, images) {
+    const ids = [];
+    for (const [i, img] of images.slice(0, 4).entries()) {
+      const src = img.currentSrc || img.src;
+      let base64 = '';
+      let mime = 'image/png';
+      const url = new URL(src, location.href);
+      if (url.origin === location.origin || url.protocol === 'blob:' || url.protocol === 'data:') {
+        const res = await fetch(src, { credentials: 'include' });
+        if (!res.ok) throw new JobError('ERROR', `Could not read generated image ${i + 1} (HTTP ${res.status}).`);
+        const blob = await res.blob();
+        mime = blob.type || mime;
+        base64 = await blobToBase64(blob);
+      } else {
+        const res = await chrome.runtime.sendMessage({ type: 'fetch-image', url: src });
+        if (!res || !res.ok) throw new JobError('ERROR', `Could not read generated image ${i + 1}: ${res && res.error}`);
+        base64 = res.base64;
+        mime = res.mime || mime;
+      }
+      if (!/^image\/(png|jpeg|webp|gif)$/.test(mime)) mime = 'image/png';
+      const up = await chrome.runtime.sendMessage({ type: 'upload-image', jobId: job.id, name: `generated-${i + 1}`, mime, dataBase64: base64, sourceUrl: src.startsWith('data:') ? null : src.slice(0, 1900) });
+      if (!up || !up.ok) throw new JobError('ERROR', `Uploading generated image ${i + 1} failed: ${up && up.error}`);
+      ids.push({ mediaAssetId: up.mediaAssetId });
+    }
+    return ids;
   }
 
   async function runJob(job, config, port) {
@@ -244,8 +288,9 @@
       const isLastUserTurn = existing && existing.index === A.userMessages().length - 1;
       if (existing && (evidence || (isLastUserTurn && !job.fresh))) {
         progress(`found the prompt already sent (${existing.match}); recovering its answer instead of resending`, { sent: true, sentAt: new Date().toISOString() });
-        const answer = await waitForAnswer(existing.index, config);
-        post('complete', { text: answer.text, html: answer.html, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
+        const answer = await waitForAnswer(existing.index, config, job.expectImages);
+        const images = job.expectImages ? await uploadImages(job, answer.images) : [];
+        post('complete', { text: answer.text, html: answer.html, images, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
         return;
       }
       if (evidence) {
@@ -267,9 +312,10 @@
       for (let i = 0; i < 40 && !realConversationUrl(); i++) await sleep(500);
       progress('prompt sent; waiting for the answer', { sent: true, sentAt });
       void userEl;
-      const answer = await waitForAnswer(before, config);
-      if (!answer.text) throw new JobError('ERROR', 'The answer was empty.');
-      post('complete', { text: answer.text, html: answer.html, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
+      const answer = await waitForAnswer(before, config, job.expectImages);
+      const images = job.expectImages && answer.images.length ? await uploadImages(job, answer.images) : [];
+      if (!answer.text && !images.length) throw new JobError('ERROR', 'The answer was empty.');
+      post('complete', { text: answer.text, html: answer.html, images, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
     } catch (error) {
       const code = error instanceof JobError ? error.code : 'ERROR';
       const extra = error instanceof JobError ? error.extra : {};

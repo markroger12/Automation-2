@@ -60,6 +60,43 @@ export function route<S extends z.ZodType | undefined = undefined>(
   };
 }
 
+/**
+ * Multipart upload route: the same loopback/origin/CSRF checks, a declared
+ * Content-Length is required and capped before the body is read.
+ */
+export function formRoute(options: { maxBytes: number }, handler: (ctx: RouteContext<undefined> & { form: FormData }) => Promise<unknown>) {
+  return async (req: Request, arg?: ParamsArg): Promise<Response> => {
+    try {
+      const check = checkDashboardRequest(req);
+      if (!check.ok) throw new AppError(check.status, 'FORBIDDEN', check.message);
+      await ensurePragmas();
+      const declared = req.headers.get('content-length');
+      if (!declared) throw new AppError(411, 'LENGTH_REQUIRED', 'Upload size is unknown; please retry from the dashboard.');
+      if (Number(declared) > options.maxBytes) throw new AppError(413, 'TOO_LARGE', `Upload is too large (max ${Math.round(options.maxBytes / 1024 / 1024)} MB per request).`);
+      if (!(req.headers.get('content-type') ?? '').toLowerCase().startsWith('multipart/form-data')) throw new AppError(415, 'UNSUPPORTED', 'Send the files as multipart/form-data.');
+      let form: FormData;
+      try {
+        form = await req.formData();
+      } catch {
+        throw new AppError(400, 'BAD_FORM', 'The upload could not be read.');
+      }
+      const params = arg?.params ? await arg.params : {};
+      const result = await handler({ req, body: undefined, params, searchParams: new URL(req.url).searchParams, form });
+      if (result instanceof Response) return result;
+      return NextResponse.json(result ?? { ok: true });
+    } catch (error) {
+      return errorResponse(error, req);
+    }
+  };
+}
+
+/** Files from a multipart form field (skips empty entries). */
+export async function formFiles(form: FormData, field: string, max: number): Promise<{ name: string; bytes: Buffer }[]> {
+  const files = form.getAll(field).filter((f): f is File => typeof f === 'object' && f !== null && 'arrayBuffer' in f && (f as File).size > 0);
+  if (files.length > max) throw new AppError(400, 'TOO_MANY', `Upload at most ${max} file(s) at once.`);
+  return Promise.all(files.map(async (f) => ({ name: f.name || 'upload', bytes: Buffer.from(await f.arrayBuffer()) })));
+}
+
 export function validationError(error: z.ZodError): AppError {
   const fieldErrors: Record<string, string[]> = {};
   for (const issue of error.issues) {

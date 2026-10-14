@@ -114,10 +114,12 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
     warnings.push('Quick Bio table is missing.');
   }
   const bodyParts = body.map((s) => s.html);
-  // Body image 1: before the second article H2 (never right before FAQs/conclusion).
+  // Body image 1: before the second article H2. With a Quick Bio first, that is the first
+  // content section; never before Quick Bio itself, the FAQs or the conclusion.
   const img1 = input.images?.find((i) => i.slot === 'BODY1');
   if (img1) {
-    if (bodyParts.length >= 2) bodyParts[1] = img1.html + bodyParts[1];
+    const target = isCelebrity && input.quickBioHtml ? 0 : 1;
+    if (bodyParts.length > target) bodyParts[target] = img1.html + bodyParts[target];
     else if (bodyParts.length === 1) bodyParts[0] = injectAfterFirstParagraph(bodyParts[0], img1.html);
     else warnings.push('Body image 1 could not be placed (no body sections).');
   }

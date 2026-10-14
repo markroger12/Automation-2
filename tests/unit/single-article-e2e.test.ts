@@ -206,7 +206,8 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(task.categoryId).toBeNull();
     const final = await drive(task.id, 'en');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
-    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS']);
+    // IMAGES = the image plan prompt (the scripted answer has no plan lines, so no image is generated).
+    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS', 'IMAGES']);
     expect(responses[0].renderedPrompt).toContain('Secondary keywords (use only where natural): hosting, plugins');
     expect(responses[0].renderedPrompt).not.toContain('Not used by default template');
     expect(responses[1].renderedPrompt).toContain('Tech & Apps');
@@ -224,7 +225,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'Best Free VPN Apps', websiteId: siteEn, categoryId: catEn, idempotencyKey: 'single:e2e-tigram-cat' }, { source: 'SINGLE' });
     await drive(task.id, 'en');
     const keys = (await client.chatGPTResponse.findMany({ where: { taskId: task.id } })).map((r) => r.stageKey);
-    expect(keys).toEqual(['ARTICLE', 'EXTERNAL_LINKS']);
+    expect(keys).toEqual(['ARTICLE', 'EXTERNAL_LINKS', 'IMAGES']);
     const stage = await client.articleStage.findFirstOrThrow({ where: { taskId: task.id, key: 'CATEGORY' } });
     expect(stage.status).toBe('SKIPPED');
   });

@@ -438,7 +438,7 @@ model MediaAsset {
   task        ArticleTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
   websiteId   String?
   website     Website?     @relation(fields: [websiteId], references: [id], onDelete: SetNull)
-  role        String // FEATURED | BODY1 | BODY2 | GALLERY | LOGO | UPLOAD
+  role        String // FEATURED | BODY1 | BODY2 | GALLERY | UPLOAD (owner photo for a task) | LOGO | TEMPLATE_PHOTO (site template library)
   responseId  String? // ChatGPTResponse that produced this image (generated images)
   origin      String // GENERATED | UPLOADED | WIKIMEDIA | CHATGPT | RENDERED
   sourceUrl   String?

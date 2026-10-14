@@ -22,7 +22,7 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M7 Links and general writer | ✅ done (local fake-web + real WordPress index verified; live third-party sites not checked here) |
 | M8 Images and templates | ✅ done (fake ChatGPT/Commons + real WordPress 6.5/6.7 verified; live ChatGPT images and live Commons not verified here) |
 | M9 Retire 2.0 + editorial tools | ✅ done (scripted-ChatGPT + full-stack agent-protocol smoke; live ChatGPT not verified here) |
-| M10 Bulk campaigns and workflow | ⏳ next |
+| M10 Bulk campaigns and workflow | 🟡 in progress — M10a Bulk Campaigns + Smart Router done; M10b scheduler/calendar next |
 | M11 Plagiarism evidence and hardening | ☐ |
 | M12–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
@@ -368,4 +368,45 @@ npm run start:all # full-stack smoke, throwaway data dir: real Next.js + real wo
 **Not verified here**
 - Live ChatGPT answering the humanizer prompt (scripted answers and a scripted agent-protocol client only). How often real rewrites pass the fact locks is unmeasured; the thresholds (45 % content-word overlap, ±20 % length) may need tuning on real output.
 - Name and entity checks are heuristics (capitalized-word runs; new-entity detection in English only), so they can miss a renamed entity or reject a legitimate rewrite.
+
+## M10a — Bulk Campaigns and Smart Router ✅ (M10b workflow scheduler follows)
+
+**Working**
+- **Import** (`src/lib/campaigns/parse.ts`):
+  - formats: one keyword per line, `keyword | secondary1, secondary2 | example title`, CSV with headers (keyword, secondary_keywords, title, website, category, kind/writer, language, priority, notes; quotes and embedded commas/newlines) and tab-separated columns pasted from a spreadsheet, with or without a header;
+  - at most 1,000 rows;
+  - each row keeps its original text; invalid rows are flagged, never dropped.
+- **Smart Router** (`src/lib/campaigns/router.ts`, version `rules-2026.10-1`):
+  - deterministic EN/DE rules (person intents, topic intents, product/brand/place/work words, name evidence) route only to the Celebrity Article Writer or the Tigram Article Writer;
+  - low confidence or mixed intent gives UNKNOWN, which asks the owner, as do names that overlap things (“Tokio Hotel”);
+  - each decision stores version, confidence and rationale; a row's writer column or the owner's choice wins, and the campaign can force one writer;
+  - 2.0 is never a writer.
+- **Preview** (no writes):
+  - row checks: website and category per row, exact and near duplicates (word order, plurals, small typos; different numbers stay different) within the website, existing tasks on the website, and already-published posts from the link index;
+  - per-row status: ready / choose writer / choose category / duplicate? / invalid / excluded;
+  - corrections by line (writer, category, keep as a separate article, exclude) never change the input text.
+- **Campaigns**:
+  - Creating a campaign stores the input text as entered plus one row per record, then the worker queues one standard task per READY row with a per-row idempotency key, so re-submits, duplicate jobs and restarts never duplicate tasks.
+  - Queueing runs on the restart-safe workflow queue. A worker killed mid-way is requeued at startup and continues; a row whose task was created just before the crash is reconciled to it.
+  - Controls: pause (no new article of the campaign starts; checked by the dispatcher), resume, cancel (unstarted rows cancelled, running articles stop at a safe point, nothing deleted).
+  - Per-row actions: retry, reprioritize (task and queued job), correct writer or category, or keep as a separate article for rows not yet queued. A queued row keeps its approved writer.
+  - CSV export of rows with task status, post ID/edit URL, SEO and Rank Math scores and review reasons; reusable templates.
+  - Campaigns never publish.
+- **UI**: `/campaigns` (list with progress), `/campaigns/new` (paste or load a file, options, templates, preview with filters, pagination and bulk corrections), `/campaigns/[id]` (progress, controls, rows with article links, bulk actions, export).
+
+**Commands run (all passed)**
+```
+bash scripts/dev-create-migration.sh bulk_campaigns        # Campaign, CampaignRow (new tables only)
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 21 files, 160 tests (new: parser 5, router 2 incl. a curated 36-keyword EN/DE
+                                                           # dataset with a confusion matrix and no confident misroutes, service 5)
+npm run build                                              # compiled
+npm run start:all # UI smoke, throwaway data dir, Chromium: 6 pasted rows → 3 ready, 1 needs a writer, 1 duplicate, 1 invalid;
+                  # writer chosen + duplicate kept → 5 ready; created; the real worker queued 5 tasks; pause/resume; CSV export
+                  # (header + 6 rows); list page; no console errors
+```
+Service tests: 1,000-row fixture → exactly 1,000 tasks and 1,000 article jobs in about 23 s locally, nothing created on a re-run; restart after 50 of 120 rows plus a crashed half-finished row → 120 tasks, one per row; preview leaves the database untouched; the dispatcher starts a lower-priority task while a higher-priority task of a paused campaign stays queued.
+
+**Found and fixed during M10a**
+- The existing-task lookup for a 1,000-row preview exceeded SQLite's bound-variable limit, so it now runs in chunks.
 

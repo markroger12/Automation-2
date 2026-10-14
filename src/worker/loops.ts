@@ -3,6 +3,7 @@ import { ArticleDispatcher } from './dispatcher';
 import { healOrphanedTasks, recoverOnStartup, sweepExpiredLeases } from './recovery';
 import { controlTick } from './control';
 import { humanizerTick } from './humanizer';
+import { workflowTick } from './workflow-queue';
 import { pruneDiagnostics } from './maintenance';
 import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
@@ -19,6 +20,7 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'article-dispatcher', intervalMs: 1000, run: async (c) => d.tick(c.stopping) });
   registerLoop({ name: 'control-queue', intervalMs: 1000, run: async (c) => controlTick(c.workerId, c.stopping) });
   registerLoop({ name: 'humanizer-queue', intervalMs: 1000, run: async (c) => humanizerTick(c.workerId, c.stopping) });
+  registerLoop({ name: 'workflow-queue', intervalMs: 1000, run: async (c) => workflowTick(c.workerId, c.stopping) });
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });
   registerLoop({ name: 'orphan-healer', intervalMs: 60_000, run: async () => void (await healOrphanedTasks()) });
   registerLoop({ name: 'retention', intervalMs: 6 * 3600_000, run: async () => void (await pruneDiagnostics()) });

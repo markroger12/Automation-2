@@ -72,6 +72,7 @@ model Website {
   linkTargets              LinkTarget[]
   linkIndexSyncedAt        DateTime?
   linkIndexFullSyncAt      DateTime?
+  campaigns                Campaign[]
 }
 
 model Category {
@@ -404,6 +405,59 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+/// A bulk campaign: one import of up to 1,000 keyword rows. The original input text is kept as entered.
+model Campaign {
+  id            String        @id @default(cuid())
+  name          String
+  websiteId     String
+  website       Website       @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  defaultWriter String        @default("AUTO") // AUTO | celebrity-writer | tigram-writer
+  options       String        @default("{}") // task options applied to every row
+  inputText     String
+  format        String
+  routerVersion String
+  status        String        @default("QUEUEING") // QUEUEING | ACTIVE | PAUSED | COMPLETED | CANCELLED
+  message       String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  rows          CampaignRow[]
+
+  @@index([createdAt])
+}
+
+/// One imported row. `raw` is the original line/record; everything else is derived and may be corrected by the owner.
+model CampaignRow {
+  id                String   @id @default(cuid())
+  campaignId        String
+  campaign          Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  position          Int
+  line              Int
+  raw               String
+  keyword           String
+  normalizedKeyword String
+  secondaryKeywords String   @default("[]")
+  exampleTitle      String?
+  websiteId         String?
+  categoryId        String?
+  language          String?
+  priority          Int      @default(0)
+  notes             String?
+  writer            String? // celebrity-writer | tigram-writer | null (owner must choose)
+  writerSource      String? // RULE | OVERRIDE | CAMPAIGN
+  routerConfidence  Float?
+  routerRationale   String?
+  /// READY | NEEDS_WRITER | NEEDS_CATEGORY | DUPLICATE | INVALID | SKIPPED | QUEUED | CANCELLED
+  status            String
+  issues            String   @default("[]")
+  confirmedVariant  Boolean  @default(false)
+  taskId            String?  @unique
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([campaignId, position])
+  @@index([campaignId, status])
 }
 
 model Workflow {

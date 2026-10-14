@@ -71,9 +71,12 @@ export class ArticleDispatcher {
     if (candidateJobs.length === 0) return null;
     const tasks = await db.articleTask.findMany({
       where: { id: { in: candidateJobs.map((j) => j.taskId).filter((x): x is string => Boolean(x)) } },
-      select: { id: true, status: true, websiteId: true },
+      select: { id: true, status: true, websiteId: true, campaignId: true },
     });
     const statusById = new Map(tasks.map((t) => [t.id, t.status]));
+    // Paused or cancelled bulk campaigns start no NEW articles (running ones continue to a safe point).
+    const held = new Set((await db.campaign.findMany({ where: { status: { in: ['PAUSED', 'CANCELLED'] } }, select: { id: true } })).map((c) => c.id));
+    const heldTasks = new Set(tasks.filter((t) => t.campaignId && held.has(t.campaignId)).map((t) => t.id));
     const isContinuation = (taskId: string | null) => (taskId ? (RUNNING_STATUSES as string[]).includes(statusById.get(taskId) ?? '') : true);
     const canStartNew = inFlightTotal < slots;
     return claimNext({
@@ -86,7 +89,7 @@ export class ArticleDispatcher {
         const continuations = candidates.filter((c) => isContinuation(c.taskId));
         const fresh = canStartNew
           ? candidates
-              .filter((c) => !isContinuation(c.taskId) && !(c.websiteId && blockedSites.includes(c.websiteId)))
+              .filter((c) => !isContinuation(c.taskId) && !(c.websiteId && blockedSites.includes(c.websiteId)) && !(c.taskId && heldTasks.has(c.taskId)))
               .sort((a, b) => {
                 if (b.priority !== a.priority) return b.priority - a.priority;
                 const load = (siteLoad.get(a.websiteId ?? '') ?? 0) - (siteLoad.get(b.websiteId ?? '') ?? 0);

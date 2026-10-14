@@ -1,0 +1,66 @@
+{
+  "name": "blog-automation-studio",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Private, Windows-first local dashboard that prepares research-led SEO articles through the owner's ChatGPT browser session and saves verified WordPress drafts.",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "setup": "tsx scripts/setup.ts",
+    "dev": "next dev -H 127.0.0.1 -p 3000",
+    "worker": "tsx src/worker/index.ts",
+    "worker:dev": "tsx watch --clear-screen=false src/worker/index.ts",
+    "dev:all": "concurrently -k -n web,worker -c blue,magenta \"npm:dev\" \"npm:worker:dev\"",
+    "build": "prisma generate && next build",
+    "start": "next start -H 127.0.0.1 -p 3000",
+    "start:all": "concurrently -k -n web,worker -c blue,magenta \"npm:start\" \"npm:worker\"",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:create": "prisma migrate dev --create-only",
+    "db:studio": "prisma studio",
+    "db:seed": "tsx scripts/seed.ts",
+    "db:backup": "tsx scripts/backup.ts",
+    "db:restore": "tsx scripts/restore.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "cheerio": "1.2.0",
+    "lucide-react": "1.57.0",
+    "marked": "18.1.1",
+    "next": "15.5.27",
+    "papaparse": "5.7.0",
+    "playwright": "1.56.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "sanitize-html": "2.18.0",
+    "sharp": "0.35.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "26.6.5",
+    "@types/papaparse": "5.5.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@types/sanitize-html": "2.16.2",
+    "concurrently": "10.0.6",
+    "postcss": "8.5.6",
+    "prisma": "6.19.3",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "prisma@6.19.3": true
+  }
+}

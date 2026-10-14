@@ -102,7 +102,12 @@ export function bodyForAssembly(ctx: PipelineContext): string {
 
 /** Assemble the article for this task (shared by the ASSEMBLY stage and Rank Math content corrections). */
 export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
-  const internal = ctx.stageJson<{ line: string; url: string; title: string } | null>('INTERNAL_LINKS');
+  const internal = ctx.stageJson<{ line: string | null; url: string | null; title: string | null; contextual?: { anchor: string; url: string }[] } | null>('INTERNAL_LINKS');
+  // Contextual internal links chosen by INTERNAL_LINKS, placed on the final body (after any humanizer edits).
+  if (internal?.contextual?.length) {
+    const { placeLinks } = await import('@/lib/links/place');
+    bodyHtml = placeLinks(bodyHtml, internal.contextual.map((c) => ({ anchor: c.anchor, url: c.url, kind: 'int' as const })), { keyword: ctx.task.focusKeyword ?? ctx.task.keyword }).html;
+  }
   const images = ctx.stageJson<{ slots?: AssemblyImage[] }>('IMAGES')?.slots ?? [];
   const quickBio = parseJson<{ attribute: string; details: string }[]>(ctx.task.quickBio, []);
   const { confirmedFullName } = await import('@/modules/celebrity-writer/parsers');
@@ -113,7 +118,7 @@ export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
     quickBioHtml: ctx.task.quickBioHtml,
     quickBioName: confirmedFullName(quickBio),
     faqs: parseJson(ctx.task.faqs, []),
-    internalLink: internal && internal.url ? internal : null,
+    internalLink: internal && internal.url && internal.line ? { line: internal.line, url: internal.url, title: internal.title ?? internal.url } : null,
     images,
   });
 }

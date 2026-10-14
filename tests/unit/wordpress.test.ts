@@ -108,7 +108,9 @@ describe('only the WordPress client sends requests to WordPress', () => {
     walk(root);
     const offenders = files.filter((f) => !f.endsWith(path.join('wordpress', 'client.ts')) && /\.request\.(fetch|post|put|patch|delete|get)\(|context\.request\b/.test(fs.readFileSync(f, 'utf8')));
     expect(offenders).toEqual([]);
-    const publishers = files.filter((f) => !f.endsWith(path.join('wordpress', 'publish-guard.ts')) && /status:\s*['"](publish|future|private|pending)['"]/.test(fs.readFileSync(f, 'utf8')));
+    // publish-guard.ts names the statuses it blocks; link-index.ts only READS already-published posts (GET filter).
+    const readers = [path.join('wordpress', 'publish-guard.ts'), path.join('wordpress', 'link-index.ts')];
+    const publishers = files.filter((f) => !readers.some((r) => f.endsWith(r)) && /status:\s*['"](publish|future|private|pending)['"]/.test(fs.readFileSync(f, 'utf8')));
     expect(publishers).toEqual([]);
   });
 });

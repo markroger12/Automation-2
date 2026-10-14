@@ -118,6 +118,13 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
     expect(report.invalidBlocksFixed).toBe(0);
     const final = await client.articleStage.findFirstOrThrow({ where: { taskId: t.id, key: 'VERIFIED_COMPLETE' } });
     expect(JSON.parse(final.outputJson!).verified).toBe(true);
+    // Internal link index read from the real site's public REST API: only published posts (WordPress's
+    // default "Hello world!" post here), verified, and used as the latest-post fallback.
+    const internal = JSON.parse((await client.articleStage.findFirstOrThrow({ where: { taskId: t.id, key: 'INTERNAL_LINKS' } })).outputJson!);
+    expect(internal.index.via).toBe('public-rest');
+    expect(internal.title).toBe('Hello world!');
+    expect(internal.reason).toMatch(/latest post/);
+    expect(post!.content.raw).toContain(`<a href="${internal.url}"`);
   });
 
   it('with Rank Math optional, the same draft is reopened (not duplicated) and counts as verified complete', async () => {

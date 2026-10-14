@@ -5,7 +5,7 @@ import { AppError, notFound } from '@/lib/errors';
 import { enqueue } from '@/lib/queue';
 import { audit } from '@/lib/audit';
 
-const ACTIONS = ['login', 'test', 'refresh', 'sync-categories', 'detect-editor', 'open-browser', 'reset-session', 'delete-profile'] as const;
+const ACTIONS = ['login', 'test', 'refresh', 'sync-categories', 'refresh-link-index', 'detect-editor', 'open-browser', 'reset-session', 'delete-profile'] as const;
 const schema = z.object({ action: z.enum(ACTIONS), confirm: z.string().max(100).optional() });
 
 /** Queue a WordPress session action for the worker (only the worker opens browsers). */

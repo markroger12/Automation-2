@@ -3,6 +3,7 @@ import { log, errorMessage } from '@/lib/log';
 import { registerControlHandler } from './control';
 import { launchAutomationChrome } from '@/lib/automation-chrome';
 import { deleteProfile, detectEditor, interactiveLogin, openAdminWindow, resetSession, syncCategories, testSession } from '@/wordpress/session';
+import { refreshLinkIndex } from '@/wordpress/link-index';
 
 async function site(websiteId: unknown) {
   if (typeof websiteId !== 'string') throw new Error('Missing websiteId');
@@ -39,6 +40,7 @@ export function registerBuiltInControlHandlers(): void {
     return { ...check, editor: await detectEditor(s) };
   });
   registerControlHandler('wp.sync-categories', async (job, payload) => syncCategories(await site(payload.websiteId ?? job.websiteId)));
+  registerControlHandler('wp.refresh-link-index', async (job, payload) => refreshLinkIndex(await site(payload.websiteId ?? job.websiteId), { force: true }));
   registerControlHandler('wp.detect-editor', async (job, payload) => ({ editor: await detectEditor(await site(payload.websiteId ?? job.websiteId)) }));
   registerControlHandler('wp.open-browser', async (job, payload, { heartbeat }) => openAdminWindow(await site(payload.websiteId ?? job.websiteId), heartbeat));
   registerControlHandler('wp.reset-session', async (job, payload) => resetSession(await site(payload.websiteId ?? job.websiteId)));

@@ -19,8 +19,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M4 ChatGPT extension vertical slice | ✅ done (fixture-verified; live ChatGPT not verified here) |
 | M5 Single Article + content pipeline | ✅ done (scripted-ChatGPT verified; tasks stop at Needs Review until M6) |
 | M6 WordPress drafts | ✅ done (real WordPress 6.5/6.7 verified; real Rank Math not available here) |
-| M7 Links and general writer | ⏳ next |
-| M8 Images and templates | ☐ |
+| M7 Links and general writer | ✅ done (local fake-web + real WordPress index verified; live third-party sites not checked here) |
+| M8 Images and templates | ⏳ next |
 | M9 Retire 2.0 + editorial tools | ☐ |
 | M10 Bulk campaigns and workflow | ☐ |
 | M11 Plagiarism evidence and hardening | ☐ |
@@ -229,3 +229,41 @@ WordPress step latency measured in the smoke (local WordPress, no Rank Math): dr
 - German WordPress admin: covered by the fixture only (no German language pack offline). The code relies on IDs and returned post status, not button texts.
 - Live sites behind security plugins/hosting overlays beyond the Hostinger-style fixture.
 - **Throughput checkpoint after M6** (5 live article-to-draft flows, then the 2-hour benchmark): not run — it requires the owner's signed-in ChatGPT and real WordPress sites. No throughput claim is made.
+
+---
+
+## M7 — Verified external and internal links ✅
+
+**Working**
+- **External links** (`EXTERNAL_LINKS`): the editable shared prompt asks ChatGPT for `LINK: phrase | URL` rows; every candidate is then checked locally before anything is inserted:
+  - policy: no social media, shops, URL shorteners, net-worth aggregators, gossip sites, downloads, credentials in URLs; Wikipedia only in the article's language; official/.gov/.edu and reference sites ranked above news, IMDb and Wikipedia;
+  - **SSRF-safe fetch** (`src/lib/links/net.ts`): http/https only, default ports, every hop resolved and refused if private/loopback/link-local/CGNAT/multicast/reserved (IPv4 + IPv6 incl. mapped), connection pinned to the checked address, redirects to another site refused *before* contacting it, max 5 redirects, 10 s / 1.5 MB caps, no cookies; HTTPS tried first;
+  - content: HTML only, not a soft 404, not a disambiguation page (EN/DE), title/heading identifies the phrase;
+  - placement: exact phrase in body text only (never headings, never inside links, never the focus keyword), at most two links per paragraph (a later mention is used when a paragraph is full), each phrase/URL once, at most *maxExternalLinks* (default 5), Wikipedia at most half of the added links.
+  - Every accepted/rejected candidate is logged with its actual reason. No passing link → the article is kept, with an informational note.
+- **Internal links** (`INTERNAL_LINKS`):
+  - per-website **link index** (`LinkTarget`): published posts only, read from the site's public REST API (no browser), falling back to the logged-in session; incremental by modification date, full pass daily marks unpublished/deleted posts REMOVED; app-created posts carry their primary keyword; broken targets are marked and skipped; changed URLs are followed and updated;
+  - selection: topic relevance over recency (keyword/topic words in title/slug/keyword, excerpt, same category; EN/DE stopwords, umlauts), then the previous app article, then the latest real post; never the article itself, never drafts; the chosen URL is verified before the draft is saved;
+  - one “Also read:” / “Das könnte Ihnen gefallen:” line at the very end, plus up to *maxContextualInternalLinks* contextual links where a related post's own phrase already appears in the body (placed at assembly, after any humanizer edits);
+  - first article on a site: no line, an informational note (not a review reason).
+- **UI**: article **Links** tab (added/rejected external links with reasons, the internal line with why, contextual links, candidate preview, “Use this” / “Remove line” / “Automatic” — the owner's choice is kept on later runs, so no duplicate line appears, and the same WordPress draft is updated); Websites page shows the link index (published/broken/removed, last refresh) and a **Refresh link index** action; Settings: index refresh interval, link-check timeout.
+
+**Commands run (all passed)**
+```
+bash scripts/dev-create-migration.sh link_index
+npx tsc --noEmit                                         # 0 errors
+npx vitest run                                           # 14 files, 94 tests
+npx vitest run --config vitest.integration.config.ts      # 5 files, 31 tests (incl. 5 link tests over real HTTP)
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress             # 7/7 on WordPress 6.7-alpha, 7/7 on 6.5.5 (now also checks the link index)
+npm run build                                            # compiled
+npm run dev:all   # smoke (throwaway data dir, real WordPress 6.7): link index read via the public REST API, “Also read: Hello world!” verified and
+                  # placed in draft #6; Links tab rendered in Chromium without console errors
+```
+Link verification tests run over real HTTP against a local **fake web** (named hosts such as en.wikipedia.org resolved to 127.0.0.1 by a test-only lookup — fixtures, not the real sites): matching page accepted (HTTPS preferred, HTTP noted), disambiguation / wrong subject / soft 404 / PDF rejected, off-site redirect refused before contact, redirect to an untrusted loopback host and a private 10.x address refused, non-default ports refused, size and time caps, no cookies sent. Stage tests: focus-keyword anchor, missing phrase, social media, redirect tracker rejected; Wikipedia ≤ half; most related published post chosen over a newer unrelated one; drafts never linked; German site's first article without a line, then a newly published post found and its changed URL followed; self-link avoided; unpublished post removed from the index.
+
+**Found and fixed during M7**
+- Cheerio's `before()` does not work on text nodes, which garbled inserted links → text nodes are replaced with escaped text + link.
+- Link stage notes (“no external link passed”, “first article, no internal line”) are informational, not review reasons — otherwise every first article and every link-less article would wait for review.
+
+**Not verified here**
+- Live third-party sites (Wikipedia, IMDb, official pages): this container reaches the internet only through a proxy that the link checker does not use, so live link verification runs on the owner's machine. ChatGPT's real link suggestions have not been run through the checker here.

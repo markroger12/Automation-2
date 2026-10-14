@@ -67,6 +67,8 @@ export const seoSettingsSchema = z.object({
   maxExternalLinks: z.number().int().min(0).max(10).default(5),
   internalLinks: z.boolean().default(true),
   maxContextualInternalLinks: z.number().int().min(0).max(5).default(2),
+  /** Re-read published posts for internal linking at most this often (hours). */
+  internalLinkIndexHours: z.number().min(0.25).max(168).default(6),
   articleImages: z.boolean().default(true),
   imagesRequired: z.boolean().default(false),
   imageOutputSize: z.enum(['1200x675', '1920x1080']).default('1200x675'),
@@ -86,6 +88,7 @@ export const advancedSettingsSchema = z.object({
   composerReadyTimeoutSec: z.number().int().min(5).max(300).default(60),
   extensionIdlePollSec: z.number().int().min(5).max(120).default(30),
   extensionBusyPollSec: z.number().int().min(1).max(30).default(3),
+  linkCheckTimeoutSec: z.number().int().min(3).max(60).default(10),
 });
 
 export const settingsSchema = z.object({

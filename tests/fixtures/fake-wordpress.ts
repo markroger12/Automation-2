@@ -57,6 +57,8 @@ export interface FakeWp {
   logoutAll(): void;
   /** Add a post directly (e.g. a draft that an earlier lost request created). */
   addPost(p: Partial<FakePost> & { title: string }): FakePost;
+  /** Public path redirects (e.g. a post whose URL changed): "/?p=101" → "/new-slug/". */
+  redirects: Map<string, string>;
 }
 
 const NONCE = 'fa0e1d2c3b';
@@ -211,6 +213,8 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     ],
   };
   const sessions = new Set<string>();
+  const redirects = new Map<string, string>();
+  let baseUrl = 'http://fake';
   const requests: FakeWp['requests'] = [];
   const posts = new Map<number, FakePost>();
   const tags: FakeWp['tags'] = [];
@@ -248,11 +252,12 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     type: 'post',
     slug: p.slug,
     generated_slug: slugify(p.title),
-    link: `http://fake/?p=${p.id}`,
+    link: `${baseUrl}/?p=${p.id}`,
     date_gmt: p.date_gmt,
     modified_gmt: p.modified_gmt,
     title: { raw: p.title, rendered: esc(p.title) },
     content: { raw: p.content, rendered: p.content },
+    excerpt: { rendered: `<p>${esc(p.content.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160))}</p>` },
     categories: p.categories,
     tags: p.tags,
     featured_media: p.featured_media,
@@ -418,12 +423,21 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       return send(404, html(options.language, `${adminBar}Not found`, 'wp-admin'));
     }
 
+    const target = redirects.get(p + url.search) ?? redirects.get(p);
+    if (target) return redirect(target);
+    // Public post pages: only published posts are visible.
+    const byId = url.searchParams.get('p') ? posts.get(Number(url.searchParams.get('p'))) : [...posts.values()].find((x) => x.slug && p === `/${x.slug}/`);
+    if (byId || url.searchParams.get('p')) {
+      if (!byId || byId.status !== 'publish') return send(404, html(options.language, `<h1>${t('Page not found', 'Seite nicht gefunden')}</h1>`, 'error404'));
+      return send(200, `<!doctype html><html lang="${options.language}"><head><title>${esc(byId.title)} – Fake blog</title></head><body><h1>${esc(byId.title)}</h1>${byId.content}</body></html>`);
+    }
     if (p === '/') return send(200, html(options.language, '<h1>Fake blog</h1>'));
     return send(404, 'not found', 'text/plain');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${port}`;
+  baseUrl = url;
   return {
     url,
     adminUrl: `${url}/wp-admin/`,
@@ -433,6 +447,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     posts,
     tags,
     addPost,
+    redirects,
     logoutAll: () => sessions.clear(),
     close: () =>
       new Promise((resolve) => {

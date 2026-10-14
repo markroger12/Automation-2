@@ -69,6 +69,9 @@ model Website {
   tasks                    ArticleTask[]
   workflows                Workflow[]
   mediaAssets              MediaAsset[]
+  linkTargets              LinkTarget[]
+  linkIndexSyncedAt        DateTime?
+  linkIndexFullSyncAt      DateTime?
 }
 
 model Category {
@@ -506,4 +509,28 @@ model RecoveryIncident {
 
   @@index([status, createdAt])
   @@index([taskId])
+}
+
+/** Per-website internal link index: published posts that may be linked from new articles. */
+model LinkTarget {
+  id            String    @id @default(cuid())
+  websiteId     String
+  website       Website   @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  wpPostId      Int
+  url           String
+  title         String
+  slug          String?
+  categoryIds   String    @default("[]") // WordPress category IDs (JSON)
+  keyword       String? // primary keyword when the post came from this app
+  excerpt       String?
+  publishedAt   DateTime?
+  modifiedAt    DateTime?
+  status        String    @default("ACTIVE") // ACTIVE | BROKEN | REMOVED
+  lastCheckedAt DateTime?
+  checkNote     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([websiteId, wpPostId])
+  @@index([websiteId, status])
 }

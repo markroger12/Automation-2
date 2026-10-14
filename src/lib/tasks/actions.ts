@@ -299,3 +299,24 @@ export async function resaveToWordPress(taskId: string, raw: unknown) {
   await ensureArticleRun(taskId, `wordpress:${input.mode}`);
   return { ok: true, mode: input.mode };
 }
+
+export const internalLinkSchema = z
+  .object({
+    mode: z.enum(['auto', 'none', 'url']),
+    url: z.string().trim().url('Enter a full URL').max(2000).optional(),
+    title: z.string().trim().max(300).optional(),
+  })
+  .refine((v) => v.mode !== 'url' || v.url, { message: 'Choose the post to link to.', path: ['url'] });
+
+/** Owner choice for the final internal-link line: automatic, none, or a specific post of this website. */
+export async function setInternalLink(taskId: string, raw: unknown) {
+  const task = await loadTask(taskId);
+  await assertIdle(taskId);
+  const input = internalLinkSchema.parse(raw);
+  const options = parseJson<Record<string, unknown>>(task.options, {});
+  if (input.mode === 'auto') delete options.internalLinkOverride;
+  else options.internalLinkOverride = input.mode === 'none' ? { mode: 'none' } : { mode: 'url', url: input.url, title: input.title };
+  await db.articleTask.update({ where: { id: taskId }, data: { options: JSON.stringify(options) } });
+  await audit('task.internal-link', 'ArticleTask', taskId, { mode: input.mode, url: input.url ?? null });
+  return regenerateStage(taskId, 'INTERNAL_LINKS');
+}

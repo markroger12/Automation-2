@@ -100,7 +100,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
 
     const final = await drive(task.id, 'en');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
-    expect(responses.map((r) => r.stageKey)).toEqual(['TITLES', 'RESEARCH', 'LONG_ARTICLE', 'FINAL_ARTICLE', 'FAQS', 'QUICK_BIO']);
+    expect(responses.map((r) => r.stageKey)).toEqual(['TITLES', 'RESEARCH', 'LONG_ARTICLE', 'FINAL_ARTICLE', 'FAQS', 'QUICK_BIO', 'EXTERNAL_LINKS']);
     const titles = responses[0].renderedPrompt;
     expect(titles).toContain(`Primary keyword: "${KEYWORD}"`);
     expect(titles).toContain(`Reference title for direction only: "${EXAMPLE}"`);
@@ -159,7 +159,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const final = await drive(task.id, 'de');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id } });
     const perStage = responses.reduce<Record<string, number>>((m, x) => ({ ...m, [x.stageKey]: (m[x.stageKey] ?? 0) + 1 }), {});
-    expect(perStage).toEqual({ TITLES: 1, RESEARCH: 1, LONG_ARTICLE: 1, FINAL_ARTICLE: 1, FAQS: 1, QUICK_BIO: 1 });
+    expect(perStage).toEqual({ TITLES: 1, RESEARCH: 1, LONG_ARTICLE: 1, FINAL_ARTICLE: 1, FAQS: 1, QUICK_BIO: 1, EXTERNAL_LINKS: 1 });
     expect(responses.every((x) => x.renderedPrompt.endsWith('Schreibe vollständig auf Deutsch für Leserinnen und Leser in Deutschland.'))).toBe(true);
     expect(responses.find((x) => x.stageKey === 'TITLES')!.renderedPrompt).toContain('Ein deutlich anderer Beispieltitel');
     expect(final.assembledHtml).toContain('<h2>Kurzbiografie von Tom Kaulitz</h2>');
@@ -206,7 +206,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(task.categoryId).toBeNull();
     const final = await drive(task.id, 'en');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
-    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY']);
+    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS']);
     expect(responses[0].renderedPrompt).toContain('Secondary keywords (use only where natural): hosting, plugins');
     expect(responses[0].renderedPrompt).not.toContain('Not used by default template');
     expect(responses[1].renderedPrompt).toContain('Tech & Apps');
@@ -224,7 +224,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'Best Free VPN Apps', websiteId: siteEn, categoryId: catEn, idempotencyKey: 'single:e2e-tigram-cat' }, { source: 'SINGLE' });
     await drive(task.id, 'en');
     const keys = (await client.chatGPTResponse.findMany({ where: { taskId: task.id } })).map((r) => r.stageKey);
-    expect(keys).toEqual(['ARTICLE']);
+    expect(keys).toEqual(['ARTICLE', 'EXTERNAL_LINKS']);
     const stage = await client.articleStage.findFirstOrThrow({ where: { taskId: task.id, key: 'CATEGORY' } });
     expect(stage.status).toBe('SKIPPED');
   });
@@ -243,7 +243,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(0);
     await actions.allowDuplicate(task.id);
     t = await drive(task.id, 'en');
-    expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(6);
+    expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(7);
     expect(t.assembledHtml).toContain('Frequently Asked Questions');
   });
 });

@@ -15,8 +15,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | --- | --- |
 | M1 Local foundation | ✅ done |
 | M2 Queue and worker | ✅ done |
-| M3 Websites and sessions | ⏳ next |
-| M4 ChatGPT extension vertical slice | ☐ |
+| M3 Websites and sessions | ✅ done |
+| M4 ChatGPT extension vertical slice | ⏳ next |
 | M5 Single Article + content pipeline | ☐ |
 | M6 WordPress drafts | ☐ |
 | M7 Links and general writer | ☐ |
@@ -86,3 +86,33 @@ Tests prove: one claimer wins among 8 concurrent; no duplicate run on 6 concurre
 
 **Limitations**
 - No writer pipeline is registered yet (M5/M7), so tasks created now go to Needs Review with an honest message.
+
+---
+
+## M3 — Websites and WordPress sessions ✅
+
+**Working**
+- Website CRUD with Zod validation and field errors: normalized public/admin URLs (`…/wp-admin/`), English/German, target country (presets + validated custom), IANA timezone, internal-link line (defaults "Also read:" / "Das könnte Ihnen gefallen:"), editor override, default category (must be a synced category of that site), Search Console property, per-site quota/priority/pause/active, per-site content/SEO/workflow overrides. Duplicate URLs refused. Removing a site is only allowed without articles (deactivate otherwise); profile folders are never deleted implicitly.
+- One persistent Playwright profile per site in `data/profiles/<validated-slug>` (installed Chrome by default; Edge/Chromium via `.env`). Profile use is serialized per site; headless contexts are pooled and closed after 3 idle minutes; a visible window closes the pooled context first.
+- Worker control actions (only the worker opens browsers), each followed live in the UI: **Log in** (visible window on the real login page; the owner signs in; "Remember Me" is pre-ticked so the session survives restarts; then editor detection + category sync), **Test session**, **Refresh session**, **Sync categories** (authenticated REST via admin-ajax `rest-nonce`, `/wp-json/` or `?rest_route=`, falling back to the categories admin table), **Detect editor** (Gutenberg vs Classic), **Open browser**, **Reset session** (confirmation), **Delete profile** (typed confirmation, audited).
+- Bounded navigation (commit → DOM ready with timeout), host overlay handling that hides only known overlay elements (never `<html>`/`<body>`), viewport screenshots on errors, English and German admin detection.
+- Publishing permission per site (`canPublish` off by default): enabling requires typing `ALLOW PUBLISHING`, separate opt-in for updating live posts, all changes audited.
+- Session becoming ACTIVE automatically resumes tasks paused with `wordpress-login` for that site.
+
+**Commands run (all passed)**
+```
+npx tsc --noEmit
+npx vitest run                                              # 39 unit tests
+npx vitest run --config vitest.integration.config.ts         # 4 integration tests (headless)
+xvfb-run -a npx vitest run --config vitest.integration.config.ts   # same 4 tests with real headed windows
+npm run build
+npm run dev:all   # smoke: invalid site → 400 with field errors; unreachable site test → clear ERROR result; enabling publishing without the phrase → 400; deleting a profile without typed confirmation → 400; website detail page 200
+```
+Integration tests run against `tests/fixtures/fake-wordpress.ts` (a fake WordPress, not a real one): LOGIN_REQUIRED detection; manual login in the window (simulated owner typing in the test only — no password reaches app logs); session survives closing/reopening the browser; categories with real IDs via REST; REST disabled → admin-table fallback; Gutenberg and Classic detection; German admin; overlay hidden without hiding the document; expired login detected; reset/delete only on request.
+
+**Found and fixed during M3**
+- WordPress login cookies are session-only unless "Remember Me" is ticked, so a login would not survive a browser restart → the login window now pre-ticks it.
+- Server pages passed functions to client components (500 on the site page) → result formatting moved client-side.
+
+**Not verified here**
+- No real WordPress site was reachable from the build container, so the live login/sync flow has only been exercised against the fixture. The selectors live in `src/wordpress/selectors.ts` and can be overridden in Settings → Advanced.

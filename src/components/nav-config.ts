@@ -71,7 +71,6 @@ export const SOON_ROUTES = new Set<string>([
   '/single-article',
   '/campaigns',
   '/writers',
-  '/websites',
   '/website-control',
   '/prompts',
   '/editorial',

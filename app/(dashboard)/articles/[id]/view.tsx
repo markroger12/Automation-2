@@ -10,6 +10,9 @@ import { Button, ConfirmDialog, CopyButton, Tabs, useToast } from '@/components/
 import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, cx, formatDateTime, formatDuration, formatRelative } from '@/components/ui';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
 import { ArticleExtraTabs, EXTRA_TABS } from './extra-tabs';
+import { ACTIVE_MODULES } from '@/modules/registry';
+
+const REGENERABLE: Record<string, string[]> = Object.fromEntries(ACTIVE_MODULES.map((m) => [m.key, m.stages.filter((s) => s.regenerable).map((s) => s.key)]));
 
 const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'images', 'stages', 'prompts', 'logs', 'conversation'] as const;
 type TabId = (typeof BASE_TABS)[number];
@@ -52,6 +55,22 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     } finally {
       setBusy(null);
       setConfirmCancel(false);
+    }
+  }
+
+  async function reviewAction(kind: 'allow-duplicate' | 'override-quality') {
+    let body: unknown = undefined;
+    if (kind === 'override-quality') {
+      const reason = window.prompt('Why is this acceptable? (saved in the audit log)');
+      if (!reason) return;
+      body = { reason };
+    }
+    try {
+      await api(`/api/tasks/${task.id}/${kind}`, body ? { body } : { method: 'POST' });
+      toast('success', kind === 'allow-duplicate' ? 'Duplicate allowed — continuing.' : 'Override recorded — continuing.');
+      await reload();
+    } catch (e) {
+      toast('error', (e as Error).message);
     }
   }
 
@@ -140,6 +159,18 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
                 <li key={i}>{r}</li>
               ))}
             </ul>
+            {!task.legacy ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {task.reviewReasonList.some((r) => r.startsWith('Duplicate keyword')) ? (
+                  <Button size="sm" onClick={() => void reviewAction('allow-duplicate')}>
+                    Allow duplicate and continue
+                  </Button>
+                ) : null}
+                <Button size="sm" onClick={() => void reviewAction('override-quality')}>
+                  Approve despite review reasons…
+                </Button>
+              </div>
+            ) : null}
           </Alert>
         </div>
       ) : null}
@@ -147,7 +178,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
       <Tabs tabs={tabs} value={tab} onChange={(id) => setTab(id as TabId)} />
       <div className="mt-4">
         {tab === 'overview' ? <OverviewTab task={task} /> : null}
-        {tab === 'stages' ? <StagesTab task={task} /> : null}
+        {tab === 'stages' ? <StagesTab task={task} onChanged={reload} /> : null}
         {tab === 'prompts' ? <PromptsTab task={task} /> : null}
         {tab === 'logs' ? <LogsTab task={task} /> : null}
         {tab === 'conversation' ? <ConversationTab task={task} /> : null}
@@ -231,8 +262,33 @@ function OverviewTab({ task }: { task: SerializedTaskDetail }) {
   );
 }
 
-function StagesTab({ task }: { task: SerializedTaskDetail }) {
+function StagesTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged: () => Promise<void> }) {
+  const toast = useToast();
+  const [plan, setPlan] = useState<{ stage: string; plan: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
   if (task.stages.length === 0) return <Card><EmptyState title="No stages yet" description="Stages are created when the worker starts this task." /></Card>;
+  const regenerable = new Set(REGENERABLE[task.moduleKey] ?? []);
+  async function preview(stageKey: string) {
+    try {
+      setPlan(await api<{ stage: string; plan: string[] }>(`/api/tasks/${task.id}/regenerate`, { body: { stageKey, preview: true } }));
+    } catch (e) {
+      toast('error', (e as Error).message);
+    }
+  }
+  async function confirm() {
+    if (!plan) return;
+    setBusy(true);
+    try {
+      await api(`/api/tasks/${task.id}/regenerate`, { body: { stageKey: plan.stage } });
+      toast('success', `Regenerating ${plan.stage} and its dependents. Earlier outputs are kept in history.`);
+      setPlan(null);
+      await onChanged();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <Card padded={false}>
       <table className="table-app">
@@ -245,6 +301,7 @@ function StagesTab({ task }: { task: SerializedTaskDetail }) {
             <th>Attempts</th>
             <th>Duration</th>
             <th>Message / error</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -261,14 +318,24 @@ function StagesTab({ task }: { task: SerializedTaskDetail }) {
               </td>
               <td className="tabular-nums">{s.attempts}</td>
               <td className="text-xs whitespace-nowrap">{formatDuration(s.durationMs)}</td>
-              <td className="max-w-[420px] text-xs">
+              <td className="max-w-[380px] text-xs">
                 {s.error ? <span className="text-rose-700 dark:text-rose-300">{s.error}</span> : s.message}
                 {s.promptVersion ? <div className="text-muted">prompt {s.promptVersion}</div> : null}
+              </td>
+              <td className="text-right">
+                {regenerable.has(s.key) && !task.legacy && (s.status === 'COMPLETED' || s.status === 'FAILED' || s.status === 'SKIPPED') ? (
+                  <Button size="sm" variant="ghost" onClick={() => void preview(s.key)}>
+                    <RotateCcw className="h-3.5 w-3.5" /> Regenerate
+                  </Button>
+                ) : null}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      <ConfirmDialog open={Boolean(plan)} title={`Regenerate ${plan?.stage ?? ''}?`} confirmLabel="Regenerate" busy={busy} onCancel={() => setPlan(null)} onConfirm={() => void confirm()}>
+        These stages will run again (dependency graph): <strong>{plan?.plan.join(' → ')}</strong>. Unrelated stages, research and approvals outside this list are kept. Previous outputs are saved as revisions.
+      </ConfirmDialog>
     </Card>
   );
 }

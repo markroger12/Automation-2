@@ -1,4 +1,13 @@
-/** Registers the active writer pipelines (added in M5/M7). */
+import { registerPipeline } from './pipeline/registry';
+import { celebrityPipeline } from './pipelines/celebrity';
+import { tigramPipeline } from './pipelines/tigram';
+import { validateManifest } from '@/modules/types';
+
+/** Registers the active writer pipelines (exactly two; Celebrity Writer 2.0 is retired). */
 export function registerBuiltInPipelines(): void {
-  // M5: Celebrity Article Writer; M7: Tigram Article Writer.
+  for (const def of [celebrityPipeline, tigramPipeline]) {
+    const problems = validateManifest(def.manifest);
+    if (problems.length) throw new Error(`Invalid pipeline ${def.moduleKey}: ${problems.join('; ')}`);
+    registerPipeline(def);
+  }
 }

@@ -6,7 +6,7 @@ import { CancelledError, FatalError, TransientError, UncertainSideEffectError } 
 import { renderTemplate, type TemplateVars } from '@/lib/prompts/template';
 import { languageInstruction } from '@/lib/chatgpt/language';
 import { createChatGPTRequest } from '@/lib/chatgpt/jobs';
-import { findPromptDefault, type PromptVariableDoc } from '@/modules/prompt-defaults';
+import { loadPromptTemplate, promptModuleFor } from '@/lib/prompts/load';
 import type { EffectiveTaskConfig } from '@/lib/settings-schema';
 import type { AskOptions, ChatGPTOutcome, PipelineContext, PipelineDefinition, PipelineStage } from './types';
 
@@ -20,19 +20,6 @@ export interface ContextDeps {
   stages: Map<string, ArticleStage>;
   workerId: string;
   signal: AbortSignal;
-}
-
-/** Resolve the prompt template text: per-site override → saved template → shipped default. */
-export async function loadPromptTemplate(moduleKey: string, stageKey: string, website: Website): Promise<{ content: string; version: string; variables: PromptVariableDoc[]; kind: string }> {
-  const overrides = parseJson<Record<string, string>>(website.promptOverrides, {});
-  const def = findPromptDefault(moduleKey, stageKey);
-  const row = await db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey, stageKey } } });
-  const variables = row ? parseJson<PromptVariableDoc[]>(row.variables, def?.variables ?? []) : (def?.variables ?? []);
-  const override = overrides[`${moduleKey}:${stageKey}`];
-  if (override && override.trim()) return { content: override, version: `site-override:${website.id}`, variables, kind: def?.kind ?? 'text' };
-  if (row) return { content: row.content, version: `v${row.version}`, variables, kind: def?.kind ?? 'text' };
-  if (def) return { content: def.content, version: `default-v${def.version}`, variables, kind: def.kind };
-  throw new FatalError(`No prompt template exists for ${moduleKey}/${stageKey}. Restore it in Prompt Manager.`);
 }
 
 export function createContext(deps: ContextDeps): PipelineContext {
@@ -111,7 +98,7 @@ export function createContext(deps: ContextDeps): PipelineContext {
 
     async askChatGPT(promptStageKey: string, extra: TemplateVars = {}, options: AskOptions = {}): Promise<ChatGPTOutcome> {
       await ctx.checkCancelled();
-      const promptModule = deps.stage.prompt?.stageKey === promptStageKey ? deps.stage.prompt.moduleKey : guessPromptModule(deps.definition.moduleKey, promptStageKey);
+      const promptModule = deps.stage.prompt?.stageKey === promptStageKey ? deps.stage.prompt.moduleKey : promptModuleFor(deps.definition.moduleKey, promptStageKey);
       const template = await loadPromptTemplate(promptModule, promptStageKey, deps.website);
       const vars = deps.definition.variables(ctx, extra);
       const rendered = renderTemplate(template.content, vars);
@@ -189,12 +176,6 @@ export function createContext(deps: ContextDeps): PipelineContext {
     },
   };
   return ctx;
-}
-
-function guessPromptModule(moduleKey: string, stageKey: string): string {
-  if (findPromptDefault(moduleKey, stageKey)) return moduleKey;
-  if (findPromptDefault('shared', stageKey)) return 'shared';
-  return moduleKey;
 }
 
 async function imagesFor(responseId: string): Promise<{ mediaAssetId: string }[]> {

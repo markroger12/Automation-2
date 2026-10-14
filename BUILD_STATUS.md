@@ -17,8 +17,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M2 Queue and worker | ✅ done |
 | M3 Websites and sessions | ✅ done |
 | M4 ChatGPT extension vertical slice | ✅ done (fixture-verified; live ChatGPT not verified here) |
-| M5 Single Article + content pipeline | ⏳ next |
-| M6 WordPress drafts | ☐ |
+| M5 Single Article + content pipeline | ✅ done (scripted-ChatGPT verified; tasks stop at Needs Review until M6) |
+| M6 WordPress drafts | ⏳ next |
 | M7 Links and general writer | ☐ |
 | M8 Images and templates | ☐ |
 | M9 Retire 2.0 + editorial tools | ☐ |
@@ -147,3 +147,37 @@ Extension integration tests load the **actual unpacked extension** into Chromium
 
 **Not verified here (needs the owner)**
 - Live ChatGPT: no signed-in ChatGPT session exists in the build container. The live "one stored prompt → one real response" check is the **Send test prompt** button on the Automation Chrome page; selectors may need tuning in `extension/adapter.js` if ChatGPT's DOM differs.
+
+---
+
+## M5 — Single Article, both writers, content pipeline ✅ (scripted-ChatGPT verified)
+
+**Working**
+- **Single Article** page (its own sidebar item): website, writer (only Celebrity Article Writer / Tigram Article Writer), keyword, secondary keywords as de-duplicated chips, category (required for Celebrity, optional for Tigram), country/language from the site with override, word-count target, FAQ count, title mode (auto / manual approval), article approval, per-task options. Draft autosaved to `localStorage` (opt-in "remember last choices"), Reset with confirmation, **Preview prompts** (renders the real templates with the real variables, unresolved placeholders shown), health alerts (worker, extension, site session). Submissions carry an idempotency key, so double-clicks create one task.
+- Task creation snapshots every input (keyword, site, language, country, category, options, prompt versions) so later edits to settings/prompts do not change a running task. The retired Celebrity Writer 2.0 key is refused with a clear message.
+- **Celebrity Article Writer** (Celebrity Writer 1.0 pipeline, 22 stages): precheck → duplicate precheck → titles (auto pick or manual approval gate) → research (identity/uncertainty analysis, evidence kept) → long article → final article → FAQs (exact count) → Quick Bio table (≥10 rows, confirmed full name) → assembly in the fixed order Intro → Quick Bio → body → FAQs → Conclusion → internal-link line → SEO check → quality gate → article approval → finalize.
+- **Tigram Article Writer** (15 stages): one ARTICLE prompt returning SEO TITLE / META DESCRIPTION / URL SLUG + Markdown body, then CATEGORY chosen by ChatGPT **only from the synced category list** (skipped when the owner picked one or the site has a single category; unknown answers fall back to the site default or stop for review). No celebrity prompts and no Quick Bio.
+- English (US) and German (DE) output: language line appended to every text prompt, German headings recognised, German slug transliteration (ä→ae, ß→ss).
+- Model Markdown is cleaned (duplicate H1/title, preambles, repeated blocks) and converted to HTML; tables kept.
+- **SEO checks**: transparent weighted checks (keyword in title/intro/H2/slug/meta, lengths, density, headings, FAQs, links, images) with score and per-check evidence; re-runnable.
+- **Quality gate**: hard stops (missing body/sections, unresolved placeholders, wrong language, too short, model refusals, duplicate blocks…) block before WordPress; warnings end in Needs Review; owner override is audited.
+- **Article detail**: approve title, research evidence, editor (visual / HTML / compare with the generated version, optimistic version check, discard edits), metadata (SEO title, meta, slug, focus keyword), SEO tab with re-run, regeneration with a preview of exactly which stages will be reset (dependency-aware via manifest `dependsOn`); previous outputs kept as revisions and old responses superseded, never deleted.
+- **Prompt Manager**: list/edit per writer and stage, variable reference, validation (unknown/required variables), version history and restore, preview with sample data; seeding never overwrites customized prompts.
+
+**Commands run (all passed)**
+```
+npx tsc --noEmit                                         # 0 errors
+npx vitest run                                           # 12 files, 73 tests passed
+npx vitest run --config vitest.integration.config.ts      # 18 integration tests
+npm run build                                            # compiled
+npm run dev:all   # smoke: Single Article page in a real browser — chips de-duplicate, values survive refresh, preview shows the example title, Generate opens the task; invalid input → 400 with field errors; retired writer → 400; worker ran PRECHECK/DUPLICATE_PRECHECK and queued the TITLES prompt for the extension
+```
+`tests/unit/single-article-e2e.test.ts` drives the real worker engine with **scripted ChatGPT answers** (`tests/helpers/fake-answers.ts` — canned text, not real model output): exact inputs preserved from form to prompt to detail; English celebrity article assembled in the required order; German site (German prompts, headings, slug) surviving a worker crash midway without duplicate prompts; manual title approval pause/resume; regeneration resets only dependents and keeps revisions; Tigram general topic runs only ARTICLE/CATEGORY; Tigram skips CATEGORY when the owner chose one; same-site duplicate keyword pauses until allowed.
+
+**Found and fixed during M5**
+- Cheerio fragment mode dropped the `<body>` wrapper, so assembly/SEO/quality saw an empty article → switched to document mode in all three.
+- Test fixtures produced repeated sentences that the duplicate-block check (correctly) flagged → fixtures now use unique sentences.
+
+**Limitations**
+- The WordPress draft, Rank Math, external/internal links, images and humanizer stages are present in the pipelines but **skipped with an explicit reason** ("arrives in M6/M7/M8/M9"). Because no verified WordPress draft exists yet, finished tasks end in **Needs Review**, never Completed.
+- Live ChatGPT output has not been run through these parsers in this container; the parsers are tolerant (bold labels, quotes, German labels) but may need tuning against real answers.

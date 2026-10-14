@@ -68,11 +68,8 @@ export const NAV_ITEMS: NavItem[] = [
 
 /** Pages not yet built in the current milestone. Updated as milestones land. */
 export const SOON_ROUTES = new Set<string>([
-  '/single-article',
   '/campaigns',
-  '/writers',
   '/website-control',
-  '/prompts',
   '/editorial',
   '/humanizer',
   '/plagiarism',

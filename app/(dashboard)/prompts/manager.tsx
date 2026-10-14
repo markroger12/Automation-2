@@ -18,6 +18,7 @@ interface ListItem {
   version: number;
   customized: boolean;
   kind: string;
+  archived?: boolean;
 }
 interface VariableDoc {
   name: string;
@@ -35,6 +36,7 @@ interface PromptDetail {
   version: number;
   kind: string;
   isDefault: boolean;
+  archived?: boolean;
   defaultContent: string | null;
   defaultVersion: number | null;
   variablesList: VariableDoc[];
@@ -173,7 +175,7 @@ export function PromptManager({ initialId }: { initialId?: string }) {
                 >
                   <span className="truncate">{p.stageKey}</span>
                   <span className="flex shrink-0 items-center gap-1">
-                    {p.customized ? <Chip tone="brand">custom</Chip> : <Chip>default</Chip>}
+                    {p.archived ? <Chip>archived</Chip> : p.customized ? <Chip tone="brand">custom</Chip> : <Chip>default</Chip>}
                     <span className="text-muted text-[11px]">v{p.version}</span>
                   </span>
                 </button>
@@ -188,7 +190,7 @@ export function PromptManager({ initialId }: { initialId?: string }) {
             title={
               <span className="flex flex-wrap items-center gap-2">
                 {detail.name} <code className="text-xs">{detail.moduleKey}/{detail.stageKey}</code> <Chip>v{detail.version}</Chip>
-                {detail.isDefault ? <Chip>shipped default v{detail.defaultVersion}</Chip> : <Chip tone="brand">customized</Chip>}
+                {detail.archived ? <Chip>retired writer — read-only archive</Chip> : detail.isDefault ? <Chip>shipped default v{detail.defaultVersion}</Chip> : <Chip tone="brand">customized</Chip>}
                 {dirty ? <Chip tone="warning">unsaved</Chip> : null}
                 {detail.kind !== 'text' ? <Chip tone="info">{detail.kind} prompt — no language line</Chip> : null}
               </span>
@@ -196,18 +198,18 @@ export function PromptManager({ initialId }: { initialId?: string }) {
             description={detail.description}
             actions={
               <>
-                {!detail.isDefault && detail.defaultContent ? (
+                {!detail.archived && !detail.isDefault && detail.defaultContent ? (
                   <Button size="sm" onClick={() => setConfirmRestore({})}>
                     <RotateCcw className="h-3.5 w-3.5" /> Restore default
                   </Button>
                 ) : null}
-                <Button size="sm" variant="primary" onClick={() => void save()} loading={saving} disabled={!dirty || Boolean(analysis.error)}>
+                <Button size="sm" variant="primary" onClick={() => void save()} loading={saving} disabled={detail.archived || !dirty || Boolean(analysis.error)}>
                   <Save className="h-3.5 w-3.5" /> Save version
                 </Button>
               </>
             }
           >
-            <Textarea className="min-h-[360px] font-mono text-xs" value={content} onChange={(e) => setContent(e.target.value)} aria-label="Prompt template" spellCheck={false} />
+            <Textarea className="min-h-[360px] font-mono text-xs" value={content} onChange={(e) => setContent(e.target.value)} aria-label="Prompt template" spellCheck={false} readOnly={detail.archived} />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Input className="max-w-md" placeholder="Version note (optional)" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Version note" />
               {analysis.error ? <Chip tone="danger">{analysis.error}</Chip> : <Chip tone="success">syntax OK</Chip>}

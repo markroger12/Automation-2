@@ -12,11 +12,12 @@ import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
 import { ArticleExtraTabs, EXTRA_TABS } from './extra-tabs';
 import { WordPressTab } from './wordpress-tab';
 import { LinksTab } from './links-tab';
+import { HumanizerTab } from './humanizer-tab';
 import { ACTIVE_MODULES } from '@/modules/registry';
 
 const REGENERABLE: Record<string, string[]> = Object.fromEntries(ACTIVE_MODULES.map((m) => [m.key, m.stages.filter((s) => s.regenerable).map((s) => s.key)]));
 
-const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'links', 'images', 'wordpress', 'stages', 'prompts', 'logs', 'conversation'] as const;
+const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'links', 'images', 'humanizer', 'wordpress', 'stages', 'prompts', 'logs', 'conversation'] as const;
 type TabId = (typeof BASE_TABS)[number];
 
 export function ArticleDetailView({ initial, initialTab }: { initial: SerializedTaskDetail; initialTab?: string }) {
@@ -85,6 +86,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     { id: 'seo', label: 'SEO' },
     { id: 'images', label: 'Images', badge: activeImages ? <Chip>{activeImages}</Chip> : undefined },
     { id: 'links', label: 'Links' },
+    { id: 'humanizer', label: 'Humanizer' },
     { id: 'wordpress', label: 'WordPress', badge: task.wpPostId ? <Chip>#{task.wpPostId}</Chip> : undefined },
     { id: 'stages', label: 'Stages' },
     { id: 'prompts', label: 'Prompt / Response', badge: task.responses.length ? <Chip>{task.responses.length}</Chip> : undefined },
@@ -184,6 +186,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
       <div className="mt-4">
         {tab === 'overview' ? <OverviewTab task={task} /> : null}
         {tab === 'links' ? <LinksTab task={task} onChanged={reload} /> : null}
+        {tab === 'humanizer' ? <HumanizerTab task={task} /> : null}
         {tab === 'wordpress' ? <WordPressTab task={task} onChanged={reload} /> : null}
         {tab === 'stages' ? <StagesTab task={task} onChanged={reload} /> : null}
         {tab === 'prompts' ? <PromptsTab task={task} /> : null}

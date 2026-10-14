@@ -63,6 +63,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'humanizerEnabled', label: 'Editorial humanizer stage', type: 'boolean' },
       { key: 'humanizerBatchWords', label: 'Humanizer batch size (words)', type: 'number', min: 300, max: 3000 },
       { key: 'humanizerLengthTolerancePct', label: 'Humanizer paragraph length tolerance (±%)', type: 'number', min: 5, max: 50 },
+      { key: 'humanizerScope', label: 'Humanizer paragraphs', type: 'select', options: [{ value: 'all', label: 'All eligible paragraphs' }, { value: 'flagged', label: 'Only paragraphs the local editor flagged' }] },
     ],
   },
   {

@@ -53,6 +53,8 @@ export const contentSettingsSchema = z.object({
   humanizerEnabled: z.boolean().default(true),
   humanizerBatchWords: z.number().int().min(300).max(3000).default(1200),
   humanizerLengthTolerancePct: z.number().int().min(5).max(50).default(20),
+  /** all = every eligible paragraph (spec default); flagged = only paragraphs the local editor flagged (fewer ChatGPT prompts). */
+  humanizerScope: z.enum(['all', 'flagged']).default('all'),
 });
 
 export const seoSettingsSchema = z.object({
@@ -104,30 +106,34 @@ export type SettingsInput = z.input<typeof settingsSchema>;
 
 export const defaultSettings = (): Settings => settingsSchema.parse({});
 
-/** Per-site overrides: only content/seo/workflow keys that make sense per site. */
+type Undefault<T> = T extends z.ZodDefault<infer I> ? I : T;
+
+/**
+ * Optional copies of the given fields WITHOUT their defaults: an unset site
+ * value must stay unset so the global setting applies (Zod 4 applies a
+ * field's default even inside .partial(), which silently pinned every site to
+ * the shipped defaults).
+ */
+function overridable<S extends z.ZodRawShape, K extends keyof S & string>(shape: S, keys: readonly K[]) {
+  const out = {} as { [P in K]: z.ZodOptional<Undefault<S[P]>> };
+  for (const k of keys) {
+    const field = shape[k] as unknown as z.ZodType;
+    (out as Record<string, z.ZodType>)[k] = (field instanceof z.ZodDefault ? (field.unwrap() as z.ZodType) : field).optional();
+  }
+  return z.object(out);
+}
+
+export const SITE_OVERRIDE_KEYS = {
+  content: ['maxArticleWordCount', 'faqCount', 'quickBioRows', 'tigramWordRange', 'humanizerEnabled'],
+  seo: ['reviewThreshold', 'rankMathTargetScore', 'rankMathMode', 'externalLinks', 'maxExternalLinks', 'internalLinks', 'articleImages', 'imagesRequired', 'imageOutputSize'],
+  workflow: ['manualTitleApproval', 'manualArticleApproval', 'autoSendToWordPress', 'createMissingCategory'],
+} as const;
+
+/** Per-site overrides: only content/seo/workflow keys that make sense per site. Unset = use the global setting. */
 export const siteOverridesSchema = z.object({
-  content: contentSettingsSchema
-    .pick({ maxArticleWordCount: true, faqCount: true, quickBioRows: true, tigramWordRange: true, humanizerEnabled: true })
-    .partial()
-    .prefault({}),
-  seo: seoSettingsSchema
-    .pick({
-      reviewThreshold: true,
-      rankMathTargetScore: true,
-      rankMathMode: true,
-      externalLinks: true,
-      maxExternalLinks: true,
-      internalLinks: true,
-      articleImages: true,
-      imagesRequired: true,
-      imageOutputSize: true,
-    })
-    .partial()
-    .prefault({}),
-  workflow: workflowSettingsSchema
-    .pick({ manualTitleApproval: true, manualArticleApproval: true, autoSendToWordPress: true, createMissingCategory: true })
-    .partial()
-    .prefault({}),
+  content: overridable(contentSettingsSchema.shape, SITE_OVERRIDE_KEYS.content).prefault({}),
+  seo: overridable(seoSettingsSchema.shape, SITE_OVERRIDE_KEYS.seo).prefault({}),
+  workflow: overridable(workflowSettingsSchema.shape, SITE_OVERRIDE_KEYS.workflow).prefault({}),
 });
 export type SiteOverrides = z.output<typeof siteOverridesSchema>;
 
@@ -177,6 +183,7 @@ export interface EffectiveTaskConfig {
   humanizerEnabled: boolean;
   humanizerBatchWords: number;
   humanizerLengthTolerancePct: number;
+  humanizerScope: 'all' | 'flagged';
   createMissingCategory: boolean;
   createMissingTags: boolean;
   duplicateSimilarityReview: number;
@@ -216,6 +223,7 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     humanizerEnabled: pick(site.content.humanizerEnabled, global.content.humanizerEnabled),
     humanizerBatchWords: global.content.humanizerBatchWords,
     humanizerLengthTolerancePct: global.content.humanizerLengthTolerancePct,
+    humanizerScope: global.content.humanizerScope,
     createMissingCategory: pick(site.workflow.createMissingCategory, global.workflow.createMissingCategory),
     createMissingTags: global.workflow.createMissingTags,
     duplicateSimilarityReview: global.seo.duplicateSimilarityReview,

@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '../db';
-import { DRAFT_STATUSES, PAUSED_STATUSES, REVIEW_STATUSES, RUNNING_STATUSES, statusGroup, type StatusGroup } from '../domain';
+import { DRAFT_STATUSES, PAUSED_STATUSES, REVIEW_STATUSES, RUNNING_STATUSES, isActiveModuleKey, statusGroup, type StatusGroup } from '../domain';
 import { parseJson, stringArray } from '../json';
 
 export const taskListQuerySchema = z.object({
@@ -175,7 +175,8 @@ export async function listTasks(query: TaskListQuery): Promise<{ rows: TaskListR
       secondaryKeywords: stringArray(t.secondaryKeywords),
       exampleTitle: t.exampleTitle,
       selectedTitle: t.selectedTitle,
-      legacy: t.legacy,
+      // Records of a retired writer are read-only even if they were created after the retirement ran.
+      legacy: t.legacy || !isActiveModuleKey(t.moduleKey),
       source: t.source,
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),

@@ -97,6 +97,7 @@ export async function runArticleJob(job: QueueJob, options: EngineOptions): Prom
       where: { id: taskId },
       data: {
         status: 'NEEDS_REVIEW',
+        legacy: true,
         message: task.legacy || task.moduleKey === 'celebrity-writer-2' ? 'Retired writer — choose a supported writer to create a new task.' : `Writer module "${task.moduleKey}" is not available.`,
         nextAction: 'Create a new task with Celebrity Article Writer or Tigram Article Writer.',
         reviewReasons: JSON.stringify(['Retired or unknown writer module; this task is read-only.']),

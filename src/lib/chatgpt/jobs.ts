@@ -15,7 +15,9 @@ import type { ExtensionFailCode } from '../domain';
 
 export interface ChatGPTJobPayload {
   operationId: string;
-  taskId: string;
+  /** The article task; null for a standalone Humanizer run (see runId). */
+  taskId: string | null;
+  runId?: string | null;
   stageKey: string;
   prompt: string;
   promptHash: string;
@@ -115,6 +117,42 @@ export async function createChatGPTRequest(
     await client.chatGPTResponse.update({ where: { id: response.id }, data: { jobId: job.id } });
   }
   return { responseId: response.id, jobId: job.id, created };
+}
+
+/**
+ * A prompt that belongs to a standalone Humanizer run (no article task).
+ * Always a new chat; idempotent by operationId like article prompts.
+ */
+export async function createRunChatGPTRequest(
+  input: { runId: string; language: string; operationId: string; prompt: string; timeoutSec: number },
+  client: Tx = db,
+): Promise<{ responseId: string; jobId: string; created: boolean }> {
+  const existing = await client.chatGPTResponse.findUnique({ where: { operationId: input.operationId } });
+  const promptHash = promptFingerprint(input.prompt);
+  const response = existing ?? (await client.chatGPTResponse.create({ data: { runId: input.runId, stageKey: 'HUMANIZE', attempt: 1, operationId: input.operationId, promptHash, renderedPrompt: input.prompt } }));
+  const payload: ChatGPTJobPayload = {
+    operationId: input.operationId,
+    taskId: null,
+    runId: input.runId,
+    stageKey: 'HUMANIZE',
+    prompt: input.prompt,
+    promptHash,
+    conversationUrl: null,
+    newChat: true,
+    attachments: [],
+    expectImages: false,
+    timeoutSec: input.timeoutSec,
+    language: input.language,
+  };
+  const { job, created } = await enqueue({ queue: 'chatgpt', kind: 'chatgpt.prompt', idempotencyKey: `chatgpt:${input.operationId}`, relatedId: response.id, maxAttempts: 4, payload }, client);
+  if (!existing || existing.jobId !== job.id) await client.chatGPTResponse.update({ where: { id: response.id }, data: { jobId: job.id } });
+  return { responseId: response.id, jobId: job.id, created };
+}
+
+/** Wake whoever waits for this ChatGPT job: the article run, or a Humanizer run. */
+async function wakeOwner(job: QueueJob, payload: ChatGPTJobPayload, client: Tx): Promise<void> {
+  if (job.taskId) await wakeArticleJob(job.taskId, client);
+  else if (payload.runId) await client.queueJob.updateMany({ where: { queue: 'humanizer', relatedId: payload.runId, status: 'WAITING', runAt: { gt: new Date() } }, data: { runAt: new Date() } });
 }
 
 export interface ClaimResult {
@@ -287,9 +325,9 @@ export async function completeChatGPTJob(
   }
   if (job.taskId) {
     if (conversationUrl) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl } });
-    await wakeArticleJob(job.taskId, client);
     await log({ category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `ChatGPT answer saved (${text.length} chars${input.recovered ? ', recovered after interruption' : ''}).` }, client);
   }
+  await wakeOwner(job, payload, client);
   const backlog = await client.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING' } });
   await recordSuccess(client, new Date(), backlog);
   return { ok: true };
@@ -315,7 +353,7 @@ export async function failChatGPTJob(
     // The extension cannot prove whether the prompt was sent/answered: never resend blindly.
     await client.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: new Date(), leaseUntil: null, error: message, errorCode: 'UNCERTAIN' } });
     if (job.relatedId) await client.chatGPTResponse.update({ where: { id: job.relatedId }, data: { status: 'FAILED', error: `UNCERTAIN: ${message}` } });
-    if (job.taskId) await wakeArticleJob(job.taskId, client);
+    await wakeOwner(job, payload, client);
     await log({ level: 'warn', category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `Uncertain prompt state, paused for review: ${message}` }, client);
     return { ok: true, outcome: 'uncertain' };
   }
@@ -377,10 +415,8 @@ export async function failChatGPTJob(
     case 'CONVERSATION_LOST': {
       await client.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: new Date(), leaseUntil: null, error: message, errorCode: input.code } });
       if (job.relatedId) await client.chatGPTResponse.update({ where: { id: job.relatedId }, data: { status: 'FAILED', error: `CONVERSATION_LOST: ${message}` } });
-      if (job.taskId) {
-        await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl: null } });
-        await wakeArticleJob(job.taskId, client);
-      }
+      if (job.taskId) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl: null } });
+      await wakeOwner(job, payload, client);
       outcome = 'conversation-lost';
       break;
     }
@@ -393,7 +429,7 @@ export async function failChatGPTJob(
       } else {
         await client.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: new Date(), leaseUntil: null, error: message, errorCode: 'ERROR' } });
         if (job.relatedId) await client.chatGPTResponse.update({ where: { id: job.relatedId }, data: { status: 'FAILED', error: message } });
-        if (job.taskId) await wakeArticleJob(job.taskId, client);
+        await wakeOwner(job, payload, client);
         outcome = 'failed';
       }
     }

@@ -27,7 +27,23 @@ export async function getSettings(client: Tx = db): Promise<Settings> {
   const stored = parseJson<unknown>(row?.value, {});
   const merged = deepMerge(defaultSettings(), stored);
   const parsed = settingsSchema.safeParse(merged);
-  return parsed.success ? parsed.data : defaultSettings();
+  if (parsed.success) return parsed.data;
+  // Keep every valid owner value; only the invalid keys fall back to their defaults.
+  const defaults = defaultSettings() as unknown as Record<string, unknown>;
+  const repaired = structuredClone(merged) as unknown as Record<string, unknown>;
+  for (const issue of parsed.error.issues) setPath(repaired, issue.path, getPath(defaults, issue.path));
+  const again = settingsSchema.safeParse(repaired);
+  return again.success ? again.data : defaultSettings();
+}
+
+function getPath(obj: unknown, path: PropertyKey[]): unknown {
+  return path.reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<PropertyKey, unknown>)[k] : undefined), obj);
+}
+
+function setPath(obj: Record<string, unknown>, path: PropertyKey[], value: unknown): void {
+  if (!path.length) return;
+  const parent = getPath(obj, path.slice(0, -1));
+  if (parent && typeof parent === 'object') (parent as Record<PropertyKey, unknown>)[path[path.length - 1]] = value;
 }
 
 /** Validate and persist a partial settings patch. Returns the saved value. */

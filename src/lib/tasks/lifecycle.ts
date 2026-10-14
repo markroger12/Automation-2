@@ -3,7 +3,7 @@ import { enqueue, cancelWaitingJobsForTask, wakeArticleJob } from '../queue';
 import { log } from '../log';
 import { audit } from '../audit';
 import { AppError } from '../errors';
-import { TERMINAL_STATUSES, type TaskStatus } from '../domain';
+import { TERMINAL_STATUSES, type TaskStatus, isActiveModuleKey } from '../domain';
 
 /**
  * Task lifecycle operations shared by the dashboard API and the worker.
@@ -84,7 +84,7 @@ const RETRYABLE: TaskStatus[] = ['FAILED', 'NEEDS_REVIEW', 'CANCELLED', 'LOGIN_R
 export async function retryTask(taskId: string, client: Tx = db): Promise<{ result: string }> {
   const task = await client.articleTask.findUnique({ where: { id: taskId } });
   if (!task) throw new AppError(404, 'NOT_FOUND', 'Task not found.');
-  if (task.legacy) throw new AppError(409, 'RETIRED_WRITER', 'This task belongs to the retired Celebrity Writer 2.0 and is read-only. Create a new task with a supported writer.');
+  if (task.legacy || !isActiveModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'This task belongs to the retired Celebrity Writer 2.0 and is read-only. Create a new task with a supported writer.');
   if (!RETRYABLE.includes(task.status as TaskStatus)) {
     throw new AppError(409, 'CONFLICT', `Only failed, cancelled, paused or review tasks can be retried (current: ${task.status}).`);
   }
@@ -105,7 +105,7 @@ export async function resumeTask(taskId: string, reason: string, client: Tx = db
   if (TERMINAL_STATUSES.includes(task.status as TaskStatus) && task.status !== 'FAILED') {
     throw new AppError(409, 'CONFLICT', `Task is ${task.status}; nothing to resume.`);
   }
-  if (task.legacy) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
+  if (task.legacy || !isActiveModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
   // Wake ChatGPT jobs that were sleeping because of login/human checks.
   await client.queueJob.updateMany({ where: { taskId, queue: 'chatgpt', status: 'WAITING' }, data: { runAt: new Date() } });
   const result = await ensureArticleRun(taskId, reason, client);

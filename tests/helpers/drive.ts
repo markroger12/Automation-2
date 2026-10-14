@@ -6,7 +6,8 @@ import { cannedAnswer } from './fake-answers';
  * answers ChatGPT jobs with scripted canned text through the same bridge the
  * extension uses (no live ChatGPT).
  */
-export type ScriptedAnswer = string | { text: string; images?: Buffer[] };
+/** A text answer, an answer with generated images, or a permanent failure of that prompt (no retries left). */
+export type ScriptedAnswer = string | { text: string; images?: Buffer[] } | { fail: string };
 
 export function makeDriver(client: PrismaClient, answer: (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => ScriptedAnswer = cannedAnswer) {
   const respond = async () => {
@@ -16,15 +17,22 @@ export function makeDriver(client: PrismaClient, answer: (stageKey: string, prom
       const claim = await jobs.claimChatGPTJob({ installId: 'test', tabId: `t${answered}` });
       if (!('job' in claim)) break;
       const p = claim.payload;
-      const task = await client.articleTask.findUniqueOrThrow({ where: { id: p.taskId } });
-      const a = answer(p.stageKey, p.prompt, task.language === 'de' ? 'de' : 'en', task.keyword);
+      // Article prompts belong to a task; standalone Humanizer prompts belong to a run.
+      const owner = p.taskId ? await client.articleTask.findUniqueOrThrow({ where: { id: p.taskId } }) : await client.humanizerRun.findUniqueOrThrow({ where: { id: p.runId! } });
+      const a = answer(p.stageKey, p.prompt, owner.language === 'de' ? 'de' : 'en', owner.keyword);
+      if (typeof a !== 'string' && 'fail' in a) {
+        await client.queueJob.update({ where: { id: claim.job.id }, data: { maxAttempts: claim.job.attempts } });
+        await jobs.failChatGPTJob({ jobId: claim.job.id, tabId: `t${answered}`, code: 'ERROR', message: a.fail });
+        answered++;
+        continue;
+      }
       const text = typeof a === 'string' ? a : a.text;
       // Generated images arrive like the extension uploads them: stored and linked to the response.
       const images: { mediaAssetId: string }[] = [];
-      if (typeof a !== 'string' && a.images?.length) {
+      if (typeof a !== 'string' && 'images' in a && a.images?.length && 'websiteId' in owner) {
         const { storeImage } = await import('@/images/store');
         for (const buffer of a.images) {
-          const { asset } = await storeImage({ buffer, taskId: p.taskId, websiteId: task.websiteId, role: 'GALLERY', origin: 'CHATGPT', responseId: claim.job.relatedId, sourceUrl: 'https://chatgpt.com/backend-api/estuary/content?id=file_test' });
+          const { asset } = await storeImage({ buffer, taskId: p.taskId, websiteId: owner.websiteId, role: 'GALLERY', origin: 'CHATGPT', responseId: claim.job.relatedId, sourceUrl: 'https://chatgpt.com/backend-api/estuary/content?id=file_test' });
           images.push({ mediaAssetId: asset.id });
         }
       }

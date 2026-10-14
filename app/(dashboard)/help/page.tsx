@@ -66,6 +66,17 @@ export default function HelpPage() {
             <li>If no usable image exists the draft continues without it, or waits for review when the website requires images.</li>
           </ol>
         </Card>
+        <Card title="6 · Humanizer (editorial polish)">
+          <ol className="list-decimal space-y-2 pl-5 text-sm">
+            <li>
+              <strong>Editorial Tools → Humanizer</strong>: choose a saved article or paste text, pick all paragraphs or only flagged ones, and run it. Your ChatGPT tab answers in the background.
+            </li>
+            <li>Every rewrite that changes a number, date, quote, name, link, bold/italic text, the keyword count, the language or the uncertainty keeps the original paragraph; the reason is shown next to it.</li>
+            <li>
+              <strong>Apply</strong> turns the result into your edited version of the article (the previous version stays in its history). The WordPress draft changes only when you use “Save again”.
+            </li>
+          </ol>
+        </Card>
         <Card title="Backups & restore">
           <ul className="list-disc space-y-2 pl-5 text-sm">
             <li>

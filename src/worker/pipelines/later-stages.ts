@@ -1,21 +1,19 @@
 import type { StageManifest } from '@/modules/types';
 import type { PipelineStage } from '../pipeline/types';
-import { notAvailableYet, stageFrom } from './common';
+import { stageFrom } from './common';
 import { rankMath, verifiedComplete, wordpressDraft } from './wordpress';
 import { externalLinks, internalLinks } from './links';
 import { imagesStage } from './images';
+import { humanizeStage } from './humanize';
 
-/**
- * Stages shared by both writers. Those implemented by later milestones are
- * SKIPPED with an explicit reason (never faked) until then.
- */
+/** Stages shared by both writers. */
 export function laterStages(stages: StageManifest[]): PipelineStage[] {
   const S = (key: string) => stageFrom(stages, key);
   return [
     externalLinks(S('EXTERNAL_LINKS')),
     internalLinks(S('INTERNAL_LINKS')),
     imagesStage(S('IMAGES')),
-    notAvailableYet(S('HUMANIZE'), 'The editorial humanizer is not available in this build yet (milestone M9).'),
+    humanizeStage(S('HUMANIZE')),
     wordpressDraft(S('WORDPRESS_DRAFT')),
     rankMath(S('RANKMATH')),
     verifiedComplete(S('VERIFIED_COMPLETE')),

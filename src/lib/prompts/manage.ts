@@ -7,6 +7,15 @@ import { findPromptDefault, type PromptVariableDoc } from '@/modules/prompt-defa
 import { TemplateSyntaxError, parseTemplate, referencedVariables } from './template';
 import { promptHash } from './seed';
 
+/** Prompts of a retired writer (Celebrity Writer 2.0) stay readable as an archive and are never edited or used. */
+export function isArchivedPromptModule(moduleKey: string): boolean {
+  return !['celebrity-writer', 'tigram-writer', 'shared'].includes(moduleKey);
+}
+
+function assertEditable(row: { moduleKey: string }) {
+  if (isArchivedPromptModule(row.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'This prompt belongs to the retired Celebrity Writer 2.0. It is kept read-only as an archive.');
+}
+
 export async function listPrompts() {
   const rows = await db.promptTemplate.findMany({ orderBy: [{ moduleKey: 'asc' }, { stageKey: 'asc' }] });
   return rows.map((r) => {
@@ -20,6 +29,7 @@ export async function listPrompts() {
       version: r.version,
       customized: def ? promptHash(r.content) !== promptHash(def.content) : r.customized,
       kind: def?.kind ?? 'text',
+      archived: isArchivedPromptModule(r.moduleKey),
       updatedAt: r.updatedAt,
     };
   });
@@ -42,6 +52,7 @@ export async function getPrompt(id: string) {
     defaultVersion: def?.version ?? null,
     kind: def?.kind ?? 'text',
     isDefault: def ? promptHash(row.content) === promptHash(def.content) : false,
+    archived: isArchivedPromptModule(row.moduleKey),
     submissions,
   };
 }
@@ -75,6 +86,7 @@ export async function savePrompt(id: string, raw: unknown) {
   const input = savePromptSchema.parse(raw);
   const row = await db.promptTemplate.findUnique({ where: { id } });
   if (!row) throw new AppError(404, 'NOT_FOUND', 'Prompt not found.');
+  assertEditable(row);
   const variables = parseJson<PromptVariableDoc[]>(row.variables, []);
   const validation = validatePromptContent(input.content, variables);
   if (validation.errors.length) throw new AppError(400, 'VALIDATION', validation.errors[0], { content: validation.errors });
@@ -96,6 +108,7 @@ export async function restorePrompt(id: string, raw: unknown) {
   const { version: fromVersion } = z.object({ version: z.number().int().min(1).optional() }).parse(raw ?? {});
   const row = await db.promptTemplate.findUnique({ where: { id } });
   if (!row) throw new AppError(404, 'NOT_FOUND', 'Prompt not found.');
+  assertEditable(row);
   let content: string;
   let note: string;
   if (fromVersion) {

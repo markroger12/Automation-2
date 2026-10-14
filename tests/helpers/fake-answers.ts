@@ -36,6 +36,16 @@ export function cannedAnswer(stageKey: string, prompt: string, language: 'en' | 
       return tigramArticle(language, keyword);
     case 'CATEGORY':
       return /Tech/.test(prompt) ? 'CATEGORY: Tech & Apps' : 'CATEGORY: Something That Does Not Exist';
+    case 'HUMANIZE': {
+      // A faithful editor: every labelled paragraph comes back, banned openers removed (fact locks must accept it).
+      const lines = prompt.slice(prompt.lastIndexOf('Paragraphs:')).split('\n');
+      const out: string[] = [];
+      lines.forEach((line, i) => {
+        const m = /^\[(P\d+)\]$/.exec(line.trim());
+        if (m && lines[i + 1]) out.push(`[${m[1]}]\n${lines[i + 1].replace(/^(?:Additionally|Furthermore|Moreover|Zudem|Außerdem), (\p{L})/u, (_, c: string) => c.toUpperCase())}`);
+      });
+      return out.join('\n\n');
+    }
     default:
       return `Answer for ${stageKey}`;
   }

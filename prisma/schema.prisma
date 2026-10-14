@@ -33,38 +33,38 @@ model BrowserProfile {
 }
 
 model Website {
-  id                       String           @id @default(cuid())
+  id                       String          @id @default(cuid())
   name                     String
-  slug                     String           @unique
+  slug                     String          @unique
   publicUrl                String
   adminUrl                 String
-  active                   Boolean          @default(true)
-  paused                   Boolean          @default(false)
+  active                   Boolean         @default(true)
+  paused                   Boolean         @default(false)
   wordpressProfileId       String?
-  wordpressProfile         BrowserProfile?  @relation(fields: [wordpressProfileId], references: [id], onDelete: SetNull)
+  wordpressProfile         BrowserProfile? @relation(fields: [wordpressProfileId], references: [id], onDelete: SetNull)
   defaultCategoryId        String?
-  editorType               String           @default("AUTO") // AUTO | GUTENBERG | CLASSIC
+  editorType               String          @default("AUTO") // AUTO | GUTENBERG | CLASSIC
   detectedEditor           String?
-  language                 String           @default("en") // en | de
-  targetCountry            String           @default("United States")
-  timezone                 String           @default("UTC")
-  internalLinkLine         String           @default("Also read:")
+  language                 String          @default("en") // en | de
+  targetCountry            String          @default("United States")
+  timezone                 String          @default("UTC")
+  internalLinkLine         String          @default("Also read:")
   logoPath                 String?
-  imageSettings            String           @default("{}")
-  imageTemplate            String           @default("{}")
-  canPublish               Boolean          @default(false)
+  imageSettings            String          @default("{}")
+  imageTemplate            String          @default("{}")
+  canPublish               Boolean         @default(false)
   canPublishAcknowledgedAt DateTime?
-  allowLiveUpdates         Boolean          @default(false)
+  allowLiveUpdates         Boolean         @default(false)
   searchConsoleProperty    String?
-  settingsOverrides        String           @default("{}")
-  promptOverrides          String           @default("{}")
-  linkStrategy             String           @default("{}")
-  queueQuota               Int              @default(0)
-  priority                 Int              @default(0)
+  settingsOverrides        String          @default("{}")
+  promptOverrides          String          @default("{}")
+  linkStrategy             String          @default("{}")
+  queueQuota               Int             @default(0)
+  priority                 Int             @default(0)
   rankMathTarget           Int?
   notes                    String?
-  createdAt                DateTime         @default(now())
-  updatedAt                DateTime         @updatedAt
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
   categories               Category[]
   tasks                    ArticleTask[]
   workflows                Workflow[]
@@ -165,6 +165,7 @@ model ArticleTask {
   completedAt        DateTime?
   stages             ArticleStage[]
   responses          ChatGPTResponse[]
+  humanizerRuns      HumanizerRun[]
   seoReports         SEOReport[]
   mediaAssets        MediaAsset[]
 
@@ -177,30 +178,30 @@ model ArticleTask {
 }
 
 model ArticleStage {
-  id           String      @id @default(cuid())
-  taskId       String
-  task         ArticleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  key          String
-  position     Int
-  label        String
-  kind         String // chatgpt | local | gate | wordpress
-  status       String      @default("PENDING") // PENDING | RUNNING | WAITING | COMPLETED | FAILED | SKIPPED
-  attempts     Int         @default(0)
+  id            String                 @id @default(cuid())
+  taskId        String
+  task          ArticleTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  key           String
+  position      Int
+  label         String
+  kind          String // chatgpt | local | gate | wordpress
+  status        String                 @default("PENDING") // PENDING | RUNNING | WAITING | COMPLETED | FAILED | SKIPPED
+  attempts      Int                    @default(0)
   inputSnapshot String?
   promptVersion String?
-  prompt       String?
-  output       String?
-  outputHtml   String?
-  outputJson   String?
-  error        String?
-  message      String?
-  startedAt    DateTime?
-  completedAt  DateTime?
-  durationMs   Int?
-  privateState String      @default("{}")
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  revisions    ArticleStageRevision[]
+  prompt        String?
+  output        String?
+  outputHtml    String?
+  outputJson    String?
+  error         String?
+  message       String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  durationMs    Int?
+  privateState  String                 @default("{}")
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  revisions     ArticleStageRevision[]
 
   @@unique([taskId, key])
   @@index([status])
@@ -223,29 +224,60 @@ model ArticleStageRevision {
 }
 
 model ChatGPTResponse {
-  id                  String      @id @default(cuid())
-  taskId              String
-  task                ArticleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  id                  String        @id @default(cuid())
+  /// The article this prompt belongs to; null for standalone Humanizer runs (see runId).
+  taskId              String?
+  task                ArticleTask?  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  runId               String?
+  run                 HumanizerRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
   stageKey            String
   attempt             Int
   jobId               String?
-  operationId         String      @unique
+  operationId         String        @unique
   promptHash          String
   renderedPrompt      String
   resultText          String?
   resultHtml          String?
   conversationUrl     String?
   responseFingerprint String?
-  recovered           Boolean     @default(false)
-  reused              Boolean     @default(false)
-  conversationSwitch  Boolean     @default(false)
+  recovered           Boolean       @default(false)
+  reused              Boolean       @default(false)
+  conversationSwitch  Boolean       @default(false)
   elapsedMs           Int?
-  status              String      @default("PENDING") // PENDING | COMPLETED | FAILED | SUPERSEDED
+  status              String        @default("PENDING") // PENDING | COMPLETED | FAILED | SUPERSEDED
   error               String?
-  createdAt           DateTime    @default(now())
+  createdAt           DateTime      @default(now())
   completedAt         DateTime?
 
   @@index([taskId, stageKey])
+  @@index([runId])
+}
+
+/// A Humanizer page run: a saved article or pasted text, edited paragraph by paragraph with fact locks.
+model HumanizerRun {
+  id             String            @id @default(cuid())
+  taskId         String?
+  task           ArticleTask?      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  source         String // ARTICLE | PASTE
+  title          String
+  language       String
+  keyword        String            @default("")
+  scope          String            @default("all") // all | flagged
+  promptOverride String?
+  inputHtml      String
+  /// Hash of the article content the run started from (ARTICLE runs): applying is refused if the article changed since.
+  baselineHash   String?
+  status         String            @default("QUEUED") // QUEUED | WAITING | COMPLETED | FAILED | CANCELLED
+  message        String?
+  result         String            @default("{}")
+  outputHtml     String?
+  appliedAt      DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  responses      ChatGPTResponse[]
+
+  @@index([taskId])
+  @@index([createdAt])
 }
 
 model PromptTemplate {
@@ -268,13 +300,13 @@ model PromptTemplate {
 }
 
 model PromptTemplateVersion {
-  id          String         @id @default(cuid())
-  templateId  String
-  template    PromptTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  version     Int
-  content     String
-  note        String?
-  createdAt   DateTime       @default(now())
+  id         String         @id @default(cuid())
+  templateId String
+  template   PromptTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version    Int
+  content    String
+  note       String?
+  createdAt  DateTime       @default(now())
 
   @@unique([templateId, version])
 }
@@ -375,49 +407,49 @@ model AuditLog {
 }
 
 model Workflow {
-  id                String            @id @default(cuid())
-  websiteId         String
-  website           Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-  name              String
-  active            Boolean           @default(false)
-  writerPreference  String            @default("AUTO") // AUTO | celebrity-writer | tigram-writer
-  weekdays          String            @default("[]") // [] = every day; 0=Sunday
-  slots             String            @default("[]") // ["9:00 AM", ...] Asia/Karachi
-  slotTimezone      String            @default("Asia/Karachi")
-  writeAheadHours   Int               @default(24)
-  maxBacklog        Int               @default(10)
-  imagesOverride    String            @default("inherit") // inherit | on | off
-  requestIndexing   Boolean           @default(false)
-  maxRetries        Int               @default(3)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  keywords          WorkflowKeyword[]
+  id               String            @id @default(cuid())
+  websiteId        String
+  website          Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  name             String
+  active           Boolean           @default(false)
+  writerPreference String            @default("AUTO") // AUTO | celebrity-writer | tigram-writer
+  weekdays         String            @default("[]") // [] = every day; 0=Sunday
+  slots            String            @default("[]") // ["9:00 AM", ...] Asia/Karachi
+  slotTimezone     String            @default("Asia/Karachi")
+  writeAheadHours  Int               @default(24)
+  maxBacklog       Int               @default(10)
+  imagesOverride   String            @default("inherit") // inherit | on | off
+  requestIndexing  Boolean           @default(false)
+  maxRetries       Int               @default(3)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  keywords         WorkflowKeyword[]
 }
 
 model WorkflowKeyword {
-  id                 String    @id @default(cuid())
-  workflowId         String
-  workflow           Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  keyword            String
-  normalizedKeyword  String
-  exampleTitle       String?
-  secondaryKeywords  String    @default("[]")
-  writerType         String    @default("UNKNOWN") // UNKNOWN | CELEBRITY | TIGRAM
-  detectionReason    String?
-  detectionSource    String? // RULE | OVERRIDE | IMPORT
+  id                  String    @id @default(cuid())
+  workflowId          String
+  workflow            Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  keyword             String
+  normalizedKeyword   String
+  exampleTitle        String?
+  secondaryKeywords   String    @default("[]")
+  writerType          String    @default("UNKNOWN") // UNKNOWN | CELEBRITY | TIGRAM
+  detectionReason     String?
+  detectionSource     String? // RULE | OVERRIDE | IMPORT
   detectionConfidence Float?
-  position           Int
-  status             String    @default("WAITING") // WAITING | WRITING | READY | SCHEDULED | PUBLISHED | INDEXING_REQUESTED | INDEXED | FAILED | SKIPPED | DONE
-  taskId             String?
-  scheduledAt        DateTime?
-  publishedUrl       String?
-  publishedAt        DateTime?
+  position            Int
+  status              String    @default("WAITING") // WAITING | WRITING | READY | SCHEDULED | PUBLISHED | INDEXING_REQUESTED | INDEXED | FAILED | SKIPPED | DONE
+  taskId              String?
+  scheduledAt         DateTime?
+  publishedUrl        String?
+  publishedAt         DateTime?
   indexingRequestedAt DateTime?
-  indexingStatus     String?
-  retries            Int       @default(0)
-  lastError          String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  indexingStatus      String?
+  retries             Int       @default(0)
+  lastError           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([workflowId, status, position])
 }
@@ -433,29 +465,29 @@ model SlotReservation {
 }
 
 model MediaAsset {
-  id          String       @id @default(cuid())
-  taskId      String?
-  task        ArticleTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  websiteId   String?
-  website     Website?     @relation(fields: [websiteId], references: [id], onDelete: SetNull)
-  role        String // FEATURED | BODY1 | BODY2 | GALLERY | UPLOAD (owner photo for a task) | LOGO | TEMPLATE_PHOTO (site template library)
-  responseId  String? // ChatGPTResponse that produced this image (generated images)
-  origin      String // GENERATED | UPLOADED | WIKIMEDIA | CHATGPT | RENDERED
-  sourceUrl   String?
-  filePath    String
-  sha256      String
-  phash       String?
-  width       Int?
-  height      Int?
-  bytes       Int?
-  mime        String?
-  altText     String?
-  wpMediaId   Int?
-  wpUrl       String?
-  status      String       @default("READY") // READY | UPLOADED | REJECTED | FAILED
-  notes       String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id         String       @id @default(cuid())
+  taskId     String?
+  task       ArticleTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  websiteId  String?
+  website    Website?     @relation(fields: [websiteId], references: [id], onDelete: SetNull)
+  role       String // FEATURED | BODY1 | BODY2 | GALLERY | UPLOAD (owner photo for a task) | LOGO | TEMPLATE_PHOTO (site template library)
+  responseId String? // ChatGPTResponse that produced this image (generated images)
+  origin     String // GENERATED | UPLOADED | WIKIMEDIA | CHATGPT | RENDERED
+  sourceUrl  String?
+  filePath   String
+  sha256     String
+  phash      String?
+  width      Int?
+  height     Int?
+  bytes      Int?
+  mime       String?
+  altText    String?
+  wpMediaId  Int?
+  wpUrl      String?
+  status     String       @default("READY") // READY | UPLOADED | REJECTED | FAILED
+  notes      String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
 
   @@index([taskId, role])
   @@index([sha256])
@@ -511,7 +543,9 @@ model RecoveryIncident {
   @@index([taskId])
 }
 
-/** Per-website internal link index: published posts that may be linked from new articles. */
+/**
+ * Per-website internal link index: published posts that may be linked from new articles.
+ */
 model LinkTarget {
   id            String    @id @default(cuid())
   websiteId     String

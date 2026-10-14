@@ -21,8 +21,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M6 WordPress drafts | ✅ done (real WordPress 6.5/6.7 verified; real Rank Math not available here) |
 | M7 Links and general writer | ✅ done (local fake-web + real WordPress index verified; live third-party sites not checked here) |
 | M8 Images and templates | ✅ done (fake ChatGPT/Commons + real WordPress 6.5/6.7 verified; live ChatGPT images and live Commons not verified here) |
-| M9 Retire 2.0 + editorial tools | ⏳ next |
-| M10 Bulk campaigns and workflow | ☐ |
+| M9 Retire 2.0 + editorial tools | ✅ done (scripted-ChatGPT + full-stack agent-protocol smoke; live ChatGPT not verified here) |
+| M10 Bulk campaigns and workflow | ⏳ next |
 | M11 Plagiarism evidence and hardening | ☐ |
 | M12–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
@@ -307,4 +307,65 @@ Image integration tests use the real engine with scripted ChatGPT answers, a **f
 - Live ChatGPT image generation and capture: verified only against the fake ChatGPT page; the generated-image selector may need adjusting on the live site (it lives in `extension/adapter.js`). Reload the extension (3.1.0) in Automation Chrome.
 - Live Wikimedia Commons (this container reaches the internet only through a proxy that the fetcher does not use).
 - Optional **face detection** is not implemented (no local model); framing uses sharp's attention-based smart crop and optional focus points. Optional **quality enhancement** has a setting but no local tool; when enabled the stage notes that originals were used.
+
+## M9 — Retire Celebrity Writer 2.0, editorial humanizer, editorial tools ✅
+
+**Working**
+- **Celebrity Writer 2.0 retirement** (versioned, idempotent data migration `2026-10-14-retire-celebrity-writer-2`, run by `npm run setup`):
+  - writes a backup of every value it will change to `data/backups/migrations/` first; `npm run db:rollback-retirement -- <file>` restores them;
+  - 2.0 tasks become read-only legacy records (outputs, post IDs, conversations, prompts and logs all kept);
+  - unfinished 2.0 tasks go to NEEDS_REVIEW with “Retired writer — choose a supported writer to create a new task”; their waiting jobs are cancelled, not deleted;
+  - stored writer preferences pointing at 2.0 (global settings, website overrides, writer lists) move to the Celebrity Article Writer;
+  - custom 2.0 prompts are kept as a read-only archive in Prompt Manager, and saving or restoring them is refused;
+  - exactly two writers are offered or accepted: UI, API (a stale tab gets HTTP 400), engine (an injected 2.0 job goes to review and sends no prompt) and actions;
+  - a 2.0 record created after the migration is still treated as read-only (derived from the writer key, not only the flag).
+- **HUMANIZE stage** (both writers, after images, before assembly; on by default):
+  - Body paragraphs get labels [P1]… and are batched (~1,200 words). Links, bold and italic become lossless marks; paragraphs with other markup, fewer than 12 words, or the internal-link line are never sent.
+  - The local editor's flags and article-wide observations go with each batch: empty phrases (each occurrence counted), banned openers, inflated words, dashes, repeated openers, uniform sentence length.
+  - **Fact locks** keep the original paragraph with the specific reason when a rewrite changes any of:
+    - numbers (digits and number words) or month names;
+    - quotations, link anchors or links, bold/italic text, or the required names;
+    - the keyword count per paragraph, or the language.
+    The same applies when a rewrite adds a name or entity (English), weakens hedging (“reportedly”, “soll”…), adds certainty, returns more than one paragraph or HTML, or goes beyond ±20 % length (configurable). It is also kept when fewer than 45 % of the content words survive.
+  - German tolerance is documented in `src/lib/humanizer/validate.ts`: inflected names are accepted (Klums, Kaulitz’), and number words are compared by stem.
+  - Regeneration always starts from the saved unedited body, never from the humanized output. Each batch is its own prompt, so a retried batch never re-sends or overwrites an accepted one. On the last retry a still-failing batch keeps its original paragraphs instead of failing the article.
+  - Settings: on/off (also per website), all or flagged-only paragraphs, batch size, length tolerance.
+  - Diagnostics: counts edited / kept / unchanged / not sent, before → after. They are editorial measures, not an AI-detection score.
+- **Humanizer page** (`/humanizer`):
+  - Input: a saved article (its edited version if any) or pasted text/HTML.
+  - Options: all or flagged-only paragraphs, and an optional prompt edit for this run only (validated; must keep `{{paragraphs}}`).
+  - Runs are queued on the worker's humanizer queue. Prompts go through the same extension bridge as article prompts, owned by the run instead of a task, and the worker is woken when an answer arrives.
+  - Output: original and rewritten paragraphs side by side, with status, flags and rejection reasons; diagnostics; copy HTML/text; export .html/.txt; cancel; history.
+  - **Apply to article** saves an owner edit, with the previous version kept in history. It never touches the WordPress draft, and it is refused if the article changed after the run started.
+- **Editorial Tools hub** (`/editorial`): available and upcoming tools, recent humanizer runs and editorial history. The article view gets a **Humanizer** tab (stage results side by side plus this article's runs).
+
+**Commands run**
+```
+bash scripts/dev-create-migration.sh humanizer_runs        # ChatGPTResponse.taskId optional + runId; HumanizerRun (existing rows copied, nothing dropped)
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 19 files, 148 tests (new: humanizer marks/fact locks/planning 25, stage + page runs 7, retirement 6, site overrides 2)
+npx vitest run --config vitest.integration.config.ts <file>  # 6 files, 38 tests, all passed (run file by file — see below)
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress               # 7/7 on WordPress 6.7-alpha-58716, 7/7 on WordPress 6.5.5 (fresh disposable databases)
+npm run build                                              # compiled
+npm run setup (fresh data dir)                             # both data migrations applied, nothing to change, no backup written
+npm run setup (M8 smoke data dir)                          # humanizer_runs schema migration applied with automatic pre-migrate backup; data migrations applied
+npm run start:all # full-stack smoke, throwaway data dir: real Next.js + real worker; a scripted client speaking the real
+                  # extension agent protocol (hello/claim/progress/complete) answered the HUMANIZE prompt; the run finished
+                  # with P1 edited, P2 kept (“Numbers changed (before: 2019; after: 2020)”), P3 not sent; Humanizer and
+                  # Editorial pages rendered in Chromium without console errors
+```
+
+**Found and fixed during M9**
+- **Website overrides hid the global settings.** Zod 4 applies a field's default even inside `.partial()`, so every website's overrides parsed (and, when saved from the website form, were stored) as the full set of shipped defaults. Global changes to words, FAQ count, review threshold, Rank Math mode, links, images, approvals and the humanizer switch had no effect on any site.
+  - The override schema now has no defaults: unset means “use the global setting”.
+  - Data migration `2026-10-14-unpin-default-site-overrides` (backup first) clears only override groups holding exactly the full default set. Any group with an owner value is kept.
+- A single invalid stored setting (e.g. a leftover 2.0 writer preference) made `getSettings` fall back to all defaults, silently ignoring every owner setting. Now only the invalid key falls back.
+- German filler phrases were missed after an opener (“Zudem *ist es* erwähnenswert”), so both word orders are listed. Filler counts now count every occurrence.
+- A pasted text without any editable paragraph used to be queued anyway. It is now refused up front with the reason (too short, or nothing flagged in flagged-only mode).
+- Humanizer runs showed the article label “Verified complete”; they now have their own statuses.
+- The first full integration run stalled in `extension.test.ts`: the test harness could not read `chrome.storage` in the extension's service worker while the machine was also building and serving the smoke app, and the run was stopped by hand. Re-run on its own: 15/15. The other five files passed one by one (images 6, links 5, drafts 7, session 4, toolchain 1).
+
+**Not verified here**
+- Live ChatGPT answering the humanizer prompt (scripted answers and a scripted agent-protocol client only). How often real rewrites pass the fact locks is unmeasured; the thresholds (45 % content-word overlap, ±20 % length) may need tuning on real output.
+- Name and entity checks are heuristics (capitalized-word runs; new-entity detection in English only), so they can miss a renamed entity or reject a legitimate rewrite.
 

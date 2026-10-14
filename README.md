@@ -77,6 +77,12 @@ The test types these credentials itself (simulating you in the login window); th
 - Celebrity articles collect a bounded photo gallery from Wikimedia Commons (12 MB cap, private hosts blocked, exact and near-duplicates removed); general articles ask ChatGPT for an image plan and three images through the extension. Missing images never block the text: the draft continues without them, or waits for review if the site requires images. No image-rights or licensing checks are performed (owner decision); the source URL is stored for reference only.
 - After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture).
 
+## Editorial tools
+
+- **Humanizer** (Editorial Tools → Humanizer): edits a saved article or pasted text paragraph by paragraph, in batches of about 1,200 words, through your ChatGPT session. Each rewrite is checked against **fact locks**: numbers, dates, quotations, names, links, bold/italic text, the keyword count, the language, a single paragraph, hedging such as “reportedly”, and length (±20 % by default). Any violation keeps the original paragraph and records the reason. Results show side by side with editorial diagnostics (empty phrases, repeated openers, sentence rhythm). It does **not** compute an “AI detection” score. A result reaches an article only when you click **Apply**, and the WordPress draft changes only when you re-save it.
+- The same humanizer runs inside every article as the HUMANIZE stage, always starting from the unedited text. Settings → Content controls whether it is on, which paragraphs it edits (all or only flagged ones), the batch size and the length tolerance.
+- **Celebrity Writer 2.0 is retired.** Old 2.0 articles stay readable (outputs, post IDs, logs, prompts) but can't be run, queued or edited. If a backup is ever needed, the retirement migration's changes can be undone with `npm run db:rollback-retirement -- <backup-file>` from `data\backups\migrations\`.
+
 ## Data folder (`data\`, git-ignored)
 
 | Path | Contents |

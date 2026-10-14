@@ -18,8 +18,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M3 Websites and sessions | ✅ done |
 | M4 ChatGPT extension vertical slice | ✅ done (fixture-verified; live ChatGPT not verified here) |
 | M5 Single Article + content pipeline | ✅ done (scripted-ChatGPT verified; tasks stop at Needs Review until M6) |
-| M6 WordPress drafts | ⏳ next |
-| M7 Links and general writer | ☐ |
+| M6 WordPress drafts | ✅ done (real WordPress 6.5/6.7 verified; real Rank Math not available here) |
+| M7 Links and general writer | ⏳ next |
 | M8 Images and templates | ☐ |
 | M9 Retire 2.0 + editorial tools | ☐ |
 | M10 Bulk campaigns and workflow | ☐ |
@@ -181,3 +181,51 @@ npm run dev:all   # smoke: Single Article page in a real browser — chips de-du
 **Limitations**
 - The WordPress draft, Rank Math, external/internal links, images and humanizer stages are present in the pipelines but **skipped with an explicit reason** ("arrives in M6/M7/M8/M9"). Because no verified WordPress draft exists yet, finished tasks end in **Needs Review**, never Completed.
 - Live ChatGPT output has not been run through these parsers in this container; the parsers are tolerant (bold labels, quotes, German labels) but may need tuning against real answers.
+
+---
+
+## M6 — WordPress drafts, publish guard, Rank Math ✅ (real WordPress verified; Rank Math fixture-only)
+
+**Working**
+- **Drafts through the logged-in admin session** (`src/wordpress/client.ts`): cookies of the site's persistent profile + the REST nonce WordPress gives logged-in users — no passwords, no Application Passwords. Works with pretty permalinks (`/wp-json/`) and plain permalinks (`?rest_route=`). A missing/expired login pauses the task (`LOGIN_REQUIRED`, resumes automatically after “Log in”).
+- **Create/reopen without duplicates** (`src/wordpress/drafts.ts`): a stored post ID is always reopened; a create attempt is recorded *before* sending and the post ID is saved the moment WordPress returns it; a lost acknowledgement is reconciled on retry (same title/slug/time → adopted); ambiguous evidence pauses for review with the candidate posts (Recovery Center → article → “Use #N” / “Create a new draft”). Trashed/deleted drafts, live/scheduled posts and edits made in WordPress are never overwritten silently (owner chooses “Overwrite WordPress draft”).
+- **Verified saves**: every save is read back — status `draft`, title, content (same words/headings/links), exactly one category (Uncategorized/Allgemein removed), slug (WordPress `-2` suffix reported as a possible duplicate), tags (looked up, created when allowed). Featured image upload with alt text, reused on later saves.
+- **Editor-correct content**: Gutenberg gets core blocks (paragraph, heading, list/list-item, table incl. Quick Bio, custom HTML fallback) — validated as *valid blocks* in the real WordPress 6.5.5 and 6.7 editors; Classic sites get plain HTML. The editor check detects the real editor, re-saves in the right format and falls back to plain HTML if any block is invalid.
+- **Publish guard** (`src/wordpress/publish-guard.ts`): one classifier used at the service boundary (every app request) and the network boundary (every request of every WordPress browser context): REST `publish/future/private/pending` in body/query/method-override/batch, Classic Publish/Schedule button, pending/private saves, Quick Edit, bulk edit, XML-RPC and deletions → HTTP 403 before reaching WordPress, logged + audited. Permits only via `withPublishPermit` (fresh `canPublish` + typed acknowledgement, one post, short-lived) for the M10 scheduler; the owner's own “Open browser” window may publish by hand only on sites that allow publishing. A static test fails if any other module sends WordPress requests or asks for a publishing status.
+- **Rank Math** (`src/wordpress/rank-math.ts`, `editor.ts`): focus keyword / SEO title / description written via Rank Math's own REST endpoint, then read back from the editor (store or form fields; a score shown beside the keyword is not mistaken for keyword text); the score is only ever *read* from the panel (stable over 3 reads) — never computed. Below target (default 75): up to 3 rounds — local metadata fixes first (title starts with keyword, meta from an intro sentence with the keyword, slug), then the editable `SEO_CORRECTION` prompt, whose rewrite is rejected if it adds >15 % / removes >30 % words, loses a heading/link/image, changes language, exceeds the density cap or fails the quality gate. Owner edits are never rewritten. Unfixable items become specific review reasons. Per-site mode: Required / Use when installed / Off.
+- **VERIFIED_COMPLETE**: final read-back; an article counts as COMPLETED (and in the ARTICLE_VERIFIED metric) only with a verified draft and no open review reasons.
+- **UI**: article **WordPress** tab (post link, status, slug, editor, verification times, guard notice, Rank Math fields/score/recommendations, correction rounds with before/after text, Save again / Overwrite / Create new / Use #N with confirmations); Websites page shows REST reachability, Rank Math detection and blocked publish attempts; Recovery Center links uncertain creates to the choice UI; Settings: Rank Math mode, content corrections, create missing tags.
+
+**Commands run (all passed)**
+```
+bash scripts/dev-create-migration.sh wordpress_drafts      # wpContentHash, wpSlug, wpVerifiedAt, rankMathReport
+npx tsc --noEmit                                            # 0 errors
+npx vitest run                                              # 13 files, 86 tests
+npx vitest run --config vitest.integration.config.ts         # 4 files, 26 tests (14 extension, 4 sessions, 7 drafts, 1 toolchain)
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress                # 7/7 on WordPress 6.7-alpha-58716, 7/7 on WordPress 6.5.5
+npm run build                                               # compiled
+npm run dev:all   # full-stack smoke, throwaway data dir: real Next.js + real worker (tsx) + real WordPress 6.7; site added via API,
+                  # owner login simulated in the profile, Test session (REST reachable, Rank Math not detected), Sync categories via REST,
+                  # Single Article task answered by a scripted client through the real /api/extension/agent → draft #6 created and verified,
+                  # honest NEEDS_REVIEW “Rank Math is not active”; WordPress tab rendered in Chromium with no console errors
+```
+**Real WordPress used here:** disposable WordPress 6.7-alpha-58716 and 6.5.5 from the npm package `@wp-playground/wordpress-builds@0.9.19`, served by PHP 8.3's built-in server with the SQLite Database Integration plugin (wordpress.org itself is not reachable from this container). Real Gutenberg and Classic editors (Classic switched on via a test-only mu-plugin). The e2e suite proves: one draft with category/tags/slug/valid blocks; reopen without duplicates; lost acknowledgement adopted; WordPress edits not overwritten until the owner chooses; publish blocked via REST (publish/future/delete), the Gutenberg Publish button, in-page fetch for every publishing state, Quick Edit and the Classic Publish button; featured image upload; Classic detection and plain-HTML re-save.
+
+WordPress step latency measured in the smoke (local WordPress, no Rank Math): draft 0.6 s, editor check 2.8 s, final verification 0.3 s.
+
+**Found and fixed during M6**
+- Keyword density multiplied by the keyword's word count, so natural multi-word keywords (e.g. “Tom Kaulitz Heidi Klum”) were flagged as stuffing and the spec's advisory 15–18 mentions would always fail → density is now mentions per 100 words (Rank Math's convention).
+- The worker (tsx) wraps named functions in `__name()`, which does not exist inside browser pages → “Sync categories” failed on a real site (pre-existing M3 bug; Vitest compiles differently so tests missed it). Every WordPress context now defines a no-op `__name`; `tests/integration/worker-toolchain.test.ts` runs the check under tsx with a negative control.
+- Category sync on plain-permalink sites hit an HTML redirect from `/wp-json/` → now uses the verified REST client (admin-table fallback kept).
+- Later session checks erased the REST/Rank Math capability result shown on the website page → merged.
+- `BAS_DATA_DIR` moved profiles/media but not the database → it now moves the database too unless `DATABASE_URL` is customized; tests also load a setup file that isolates every test process from `data/app.db`.
+- Switching a draft between block and Classic format was not detected as a change → format now counts.
+- `?rest_route=` URLs with a stray `?` were not parsed as routes by the guard → fixed (WordPress had answered 404, so nothing was bypassed).
+- Expected duplicate-key inserts (metrics/incidents) printed Prisma errors → look-up first.
+- Relative times caused React hydration warnings; a missing favicon caused 404 console errors → fixed.
+
+**Not verified here (needs the owner)**
+- **Real Rank Math**: the plugin cannot be downloaded in this container. Rank Math behaviour is tested only against the fake WordPress fixture, whose panel uses its own documented rules (not Rank Math's algorithm). The endpoint (`rankmath/v1/updateMeta`), score and recommendation selectors are best-effort and overridable in Settings → Advanced (`rankMathScore`, `rankMathRecommendations`, `rankMathTabTrigger`). If the score cannot be read, the article says “not verified” — it is never estimated.
+- German WordPress admin: covered by the fixture only (no German language pack offline). The code relies on IDs and returned post status, not button texts.
+- Live sites behind security plugins/hosting overlays beyond the Hostinger-style fixture.
+- **Throughput checkpoint after M6** (5 live article-to-draft flows, then the 2-hour benchmark): not run — it requires the owner's signed-in ChatGPT and real WordPress sites. No throughput claim is made.

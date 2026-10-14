@@ -49,8 +49,12 @@ export function ensureDataDirs(): void {
  * generated client at runtime, which differs between Next.js and the worker.
  * We resolve once, relative to prisma/, and hand Prisma the absolute path.
  */
+const DEFAULT_DATABASE_URL = 'file:../data/app.db';
+
 export function resolveDatabaseUrl(raw = process.env.DATABASE_URL): string {
-  const value = raw && raw.trim() ? raw.trim() : 'file:../data/app.db';
+  let value = raw && raw.trim() ? raw.trim() : DEFAULT_DATABASE_URL;
+  // BAS_DATA_DIR moves ALL app data, including the database, unless DATABASE_URL was customized.
+  if (process.env.BAS_DATA_DIR && value === DEFAULT_DATABASE_URL) value = `file:${dataPaths.db().split(path.sep).join('/')}`;
   if (!value.startsWith('file:')) {
     throw new Error(`DATABASE_URL must be a SQLite file: URL (got "${value.slice(0, 40)}")`);
   }

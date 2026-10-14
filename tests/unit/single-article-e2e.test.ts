@@ -44,7 +44,7 @@ async function drive(taskId: string, language: 'en' | 'de', stopWhen?: (status: 
   for (let i = 0; i < 80; i++) {
     const t = await client.articleTask.findUniqueOrThrow({ where: { id: taskId } });
     if (stopWhen?.(t.status, t.stage)) return t;
-    if (['COMPLETED', 'NEEDS_REVIEW', 'FAILED', 'CANCELLED', 'AWAITING_TITLE_APPROVAL', 'AWAITING_ARTICLE_APPROVAL'].includes(t.status) && !(await client.queueJob.count({ where: { taskId, status: { in: ['WAITING', 'ACTIVE'] } } }))) return t;
+    if (['COMPLETED', 'NEEDS_REVIEW', 'FAILED', 'CANCELLED', 'AWAITING_TITLE_APPROVAL', 'AWAITING_ARTICLE_APPROVAL', 'LOGIN_REQUIRED'].includes(t.status) && !(await client.queueJob.count({ where: { taskId, status: { in: ['WAITING', 'ACTIVE'] } } }))) return t;
     await client.queueJob.updateMany({ where: { taskId, queue: 'article', status: 'WAITING' }, data: { runAt: new Date(0) } });
     const job = await queue.claimNext({ queue: 'article', owner: 'test-worker', leaseMs: 60_000 });
     if (job) await engine.runArticleJob(job, { workerId: 'test-worker', leaseMs: 60_000, random: () => 0.5 });
@@ -74,6 +74,10 @@ beforeAll(async () => {
   siteDe = de.id;
   catEn = (await client.category.create({ data: { websiteId: siteEn, externalId: 7, name: 'Celebrities' } })).id;
   catDe = (await client.category.create({ data: { websiteId: siteDe, externalId: 3, name: 'Promis' } })).id;
+  // These sites are not real WordPress installs: their profiles are logged out, so the
+  // content pipeline runs completely and the task pauses at the WordPress draft step.
+  // (Draft creation itself is covered by the WordPress integration/e2e tests.)
+  await client.browserProfile.updateMany({ data: { sessionState: 'LOGIN_REQUIRED' } });
 });
 
 describe('Single Article end-to-end (scripted ChatGPT)', () => {
@@ -107,9 +111,12 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(responses[4].renderedPrompt).toContain('write exactly 5 realistic');
     expect(responses[5].renderedPrompt).toContain('approximately 11–13 useful rows');
 
-    // No WordPress step yet in this build: honest NEEDS_REVIEW, never "completed".
-    expect(final.status).toBe('NEEDS_REVIEW');
+    // Logged-out site: the finished article waits at the WordPress step — never "completed".
+    expect(final.status).toBe('LOGIN_REQUIRED');
+    expect(final.pausedFor).toBe('wordpress-login');
+    expect(final.stage).toBe('WORDPRESS_DRAFT');
     expect(final.verifiedCompleteAt).toBeNull();
+    expect(final.wpPostId).toBeNull();
     const html = final.assembledHtml!;
     expect(html).toContain('<h2>Quick Bio of Tom Kaulitz</h2>');
     expect(html).toContain('<h2>Frequently Asked Questions</h2>');
@@ -172,7 +179,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(t.recommendedTitle).toBe('Sydney Sweeney: Inside Their Relationship');
     await actions.approveTitle(task.id, { title: 'Sydney Sweeney: Career, Roles and Rise' });
     t = await drive(task.id, 'en');
-    expect(t.status).toBe('NEEDS_REVIEW');
+    expect(t.status).toBe('LOGIN_REQUIRED');
     const long = await client.chatGPTResponse.findFirstOrThrow({ where: { taskId: task.id, stageKey: 'LONG_ARTICLE' } });
     expect(long.renderedPrompt).toContain('Title: "Sydney Sweeney: Career, Roles and Rise"');
 
@@ -210,7 +217,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(final.assembledHtml).not.toContain('Quick Bio');
     expect(final.assembledHtml).toContain('<h2>Frequently Asked Questions</h2>');
     expect(final.assembledHtml).toContain('<table>');
-    expect(final.status).toBe('NEEDS_REVIEW');
+    expect(final.status).toBe('LOGIN_REQUIRED');
   });
 
   it('Tigram: skips the CATEGORY prompt when the owner chose a category', async () => {

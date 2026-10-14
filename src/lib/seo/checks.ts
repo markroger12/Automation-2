@@ -81,7 +81,9 @@ export function runSeoChecks(input: SeoInput): SeoReport {
   const keywordExact = countExact(text, kw);
   const keywordNormalized = countNormalized(text, kw);
   const kwWords = Math.max(1, words(kw).length);
-  const densityPct = totalWords ? (keywordNormalized * kwWords * 100) / totalWords : 0;
+  // Same convention as Rank Math: keyword mentions per 100 words (not words-of-keyword per 100 words),
+  // so a natural multi-word keyword is not mistaken for stuffing.
+  const densityPct = totalWords ? (keywordNormalized * 100) / totalWords : 0;
 
   const h2 = $('h2').toArray();
   const h3 = $('h3').toArray();

@@ -53,8 +53,8 @@ export default async function RecoveryPage() {
                       {i.description}
                       {i.taskId ? (
                         <div>
-                          <Link className="text-xs text-indigo-600 hover:underline" href={`/articles/${i.taskId}`}>
-                            Open article{i.stageKey ? ` (${i.stageKey})` : ''}
+                          <Link className="text-xs text-indigo-600 hover:underline" href={i.kind === 'UNCERTAIN_WP_CREATE' ? `/articles/${i.taskId}?tab=wordpress` : `/articles/${i.taskId}`}>
+                            {i.kind === 'UNCERTAIN_WP_CREATE' ? 'Choose the right WordPress post' : `Open article${i.stageKey ? ` (${i.stageKey})` : ''}`}
                           </Link>
                         </div>
                       ) : null}

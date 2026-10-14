@@ -6,15 +6,16 @@ import { useRouter } from 'next/navigation';
 import { Ban, ExternalLink, Play, RotateCcw } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
-import { Button, ConfirmDialog, CopyButton, Tabs, useToast } from '@/components/client';
-import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, cx, formatDateTime, formatDuration, formatRelative } from '@/components/ui';
+import { Button, ConfirmDialog, CopyButton, RelativeTime, Tabs, useToast } from '@/components/client';
+import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, cx, formatDateTime, formatDuration } from '@/components/ui';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
 import { ArticleExtraTabs, EXTRA_TABS } from './extra-tabs';
+import { WordPressTab } from './wordpress-tab';
 import { ACTIVE_MODULES } from '@/modules/registry';
 
 const REGENERABLE: Record<string, string[]> = Object.fromEntries(ACTIVE_MODULES.map((m) => [m.key, m.stages.filter((s) => s.regenerable).map((s) => s.key)]));
 
-const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'images', 'stages', 'prompts', 'logs', 'conversation'] as const;
+const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'images', 'wordpress', 'stages', 'prompts', 'logs', 'conversation'] as const;
 type TabId = (typeof BASE_TABS)[number];
 
 export function ArticleDetailView({ initial, initialTab }: { initial: SerializedTaskDetail; initialTab?: string }) {
@@ -81,6 +82,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     { id: 'editor', label: 'Editor' },
     { id: 'seo', label: 'SEO' },
     { id: 'images', label: 'Images', badge: task.mediaAssets.length ? <Chip>{task.mediaAssets.length}</Chip> : undefined },
+    { id: 'wordpress', label: 'WordPress', badge: task.wpPostId ? <Chip>#{task.wpPostId}</Chip> : undefined },
     { id: 'stages', label: 'Stages' },
     { id: 'prompts', label: 'Prompt / Response', badge: task.responses.length ? <Chip>{task.responses.length}</Chip> : undefined },
     { id: 'logs', label: 'Logs' },
@@ -138,7 +140,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
             {task.stage ? <span className="font-mono">{task.stage}</span> : null} {task.message}
           </span>
           <span>
-            {task.percent}% · updated {formatRelative(task.updatedAt)}
+            {task.percent}% · updated <RelativeTime value={task.updatedAt} />
             {live ? ' · live' : ''}
           </span>
         </div>
@@ -178,6 +180,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
       <Tabs tabs={tabs} value={tab} onChange={(id) => setTab(id as TabId)} />
       <div className="mt-4">
         {tab === 'overview' ? <OverviewTab task={task} /> : null}
+        {tab === 'wordpress' ? <WordPressTab task={task} onChanged={reload} /> : null}
         {tab === 'stages' ? <StagesTab task={task} onChanged={reload} /> : null}
         {tab === 'prompts' ? <PromptsTab task={task} /> : null}
         {tab === 'logs' ? <LogsTab task={task} /> : null}
@@ -220,7 +223,7 @@ function OverviewTab({ task }: { task: SerializedTaskDetail }) {
             { label: 'Slug', value: task.slug ?? '—' },
             { label: 'Focus keyword', value: task.focusKeyword ?? '—' },
             { label: 'Internal SEO score', value: task.seoScore ?? '—' },
-            { label: 'Rank Math score', value: task.rankMathScore ?? <span className="text-muted">not verified</span> },
+            { label: 'Rank Math score', value: task.rankMathScore !== null ? `${task.rankMathScore} / 100 (read from WordPress)` : <span className="text-muted">not verified</span> },
             { label: 'WordPress', value: task.wpEditUrl ? <a className="text-indigo-600 underline" href={task.wpEditUrl} target="_blank" rel="noreferrer">post #{task.wpPostId} ({task.wpPostStatus ?? 'draft'})</a> : '—' },
             { label: 'Verified complete', value: task.verifiedCompleteAt ? formatDateTime(task.verifiedCompleteAt) : '—' },
           ]}

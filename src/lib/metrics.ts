@@ -18,6 +18,8 @@ export interface MetricInput {
 }
 
 export async function recordMetric(input: MetricInput, client: Tx = db): Promise<boolean> {
+  // Look first so the common duplicate case does not produce Prisma error logs.
+  if (await client.productionMetric.findUnique({ where: { dedupeKey: input.dedupeKey }, select: { id: true } })) return false;
   try {
     await client.productionMetric.create({
       data: {

@@ -92,7 +92,7 @@ export function notAvailableYet(manifest: StageManifest, reason: string): Pipeli
   return bind(manifest, { run: async () => ({ outcome: 'skipped', reason }) });
 }
 
-function bodyForAssembly(ctx: PipelineContext): string {
+export function bodyForAssembly(ctx: PipelineContext): string {
   const humanized = ctx.stages.get('HUMANIZE');
   if (humanized?.status === 'COMPLETED' && humanized.outputHtml) return humanized.outputHtml;
   const linked = ctx.stages.get('EXTERNAL_LINKS');
@@ -100,23 +100,28 @@ function bodyForAssembly(ctx: PipelineContext): string {
   return ctx.task.bodyHtml ?? '';
 }
 
+/** Assemble the article for this task (shared by the ASSEMBLY stage and Rank Math content corrections). */
+export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
+  const internal = ctx.stageJson<{ line: string; url: string; title: string } | null>('INTERNAL_LINKS');
+  const images = ctx.stageJson<{ slots?: AssemblyImage[] }>('IMAGES')?.slots ?? [];
+  const quickBio = parseJson<{ attribute: string; details: string }[]>(ctx.task.quickBio, []);
+  const { confirmedFullName } = await import('@/modules/celebrity-writer/parsers');
+  return assembleArticle({
+    bodyHtml,
+    language: ctx.task.language,
+    moduleKey: ctx.task.moduleKey,
+    quickBioHtml: ctx.task.quickBioHtml,
+    quickBioName: confirmedFullName(quickBio),
+    faqs: parseJson(ctx.task.faqs, []),
+    internalLink: internal && internal.url ? internal : null,
+    images,
+  });
+}
+
 export function assembly(manifest: StageManifest): PipelineStage {
   return bind(manifest, {
     run: async (ctx) => {
-      const internal = ctx.stageJson<{ line: string; url: string; title: string } | null>('INTERNAL_LINKS');
-      const images = ctx.stageJson<{ slots?: AssemblyImage[] }>('IMAGES')?.slots ?? [];
-      const quickBio = parseJson<{ attribute: string; details: string }[]>(ctx.task.quickBio, []);
-      const { confirmedFullName } = await import('@/modules/celebrity-writer/parsers');
-      const result = assembleArticle({
-        bodyHtml: bodyForAssembly(ctx),
-        language: ctx.task.language,
-        moduleKey: ctx.task.moduleKey,
-        quickBioHtml: ctx.task.quickBioHtml,
-        quickBioName: confirmedFullName(quickBio),
-        faqs: parseJson(ctx.task.faqs, []),
-        internalLink: internal && internal.url ? internal : null,
-        images,
-      });
+      const result = await assembleForTask(ctx, bodyForAssembly(ctx));
       // Celebrity metadata (Tigram sets its own from the ARTICLE lines).
       const updates: Record<string, unknown> = { assembledHtml: result.html };
       if (ctx.task.moduleKey === 'celebrity-writer') {
@@ -152,33 +157,39 @@ export function articleHtml(ctx: PipelineContext): string {
   return ctx.task.editedHtml ?? ctx.task.assembledHtml ?? '';
 }
 
+/** Local SEO report for the task's current metadata and the given article HTML. */
+export function seoReportFor(ctx: PipelineContext, html: string) {
+  const t = ctx.task;
+  const range = ctx.config.tigramWordRange.split(/\s*[-–]\s*/).map(Number) as [number, number];
+  return runSeoChecks({
+    html,
+    moduleKey: t.moduleKey,
+    language: t.language,
+    keyword: t.focusKeyword ?? t.keyword,
+    title: t.selectedTitle,
+    seoTitle: t.seoTitle,
+    metaDescription: t.metaDescription,
+    slug: t.slug,
+    categoryName: t.categoryName,
+    tags: stringArray(t.tags),
+    expectedFaqCount: t.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount,
+    quickBioRows: ctx.config.quickBioRows,
+    maxWords: ctx.config.maxWords,
+    wordRange: t.moduleKey === 'tigram-writer' && range.length === 2 && range.every(Number.isFinite) ? range : null,
+    minKeywordOccurrences: ctx.config.minKeywordOccurrences,
+    maxKeywordOccurrences: ctx.config.maxKeywordOccurrences,
+    densityCeilingPct: ctx.config.keywordDensityCeilingPct,
+    externalLinksEnabled: ctx.config.externalLinks,
+    internalLinksEnabled: ctx.config.internalLinks,
+    imagesExpected: ctx.config.images && ctx.config.imagesRequired,
+  });
+}
+
 export function seoCheck(manifest: StageManifest): PipelineStage {
   return bind(manifest, {
     run: async (ctx) => {
       const t = ctx.task;
-      const range = ctx.config.tigramWordRange.split(/\s*[-–]\s*/).map(Number) as [number, number];
-      const report = runSeoChecks({
-        html: articleHtml(ctx),
-        moduleKey: t.moduleKey,
-        language: t.language,
-        keyword: t.focusKeyword ?? t.keyword,
-        title: t.selectedTitle,
-        seoTitle: t.seoTitle,
-        metaDescription: t.metaDescription,
-        slug: t.slug,
-        categoryName: t.categoryName,
-        tags: stringArray(t.tags),
-        expectedFaqCount: t.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount,
-        quickBioRows: ctx.config.quickBioRows,
-        maxWords: ctx.config.maxWords,
-        wordRange: t.moduleKey === 'tigram-writer' && range.length === 2 && range.every(Number.isFinite) ? range : null,
-        minKeywordOccurrences: ctx.config.minKeywordOccurrences,
-        maxKeywordOccurrences: ctx.config.maxKeywordOccurrences,
-        densityCeilingPct: ctx.config.keywordDensityCeilingPct,
-        externalLinksEnabled: ctx.config.externalLinks,
-        internalLinksEnabled: ctx.config.internalLinks,
-        imagesExpected: ctx.config.images && ctx.config.imagesRequired,
-      });
+      const report = seoReportFor(ctx, articleHtml(ctx));
       await db.sEOReport.create({ data: { taskId: t.id, source: 'INTERNAL', score: report.score, checks: JSON.stringify(report.checks), metrics: JSON.stringify(report.metrics) } });
       const metrics = parseJson<Record<string, unknown>>(t.metrics, {});
       await ctx.updateTask({ seoScore: report.score, metrics: JSON.stringify({ ...metrics, seo: report.metrics }) });
@@ -250,8 +261,10 @@ export async function finalizeTask(ctx: PipelineContext): Promise<void> {
   const options = parseJson<Record<string, unknown>>(t.options, {});
   const responses = await db.chatGPTResponse.count({ where: { taskId: t.id, status: { in: ['COMPLETED', 'FAILED', 'SUPERSEDED', 'REJECTED'] } } });
   const metrics = { ...parseJson<Record<string, unknown>>(t.metrics, {}), chatgptInteractions: responses };
-  const wpStage = ctx.stages.get('WORDPRESS_DRAFT');
-  const verifiedDraft = Boolean(t.wpPostId && t.wpDraftAt);
+  const wpStage = await db.articleStage.findUnique({ where: { taskId_key: { taskId: t.id, key: 'WORDPRESS_DRAFT' } } });
+  const finalCheck = await db.articleStage.findUnique({ where: { taskId_key: { taskId: t.id, key: 'VERIFIED_COMPLETE' } } });
+  // A draft counts only after the final read-back verification passed.
+  const verifiedDraft = Boolean(t.wpPostId && t.wpDraftAt && t.wpVerifiedAt && finalCheck?.status === 'COMPLETED' && parseJson<{ verified?: boolean }>(finalCheck.outputJson, {}).verified === true);
   let status: string;
   let message: string;
   let nextAction: string | null = null;
@@ -264,12 +277,14 @@ export async function finalizeTask(ctx: PipelineContext): Promise<void> {
     } else {
       message = wpStage?.status === 'SKIPPED' ? `Article is ready locally. ${wpStage.message ?? 'The WordPress draft step did not run.'}` : 'Article is ready locally, but no verified WordPress draft exists.';
       reasons.push(wpStage?.message ?? 'No verified WordPress draft.');
-      nextAction = 'Create the WordPress draft (Retry) once the WordPress step is available and the site is logged in.';
+      nextAction = t.wpPostId ? `Open draft #${t.wpPostId} to check it, then Retry the WordPress steps.` : 'Log in to the website if needed, then Retry to create the WordPress draft.';
     }
   } else if (reasons.length && options.qualityOverride !== true) {
     status = 'NEEDS_REVIEW';
     message = `WordPress draft #${t.wpPostId} saved; ${reasons.length} review reason(s) remain.`;
-    nextAction = 'Review the reasons and the draft. Use “Approve despite review reasons” if acceptable.';
+    nextAction = reasons.every((r) => /^Rank Math is not active/.test(r))
+      ? 'Activate Rank Math on this website (or set its Rank Math option to “Use when installed”), then use WordPress → Save again.'
+      : 'Review the reasons and the draft. Use “Approve despite review reasons” if acceptable.';
   } else {
     status = 'COMPLETED';
     message = `Verified WordPress draft #${t.wpPostId}.`;

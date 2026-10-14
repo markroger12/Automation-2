@@ -36,6 +36,14 @@ export default function HelpPage() {
             <li>Websites → Add website (public URL, admin URL, language, timezone).</li>
             <li>Click <strong>Log in</strong>: a visible browser window opens; sign in yourself. Passwords are never stored or typed by the app.</li>
             <li>Click <strong>Sync categories</strong>. Drafts are created as drafts only; publishing needs the per-site switch plus the scheduler.</li>
+            <li>
+              Click <strong>Test session</strong>: it also checks that the WordPress REST API answers for the logged-in user (the block editor needs it too) and whether Rank Math is active. Drafts are saved through
+              that logged-in session — no Application Password is used.
+            </li>
+            <li>
+              Rank Math: fields are set and the score is read from the editor. Without Rank Math, choose “Use when installed” (site settings) so drafts can still complete; with “Required” the article stays in
+              review.
+            </li>
           </ol>
         </Card>
         <Card title="4 · ChatGPT (Automation Chrome)">

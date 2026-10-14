@@ -2,6 +2,27 @@ import { db } from '../db';
 import { parseJson, stringArray } from '../json';
 import { moduleDisplayName, statusGroup } from '../domain';
 import { sanitizeArticleHtml } from '../html/sanitize';
+import { stripTags } from '../content/text';
+
+/** Rank Math report as stored by the RANKMATH stage (values read from WordPress, never computed). */
+export interface RankMathReportView {
+  mode: string;
+  active: boolean;
+  target: number;
+  score: number | null;
+  scoreText: string | null;
+  scoreVia: string | null;
+  fields: { focusKeyword: string | null; title: string | null; description: string | null } | null;
+  fieldsVerified: boolean;
+  fieldProblems: string[];
+  recommendations: { text: string; state: string }[];
+  rounds: { round: number; kind: string; scoreBefore: number | null; scoreAfter?: number | null; changes: string[]; accepted: boolean; reasons?: string[]; before?: string; after?: string }[];
+  editor: string | null;
+  invalidBlocksFixed: number;
+  editorSave: string | null;
+  notes: string[];
+  checkedAt: string;
+}
 
 export async function getTaskDetail(id: string) {
   const task = await db.articleTask.findUnique({
@@ -36,6 +57,7 @@ export async function getTaskDetail(id: string) {
     config: parseJson<Record<string, unknown>>(task.configSnapshot, {}),
     metricsValues: parseJson<Record<string, unknown>>(task.metrics, {}),
     routeDecisionValue: parseJson<Record<string, unknown>>(task.routeDecision, {}),
+    rankMathReportValue: parseJson<RankMathReportView | null>(task.rankMathReport, null),
     logs,
     jobs,
     incidents,
@@ -53,6 +75,13 @@ export function serializeDetail(detail: TaskDetail) {
     editedHtml: detail.editedHtml ? sanitizeArticleHtml(detail.editedHtml) : null,
     assembledHtml: detail.assembledHtml ? sanitizeArticleHtml(detail.assembledHtml) : null,
     quickBioHtml: detail.quickBioHtml ? sanitizeArticleHtml(detail.quickBioHtml) : null,
+    // Correction rounds are shown as text only.
+    rankMathReportValue: detail.rankMathReportValue
+      ? {
+          ...detail.rankMathReportValue,
+          rounds: detail.rankMathReportValue.rounds.map((r) => ({ ...r, before: r.before ? stripTags(r.before) : undefined, after: r.after ? stripTags(r.after) : undefined })),
+        }
+      : null,
   };
   return JSON.parse(JSON.stringify(safe)) as SerializedTaskDetail;
 }

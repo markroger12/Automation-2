@@ -21,7 +21,9 @@ export function cannedAnswer(stageKey: string, prompt: string, language: 'en' | 
     case 'FAQS': {
       const n = Number(/exactly (\d+)/.exec(prompt)?.[1] ?? '5');
       return Array.from({ length: n }, (_, i) =>
-        de ? `QUESTION: Frage ${i + 1} zu ${keyword}?\nANSWER: Eine kurze, sachliche Antwort Nummer ${i + 1}.` : `QUESTION: Question ${i + 1} about ${keyword}?\nANSWER: A short factual answer number ${i + 1}.`,
+        de
+          ? `QUESTION: Frage ${i + 1} zu ${i === 0 ? keyword : 'den beiden'}?\nANSWER: Eine kurze, sachliche Antwort Nummer ${i + 1}.`
+          : `QUESTION: Question ${i + 1} about ${i === 0 ? keyword : 'the couple'}?\nANSWER: A short factual answer number ${i + 1}.`,
       ).join('\n\n');
     }
     case 'QUICK_BIO': {
@@ -64,7 +66,8 @@ function tigramArticle(language: 'en' | 'de', keyword: string): string {
       ? `Beim Thema ${t} lohnt sich ein genauer Blick, denn Punkt ${i} entscheidet oft über die Zufriedenheit. Prüfe die offiziellen Angaben und vergleiche sie mit deinen Anforderungen, bevor du eine Wahl triffst.`
       : `When it comes to ${t.toLowerCase()}, point ${i} often decides whether users are happy. Check the official information and compare it with your own needs before you decide.`;
   const sections = topics.slice(0, 5).map((t, i) => `## ${t}\n\n${para(t, i + 1)} ${para(t, i + 2)}\n\n${para(t, i + 3)}`).join('\n\n');
-  const faqs = Array.from({ length: 7 }, (_, i) => (de ? `### Frage ${i + 1} zu ${keyword}?\n\nKurze Antwort ${i + 1}.` : `### Question ${i + 1} about ${keyword}?\n\nShort answer ${i + 1}.`)).join('\n\n');
+  const subject = (i: number) => (i === 0 ? keyword : de ? 'diesem Thema' : 'this topic');
+  const faqs = Array.from({ length: 7 }, (_, i) => (de ? `### Frage ${i + 1} zu ${subject(i)}?\n\nKurze Antwort ${i + 1}.` : `### Question ${i + 1} about ${subject(i)}?\n\nShort answer ${i + 1}.`)).join('\n\n');
   return [
     `SEO TITLE: ${keyword}: ${de ? 'Der komplette Leitfaden' : 'The Complete Guide'}`,
     `META DESCRIPTION: ${de ? `Alles über ${keyword}: Installation, Einstellungen, Sicherheit und Alternativen verständlich erklärt.` : `Everything about ${keyword}: installation, settings, security and alternatives explained clearly for beginners.`}`,

@@ -3,7 +3,7 @@
  * (Settings → Advanced → selectorOverrides) are tried first. Supports English
  * and German admin interfaces.
  */
-export const SELECTORS_VERSION = '2026.10.14-1';
+export const SELECTORS_VERSION = '2026.10.14-2';
 
 export const SELECTORS = {
   loggedIn: ['#wpadminbar', 'body.wp-admin', '#adminmenu'],
@@ -32,6 +32,7 @@ export const SELECTORS = {
   categoryRowSlug: ['td.slug', 'td.column-slug'],
   categoryRowCount: ['td.posts', 'td.column-posts'],
   rankMathScore: [
+    '.rank-math-toolbar-score .score-text',
     '.rank-math-toolbar-score .rank-math-score',
     '.rank-math-toolbar-score',
     '.rank-math-seo-score .score-text',

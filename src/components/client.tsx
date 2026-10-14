@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Check, Clipboard, LoaderCircle, Moon, Sun, X } from 'lucide-react';
-import { buttonClasses, cx } from './ui';
+import { buttonClasses, cx, formatRelative } from './ui';
 
 export function Button({
   children,
@@ -253,4 +253,9 @@ export function usePersistentState<T>(key: string, initial: T): [T, (v: T | ((p:
     }
   }, [key, value]);
   return [value, setValue];
+}
+
+/** "12s ago"-style time. Server and browser render it a moment apart, so a small text difference is expected. */
+export function RelativeTime({ value }: { value: Date | string | null | undefined }) {
+  return <span suppressHydrationWarning>{formatRelative(value)}</span>;
 }

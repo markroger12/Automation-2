@@ -6,8 +6,8 @@ import { Ban, ExternalLink, Play, RotateCcw, Search } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { moduleDisplayName } from '@/lib/domain';
 import type { TaskListRow } from '@/lib/tasks/query';
-import { Button, ConfirmDialog, usePersistentState, useToast } from './client';
-import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime, formatRelative } from './ui';
+import { Button, ConfirmDialog, usePersistentState, useToast, RelativeTime } from './client';
+import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime } from './ui';
 
 type Group = 'all' | 'queued' | 'running' | 'review' | 'paused' | 'draft' | 'failed' | 'cancelled';
 const GROUPS: { id: Group; label: string }[] = [
@@ -322,7 +322,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                       ) : null}
                       {r.job ? (
                         <div className="text-muted">
-                          {r.job.status === 'ACTIVE' ? `worker ${r.job.owner?.slice(0, 15)}…` : new Date(r.job.runAt) > new Date() ? `next run ${formatRelative(r.job.runAt)}` : 'ready'}
+                          {r.job.status === 'ACTIVE' ? `worker ${r.job.owner?.slice(0, 15)}…` : new Date(r.job.runAt) > new Date() ? <>next run <RelativeTime value={r.job.runAt} /></> : 'ready'}
                         </div>
                       ) : !r.chatgpt ? (
                         <span className="text-muted">—</span>
@@ -344,7 +344,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                     </td>
                   ) : null}
                   <td className="text-muted text-xs whitespace-nowrap" title={formatDateTime(mode === 'queue' ? r.updatedAt : r.createdAt)}>
-                    {mode === 'queue' ? formatRelative(r.updatedAt) : formatDateTime(r.createdAt)}
+                    {mode === 'queue' ? <RelativeTime value={r.updatedAt} /> : formatDateTime(r.createdAt)}
                   </td>
                   <td className="text-right whitespace-nowrap">
                     {(r.status === 'LOGIN_REQUIRED' || r.status === 'PAUSED') && !r.legacy ? (

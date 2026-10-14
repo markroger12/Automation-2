@@ -119,7 +119,10 @@ export async function resumeLoginPausedTasks(scope: { websiteId: string } | { ch
       ? { status: 'LOGIN_REQUIRED', pausedFor: 'wordpress-login', websiteId: scope.websiteId }
       : { status: { in: ['LOGIN_REQUIRED', 'PAUSED'] }, pausedFor: { in: ['chatgpt-login', 'chatgpt-human-check'] } };
   const tasks = await client.articleTask.findMany({ where, select: { id: true } });
-  for (const t of tasks) await resumeTask(t.id, 'websiteId' in scope ? 'wordpress-session-ready' : 'chatgpt-session-ready', client);
+  for (const t of tasks) {
+    await client.articleTask.update({ where: { id: t.id }, data: { status: 'QUEUED', pausedFor: null, message: 'Session is active again; resuming.', nextAction: null } });
+    await resumeTask(t.id, 'websiteId' in scope ? 'wordpress-session-ready' : 'chatgpt-session-ready', client);
+  }
   return tasks.length;
 }
 

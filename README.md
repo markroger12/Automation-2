@@ -55,6 +55,20 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 | `npm run db:backup -- --media` | Consistent backup to `data\backups\` |
 | `npm run db:restore -- <folder>` | Restore a backup (stop the app first; current DB is moved aside) |
 | `npm run typecheck` / `npm test` / `npm run test:integration` | Quality gates |
+| `npm run test:e2e:wordpress` | Optional: draft/publish-guard tests against a **disposable** WordPress (see below) |
+
+### Testing against a disposable WordPress
+
+Only ever point this at a throw-away site — it creates drafts and deliberately tries (and must fail) to publish them.
+
+```powershell
+$env:WP_E2E_ADMIN_URL = "http://localhost:8080/wp-admin/"
+$env:WP_E2E_USER = "admin"            # credentials of the DISPOSABLE site only
+$env:WP_E2E_PASSWORD = "..."
+npm run test:e2e:wordpress
+```
+
+The test types these credentials itself (simulating you in the login window); the app never stores them.
 
 ## Data folder (`data\`, git-ignored)
 

@@ -27,7 +27,7 @@ export interface WebsiteFormValues {
   notes: string;
   settingsOverrides: {
     content: { maxArticleWordCount?: number; faqCount?: number; quickBioRows?: number };
-    seo: { articleImages?: boolean; imagesRequired?: boolean; externalLinks?: boolean; internalLinks?: boolean; rankMathTargetScore?: number; reviewThreshold?: number };
+    seo: { articleImages?: boolean; imagesRequired?: boolean; externalLinks?: boolean; internalLinks?: boolean; rankMathTargetScore?: number; reviewThreshold?: number; rankMathMode?: 'required' | 'if-installed' | 'off' };
     workflow: { manualTitleApproval?: boolean; manualArticleApproval?: boolean };
   };
 }
@@ -194,6 +194,18 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
           </Field>
           <Field label="Rank Math target" htmlFor="ov-rm">
             <Input id="ov-rm" type="number" value={values.settingsOverrides.seo.rankMathTargetScore ?? ''} onChange={(e) => setOv('seo', 'rankMathTargetScore', optNum(e.target.value))} />
+          </Field>
+          <Field label="Rank Math on this site" htmlFor="ov-rmmode">
+            <Select
+              id="ov-rmmode"
+              value={values.settingsOverrides.seo.rankMathMode ?? ''}
+              onChange={(e) => setOv('seo', 'rankMathMode', (e.target.value || undefined) as 'required' | 'if-installed' | 'off' | undefined)}
+            >
+              <option value="">Global default</option>
+              <option value="required">Required</option>
+              <option value="if-installed">Use when installed</option>
+              <option value="off">Off</option>
+            </Select>
           </Field>
           <Field label="SEO review threshold" htmlFor="ov-rt">
             <Input id="ov-rt" type="number" value={values.settingsOverrides.seo.reviewThreshold ?? ''} onChange={(e) => setOv('seo', 'reviewThreshold', optNum(e.target.value))} />

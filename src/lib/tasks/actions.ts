@@ -230,3 +230,72 @@ export async function saveMetadata(taskId: string, raw: unknown) {
   await audit('task.edit-metadata', 'ArticleTask', taskId, { fields: Object.keys(input).filter((k) => k !== 'baseVersion') });
   return { ok: true, version: updated.version };
 }
+
+export const wordpressActionSchema = z
+  .object({
+    /** resave: save/verify again (same post); overwrite-remote: replace edits made in WordPress;
+     *  recreate: create a new draft when the old one is gone or the earlier attempt is ambiguous;
+     *  adopt: use an existing post found during reconciliation. */
+    mode: z.enum(['resave', 'overwrite-remote', 'recreate', 'adopt']).default('resave'),
+    adoptPostId: z.number().int().positive().optional(),
+  })
+  .refine((v) => v.mode !== 'adopt' || v.adoptPostId, { message: 'Choose the post to use.', path: ['adoptPostId'] });
+
+const WP_REASON = /^(Rank Math|WordPress draft|Draft #|Final check|The draft could not|Post #|An earlier save may have created)/;
+
+/** WordPress-step settings as they are NOW (the owner may have changed them before re-saving). */
+async function currentWordPressConfig(task: { websiteId: string; options: string }): Promise<Partial<EffectiveTaskConfig>> {
+  const site = await db.website.findUniqueOrThrow({ where: { id: task.websiteId } });
+  const options = taskOptionsSchema.safeParse(parseJson(task.options, {}));
+  const config = effectiveTaskConfig(await getSettings(), parseSiteOverrides(site.settingsOverrides), options.success ? options.data : taskOptionsSchema.parse({}));
+  return {
+    rankMathMode: config.rankMathMode,
+    rankMathTargetScore: config.rankMathTargetScore,
+    maxRankMathAttempts: config.maxRankMathAttempts,
+    rankMathContentCorrection: config.rankMathContentCorrection,
+    createMissingTags: config.createMissingTags,
+  };
+}
+
+/** Run the WordPress steps again for the SAME draft (never a second post unless the owner chooses “recreate”). */
+export async function resaveToWordPress(taskId: string, raw: unknown) {
+  const task = await loadTask(taskId);
+  await assertIdle(taskId);
+  const input = wordpressActionSchema.parse(raw ?? {});
+  if (!task.assembledHtml && !task.editedHtml) throw new AppError(409, 'NOT_READY', 'The article is not assembled yet.');
+  const options = parseJson<Record<string, unknown>>(task.options, {});
+  delete options.wpOverwriteRemoteEdits;
+  delete options.wpRecreate;
+  delete options.wpAdoptPostId;
+  options.saveToWordPress = true;
+  if (input.mode === 'overwrite-remote') options.wpOverwriteRemoteEdits = true;
+  if (input.mode === 'recreate') options.wpRecreate = true;
+  if (input.mode === 'adopt') options.wpAdoptPostId = input.adoptPostId;
+  const plan = ['WORDPRESS_DRAFT', 'RANKMATH', 'VERIFIED_COMPLETE'];
+  const stageErrors = new Set((await db.articleStage.findMany({ where: { taskId, key: { in: plan } }, select: { error: true } })).map((s) => s.error).filter(Boolean));
+  await db.articleStage.updateMany({
+    where: { taskId, key: { in: plan } },
+    data: { status: 'PENDING', error: null, message: `WordPress step requested (${input.mode})`, startedAt: null, completedAt: null, durationMs: null, outputJson: null, privateState: '{}' },
+  });
+  // Drop reasons produced by the WordPress steps themselves; they are re-evaluated by the new run.
+  const reasons = parseJson<string[]>(task.reviewReasons, []).filter((r) => !WP_REASON.test(r) && !stageErrors.has(r));
+  await db.articleTask.update({
+    where: { id: taskId },
+    data: {
+      options: JSON.stringify(options),
+      status: 'QUEUED',
+      message: input.mode === 'resave' ? 'Saving to WordPress again.' : `WordPress: ${input.mode.replace('-', ' ')} requested by the owner.`,
+      nextAction: null,
+      reviewReasons: JSON.stringify(reasons),
+      verifiedCompleteAt: null,
+      wpVerifiedAt: null,
+      ...(input.mode === 'recreate' || input.mode === 'adopt' ? { wpCreateMarker: null } : {}),
+      configSnapshot: JSON.stringify({ ...parseJson<Record<string, unknown>>(task.configSnapshot, {}), ...(await currentWordPressConfig(task)), saveToWordPress: true }),
+      version: { increment: 1 },
+    },
+  });
+  await db.recoveryIncident.updateMany({ where: { taskId, status: 'OPEN', kind: 'UNCERTAIN_WP_CREATE' }, data: { status: 'RESOLVED', resolvedAt: new Date(), resolution: `owner chose ${input.mode}${input.adoptPostId ? ` #${input.adoptPostId}` : ''}` } });
+  await audit('task.wordpress', 'ArticleTask', taskId, { mode: input.mode, adoptPostId: input.adoptPostId ?? null, wpPostId: task.wpPostId });
+  await ensureArticleRun(taskId, `wordpress:${input.mode}`);
+  return { ok: true, mode: input.mode };
+}

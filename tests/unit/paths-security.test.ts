@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isValidSlug, resolveDatabaseUrl, safeJoin, slugify } from '@/lib/paths';
@@ -20,10 +21,25 @@ describe('paths', () => {
   });
 
   it('resolves the relative SQLite URL against prisma/ and keeps forward slashes', () => {
-    const url = resolveDatabaseUrl('file:../data/app.db');
-    expect(url.startsWith('file:')).toBe(true);
-    expect(url).toContain('/data/app.db?');
-    expect(url).toContain('socket_timeout=');
+    const saved = process.env.BAS_DATA_DIR;
+    try {
+      delete process.env.BAS_DATA_DIR;
+      const url = resolveDatabaseUrl('file:../data/app.db');
+      expect(url.startsWith('file:')).toBe(true);
+      expect(url).toContain('/data/app.db?');
+      expect(url).toContain('socket_timeout=');
+      // BAS_DATA_DIR moves the database too, unless DATABASE_URL was customized.
+      const elsewhere = path.resolve(os.tmpdir(), 'bas-elsewhere');
+      const fwd = (p: string) => p.split(path.sep).join('/');
+      process.env.BAS_DATA_DIR = elsewhere;
+      expect(resolveDatabaseUrl('file:../data/app.db')).toContain(`file:${fwd(path.join(elsewhere, 'app.db'))}?`);
+      expect(resolveDatabaseUrl('')).toContain(`file:${fwd(path.join(elsewhere, 'app.db'))}?`);
+      const custom = fwd(path.resolve(os.tmpdir(), 'custom', 'my.db'));
+      expect(resolveDatabaseUrl(`file:${custom}`)).toContain(`file:${custom}?`);
+    } finally {
+      if (saved === undefined) delete process.env.BAS_DATA_DIR;
+      else process.env.BAS_DATA_DIR = saved;
+    }
     expect(() => resolveDatabaseUrl('postgres://x')).toThrow();
   });
 });

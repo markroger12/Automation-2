@@ -141,6 +141,10 @@ model ArticleTask {
   wpDraftAt          DateTime?
   wpModifiedGmt      String?
   wpCreateMarker     String?
+  wpContentHash      String? // sha256 of the content WordPress stored at the app's last verified save
+  wpSlug             String?
+  wpVerifiedAt       DateTime? // last full read-back verification (VERIFIED_COMPLETE)
+  rankMathReport     String? // JSON: fields, score, recommendations, correction rounds (read from WordPress, never computed)
   verifiedCompleteAt DateTime?
   idempotencyKey     String            @unique
   version            Int               @default(0)

@@ -9,6 +9,10 @@ import { audit } from '@/lib/audit';
 import { resumeLoginPausedTasks } from '@/lib/tasks/lifecycle';
 import { anyOf } from './selectors';
 import { boundedGoto, captureScreenshot, closeSiteContext, dismissOverlays, firstPage, withSiteContext, type SiteRef } from './browser';
+import { withOwnerWindowPermit } from './publish-guard';
+import { WpClient } from './client';
+import { LoginRequiredError } from '@/lib/pipeline-errors';
+import { parseJson } from '@/lib/json';
 
 export type SessionCheck = { state: 'ACTIVE' | 'LOGIN_REQUIRED' | 'ERROR'; detail: string; url?: string; adminLanguage?: string | null };
 
@@ -44,6 +48,11 @@ export async function checkSessionOnPage(page: Page, site: SiteRef, timeoutMs: n
   return { state: 'ERROR', detail: `Unexpected page at ${page.url()} (no admin bar and no login form). A security plugin, maintenance page or host overlay may be in the way.`, url: page.url(), adminLanguage: lang };
 }
 
+function pickCapabilities(raw: string | null | undefined): Record<string, unknown> {
+  const d = parseJson<Record<string, unknown>>(raw, {});
+  return Object.fromEntries(Object.entries(d).filter(([k]) => ['rest', 'rankMath', 'restError'].includes(k)));
+}
+
 async function recordSession(site: Website, check: SessionCheck, extra: Record<string, unknown> = {}) {
   if (!site.wordpressProfileId) return;
   const before = await db.browserProfile.findUnique({ where: { id: site.wordpressProfileId } });
@@ -53,7 +62,8 @@ async function recordSession(site: Website, check: SessionCheck, extra: Record<s
       sessionState: check.state,
       lastCheckedAt: new Date(),
       ...(check.state === 'ACTIVE' && before?.sessionState !== 'ACTIVE' ? { lastLoginAt: new Date() } : {}),
-      diagnostics: JSON.stringify({ detail: check.detail, url: check.url ?? null, adminLanguage: check.adminLanguage ?? null, ...extra, checkedAt: new Date().toISOString() }),
+      // Keep the last REST/Rank Math capability result unless this check measured it again.
+      diagnostics: JSON.stringify({ ...pickCapabilities(before?.diagnostics), detail: check.detail, url: check.url ?? null, adminLanguage: check.adminLanguage ?? null, ...extra, checkedAt: new Date().toISOString() }),
     },
   });
   if (check.state === 'ACTIVE' && before?.sessionState !== 'ACTIVE') {
@@ -66,13 +76,25 @@ async function recordSession(site: Website, check: SessionCheck, extra: Record<s
 export async function testSession(site: Website): Promise<SessionCheck> {
   const settings = await getSettings();
   const timeout = settings.browser.navigationTimeoutSec * 1000;
+  let capabilities: Record<string, unknown> = {};
   const result = await withSiteContext(siteRef(site), { headed: settings.browser.mode === 'headed', purpose: 'test-session' }, async (context) => {
     const page = await firstPage(context);
     const check = await checkSessionOnPage(page, siteRef(site), timeout);
     if (check.state === 'ERROR' && settings.browser.screenshots) await captureScreenshot(page, `${site.slug}-session-error`);
+    if (check.state === 'ACTIVE') {
+      // Can the logged-in session reach the REST API the drafts use? Is Rank Math active?
+      try {
+        const client = await WpClient.connect(context, siteRef(site), { timeoutMs: timeout });
+        capabilities = { rest: true, rankMath: client.hasRankMath };
+      } catch (error) {
+        capabilities = { rest: false, restError: (error as Error).message };
+      }
+    }
     return check;
   });
-  await recordSession(site, result);
+  if (result.state === 'ACTIVE' && capabilities.rest === false) result.detail += ` But the REST API is not reachable: ${String(capabilities.restError)}`;
+  else if (result.state === 'ACTIVE') result.detail += capabilities.rankMath ? ' REST API reachable; Rank Math detected.' : ' REST API reachable; Rank Math NOT detected.';
+  await recordSession(site, result, capabilities);
   await log({ level: result.state === 'ACTIVE' ? 'info' : 'warn', category: 'wordpress', message: `${site.name}: session ${result.state} — ${result.detail}` });
   return result;
 }
@@ -111,19 +133,26 @@ export async function interactiveLogin(site: Website, heartbeat: () => Promise<b
   return result;
 }
 
-/** Open a visible admin window for manual work; returns when the owner closes it (or after 30 min). */
-export async function openAdminWindow(site: Website, heartbeat: () => Promise<boolean>): Promise<{ closed: boolean }> {
+/**
+ * Open a visible admin window for manual work; returns when the owner closes
+ * it (or after 30 min). The publish guard stays active: publishing by hand is
+ * only possible here when the site allows publishing.
+ */
+export async function openAdminWindow(site: Website, heartbeat: () => Promise<boolean>): Promise<{ closed: boolean; publishingAllowed: boolean }> {
   const settings = await getSettings();
-  return withSiteContext(siteRef(site), { headed: true, purpose: 'open-browser' }, async (context) => {
-    const page = await firstPage(context);
-    await boundedGoto(page, site.adminUrl, settings.browser.navigationTimeoutSec * 1000).catch(() => {});
-    const deadline = Date.now() + 30 * 60_000;
-    while (Date.now() < deadline && context.pages().length > 0) {
-      await heartbeat();
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    return { closed: context.pages().length === 0 };
-  });
+  const { result, publishingAllowed } = await withOwnerWindowPermit(site.id, () =>
+    withSiteContext(siteRef(site), { headed: true, purpose: 'open-browser' }, async (context) => {
+      const page = await firstPage(context);
+      await boundedGoto(page, site.adminUrl, settings.browser.navigationTimeoutSec * 1000).catch(() => {});
+      const deadline = Date.now() + 30 * 60_000;
+      while (Date.now() < deadline && context.pages().length > 0) {
+        await heartbeat();
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      return { closed: context.pages().length === 0 };
+    }),
+  );
+  return { ...result, publishingAllowed };
 }
 
 export interface RemoteCategory {
@@ -134,47 +163,26 @@ export interface RemoteCategory {
   count: number | null;
 }
 
-/** Read categories through the authenticated REST API (nonce from admin-ajax), with admin-table fallback. */
+/** Read categories through the authenticated REST API (logged-in session + nonce), with admin-table fallback. */
 export async function fetchCategories(page: Page, site: SiteRef, timeoutMs: number): Promise<{ categories: RemoteCategory[]; via: 'rest' | 'admin' }> {
   if (!/\/wp-admin\//.test(page.url())) await boundedGoto(page, site.adminUrl, timeoutMs);
   const adminBase = site.adminUrl;
-  const siteBase = adminBase.replace(/wp-admin\/$/, '');
-  const rest = await page
-    .evaluate(
-      async ({ adminBase, siteBase }) => {
-        const nonceRes = await fetch(`${adminBase}admin-ajax.php?action=rest-nonce`, { credentials: 'same-origin' });
-        const nonce = nonceRes.ok ? (await nonceRes.text()).trim() : '';
-        const headers: Record<string, string> = nonce && nonce !== '0' && nonce !== '-1' ? { 'X-WP-Nonce': nonce } : {};
-        const out: { id: number; name: string; slug: string; parent: number; count: number }[] = [];
-        for (const root of [`${siteBase}wp-json/`, `${siteBase}?rest_route=/`]) {
-          out.length = 0;
-          let ok = true;
-          for (let p = 1; p <= 50; p++) {
-            const sep = root.includes('?') ? '&' : '?';
-            const res = await fetch(`${root}wp/v2/categories${sep}per_page=100&page=${p}&_fields=id,name,slug,parent,count`, { credentials: 'same-origin', headers });
-            if (res.status === 400 && p > 1) break;
-            if (!res.ok) {
-              ok = false;
-              break;
-            }
-            const items = (await res.json()) as typeof out;
-            if (!Array.isArray(items)) {
-              ok = false;
-              break;
-            }
-            out.push(...items);
-            const total = Number(res.headers.get('X-WP-TotalPages') ?? '1');
-            if (p >= total || items.length < 100) break;
-          }
-          if (ok && out.length) return out;
-        }
-        return null;
-      },
-      { adminBase, siteBase },
-    )
-    .catch(() => null);
-  if (rest && rest.length) {
-    return { categories: rest.map((c) => ({ id: c.id, name: decodeEntities(c.name), slug: c.slug ?? null, parent: c.parent || null, count: c.count ?? null })), via: 'rest' };
+  try {
+    const client = await WpClient.connect(page.context(), site, { timeoutMs });
+    const out: RemoteCategory[] = [];
+    for (let p = 1; p <= 50; p++) {
+      const res = await client.call<{ id: number; name: string; slug: string; parent: number; count: number }[]>('GET', '/wp/v2/categories', {
+        query: { per_page: 100, page: p, _fields: 'id,name,slug,parent,count' },
+      });
+      const items = Array.isArray(res.data) ? res.data : [];
+      out.push(...items.map((c) => ({ id: c.id, name: decodeEntities(c.name), slug: c.slug ?? null, parent: c.parent || null, count: c.count ?? null })));
+      const total = Number(res.headers['x-wp-totalpages'] ?? '1');
+      if (p >= total || items.length < 100) break;
+    }
+    if (out.length) return { categories: out, via: 'rest' };
+  } catch (error) {
+    if (error instanceof LoginRequiredError) throw error;
+    // REST blocked or unusual: fall back to the admin table below.
   }
   // Fallback: the categories admin table.
   const sel = await overrides();
@@ -184,11 +192,13 @@ export async function fetchCategories(page: Page, site: SiteRef, timeoutMs: numb
     const rows = await page.$$eval(
       anyOf('categoryRows', sel),
       (trs, cfg) =>
-        trs.map((tr) => {
-          const q = (s: string) => tr.querySelector(s);
-          const name = (q(cfg.name)?.textContent ?? '').replace(/^[—–-]\s*/g, '').trim();
-          return { id: Number((tr.id || '').replace('tag-', '')), name, slug: (q(cfg.slug)?.textContent ?? '').trim() || null, count: Number((q(cfg.count)?.textContent ?? '').trim()) || 0 };
-        }),
+        // No named inner functions here: this runs inside the page (see browser.ts about __name).
+        trs.map((tr) => ({
+          id: Number((tr.id || '').replace('tag-', '')),
+          name: (tr.querySelector(cfg.name)?.textContent ?? '').replace(/^[—–-]\s*/g, '').trim(),
+          slug: (tr.querySelector(cfg.slug)?.textContent ?? '').trim() || null,
+          count: Number((tr.querySelector(cfg.count)?.textContent ?? '').trim()) || 0,
+        })),
       { name: anyOf('categoryRowName', sel), slug: anyOf('categoryRowSlug', sel), count: anyOf('categoryRowCount', sel) },
     );
     const fresh = rows.filter((r) => r.id > 0 && r.name && !categories.some((c) => c.id === r.id));

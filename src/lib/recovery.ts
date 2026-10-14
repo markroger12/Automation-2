@@ -17,6 +17,7 @@ export interface IncidentInput {
 
 /** Record a recovery incident once (deduplicated). */
 export async function openIncident(input: IncidentInput, client: Tx = db): Promise<void> {
+  if (await client.recoveryIncident.findUnique({ where: { dedupeKey: input.dedupeKey }, select: { id: true } })) return;
   try {
     await client.recoveryIncident.create({
       data: {

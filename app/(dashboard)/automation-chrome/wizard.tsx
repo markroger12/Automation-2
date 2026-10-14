@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CircleCheck, CircleDashed, Pause, Play, Rocket, Send } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { Button, CopyButton, useToast } from '@/components/client';
+import { Button, CopyButton, RelativeTime, useToast } from '@/components/client';
 import { ExtensionPairing } from '@/components/extension-pairing';
-import { Alert, Card, Chip, cx, formatRelative } from '@/components/ui';
+import { Alert, Card, Chip, cx } from '@/components/ui';
 import { Textarea } from '@/components/form';
 
 interface Step {
@@ -163,7 +163,7 @@ export function AutomationChromeWizard() {
               <span>Extension</span>
               <Chip tone={s.extension.state === 'connected' ? 'success' : 'warning'}>{s.extension.state}</Chip>
             </li>
-            <li className="text-muted text-xs">Last heartbeat {formatRelative(s.extension.lastSeenAt)} · {s.extension.tabs} ChatGPT tab(s)</li>
+            <li className="text-muted text-xs">Last heartbeat <RelativeTime value={s.extension.lastSeenAt} /> · {s.extension.tabs} ChatGPT tab(s)</li>
             <li className="flex justify-between">
               <span>ChatGPT jobs</span>
               <span className="tabular-nums">

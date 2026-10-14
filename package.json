@@ -26,7 +26,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:e2e:wordpress": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

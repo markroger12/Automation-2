@@ -23,6 +23,7 @@ export const workflowSettingsSchema = z.object({
   manualArticleApproval: z.boolean().default(false),
   autoSendToWordPress: z.boolean().default(true),
   createMissingCategory: z.boolean().default(false),
+  createMissingTags: z.boolean().default(true),
   taskConcurrency: z.number().int().min(1).max(5).default(3),
   adaptiveConcurrency: z.boolean().default(true),
   maxTaskConcurrency: z.number().int().min(1).max(5).default(5),
@@ -58,6 +59,10 @@ export const seoSettingsSchema = z.object({
   reviewThreshold: z.number().int().min(0).max(100).default(70),
   rankMathTargetScore: z.number().int().min(0).max(100).default(75),
   maxRankMathAttempts: z.number().int().min(0).max(3).default(3),
+  /** required: a site without Rank Math ends in review; if-installed: skipped when absent; off: never touched. */
+  rankMathMode: z.enum(['required', 'if-installed', 'off']).default('required'),
+  /** Allow the editable SEO_CORRECTION prompt (fact-preserving, guarded) when local fixes are not enough. */
+  rankMathContentCorrection: z.boolean().default(true),
   externalLinks: z.boolean().default(true),
   maxExternalLinks: z.number().int().min(0).max(10).default(5),
   internalLinks: z.boolean().default(true),
@@ -106,6 +111,7 @@ export const siteOverridesSchema = z.object({
     .pick({
       reviewThreshold: true,
       rankMathTargetScore: true,
+      rankMathMode: true,
       externalLinks: true,
       maxExternalLinks: true,
       internalLinks: true,
@@ -157,6 +163,8 @@ export interface EffectiveTaskConfig {
   reviewThreshold: number;
   rankMathTargetScore: number;
   maxRankMathAttempts: number;
+  rankMathMode: 'required' | 'if-installed' | 'off';
+  rankMathContentCorrection: boolean;
   externalLinks: boolean;
   maxExternalLinks: number;
   internalLinks: boolean;
@@ -166,6 +174,7 @@ export interface EffectiveTaskConfig {
   humanizerBatchWords: number;
   humanizerLengthTolerancePct: number;
   createMissingCategory: boolean;
+  createMissingTags: boolean;
   duplicateSimilarityReview: number;
   retryAttempts: number;
   generationTimeoutSec: number;
@@ -192,6 +201,8 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     reviewThreshold: pick(options.reviewThreshold, site.seo.reviewThreshold, global.seo.reviewThreshold),
     rankMathTargetScore: pick(options.rankMathTargetScore, site.seo.rankMathTargetScore, global.seo.rankMathTargetScore),
     maxRankMathAttempts: global.seo.maxRankMathAttempts,
+    rankMathMode: pick(site.seo.rankMathMode, global.seo.rankMathMode),
+    rankMathContentCorrection: global.seo.rankMathContentCorrection,
     externalLinks: pick(options.externalLinks, site.seo.externalLinks, global.seo.externalLinks),
     maxExternalLinks: pick(site.seo.maxExternalLinks, global.seo.maxExternalLinks),
     internalLinks: pick(options.internalLinks, site.seo.internalLinks, global.seo.internalLinks),
@@ -201,6 +212,7 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     humanizerBatchWords: global.content.humanizerBatchWords,
     humanizerLengthTolerancePct: global.content.humanizerLengthTolerancePct,
     createMissingCategory: pick(site.workflow.createMissingCategory, global.workflow.createMissingCategory),
+    createMissingTags: global.workflow.createMissingTags,
     duplicateSimilarityReview: global.seo.duplicateSimilarityReview,
     retryAttempts: global.workflow.retryAttempts,
     generationTimeoutSec: global.browser.generationTimeoutSec,

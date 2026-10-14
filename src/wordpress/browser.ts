@@ -6,6 +6,7 @@ import { browserLaunchBase } from '@/lib/browser-launch';
 import { dataPaths, profileDirForSlug } from '@/lib/paths';
 import { log } from '@/lib/log';
 import { anyOf } from './selectors';
+import { installPublishGuard } from './publish-guard';
 
 /**
  * Persistent WordPress browser profiles (data/profiles/<slug>), one context
@@ -53,6 +54,12 @@ async function launch(site: SiteRef, headed: boolean, options: { disableQuic?: b
     args: ['--no-first-run', '--no-default-browser-check', ...(options.disableQuic ? ['--disable-quic'] : [])],
   });
   context.setDefaultNavigationTimeout(60_000);
+  // The worker runs under tsx/esbuild, which wraps named functions in a `__name()` helper. Functions
+  // passed to page.evaluate are serialized into the page, where that helper does not exist — define a
+  // no-op so in-page code never fails with "__name is not defined".
+  await context.addInitScript({ content: 'window.__name = window.__name || function (f) { return f; };' });
+  // Every WordPress context gets the network-level publish guard before any page opens.
+  await installPublishGuard(context, site.id);
   for (const hook of contextHooks) await hook(context, site);
   return context;
 }
@@ -114,6 +121,20 @@ function isContextAlive(context: BrowserContext): boolean {
     return Boolean(context.browser()?.isConnected() ?? true);
   } catch {
     return false;
+  }
+}
+
+// Global limit on simultaneous WordPress browser operations (Settings → workflow.wordpressConcurrency).
+let wpActive = 0;
+const wpWaiters: (() => void)[] = [];
+export async function withWordPressSlot<T>(limit: number, fn: () => Promise<T>): Promise<T> {
+  while (wpActive >= Math.max(1, limit)) await new Promise<void>((resolve) => wpWaiters.push(resolve));
+  wpActive++;
+  try {
+    return await fn();
+  } finally {
+    wpActive--;
+    wpWaiters.shift()?.();
   }
 }
 

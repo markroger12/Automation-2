@@ -18,9 +18,10 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
     include: { wordpressProfile: true, categories: { orderBy: { name: 'asc' } }, _count: { select: { tasks: true } } },
   });
   if (!site) notFound();
-  const [jobs, audits] = await Promise.all([
+  const [jobs, audits, blockedAttempts] = await Promise.all([
     db.queueJob.findMany({ where: { queue: 'control', websiteId: id }, orderBy: { createdAt: 'desc' }, take: 8 }),
-    db.auditLog.findMany({ where: { entityType: 'Website', entityId: id }, orderBy: { createdAt: 'desc' }, take: 10 }),
+    db.auditLog.findMany({ where: { entityType: 'Website', entityId: id, action: { not: 'publish.blocked' } }, orderBy: { createdAt: 'desc' }, take: 10 }),
+    db.auditLog.count({ where: { entityType: 'Website', entityId: id, action: 'publish.blocked' } }),
   ]);
   const profile = site.wordpressProfile;
   const state = profile?.sessionState ?? 'UNKNOWN';
@@ -107,6 +108,8 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
                 { label: 'Detail', value: String(diag.detail ?? '—') },
                 { label: 'Admin language', value: String(diag.adminLanguage ?? '—') },
                 { label: 'Editor', value: `${site.editorType === 'AUTO' ? 'auto' : site.editorType.toLowerCase()} · detected ${site.detectedEditor?.toLowerCase() ?? '—'}` },
+                { label: 'REST API (drafts)', value: diag.rest === true ? 'reachable with the logged-in session' : diag.rest === false ? <span className="text-amber-600">not reachable — {String(diag.restError ?? '')}</span> : 'not tested yet (Test session)' },
+                { label: 'Rank Math', value: diag.rest === true ? (diag.rankMath ? 'detected' : 'not detected') : '—' },
                 { label: 'Admin URL', value: site.adminUrl },
               ]}
             />
@@ -164,6 +167,11 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <Card title="Publishing permission (canPublish)" description="Site-specific. Off by default.">
+          <p className="text-muted mb-3 text-sm">
+            The publish guard blocks every request that would publish, schedule, make private/pending or delete a post — from the editor UI, the REST API, Quick Edit, XML-RPC and every retry.
+            {site.canPublish ? ' With permission on, only the approved scheduler may change a post’s status (and you, by hand, in the “Open browser” window).' : ' Drafts only.'}
+            {blockedAttempts ? ` Blocked attempts so far: ${blockedAttempts}.` : ''}
+          </p>
           <PublishingPermission websiteId={site.id} canPublish={site.canPublish} allowLiveUpdates={site.allowLiveUpdates} />
           {audits.length ? (
             <div className="mt-4">

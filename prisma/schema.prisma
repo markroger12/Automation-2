@@ -107,6 +107,7 @@ model ArticleTask {
   errors             String            @default("[]")
   reviewReasons      String            @default("[]")
   nextAction         String?
+  pausedFor          String? // chatgpt-login | chatgpt-human-check | wordpress-login | usage-limit
   cancelRequested    Boolean           @default(false)
   options            String            @default("{}")
   configSnapshot     String            @default("{}")
@@ -431,6 +432,7 @@ model MediaAsset {
   websiteId   String?
   website     Website?     @relation(fields: [websiteId], references: [id], onDelete: SetNull)
   role        String // FEATURED | BODY1 | BODY2 | GALLERY | LOGO | UPLOAD
+  responseId  String? // ChatGPTResponse that produced this image (generated images)
   origin      String // GENERATED | UPLOADED | WIKIMEDIA | CHATGPT | RENDERED
   sourceUrl   String?
   filePath    String
@@ -450,10 +452,54 @@ model MediaAsset {
 
   @@index([taskId, role])
   @@index([sha256])
+  @@index([responseId])
 }
 
 model DataMigration {
   id        String   @id
   appliedAt DateTime @default(now())
   details   String   @default("{}")
+}
+
+/// Measured timing/outcome evidence. Unique keys prevent double counting on retries.
+model ProductionMetric {
+  id         String   @id @default(cuid())
+  kind       String // STAGE | CHATGPT | WORDPRESS | IMAGE | BACKOFF | ARTICLE_VERIFIED | QUEUE_WAIT
+  taskId     String?
+  stageKey   String?
+  moduleKey  String?
+  websiteId  String?
+  attempt    Int      @default(1)
+  outcome    String // COMPLETED | FAILED | SKIPPED | PAUSED | WAITING
+  startedAt  DateTime
+  endedAt    DateTime
+  durationMs Int
+  waitMs     Int      @default(0)
+  details    String   @default("{}")
+  dedupeKey  String   @unique
+  createdAt  DateTime @default(now())
+
+  @@index([kind, endedAt])
+  @@index([taskId])
+  @@index([websiteId, kind, endedAt])
+}
+
+/// Stalled jobs and uncertain external side effects found by recovery.
+model RecoveryIncident {
+  id          String    @id @default(cuid())
+  kind        String // EXPIRED_LEASE | UNCERTAIN_PROMPT | UNCERTAIN_WP_CREATE | UNCERTAIN_MEDIA | UNCERTAIN_SCHEDULE | STALLED
+  severity    String    @default("warning") // info | warning | critical
+  status      String    @default("OPEN") // OPEN | AUTO_RESOLVED | RESOLVED | DISMISSED
+  jobId       String?
+  taskId      String?
+  stageKey    String?
+  description String
+  evidence    String    @default("{}")
+  resolution  String?
+  dedupeKey   String    @unique
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  @@index([status, createdAt])
+  @@index([taskId])
 }

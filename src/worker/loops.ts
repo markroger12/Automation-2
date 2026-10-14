@@ -1,10 +1,28 @@
-import type { WorkerContext } from './runtime';
+import { registerLoop, type WorkerContext } from './runtime';
+import { ArticleDispatcher } from './dispatcher';
+import { healOrphanedTasks, recoverOnStartup, sweepExpiredLeases } from './recovery';
+import { controlTick } from './control';
+import { pruneDiagnostics } from './maintenance';
+import { registerBuiltInPipelines } from './pipelines';
+import { registerBuiltInControlHandlers } from './handlers';
 
-/** Registers the worker's processing loops. Queue processing arrives in M2. */
-export async function registerBuiltInLoops(_ctx: WorkerContext): Promise<void> {
-  // Intentionally empty in M1.
+let dispatcher: ArticleDispatcher | null = null;
+
+/** Registers the worker's processing loops. */
+export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
+  registerBuiltInPipelines();
+  registerBuiltInControlHandlers();
+  await recoverOnStartup(ctx.workerId);
+  dispatcher = new ArticleDispatcher(ctx.workerId);
+  const d = dispatcher;
+  registerLoop({ name: 'article-dispatcher', intervalMs: 1000, run: async (c) => d.tick(c.stopping) });
+  registerLoop({ name: 'control-queue', intervalMs: 1000, run: async (c) => controlTick(c.workerId, c.stopping) });
+  registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });
+  registerLoop({ name: 'orphan-healer', intervalMs: 60_000, run: async () => void (await healOrphanedTasks()) });
+  registerLoop({ name: 'retention', intervalMs: 6 * 3600_000, run: async () => void (await pruneDiagnostics()) });
 }
 
+/** Let in-flight article work reach a safe point before exit. */
 export async function onShutdown(): Promise<void> {
-  // Nothing to drain in M1.
+  if (dispatcher && dispatcher.activeCount > 0) await dispatcher.drain(10_000);
 }

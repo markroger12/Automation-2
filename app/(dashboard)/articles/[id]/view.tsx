@@ -1,0 +1,388 @@
+'use client';
+
+import Link from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Ban, ExternalLink, Play, RotateCcw } from 'lucide-react';
+import { api } from '@/lib/client/api';
+import type { SerializedTaskDetail } from '@/lib/tasks/detail';
+import { Button, ConfirmDialog, CopyButton, Tabs, useToast } from '@/components/client';
+import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, cx, formatDateTime, formatDuration, formatRelative } from '@/components/ui';
+import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
+import { ArticleExtraTabs, EXTRA_TABS } from './extra-tabs';
+
+const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'images', 'stages', 'prompts', 'logs', 'conversation'] as const;
+type TabId = (typeof BASE_TABS)[number];
+
+export function ArticleDetailView({ initial, initialTab }: { initial: SerializedTaskDetail; initialTab?: string }) {
+  const toast = useToast();
+  const router = useRouter();
+  const [task, setTask] = useState(initial);
+  const [tab, setTab] = useState<TabId>((BASE_TABS as readonly string[]).includes(initialTab ?? '') ? (initialTab as TabId) : 'overview');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const live = !['COMPLETED', 'CANCELLED', 'FAILED'].includes(task.status);
+
+  const reload = useCallback(async () => {
+    try {
+      const res = await api<{ task: SerializedTaskDetail }>(`/api/tasks/${task.id}`);
+      setTask(res.task);
+    } catch {
+      /* keep last state; banner below shows staleness via timestamps */
+    }
+  }, [task.id]);
+
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void reload();
+    }, 4000);
+    return () => clearInterval(id);
+  }, [live, reload]);
+
+  async function action(name: 'cancel' | 'retry' | 'resume') {
+    setBusy(name);
+    try {
+      await api(`/api/tasks/${task.id}/${name}`, { method: 'POST' });
+      toast('success', name === 'cancel' ? 'Cancellation requested.' : name === 'retry' ? 'Retry queued from the first unfinished stage.' : 'Resume queued.');
+      await reload();
+      router.refresh();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(null);
+      setConfirmCancel(false);
+    }
+  }
+
+  const tabs = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'titles', label: 'Titles' },
+    { id: 'research', label: 'Research' },
+    { id: 'editor', label: 'Editor' },
+    { id: 'seo', label: 'SEO' },
+    { id: 'images', label: 'Images', badge: task.mediaAssets.length ? <Chip>{task.mediaAssets.length}</Chip> : undefined },
+    { id: 'stages', label: 'Stages' },
+    { id: 'prompts', label: 'Prompt / Response', badge: task.responses.length ? <Chip>{task.responses.length}</Chip> : undefined },
+    { id: 'logs', label: 'Logs' },
+    { id: 'conversation', label: 'Conversation' },
+  ];
+
+  return (
+    <>
+      <PageHeader
+        eyebrow={
+          <Link href="/queue" className="hover:underline">
+            ← Article Queue
+          </Link>
+        }
+        title={task.selectedTitle || task.keyword}
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            <StatusChip status={task.status} />
+            <span>{task.writerName}</span>·<span>{task.website.name}</span>·<span>{LANGUAGE_LABELS[task.language as Language] ?? task.language}</span>·<span>{task.targetCountry}</span>
+            {task.legacy ? <Chip>read-only legacy record</Chip> : null}
+          </span>
+        }
+        actions={
+          task.legacy ? null : (
+            <>
+              {task.status === 'LOGIN_REQUIRED' || task.status === 'PAUSED' ? (
+                <Button onClick={() => void action('resume')} loading={busy === 'resume'}>
+                  <Play className="h-4 w-4" /> Resume
+                </Button>
+              ) : null}
+              {['FAILED', 'CANCELLED', 'NEEDS_REVIEW'].includes(task.status) ? (
+                <Button onClick={() => void action('retry')} loading={busy === 'retry'}>
+                  <RotateCcw className="h-4 w-4" /> Retry
+                </Button>
+              ) : null}
+              {!['COMPLETED', 'CANCELLED', 'FAILED', 'DRAFT_CREATED'].includes(task.status) ? (
+                <Button variant="danger" onClick={() => setConfirmCancel(true)} loading={busy === 'cancel'}>
+                  <Ban className="h-4 w-4" /> Cancel
+                </Button>
+              ) : null}
+              {task.wpEditUrl ? (
+                <a className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700" href={task.wpEditUrl} target="_blank" rel="noreferrer">
+                  WordPress draft #{task.wpPostId} <ExternalLink className="h-4 w-4" />
+                </a>
+              ) : null}
+            </>
+          )
+        }
+      />
+
+      <div className="mb-4">
+        <ProgressBar value={task.percent} tone={task.group === 'failed' ? 'danger' : task.group === 'review' || task.group === 'paused' ? 'warning' : task.status === 'COMPLETED' ? 'success' : 'brand'} />
+        <div className="text-muted mt-1.5 flex flex-wrap justify-between gap-2 text-xs">
+          <span>
+            {task.stage ? <span className="font-mono">{task.stage}</span> : null} {task.message}
+          </span>
+          <span>
+            {task.percent}% · updated {formatRelative(task.updatedAt)}
+            {live ? ' · live' : ''}
+          </span>
+        </div>
+      </div>
+
+      {task.nextAction && ['review', 'paused', 'failed'].includes(task.group) ? (
+        <div className="mb-4">
+          <Alert tone={task.group === 'failed' ? 'danger' : 'warning'} title="Next action">
+            {task.nextAction}
+          </Alert>
+        </div>
+      ) : null}
+      {task.reviewReasonList.length > 0 && task.group === 'review' ? (
+        <div className="mb-4">
+          <Alert tone="warning" title="Review reasons">
+            <ul className="list-disc pl-5">
+              {task.reviewReasonList.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          </Alert>
+        </div>
+      ) : null}
+
+      <Tabs tabs={tabs} value={tab} onChange={(id) => setTab(id as TabId)} />
+      <div className="mt-4">
+        {tab === 'overview' ? <OverviewTab task={task} /> : null}
+        {tab === 'stages' ? <StagesTab task={task} /> : null}
+        {tab === 'prompts' ? <PromptsTab task={task} /> : null}
+        {tab === 'logs' ? <LogsTab task={task} /> : null}
+        {tab === 'conversation' ? <ConversationTab task={task} /> : null}
+        {(EXTRA_TABS as readonly string[]).includes(tab) ? <ArticleExtraTabs tab={tab as (typeof EXTRA_TABS)[number]} task={task} onChanged={reload} /> : null}
+      </div>
+
+      <ConfirmDialog open={confirmCancel} title="Cancel this article?" confirmLabel="Cancel article" tone="danger" busy={busy === 'cancel'} onCancel={() => setConfirmCancel(false)} onConfirm={() => void action('cancel')}>
+        Work stops at the next safe point. Completed outputs, prompts and responses are kept.
+      </ConfirmDialog>
+    </>
+  );
+}
+
+function OverviewTab({ task }: { task: SerializedTaskDetail }) {
+  const opts = task.optionValues as Record<string, unknown>;
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Card title="Input (as submitted)">
+        <KeyValue
+          items={[
+            { label: 'Primary keyword', value: <span className="font-medium">{task.keyword}</span> },
+            { label: 'Secondary keywords', value: task.secondaryKeywordList.length ? task.secondaryKeywordList.join(', ') : '—' },
+            { label: 'Example title', value: task.exampleTitle ?? '—' },
+            { label: 'Writer', value: task.writerName },
+            { label: 'Website', value: task.website.name },
+            { label: 'Category', value: task.categoryName ?? 'Not chosen yet' },
+            { label: 'Language / country', value: `${LANGUAGE_LABELS[task.language as Language] ?? task.language} · ${task.targetCountry}` },
+            { label: 'Source', value: task.source },
+            { label: 'Options', value: Object.keys(opts).length ? <code className="text-xs">{JSON.stringify(opts)}</code> : 'site defaults' },
+          ]}
+        />
+      </Card>
+      <Card title="Result">
+        <KeyValue
+          items={[
+            { label: 'Selected title', value: task.selectedTitle ?? '—' },
+            { label: 'SEO title', value: task.seoTitle ?? '—' },
+            { label: 'Meta description', value: task.metaDescription ?? '—' },
+            { label: 'Slug', value: task.slug ?? '—' },
+            { label: 'Focus keyword', value: task.focusKeyword ?? '—' },
+            { label: 'Internal SEO score', value: task.seoScore ?? '—' },
+            { label: 'Rank Math score', value: task.rankMathScore ?? <span className="text-muted">not verified</span> },
+            { label: 'WordPress', value: task.wpEditUrl ? <a className="text-indigo-600 underline" href={task.wpEditUrl} target="_blank" rel="noreferrer">post #{task.wpPostId} ({task.wpPostStatus ?? 'draft'})</a> : '—' },
+            { label: 'Verified complete', value: task.verifiedCompleteAt ? formatDateTime(task.verifiedCompleteAt) : '—' },
+          ]}
+        />
+      </Card>
+      <Card title="Timeline">
+        <KeyValue
+          items={[
+            { label: 'Created', value: formatDateTime(task.createdAt) },
+            { label: 'Started', value: formatDateTime(task.startedAt) },
+            { label: 'Draft saved', value: formatDateTime(task.wpDraftAt) },
+            { label: 'Completed', value: formatDateTime(task.completedAt) },
+            { label: 'ChatGPT conversation', value: task.conversationUrl ? <a className="text-indigo-600 underline" href={task.conversationUrl} target="_blank" rel="noreferrer">open</a> : '—' },
+          ]}
+        />
+      </Card>
+      <Card title="Errors & incidents">
+        {task.errorList.length === 0 && task.incidents.length === 0 ? (
+          <p className="text-muted text-sm">No errors recorded.</p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {task.incidents.map((i) => (
+              <li key={i.id}>
+                <Chip tone={i.status === 'OPEN' ? 'warning' : 'neutral'}>{i.kind}</Chip> {i.description}
+              </li>
+            ))}
+            {task.errorList
+              .slice()
+              .reverse()
+              .map((e, i) => (
+                <li key={i} className="text-rose-700 dark:text-rose-300">
+                  <span className="text-muted text-xs">{formatDateTime(e.at)}</span> {e.stage ? <code className="text-xs">{e.stage}</code> : null} {e.message}
+                </li>
+              ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function StagesTab({ task }: { task: SerializedTaskDetail }) {
+  if (task.stages.length === 0) return <Card><EmptyState title="No stages yet" description="Stages are created when the worker starts this task." /></Card>;
+  return (
+    <Card padded={false}>
+      <table className="table-app">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Stage</th>
+            <th>Kind</th>
+            <th>Status</th>
+            <th>Attempts</th>
+            <th>Duration</th>
+            <th>Message / error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {task.stages.map((s) => (
+            <tr key={s.id}>
+              <td className="text-muted tabular-nums">{s.position}</td>
+              <td>
+                <div className="font-medium">{s.label}</div>
+                <code className="text-muted text-[11px]">{s.key}</code>
+              </td>
+              <td className="text-xs">{s.kind}</td>
+              <td>
+                <Chip tone={s.status === 'COMPLETED' ? 'success' : s.status === 'FAILED' ? 'danger' : s.status === 'RUNNING' ? 'info' : s.status === 'WAITING' ? 'warning' : 'neutral'}>{s.status.toLowerCase()}</Chip>
+              </td>
+              <td className="tabular-nums">{s.attempts}</td>
+              <td className="text-xs whitespace-nowrap">{formatDuration(s.durationMs)}</td>
+              <td className="max-w-[420px] text-xs">
+                {s.error ? <span className="text-rose-700 dark:text-rose-300">{s.error}</span> : s.message}
+                {s.promptVersion ? <div className="text-muted">prompt {s.promptVersion}</div> : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+function PromptsTab({ task }: { task: SerializedTaskDetail }) {
+  if (task.responses.length === 0) return <Card><EmptyState title="No prompts sent yet" description="Each ChatGPT prompt is stored exactly as submitted, with its answer." /></Card>;
+  return (
+    <div className="space-y-4">
+      {task.responses.map((r) => (
+        <Card
+          key={r.id}
+          title={
+            <span className="flex flex-wrap items-center gap-2">
+              <code>{r.stageKey}</code> attempt {r.attempt}
+              <Chip tone={r.status === 'COMPLETED' ? 'success' : r.status === 'PENDING' ? 'info' : r.status === 'FAILED' ? 'danger' : 'neutral'}>{r.status.toLowerCase()}</Chip>
+              {r.recovered ? <Chip tone="warning">recovered</Chip> : null}
+              {r.reused ? <Chip>reused</Chip> : null}
+              {r.conversationSwitch ? <Chip tone="warning">new conversation</Chip> : null}
+            </span>
+          }
+          description={`${formatDateTime(r.createdAt)}${r.elapsedMs ? ` · ${formatDuration(r.elapsedMs)}` : ''} · op ${r.operationId}`}
+        >
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-muted text-xs font-semibold uppercase">Exact prompt</span>
+                <CopyButton text={r.renderedPrompt} />
+              </div>
+              <pre className="surface-2 max-h-80 overflow-auto rounded-lg p-3 text-xs whitespace-pre-wrap">{r.renderedPrompt}</pre>
+            </div>
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-muted text-xs font-semibold uppercase">Answer</span>
+                {r.resultText ? <CopyButton text={r.resultText} /> : null}
+              </div>
+              {r.resultText ? (
+                <pre className="surface-2 max-h-80 overflow-auto rounded-lg p-3 text-xs whitespace-pre-wrap">{r.resultText}</pre>
+              ) : (
+                <p className="text-muted text-sm">{r.error ?? 'Waiting for the ChatGPT extension…'}</p>
+              )}
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function LogsTab({ task }: { task: SerializedTaskDetail }) {
+  if (task.logs.length === 0) return <Card><EmptyState title="No log entries" /></Card>;
+  return (
+    <Card padded={false}>
+      <div className="max-h-[70vh] overflow-auto">
+        <table className="table-app">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Level</th>
+              <th>Stage</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {task.logs.map((l) => (
+              <tr key={l.id}>
+                <td className="text-muted text-xs whitespace-nowrap">{formatDateTime(l.createdAt)}</td>
+                <td>
+                  <Chip tone={l.level === 'error' ? 'danger' : l.level === 'warn' ? 'warning' : 'neutral'}>{l.level}</Chip>
+                </td>
+                <td className="text-xs">{l.stage ?? '—'}</td>
+                <td className="text-sm break-words">
+                  {l.message}
+                  {l.screenshotPath ? (
+                    <a className="ml-2 text-xs text-indigo-600 underline" href={`/api/files/screenshot?path=${encodeURIComponent(l.screenshotPath)}`} target="_blank" rel="noreferrer">
+                      screenshot
+                    </a>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function ConversationTab({ task }: { task: SerializedTaskDetail }) {
+  const completed = task.responses.filter((r) => r.status === 'COMPLETED' || r.status === 'PENDING');
+  return (
+    <Card
+      title="ChatGPT conversation"
+      description="Successive prompts of one article run in one conversation whenever possible. Conversation switches are recorded."
+      actions={task.conversationUrl ? <a className="text-sm text-indigo-600 underline" href={task.conversationUrl} target="_blank" rel="noreferrer">Open in Automation Chrome</a> : undefined}
+    >
+      {completed.length === 0 ? (
+        <EmptyState title="No conversation yet" />
+      ) : (
+        <ol className="space-y-4">
+          {completed.map((r) => (
+            <li key={r.id} className="space-y-2">
+              {r.conversationSwitch ? <Alert tone="warning">Conversation switched here: the previous chat could not be recovered, so a new chat started with a source-faithful primer.</Alert> : null}
+              <div className="ml-auto max-w-[85%] rounded-xl bg-indigo-50 px-3 py-2 text-sm whitespace-pre-wrap dark:bg-indigo-950">
+                <div className="text-muted mb-1 text-[11px]">You · {r.stageKey}</div>
+                {r.renderedPrompt.length > 600 ? r.renderedPrompt.slice(0, 600) + '…' : r.renderedPrompt}
+              </div>
+              <div className={cx('surface-2 max-w-[85%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap')}>
+                <div className="text-muted mb-1 text-[11px]">ChatGPT {r.conversationUrl ? '· saved' : ''}</div>
+                {r.resultText ? (r.resultText.length > 1200 ? r.resultText.slice(0, 1200) + '…' : r.resultText) : <em className="text-muted">waiting…</em>}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </Card>
+  );
+}

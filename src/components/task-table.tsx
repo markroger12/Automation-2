@@ -304,7 +304,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                   </td>
                   {mode === 'queue' ? (
                     <td>
-                      <ProgressBar value={r.percent} tone={r.group === 'failed' ? 'danger' : r.group === 'paused' || r.group === 'review' ? 'warning' : r.status === 'COMPLETED' ? 'success' : 'brand'} />
+                      <ProgressBar label={`Progress of ${r.keyword}`} value={r.percent} tone={r.group === 'failed' ? 'danger' : r.group === 'paused' || r.group === 'review' ? 'warning' : r.status === 'COMPLETED' ? 'success' : 'brand'} />
                       <div className="text-muted mt-1 line-clamp-2 text-xs">
                         {r.stage ? <span className="font-mono">{r.stage}</span> : null} {r.message}
                       </div>

@@ -156,11 +156,11 @@ export function KeyValue({ items }: { items: { label: ReactNode; value: ReactNod
   );
 }
 
-export function ProgressBar({ value, tone = 'brand' }: { value: number; tone?: 'brand' | 'success' | 'danger' | 'warning' }) {
+export function ProgressBar({ value, tone = 'brand', label = 'Progress' }: { value: number; tone?: 'brand' | 'success' | 'danger' | 'warning'; label?: string }) {
   const color = { brand: 'bg-indigo-500', success: 'bg-emerald-500', danger: 'bg-rose-500', warning: 'bg-amber-500' }[tone];
   const v = Math.max(0, Math.min(100, Math.round(value)));
   return (
-    <div className="surface-2 h-1.5 w-full overflow-hidden rounded-full" role="progressbar" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100}>
+    <div className="surface-2 h-1.5 w-full overflow-hidden rounded-full" role="progressbar" aria-label={label} aria-valuenow={v} aria-valuemin={0} aria-valuemax={100}>
       <div className={cx('h-full rounded-full transition-all', color)} style={{ width: `${v}%` }} />
     </div>
   );

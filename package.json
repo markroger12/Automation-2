@@ -28,11 +28,13 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "postinstall": "prisma generate",
-    "test:e2e:wordpress": "vitest run --config vitest.e2e.config.ts"
+    "test:e2e:wordpress": "vitest run --config vitest.e2e.config.ts",
+    "audit:a11y": "tsx scripts/a11y-audit.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
     "cheerio": "1.2.0",
+    "dompurify": "3.4.16",
     "lucide-react": "1.57.0",
     "marked": "18.1.1",
     "next": "15.5.27",
@@ -51,6 +53,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@types/sanitize-html": "2.16.2",
+    "axe-core": "4.13.0",
     "concurrently": "10.0.6",
     "postcss": "8.5.6",
     "prisma": "6.19.3",

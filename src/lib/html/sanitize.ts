@@ -1,4 +1,5 @@
 import sanitizeHtml from 'sanitize-html';
+import { ARTICLE_ATTRIBUTES, ARTICLE_TAGS } from './allowlist';
 
 /**
  * Allow-listed article HTML. Applied before saving model output and again
@@ -6,20 +7,8 @@ import sanitizeHtml from 'sanitize-html';
  * URLs never survive.
  */
 const OPTIONS: sanitizeHtml.IOptions = {
-  allowedTags: [
-    'p', 'h2', 'h3', 'h4', 'strong', 'b', 'em', 'i', 'u', 'a', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
-    'figure', 'figcaption', 'img', 'blockquote', 'br', 'hr', 'span', 'code', 'sup', 'sub',
-  ],
-  allowedAttributes: {
-    a: ['href', 'title', 'rel', 'target', 'data-bas-link'],
-    img: ['src', 'alt', 'width', 'height', 'loading', 'data-bas-media', 'class'],
-    figure: ['class', 'data-bas-slot'],
-    th: ['scope', 'colspan', 'rowspan'],
-    td: ['colspan', 'rowspan'],
-    table: ['class'],
-    p: ['class', 'data-bas-internal-link'],
-    span: ['class'],
-  },
+  allowedTags: ARTICLE_TAGS,
+  allowedAttributes: ARTICLE_ATTRIBUTES,
   allowedSchemes: ['http', 'https', 'mailto'],
   allowedSchemesByTag: { img: ['http', 'https', 'data'] },
   allowProtocolRelative: false,

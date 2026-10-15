@@ -7,7 +7,7 @@ A private, **Windows-first, local** dashboard for a publisher running several En
 - **Draft-only by default.** Publishing/scheduling requires a per-site `canPublish` switch *and* the scheduler path.
 - WordPress passwords are never asked for, typed or stored: you log in once per site in a visible browser window.
 
-> Build progress, verified commands and known limitations are tracked in [BUILD_STATUS.md](BUILD_STATUS.md).
+> Build progress, verified commands and known limitations are tracked in [BUILD_STATUS.md](BUILD_STATUS.md); the release steps are in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
 ## Requirements
 
@@ -42,6 +42,38 @@ npm run start:all      # production build: dashboard + worker
 
 Open **http://localhost:3000**. Only one worker can own the `data\` folder; a second one refuses to start.
 
+## First run
+
+1. **Automation Chrome** (sidebar): follow the five checked steps — start the dedicated Chrome window, load the unpacked extension from the `extension\` folder, paste the one-time connection key, sign in to ChatGPT yourself. “Send test prompt” proves the round trip.
+2. **Websites → Add website**: public URL, language, country and time zone. Then **Log in** opens a visible window where *you* sign in to WordPress (leave “Remember Me” ticked, or the sign-in ends when the window closes). **Sync categories** and pick a default category.
+3. **Single Article**: enter a keyword and generate. The finished article is saved as a **WordPress draft** and read back to verify it.
+4. Optional: **Bulk Campaigns**, **Workflow / Calendar**, **Image Template**, **Settings**.
+
+## Updating
+
+```powershell
+# stop npm run dev:all / start:all first
+git pull
+npm install
+npm run setup          # backs up and migrates the database; never deletes your data
+npm run build          # only if you use start:all
+```
+
+Then reload the extension in Automation Chrome (`chrome://extensions` → reload) if the release notes mention a new extension version; the Automation Chrome page shows when the version does not match.
+
+## Troubleshooting (Windows)
+
+| Symptom | What to do |
+| --- | --- |
+| `npm` scripts refuse to run (“running scripts is disabled”) | Run once in PowerShell: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
+| `Port 3000 is already in use` | Another dashboard is running: close it, or find it with `netstat -ano \| findstr :3000` |
+| “Another worker owns the data folder” | Only one worker may run. Close the other window; a crashed worker's lock is taken over automatically once its PID is gone |
+| Chrome not found | Install Google Chrome, or set `BROWSER_CHANNEL="msedge"` (Edge) or `BROWSER_EXECUTABLE_PATH` in `.env` |
+| WordPress keeps asking to log in | Log in again with “Remember Me” ticked; security plugins that end sessions on browser close need that option |
+| Files in `data\` are locked / “EBUSY” | Exclude the project folder from real-time antivirus scanning, and stop the app before restoring a backup |
+| The extension shows “disconnected” | Open Automation Chrome; check the key on the Automation Chrome page; **Logs / Diagnostics → Checks** runs the setup check and a test prompt |
+| Something else | **Logs / Diagnostics → Download diagnostic bundle** (cookies, keys, tokens and passwords are stripped) |
+
 ## Scripts
 
 | Script | Purpose |
@@ -56,6 +88,7 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 | `npm run db:restore -- <folder>` | Restore a backup (stop the app first; current DB is moved aside) |
 | `npm run typecheck` / `npm test` / `npm run test:integration` | Quality gates |
 | `npm run test:e2e:wordpress` | Optional: draft/publish-guard tests against a **disposable** WordPress (see below) |
+| `npm run audit:a11y` | Accessibility audit (axe-core, WCAG 2.1 AA, light and dark) of the running dashboard |
 
 ### Testing against a disposable WordPress
 
@@ -119,3 +152,6 @@ Backups use SQLite `VACUUM INTO`, so they are consistent even while the worker r
 - The dashboard has no accounts by design (owner request). Do not expose port 3000 to a network; it binds to `127.0.0.1`.
 - The ChatGPT extension authenticates with a one-time-displayed connection key (`bas_…`); only its hash is stored.
 - Logs and the diagnostic bundle redact cookies, tokens, keys and passwords.
+- Every outside page the app reads (link checks, images, plagiarism sources) goes through one SSRF-safe fetcher: public addresses only (checked again on every redirect), size and time limits, no cookies.
+- Article HTML is allow-listed before it is saved and again before it is shown, including unsaved edits in the editor.
+- Optional `SERPER_API_KEY` (plagiarism web search) stays in `.env`; it is sent only to that API and never logged or shown.

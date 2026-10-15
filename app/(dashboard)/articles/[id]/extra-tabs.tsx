@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Code2, Columns2, Eye, RefreshCcw, Save, Undo2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
+import { inertBody, sanitizeForDisplay } from '@/lib/html/sanitize-client';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { ImagesTab } from './images-tab';
 import { Button, CopyButton, useToast } from '@/components/client';
@@ -124,18 +125,16 @@ function ResearchTab({ task }: { task: SerializedTaskDetail }) {
   );
 }
 
+// Parsed inertly: owner-typed HTML is never executed by these helpers.
 function htmlToText(html: string): string {
-  if (typeof document === 'undefined') return html;
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  return div.innerText;
+  const body = inertBody(html.replace(/<\/(p|h[1-6]|li|td|th|div|blockquote|figcaption)>|<br\s*\/?>/gi, '$& '));
+  return body ? (body.textContent ?? '').replace(/\s+/g, ' ').trim() : html;
 }
 
 function paragraphs(html: string): string[] {
-  if (typeof document === 'undefined') return [];
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  return Array.from(div.querySelectorAll('p,h2,h3,li,td')).map((e) => (e as HTMLElement).innerText.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const body = inertBody(html);
+  if (!body) return [];
+  return Array.from(body.querySelectorAll('p,h2,h3,li,td')).map((e) => (e.textContent ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
 }
 
 function EditorTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged: () => Promise<void> }) {
@@ -164,7 +163,9 @@ function EditorTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    if (mode === 'visual' && editorRef.current && editorRef.current.innerHTML !== html) editorRef.current.innerHTML = html;
+    if (mode !== 'visual' || !editorRef.current) return;
+    const safe = sanitizeForDisplay(html);
+    if (editorRef.current.innerHTML !== safe) editorRef.current.innerHTML = safe;
   }, [mode, html]);
   useEffect(() => {
     const t = setTimeout(() => {
@@ -298,11 +299,11 @@ function EditorTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged:
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <div className="text-muted mb-2 text-xs font-semibold uppercase">Generated original</div>
-              <div className="article-preview max-h-[600px] overflow-auto rounded-lg border p-3" dangerouslySetInnerHTML={{ __html: original }} />
+              <div className="article-preview max-h-[600px] overflow-auto rounded-lg border p-3" dangerouslySetInnerHTML={{ __html: sanitizeForDisplay(original) }} />
             </div>
             <div>
               <div className="text-muted mb-2 text-xs font-semibold uppercase">Current edit</div>
-              <div className="article-preview max-h-[600px] overflow-auto rounded-lg border p-3" dangerouslySetInnerHTML={{ __html: html }} />
+              <div className="article-preview max-h-[600px] overflow-auto rounded-lg border p-3" dangerouslySetInnerHTML={{ __html: sanitizeForDisplay(html) }} />
             </div>
             <div className="md:col-span-2">
               <div className="text-muted mb-1 text-xs font-semibold uppercase">

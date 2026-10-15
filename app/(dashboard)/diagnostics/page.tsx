@@ -1,6 +1,7 @@
 import { collectDiagnostics } from '@/lib/diagnostics';
 import { Card, Chip, EmptyState, KeyValue, PageHeader, formatDateTime, formatRelative } from '@/components/ui';
 import { DiagnosticsActions } from './actions';
+import { DiagnosticChecks } from './checks';
 
 export const metadata = { title: 'Diagnostics' };
 
@@ -43,9 +44,39 @@ export default async function DiagnosticsPage() {
               { label: 'Last seen', value: formatRelative(d.extension.lastSeenAt) },
               { label: 'Version', value: d.extension.version ?? '—' },
               { label: 'Open ChatGPT tabs', value: d.extension.tabs },
-              { label: 'Last backoff / 429', value: String((d.extension.diagnostics as Record<string, unknown>).backoff ?? '—') },
+              { label: 'Capabilities', value: Object.keys(d.extension.capabilities).length ? Object.entries(d.extension.capabilities).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(' · ') : '—' },
             ]}
           />
+        </Card>
+        <Card title="ChatGPT rate limits">
+          <KeyValue
+            items={[
+              { label: 'Backoff', value: d.chatgptRate.backoffUntil && new Date(d.chatgptRate.backoffUntil) > new Date() ? <Chip tone="warning">until {formatDateTime(d.chatgptRate.backoffUntil)}</Chip> : <Chip tone="success">none</Chip> },
+              { label: 'Last 429 / usage limit', value: d.chatgptRate.last429At ? `${formatDateTime(d.chatgptRate.last429At)} (${formatRelative(d.chatgptRate.last429At)})${d.chatgptRate.reason ? ` — ${d.chatgptRate.reason}` : ''}` : 'never' },
+              { label: 'Recent 429s', value: d.chatgptRate.recent429Count },
+              { label: 'Current concurrency', value: `${d.chatgptRate.concurrency} (step ${d.chatgptRate.step})` },
+              { label: 'Last success', value: d.chatgptRate.lastSuccessAt ? formatRelative(d.chatgptRate.lastSuccessAt) : '—' },
+            ]}
+          />
+        </Card>
+        <DiagnosticChecks sessions={d.sessions.map((x) => ({ ...x, lastCheckedAt: x.lastCheckedAt ? new Date(x.lastCheckedAt).toISOString() : null }))} failedStages={d.failedStages} />
+        <Card title="Failing page snapshots" description="What the extension saw on the ChatGPT page when a step failed (page variant, composer, send/stop buttons…). No cookies or page text.">
+          {d.failureSnapshots.length === 0 ? (
+            <p className="text-muted text-sm">None recorded.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {d.failureSnapshots.map((f) => (
+                <li key={f.id}>
+                  <details>
+                    <summary className="cursor-pointer">
+                      {formatDateTime(f.updatedAt)} · {f.kind} · <Chip tone={f.status === 'FAILED' ? 'danger' : 'neutral'}>{f.status.toLowerCase()}</Chip> {f.errorCode ?? ''} <span className="text-muted">{(f.error ?? '').slice(0, 120)}</span>
+                    </summary>
+                    <pre className="surface-2 mt-1 max-h-64 overflow-auto rounded p-2 text-xs">{JSON.stringify(f.snapshot, null, 2)}</pre>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
         <Card title="Queue" padded={false}>
           {d.queue.counts.length === 0 ? (

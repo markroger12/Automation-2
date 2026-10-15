@@ -91,7 +91,7 @@ function NavLink({ item, pathname, depth, onNavigate }: { item: NavItem; pathnam
       <Icon className={cx('shrink-0', depth > 0 ? 'h-3.5 w-3.5' : 'h-4 w-4')} aria-hidden />
       <span className="truncate">{item.label}</span>
       {soon ? (
-        <span className="ml-auto rounded bg-slate-100 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400" title="Not built yet in this milestone">
+        <span className="ml-auto rounded bg-slate-100 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300" title="Not built yet in this milestone">
           soon
         </span>
       ) : null}

@@ -34,6 +34,17 @@
   color-scheme: dark;
 }
 
+/* Dark mode contrast (WCAG AA): components written with the light-mode shade get the brighter one. */
+.dark .text-indigo-600 {
+  color: var(--color-indigo-400, #818cf8);
+}
+.dark .text-amber-700 {
+  color: var(--color-amber-300, #fcd34d);
+}
+.dark .text-zinc-500 {
+  color: var(--color-zinc-400, #a1a1aa);
+}
+
 html,
 body {
   background: var(--bg);

@@ -100,7 +100,7 @@ export default async function OverviewPage() {
                         <StatusChip status={task.status} />
                       </td>
                       <td>
-                        <ProgressBar value={task.percent} tone={task.status === 'FAILED' ? 'danger' : task.status === 'COMPLETED' ? 'success' : 'brand'} />
+                        <ProgressBar label={`Progress of ${task.keyword}`} value={task.percent} tone={task.status === 'FAILED' ? 'danger' : task.status === 'COMPLETED' ? 'success' : 'brand'} />
                       </td>
                       <td className="text-muted whitespace-nowrap">{formatRelative(task.updatedAt)}</td>
                     </tr>

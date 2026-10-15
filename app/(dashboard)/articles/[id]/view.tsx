@@ -141,7 +141,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
       />
 
       <div className="mb-4">
-        <ProgressBar value={task.percent} tone={task.group === 'failed' ? 'danger' : task.group === 'review' || task.group === 'paused' ? 'warning' : task.status === 'COMPLETED' ? 'success' : 'brand'} />
+        <ProgressBar label="Article progress" value={task.percent} tone={task.group === 'failed' ? 'danger' : task.group === 'review' || task.group === 'paused' ? 'warning' : task.status === 'COMPLETED' ? 'success' : 'brand'} />
         <div className="text-muted mt-1.5 flex flex-wrap justify-between gap-2 text-xs">
           <span>
             {task.stage ? <span className="font-mono">{task.stage}</span> : null} {task.message}

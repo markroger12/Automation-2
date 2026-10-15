@@ -123,7 +123,7 @@ export function CampaignDetail({ id }: { id: string }) {
         }
       >
         {c.message ? <p className="text-muted mb-3 text-sm">{c.message}</p> : null}
-        <ProgressBar value={tasks ? (done / tasks) * 100 : 0} />
+        <ProgressBar label="Campaign progress" value={tasks ? (done / tasks) * 100 : 0} />
         <div className="mt-2 flex flex-wrap gap-2 text-sm">
           <Chip tone="success">{p.drafts} drafts</Chip>
           <Chip tone="info">{p.running} running</Chip>

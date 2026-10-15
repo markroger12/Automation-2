@@ -28,7 +28,7 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M13 Research evidence ledger, internal-link decisions | ✅ done (local fake web; live sources not checked here) |
 | M14 Image Studio and WordPress manager hardening | ✅ done (fake + real WordPress 6.5/6.7 verified; the owner's Chrome and live sites not verified here) |
 | M15 Search Performance and Content Refresh | ✅ done (fixture exports + fake and real WordPress 6.5/6.7 verified; live Search Console data and live sites not verified here) |
-| M16 Analytics, Website Control, recovery, benchmark report | ☐ |
+| M16 Analytics, Website Control, recovery, benchmark report | ✅ done (seeded data + real WordPress 6.5/6.7 e2e; the live 2-hour benchmark is NOT RUN) |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
 
 ---
@@ -850,3 +850,116 @@ The audit found one dark-mode contrast problem in existing code: job errors on t
 - **Indexing**: a URL Inspection API or automated indexing checks are not built.
 - **Content refresh text**: there is no ChatGPT-assisted rewrite. The owner writes the new text; only dead links are fixed automatically.
 - **Freshness wording**: only the listed marker phrases are recognised.
+
+## M16 — Productivity analytics, Website Control Center, recovery and the benchmark report ✅ (live benchmark NOT RUN)
+
+**Working**
+- **Productivity Analytics** (upgrades 01 and 15; `src/lib/analytics/`, `/productivity`):
+  - **Evidence only**:
+    - a verified draft is the `ARTICLE_VERIFIED` metric written once per article when its WordPress draft was read back and verified, with the post ID and edit URL as proof;
+    - stage times are `STAGE` metrics;
+    - unique metric keys mean retries and restarts never count twice (tested by recording the same event again);
+    - metrics now carry the app version, so stage medians can be compared per release.
+  - **Throughput**:
+    - rolling 15/60/120-minute counts and rates (window boundaries tested to the second);
+    - a 14-day trend in Pakistan days;
+    - 7-day totals by website, writer and campaign;
+    - the latest verified drafts with their WordPress posts.
+  - **Where time goes**:
+    - the slowest stages (p50/p90 by nearest rank, retries, failures) and the whole-article median/p90;
+    - ChatGPT limits (24 h) and time in backoff;
+    - review/approval/paused load, quality-gate results (7 days) and the top reasons articles stopped;
+    - CSV of verified drafts and of stage timings.
+  - **Target vs actual**: 6 verified drafts in EACH of the last two consecutive hours.
+    - PASS or FAIL;
+    - **claim suspended** when ChatGPT limits, a login/check pause or a stopped worker interfered (“target temporarily unattainable: …”);
+    - **no work to measure** when nothing was queued.
+
+    The capacity figure (slots × 60 ÷ measured median minutes per article) is labelled as an estimate.
+  - **Alerts**: worker not running, an article job waiting 15+ min past its start time (queue stall), ≥ 30 % failed stage runs in the last hour (at least 5 runs), ChatGPT backoff.
+  - **Speed profiles**: the existing high-throughput (3 adaptive slots, 1–5, halved on 429s) and quality-first (1 slot) profiles are shown with the current slot count. Both pass the same quality gate. The profile is chosen in Settings.
+- **2-hour benchmark report** (`npm run benchmark:report -- <start>`; `src/lib/analytics/benchmark.ts`): for the owner's live test, from stored evidence only.
+  - It lists:
+    - the verified articles of each hour with their WordPress post and edit URL, minutes from start, ChatGPT interactions and per-stage times;
+    - stage p50/p90 and retries in the window;
+    - articles stopped or failed in the window;
+    - logged pauses, ChatGPT limits, and the app/Node/worker/extension versions;
+    - the PASS / FAIL / SUSPENDED / NO_WORK verdict.
+  - It is saved as Markdown in `data/reports/`, and the exit code is 0 only on PASS.
+- **Website Control Center** (upgrade 14; `src/lib/website-control.ts`, `/website-control`):
+  - **One grid**: every website with language, time zone, WordPress session, measured health (M14), categories and default category, editor, internal-link line and index size, image template, prompt overrides, writer rules, Rank Math mode/target, workflow, Search Console property, publishing permission and article counts (incl. verified in 7 days).
+  - **Per-site controls** (validated, audited `website.controls`):
+    - **Pause/Resume** — the dispatcher starts no new articles for a paused site;
+    - **Priority** (−10…10);
+    - **Max in progress** (0 = no limit) — the dispatcher's per-site quota.
+  - **Check all sessions** queues one session test per active site (never two at once for a site).
+  - **Copy safe settings** (audited):
+    - copied: overrides, writer rules, the Rank Math target, and the image design without the source's logo and fixed photos;
+    - between sites of the same language only: the internal-link line and prompt overrides (skipped with the reason otherwise);
+    - never copied: URLs, the WordPress profile, categories, publishing permission, the Search Console property and pause/priority.
+  - **Isolation tests**: the same WordPress category ID on three sites — a task cannot use another site's category; publishing permission on one site stays off on the others; German/English text never crosses.
+- **Recovery Center**: stalled articles (running, no update for 30+ minutes) get **Resume from <stage>**, continuing from the saved checkpoint without resetting finished stages. Open incidents already offered resume/retry (M2).
+- **Search intent and SEO brief** (upgrade 04, the part that was missing; `src/lib/seo/intent.ts`, article SEO tab):
+  - **Intent**: deterministic EN/DE rules classify each keyword as biography, family/relationship, net worth estimate, explainer, comparison or how-to, with the reason and a confidence.
+    - Two person names → relationship.
+    - Surnames such as “Mann” do not count as family words.
+  - **Brief**: sections to cover in the article language, title/meta guidance, the FAQ focus, and the keyword guideline (a density guideline, “never repeat it unnaturally”). For net worth, figures are marked as estimates.
+    - Stored when the task is created (`ArticleTask.seoBrief`).
+    - Editable on the SEO tab (validated, audited `task.seo-brief`), with a reset to the suggestion.
+  - **Use**: appended to the LONG_ARTICLE / ARTICLE prompt unless the template places `{{seo_brief}}` itself.
+    - Setting “Add the SEO brief to writing prompts”, default on.
+    - Saved prompts are not changed.
+  - **Check**: an `info` SEO check shows which brief sections appear as headings. It never changes the score, and the gate ignores info checks.
+- Production metrics carry the app version (per-release stage baselines on the Productivity page).
+- Sidebar: no “soon” pages are left.
+
+**Commands run**
+```
+bash scripts/dev-create-migration.sh article_seo_brief     # ALTER TABLE ArticleTask ADD COLUMN seoBrief (no rebuild)
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 37 files, 254 tests (new: measurement + report 7, Website
+                                                           # Control 4, benchmark report 2, search intent / SEO brief 5)
+npx vitest run --config vitest.integration.config.ts <file>  # 9 files, 54 tests: 8 files passed on the first attempt;
+                                                           # extension 14/15 (see below), 15/15 after the harness fix
+npm run build                                              # compiled
+npm run setup + seed + npm run start:all  # UI smoke on a throwaway data dir (see below)
+npm run audit:a11y                                         # 58/58 page+theme combinations, no violations (now incl.
+                                                           # /productivity and /website-control)
+npm run benchmark:report  (smoke data dir)                 # Markdown report saved to data/reports/, verdict FAIL for the
+                                                           # seeded 2 + 3 drafts, exit code 1
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress              # final: 11/11 on WordPress 6.7-alpha and 11/11 on 6.5.5 (fresh databases;
+                                                           # two earlier runs hit test-harness races, see below)
+```
+- **Extension integration, first run**: one test failed before any prompt was sent. Playwright reported the extension's service worker before its `chrome.storage` API was bound (“Cannot read properties of undefined (reading 'local')” while pairing). This is a startup race in the test helper, not in the app. The helper now waits up to 15 s for the API; the whole file then passed 15/15.
+- **Real WordPress e2e, three runs.** Both failures were races in the test harness; no app code changed.
+  1. **6.7: 0/11 (all skipped); 6.5: 11/11.** The setup failed with `LOGIN_REQUIRED`.
+     - The PHP built-in server is single-threaded. A `wp-cron` loopback held it for 35 s, so the login page appeared late.
+     - The test's simulated owner checked for the login page once, after 1.5 s, and gave up. Nobody typed until the 90 s login window closed; the PHP log shows no login POST.
+     - Fix: the simulated owner now waits for `wp-login.php`.
+  2. **6.7: 10/11; 6.5: 11/11.** The “session expired” test timed out after 60 s.
+     - The test runs as soon as the admin bar exists, which is before the footer scripts load. Its `wp.heartbeat.connectNow()` therefore did nothing.
+     - The next regular dashboard heartbeat came 58 s later, too late for the test's 60 s wait.
+     - Fix: the test waits for `heartbeat.js` and page load before dropping the cookies.
+  3. **Final, fresh databases: 6.7 11/11 and 6.5 11/11**, at the commit with both fixes.
+- **UI smoke** (Chromium, built app + real worker):
+  - **Productivity**:
+    - last 15/60/120 min = 1/3/5 verified (4, 3 and 2.5 per hour);
+    - target vs actual “FAIL — 2 and 3 verified drafts…” with both windows listed;
+    - slowest stage LONG_ARTICLE (p50 6.0 min, p90 7.0 min);
+    - by website Celeb News 4 / Promi Welt 2; 6 proof rows;
+    - the CSV has 6 rows.
+  - **Website Control**: 2 cards; pause → “paused” shown; quota saved; copy EN → DE skipped the internal-link line because the language differs; session tests queued for 2 of 2 sites.
+  - **Recovery Center**: “Resume from LONG_ARTICLE” on an article idle for 45 minutes → “Resuming from LONG_ARTICLE.”
+  - No console errors.
+
+  The first seed gave the idle article a status that does not exist (`GENERATING_ARTICLE`), so the page rightly did not list it. Corrected in the seed (`WRITING_ARTICLE`); no app change.
+
+**Benchmark: NOT RUN.** The owner-authorized 2-hour live benchmark (6 verified drafts in each consecutive hour) needs the owner's signed-in ChatGPT, the paired extension and real WordPress sites. None of these exist in this container.
+- No PASS or FAIL is claimed for the real target.
+- The tooling to measure it is built and tested: the Productivity page and `npm run benchmark:report`.
+- RELEASE_CHECKLIST §4 says how to run it and where to record the result.
+
+**Not verified here**
+- Real throughput, real stage timings, ChatGPT 429 behaviour and Chrome health under load; all figures above come from seeded or scripted runs.
+- How well the intent rules match real keywords, and whether the appended brief improves real ChatGPT articles.
+- Chrome memory/health as a signal for the adaptive slots: not measured. Slots adapt to ChatGPT 429s, as since M2.

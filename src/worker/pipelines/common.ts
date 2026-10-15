@@ -7,6 +7,7 @@ import { runSeoChecks } from '@/lib/seo/checks';
 import { evaluateQuality, type QualityFinding } from '@/lib/quality/gate';
 import { latestQualityReport, saveQualityReport, type QualitySections } from '@/lib/quality/report';
 import { runDuplicateCheck } from '@/lib/duplicates/service';
+import { evaluateArticleEvidence } from '@/lib/research/ledger';
 import { baseVariables } from '@/lib/prompts/variables';
 import { recordMetric } from '@/lib/metrics';
 import { isNearDuplicate } from '@/lib/campaigns/dedupe';
@@ -254,6 +255,10 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
         message: `${Math.round((top?.wordingShare ?? 0) * 100)} % of the wording (longest identical run ${top?.longestRun ?? 0} words, ${top?.exactParagraphs ?? 0} identical paragraph(s)) repeats “${top?.otherTitle}” on ${top?.otherWebsite}. See Duplicate Review.`,
         source: 'DUPLICATES',
       });
+      // Research evidence: contradicted / unsupported high-impact claims in the article, and leaked research notes.
+      const ev = await evaluateArticleEvidence(t.id, articleHtml(ctx));
+      for (const h of ev.hardStops) result.hardStops.push({ code: 'RESEARCH_LEAK', message: h, source: 'ASSEMBLY' });
+      for (const w of ev.warnings) result.warnings.push({ code: 'EVIDENCE', message: w, source: 'RESEARCH_EVIDENCE' });
       if (dup.highest === 'HIGH' && !dup.overridden) result.hardStops.push(dupFinding('DUPLICATE_WORDING'));
       else if (dup.highest === 'MEDIUM' && !dup.overridden) result.warnings.push(dupFinding('DUPLICATE_SIMILAR'));
       result.passed = result.hardStops.length === 0;
@@ -265,7 +270,7 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
       const sections: QualitySections = {
         seo: { score: seo.score, threshold: ctx.config.reviewThreshold, failed: seo.checks.filter((c) => !c.passed).map((c) => c.label) },
         structure: { words: seo.metrics.words, faqCount: seo.metrics.faqCount, expectedFaqCount: t.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount, quickBioRows: seo.metrics.quickBioRows, quickBioColumnsOk: seo.metrics.quickBioColumnsOk, emptyHeadings: seo.metrics.emptyHeadings, duplicateSentences: seo.metrics.duplicateSentences },
-        evidence: research ? { sources: research.sources?.length ?? 0, uncertain: research.uncertain?.length ?? 0, warnings: research.warnings ?? [] } : null,
+        evidence: research ? { sources: research.sources?.length ?? 0, uncertain: research.uncertain?.length ?? 0, warnings: research.warnings ?? [], claims: ev.summary.claims, verified: ev.summary.verified, contradicted: ev.summary.contradicted, unsupportedInArticle: ev.summary.unsupportedInArticle } : null,
         duplicates: { highest: dup.highest, overridden: dup.overridden, overrideReason: dup.overrideReason, compared: dup.compared, matches: dup.comparisons.filter((c) => c.severity !== 'LOW').slice(0, 5).map((c) => ({ otherTaskId: c.otherTaskId, title: c.otherTitle, website: c.otherWebsite, severity: c.severity, wordingShare: c.wordingShare, longestRun: c.longestRun, factWords: c.factWords })) },
         links: { external: seo.metrics.externalLinks, internalLinkLine: Boolean(seo.metrics.internalLinkLine) },
         images: { count: seo.metrics.images, withAlt: seo.metrics.imagesWithAlt, required: ctx.config.images && ctx.config.imagesRequired },

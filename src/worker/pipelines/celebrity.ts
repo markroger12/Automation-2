@@ -7,6 +7,7 @@ import { TransientError } from '@/lib/pipeline-errors';
 import type { PipelineContext, PipelineDefinition, PipelineStage } from '../pipeline/types';
 import { articleApproval, assembly, bind, duplicatePrecheck, finalizeTask, precheck, qualityGate, seoCheck, stageFrom, syncTaskVariables, waiting } from './common';
 import { laterStages } from './later-stages';
+import { buildLedger } from '@/lib/research/ledger';
 
 const S = (key: string) => stageFrom(celebrityManifest.stages, key);
 
@@ -54,9 +55,11 @@ const stages: PipelineStage[] = [
   bind(S('RESEARCH_EVIDENCE'), {
     run: async (ctx) => {
       const analysis = analyzeResearch(ctx.task.researchNotes ?? '');
-      const warnings: string[] = [];
-      if (analysis.sources.length === 0) warnings.push('Research notes cite no checkable source URLs; treat facts as unverified until checked.');
-      return { outcome: 'completed', data: { ...analysis, warnings }, message: `${analysis.sources.length} source URL(s), ${analysis.uncertain.length} uncertainty note(s)` };
+      // Claims are checked against the cited sources (fetched SSRF-safe, same person only); see Research Evidence.
+      const ledger = await buildLedger(ctx.taskId);
+      const warnings = [...ledger.warnings];
+      const verified = (ledger.byStatus.VERIFIED ?? 0) + (ledger.byStatus.SINGLE_SOURCE ?? 0);
+      return { outcome: 'completed', data: { ...analysis, ledger, warnings }, message: `${ledger.claims} claim(s): ${verified} supported by a source, ${ledger.byStatus.CONTRADICTED ?? 0} contradicted · ${ledger.sources.ok} usable source(s)` };
     },
   }),
   bind(S('LONG_ARTICLE'), {

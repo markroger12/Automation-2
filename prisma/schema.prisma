@@ -172,6 +172,7 @@ model ArticleTask {
   plagiarismChecks   PlagiarismCheck[]
   seoReports         SEOReport[]
   fingerprints       ContentFingerprint[]
+  claims             ClaimEvidence[]
   duplicateMatches   DuplicateMatch[]
   qualityReports     ArticleQualityReport[]
   mediaAssets        MediaAsset[]
@@ -366,6 +367,51 @@ model ArticleQualityReport {
   createdAt DateTime    @default(now())
 
   @@index([taskId, createdAt])
+}
+
+/// One fetched source page (upgrade 03), cached per URL; reused across articles for 7 days.
+model SourceRecord {
+  id          String   @id @default(cuid())
+  url         String   @unique
+  host        String
+  title       String   @default("")
+  status      String // OK | DEAD | BLOCKED | NOT_HTML | FAILED
+  httpStatus  Int?
+  detail      String?
+  /// Readable text of the page (bounded), kept so claims can be re-checked without fetching again.
+  text        String   @default("")
+  contentHash String?
+  fetchedAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([host])
+}
+
+/// One significant claim from an article's research and the evidence for it (upgrade 03).
+model ClaimEvidence {
+  id               String      @id @default(cuid())
+  taskId           String
+  task             ArticleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  claimType        String // BIRTH | DEATH | FAMILY | EDUCATION | AWARD | NET_WORTH | CAREER
+  claimText        String
+  values           String      @default("{}")
+  nature           String // REPORTED_FACT | ESTIMATE | UNVERIFIED_CLAIM
+  highImpact       Boolean     @default(false)
+  status           String // VERIFIED | SINGLE_SOURCE | ESTIMATE | DISPUTED | CONTRADICTED | UNVERIFIED
+  citations        String      @default("[]")
+  /// [{ sourceId, url, host, verdict, excerpt, detail, observedAt }]
+  evidence         String      @default("[]")
+  articleParagraph Int?
+  ownerDecision    String? // ACCEPTED | OMIT | CORRECTED
+  ownerValue       String?
+  ownerNote        String?
+  decidedAt        DateTime?
+  researchedAt     DateTime
+  createdAt        DateTime    @default(now())
+
+  @@index([taskId])
+  @@index([status])
 }
 
 model PromptTemplate {

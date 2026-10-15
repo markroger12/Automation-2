@@ -13,7 +13,7 @@ import type { QualityFinding } from './gate';
 export interface QualitySections {
   seo?: { score: number; threshold: number; failed: string[] };
   structure?: { words: number; faqCount: number; expectedFaqCount: number; quickBioRows: number | null; quickBioColumnsOk: boolean | null; emptyHeadings: number; duplicateSentences: number };
-  evidence?: { sources: number; uncertain: number; warnings: string[] } | null;
+  evidence?: { sources: number; uncertain: number; warnings: string[]; claims?: number; verified?: number; contradicted?: number; unsupportedInArticle?: number } | null;
   duplicates?: { highest: string | null; overridden: boolean; overrideReason: string | null; compared: number; matches: { otherTaskId: string; title: string; website: string; severity: string; wordingShare: number; longestRun: number; factWords: number }[] };
   links?: { external: number; internalLinkLine: boolean };
   images?: { count: number; withAlt: number; required: boolean };

@@ -23,7 +23,7 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M8 Images and templates | ✅ done (fake ChatGPT/Commons + real WordPress 6.5/6.7 verified; live ChatGPT images and live Commons not verified here) |
 | M9 Retire 2.0 + editorial tools | ✅ done (scripted-ChatGPT + full-stack agent-protocol smoke; live ChatGPT not verified here) |
 | M10 Bulk campaigns and workflow | ✅ done (fake + real WordPress 6.5/6.7 scheduling verified; Search Console requests are manual, not automated) |
-| M11 Plagiarism evidence and hardening | 🟡 in progress — M11a Plagiarism Evidence Checker done; M11b hardening next |
+| M11 Plagiarism evidence and hardening | ✅ done (plagiarism checker on a local fake web; hardening, diagnostics, a11y 0 violations; live checks in RELEASE_CHECKLIST §4 need the owner's PC) |
 | M12–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
 
@@ -476,7 +476,7 @@ npm run start:all # UI smoke, throwaway data dir, Chromium, real worker: switchi
 - WP-Cron on a low-traffic production site can publish late. The tool reports “still future” and adds a hint after 24 hours, but cannot make WordPress publish.
 - Live ChatGPT writing the workflow articles was not exercised (scripted answers only).
 
-## M11a — Plagiarism Evidence Checker ✅ (M11b hardening follows)
+## M11a — Plagiarism Evidence Checker ✅
 
 **Working**
 - **Matching** (`src/lib/plagiarism/match.ts`, `text.ts`, pure and unit-tested):
@@ -526,3 +526,59 @@ The end-to-end test runs against a local fake web: a linked page with a copied s
 - Live Wikipedia, live web pages and the real Serper API (no internet in this environment; local fakes only). Serper's response format is taken from its documentation (`organic[].link`).
 - The near-match thresholds (70 % content words, 60 % word order) and the 3-article boilerplate rule are first settings, untested on real articles; they may need tuning.
 - German compound words and inflection are matched exactly (no stemming), so reworded German text yields fewer near matches than English.
+
+## M11b — Hardening, diagnostics, accessibility, Windows README, release checklist ✅
+
+**Working**
+- **Diagnostics** (`/diagnostics`, `src/lib/diagnostics.ts`, spec §15):
+  - **ChatGPT rate limits**: backoff state, last 429/usage limit with the reason, recent 429 count, current concurrency and step, last success.
+  - **Extension capabilities** next to its version.
+  - **Failing page snapshots**: what the extension saw when a ChatGPT step failed (page variant, composer, send/stop state; no cookies or page text).
+  - **Failed stages**, with “Inspect stage” and, where the article has text, “Re-run SEO analysis”.
+  - **Checks** that run the real thing: Chrome setup check, extension test prompt (polled to the answer), and a WordPress session test per website (queued for the worker).
+  - The downloadable bundle carries all of the above plus the WordPress session states and whether a search key is configured (yes/no only). A new unit test plants a password, cookie, bearer/JWT, a token in a URL, the connection key and search key in logs, snapshots and settings, and checks that none appear in the bundle.
+- **Security review** (code read plus the checks below):
+  - Response headers: a strict CSP (no third-party origins, `frame-ancestors 'none'`, `object-src 'none'`), nosniff, `X-Frame-Options: DENY`, a referrer policy, a permissions policy and COOP were already in place.
+  - SSRF: every fetch of an outside page goes through the SSRF-safe fetcher (link checks, link index, Commons, plagiarism pages and Wikipedia). The exceptions are deliberate: Serper (a fixed API host), the owner's WordPress through the logged-in session, and same-origin browser calls.
+  - Path traversal (existing tests), secrets in client bundles (none; only the help-text name `SERPER_API_KEY`), and sharp (all inputs are buffers, so no locked files on Windows) were checked.
+  - **Fixed — owner HTML could run script in the editor:**
+    - The article editor put unsaved HTML (typed or pasted in HTML mode, or a draft restored from this browser) into the page unsanitized: the visual editor, the compare view and two text helpers that used a detached `div`.
+    - Because the CSP allows inline scripts (`'unsafe-inline'`, needed by Next.js's inline bootstrap), inline event handlers could run. Under the app's CSP, `<img onerror>` in a detached `div` did run (checked in Chromium).
+    - Now the display goes through DOMPurify with the same allow-list as the server sanitizer (shared `src/lib/html/allowlist.ts`), and the helpers parse with `DOMParser` (inert).
+    - After the fix, the same input in the editor ran nothing and the `onerror` attribute was gone. Editing, saving and reloading still work.
+  - **`npm audit --omit=dev`** has 5 findings, none fixable without a major upgrade, and accepted:
+    - postcss 8.4.31 bundled inside Next.js 15 (4 advisories, plus Next listed for it). It processes only the app's own CSS at build time and never sees outside CSS. The fix is Next 16 (major), deferred.
+    - deepmerge-ts < 8 (stack exhaustion on recursive objects) inside the Prisma CLI's config loader (`@prisma/config`), which merges only the local trusted config. Waiting for a Prisma release that updates it.
+- **Accessibility**:
+  - `npm run audit:a11y` (`scripts/a11y-audit.ts`, axe-core 4.13.0, WCAG 2.0/2.1 A and AA) audits all 21 dashboard pages plus an article page, in light and dark mode, against the running app. It refuses non-local URLs and fails on serious or critical issues.
+  - First run: 37 serious violations, all fixed at the source:
+    - the sidebar “soon” badge contrast;
+    - progress bars without an accessible name (now labelled, e.g. “Progress of <keyword>”);
+    - dark-mode contrast of `text-indigo-600` links and some amber and grey text.
+  - Second run: **0 violations of any severity** on all 44 page/theme combinations.
+- **Windows README**: first-run walkthrough, updating steps, a Windows troubleshooting table (execution policy, port in use, worker lock, Chrome/Edge choice, “Remember Me”, antivirus file locks, extension disconnected, diagnostic bundle), the new script and expanded security notes.
+- **`RELEASE_CHECKLIST.md`**: install/upgrade, quality gates, safety rules, owner-PC live checks (including the throughput benchmark), hand-over. Each item says whether it can be checked here or only on the owner's PC.
+- New dependencies, exact versions released weeks ago: `dompurify` 3.4.16 (runtime, browser only) and `axe-core` 4.13.0 (dev).
+
+**Commands run (all passed)**
+```
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 25 files, 180 tests (new: diagnostic bundle redaction 1)
+npx vitest run --config vitest.integration.config.ts <file>  # 7 files, 45 tests, file by file, first attempt: extension 15,
+                                                           # images 6, links 5, drafts 7, session 5, toolchain 1, workflow-publish 6
+npm run build                                              # compiled
+npm run audit:a11y   # app running (start:all, throwaway data dir with articles): 1st run 37 serious → fixes → 2nd run
+                     # “No serious or critical violations”, 44/44 page+theme combinations without any violation
+npm audit --omit=dev # 5 findings, all requiring major upgrades, accepted with reasons above
+npm run start:all # smokes in Chromium against the built app + real worker:
+                  # Diagnostics: rate-limit card, “Check Chrome setup” (real result: Chrome not installed in this sandbox),
+                  # “Test extension connection” queued and waiting for the extension, “Test session” queued for a website,
+                  # bundle downloaded — 17 sections, no cookie or key pattern inside;
+                  # editor: <img onerror> + <p onclick> typed in HTML mode, compare + visual views → handler never ran,
+                  # onerror stripped; visual typing → HTML mode → Save edits → reload shows the edit; no console errors
+```
+
+**Not verified here**
+- The live checks in `RELEASE_CHECKLIST.md` §4 (real ChatGPT, real WordPress sites, Rank Math, live web sources, backup/restore on the owner's PC) and the **throughput benchmark** (≥ 6 verified drafts/hour). They need the owner's accounts and internet.
+- The CSP still allows inline scripts (`'unsafe-inline'`) because the Next.js bootstrap needs them. A nonce-based CSP would require rendering every page dynamically and is not done. HTML is sanitized before display instead.
+- Screen-reader testing by a person (axe only finds what can be detected automatically).

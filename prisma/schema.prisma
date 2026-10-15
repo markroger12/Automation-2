@@ -33,40 +33,40 @@ model BrowserProfile {
 }
 
 model Website {
-  id                       String                  @id @default(cuid())
+  id                       String                      @id @default(cuid())
   name                     String
-  slug                     String                  @unique
+  slug                     String                      @unique
   publicUrl                String
   adminUrl                 String
-  active                   Boolean                 @default(true)
-  paused                   Boolean                 @default(false)
+  active                   Boolean                     @default(true)
+  paused                   Boolean                     @default(false)
   wordpressProfileId       String?
-  wordpressProfile         BrowserProfile?         @relation(fields: [wordpressProfileId], references: [id], onDelete: SetNull)
+  wordpressProfile         BrowserProfile?             @relation(fields: [wordpressProfileId], references: [id], onDelete: SetNull)
   defaultCategoryId        String?
-  editorType               String                  @default("AUTO") // AUTO | GUTENBERG | CLASSIC
+  editorType               String                      @default("AUTO") // AUTO | GUTENBERG | CLASSIC
   detectedEditor           String?
-  language                 String                  @default("en") // en | de
-  targetCountry            String                  @default("United States")
-  timezone                 String                  @default("UTC")
-  internalLinkLine         String                  @default("Also read:")
+  language                 String                      @default("en") // en | de
+  targetCountry            String                      @default("United States")
+  timezone                 String                      @default("UTC")
+  internalLinkLine         String                      @default("Also read:")
   logoPath                 String?
-  imageSettings            String                  @default("{}")
-  imageTemplate            String                  @default("{}")
-  canPublish               Boolean                 @default(false)
+  imageSettings            String                      @default("{}")
+  imageTemplate            String                      @default("{}")
+  canPublish               Boolean                     @default(false)
   canPublishAcknowledgedAt DateTime?
-  allowLiveUpdates         Boolean                 @default(false)
+  allowLiveUpdates         Boolean                     @default(false)
   searchConsoleProperty    String?
-  settingsOverrides        String                  @default("{}")
+  settingsOverrides        String                      @default("{}")
   /// Per-site writer routing rules: [{ contains, writer }] checked before the classifier (upgrade 05).
-  routingRules             String                  @default("[]")
-  promptOverrides          String                  @default("{}")
-  linkStrategy             String                  @default("{}")
-  queueQuota               Int                     @default(0)
-  priority                 Int                     @default(0)
+  routingRules             String                      @default("[]")
+  promptOverrides          String                      @default("{}")
+  linkStrategy             String                      @default("{}")
+  queueQuota               Int                         @default(0)
+  priority                 Int                         @default(0)
   rankMathTarget           Int?
   notes                    String?
-  createdAt                DateTime                @default(now())
-  updatedAt                DateTime                @updatedAt
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
   categories               Category[]
   tasks                    ArticleTask[]
   workflows                Workflow[]
@@ -76,6 +76,8 @@ model Website {
   linkIndexFullSyncAt      DateTime?
   campaigns                Campaign[]
   healthObservations       SiteHealthObservation[]
+  searchSnapshots          SearchPerformanceSnapshot[]
+  refreshCandidates        RefreshCandidate[]
 }
 
 model Category {
@@ -175,6 +177,8 @@ model ArticleTask {
   fingerprints       ContentFingerprint[]
   claims             ClaimEvidence[]
   linkSuggestions    SuggestedInternalLink[]
+  refreshCandidates  RefreshCandidate[]
+  contentRevisions   ContentRevision[]
   duplicateMatches   DuplicateMatch[]
   qualityReports     ArticleQualityReport[]
   mediaAssets        MediaAsset[]
@@ -724,6 +728,108 @@ model SiteHealthObservation {
 
   @@index([websiteId, kind, createdAt])
   @@index([websiteId, createdAt])
+}
+
+/// One imported Search Console performance report (upgrade 10): only data the owner exported from Search Console.
+/// Days are Search Console days (Pacific Time), kept as exported (YYYY-MM-DD).
+model SearchPerformanceSnapshot {
+  id         String                 @id @default(cuid())
+  websiteId  String
+  website    Website                @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  property   String
+  source     String                 @default("GSC_EXPORT")
+  searchType String                 @default("web")
+  fileName   String
+  sha256     String
+  startDate  String
+  endDate    String
+  compare    Boolean                @default(false)
+  dateFilter String?
+  pageRows   Int                    @default(0)
+  queryRows  Int                    @default(0)
+  dateRows   Int                    @default(0)
+  notes      String                 @default("[]")
+  importedAt DateTime               @default(now())
+  rows       SearchPerformanceRow[]
+
+  @@unique([websiteId, sha256])
+  @@index([websiteId, endDate])
+}
+
+/// A row of an imported report: a page, a query or a day, with the comparison period when the export had one.
+model SearchPerformanceRow {
+  id              String                    @id @default(cuid())
+  snapshotId      String
+  snapshot        SearchPerformanceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  websiteId       String
+  dimension       String // PAGE | QUERY | DATE
+  key             String
+  clicks          Int
+  impressions     Int
+  ctr             Float?
+  position        Float?
+  prevClicks      Int?
+  prevImpressions Int?
+  prevCtr         Float?
+  prevPosition    Float?
+
+  @@index([websiteId, dimension, key])
+  @@index([snapshotId, dimension])
+}
+
+/// An article that may need a refresh (upgrade 11), with the evidence. Evaluation never changes the article.
+model RefreshCandidate {
+  id          String            @id @default(cuid())
+  websiteId   String
+  website     Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  taskId      String?
+  task        ArticleTask?      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  wpPostId    Int?
+  url         String?
+  title       String
+  status      String            @default("OPEN") // OPEN | REVISION | APPLIED | DISMISSED | RESOLVED
+  priority    Int               @default(0)
+  /// [{ code, detail, evidence }]
+  reasons     String            @default("[]")
+  signature   String            @default("")
+  live        Boolean           @default(false)
+  note        String?
+  evaluatedAt DateTime
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  revisions   ContentRevision[]
+
+  @@index([websiteId, status, priority])
+  @@index([taskId])
+}
+
+/// A proposed change to an article's content, approved by the owner before it is written to the same WordPress post.
+model ContentRevision {
+  id             String            @id @default(cuid())
+  candidateId    String?
+  candidate      RefreshCandidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  taskId         String
+  task           ArticleTask       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  websiteId      String
+  wpPostId       Int?
+  kind           String // REFRESH | ROLLBACK
+  source         String // AUTOMATIC | OWNER
+  status         String            @default("PROPOSED") // PROPOSED | APPROVED | APPLYING | APPLIED | CONFLICT | BLOCKED | FAILED | REJECTED
+  baseHtml       String
+  baseHash       String
+  proposedHtml   String
+  /// [{ kind, detail }]
+  changes        String            @default("[]")
+  note           String?
+  remoteSnapshot String?
+  result         String            @default("{}")
+  approvedAt     DateTime?
+  appliedAt      DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([taskId, createdAt])
+  @@index([status])
 }
 
 model DataMigration {

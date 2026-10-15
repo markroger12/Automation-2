@@ -142,7 +142,7 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
                     <span className="text-muted">{formatDateTime(j.createdAt)}</span>
                     <code>{j.kind}</code>
                     <Chip tone={j.status === 'COMPLETED' ? 'success' : j.status === 'FAILED' ? 'danger' : 'info'}>{j.status.toLowerCase()}</Chip>
-                    {j.error ? <span className="text-rose-700">{j.error}</span> : null}
+                    {j.error ? <span className="text-rose-700 dark:text-rose-300">{j.error}</span> : null}
                   </li>
                 ))}
               </ul>

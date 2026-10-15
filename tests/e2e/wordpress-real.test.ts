@@ -368,4 +368,54 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
     expect(row.publishedUrl).toBeTruthy();
     await client.website.update({ where: { id: site.id }, data: { canPublish: false, canPublishAcknowledgedAt: null } });
   }, 480_000);
+
+  it('content refresh of the now LIVE post: locked until allowed; then only its content changes, and WordPress edits stop it', async () => {
+    const refresh = await import('@/lib/refresh/service');
+    const apply = await import('@/wordpress/refresh-apply');
+    const t0 = await client.articleTask.findFirstOrThrow({ where: { websiteId: site.id, keyword: 'Bill Kaulitz Tokio Hotel' } });
+    const postId = t0.wpPostId!;
+    const before = (await withClient((c) => c.getPost(postId)))!;
+    expect(before.status).toBe('publish');
+    await client.linkTarget.upsert({ where: { websiteId_wpPostId: { websiteId: site.id, wpPostId: postId } }, update: { status: 'ACTIVE' }, create: { websiteId: site.id, wpPostId: postId, url: before.link, title: 'Bill Kaulitz', status: 'ACTIVE', publishedAt: new Date() } });
+    const addOutdated = async (text: string) => {
+      const t = await client.articleTask.findUniqueOrThrow({ where: { id: t0.id } });
+      await client.articleTask.update({ where: { id: t0.id }, data: { editedHtml: `${t.editedHtml ?? t.assembledHtml}<p>${text}</p>` } });
+    };
+    const runApply = async (id: string) => {
+      const r = await apply.applyContentRevision(id);
+      await client.queueJob.updateMany({ where: { relatedId: id, kind: 'wp.refresh-apply', status: 'WAITING' }, data: { status: 'COMPLETED', finishedAt: new Date() } });
+      return r;
+    };
+    const propose = async (from: string, to: string) => {
+      await refresh.evaluateRefresh(site.id, new Date());
+      const c = await client.refreshCandidate.findFirstOrThrow({ where: { taskId: t0.id, status: { in: ['OPEN', 'REVISION'] } }, orderBy: { createdAt: 'desc' } });
+      expect(c.live).toBe(true);
+      const { revision } = await refresh.proposeRevision(c.id);
+      await refresh.updateRevision(revision.id, revision.proposedHtml.replace(from, to));
+      return revision.id;
+    };
+
+    await addOutdated('Tour dates as of 2024 are listed below.');
+    const first = await propose('as of 2024', 'as of 2026');
+    await expect(refresh.approveRevision(first, refresh.LIVE_ACK_PHRASE)).rejects.toMatchObject({ code: 'LIVE_LOCKED' });
+    await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date(), allowLiveUpdates: true } });
+    await refresh.approveRevision(first, refresh.LIVE_ACK_PHRASE);
+    expect(await runApply(first)).toMatchObject({ status: 'APPLIED', verified: true, stateUnchanged: true, postStatus: 'publish' });
+    const after = (await withClient((c) => c.getPost(postId)))!;
+    expect([after.status, after.date_gmt, after.slug, after.link]).toEqual([before.status, before.date_gmt, before.slug, before.link]);
+    expect(after.content.raw).toContain('as of 2026');
+    expect(after.content.raw).not.toContain('as of 2024');
+
+    // Someone edits the live post in WordPress; the next refresh stops and changes nothing.
+    await withClient((c) => c.updatePost(postId, { content: `${after.content.raw}\n<!-- wp:paragraph -->\n<p>Edited in WordPress by the owner.</p>\n<!-- /wp:paragraph -->` }));
+    await addOutdated('Ticket prices (Stand: 2025).');
+    const second = await propose('(Stand: 2025)', '(Stand: 2026)');
+    await refresh.approveRevision(second, refresh.LIVE_ACK_PHRASE);
+    expect(await runApply(second)).toMatchObject({ status: 'CONFLICT' });
+    const untouched = (await withClient((c) => c.getPost(postId)))!;
+    expect(untouched.content.raw).toContain('Edited in WordPress by the owner.');
+    expect(untouched.content.raw).not.toContain('Stand: 2026');
+    expect(untouched.status).toBe('publish');
+    await client.website.update({ where: { id: site.id }, data: { canPublish: false, canPublishAcknowledgedAt: null, allowLiveUpdates: false } });
+  }, 240_000);
 });

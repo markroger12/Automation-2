@@ -148,6 +148,36 @@ The overall status is *healthy*, *needs attention*, *failing* or *no data yet*, 
 - **Indexing**: the tool never claims a post is indexed. With “Remind me to request indexing” on, a Search Console link appears after publishing; you mark “indexing requested” and “indexed” yourself after checking.
 - **Publishing Calendar** (sidebar, under Workflow): reserved and free slots of every workflow, two weeks at a time, in Pakistan time.
 
+## Search Performance and Content Refresh
+
+- **Search Performance** (sidebar → Productivity → Search Performance) shows only data you export from Google Search Console:
+  1. In Search Console open **Performance → Search results**, choose the date range (optionally **Compare**), then **Export → Download CSV**.
+  2. Upload the zip, or its CSV files.
+
+  What you see:
+  - The website needs its Search Console property first (website page → Settings, e.g. `sc-domain:example.com`). Until then the page says **NOT CONNECTED**; with a property but no import it says **NO VERIFIED DATA**.
+  - Imports are checked: pages of another property, a search type other than Web, a missing period (no Dates.csv and no dates entered) and the same export twice are refused.
+  - The page shows 7/28/90-day totals with how many days have data, and the change only when both periods are complete. Days are Search Console days (Pacific Time), as exported.
+  - It also shows top pages and queries (linked to your articles), declining pages (from a Compare export or an earlier report of the same length), and published articles without impressions. Pages missing from a 1,000-row export are not counted.
+  - **Indexing**: requests are counted separately from indexing you confirmed yourself and from pages actually seen in search (impressions).
+  - Every table exports to CSV; an import can be removed.
+- **Content Refresh** (Editorial Tools → Content Refresh) lists verified articles that need a refresh, with the evidence:
+  - when an article is listed:
+    - a past year in the title or a heading, or “as of 2024” / “Stand: 2024” in the text (ordinary dates such as birth years never count);
+    - a dead link (HTTP 404/410; a missing domain only when other links answered, so a dropped internet connection is not mistaken for dead links);
+    - a high-impact fact a source now contradicts (Research Evidence);
+    - falling clicks or no impressions in imported Search Console data.
+
+    Age alone never lists an article; it only raises the priority.
+  - when it runs: each website is evaluated once a day (read-only); **Evaluate now** runs it for one website.
+  - **Propose a revision** starts from the article's current text: dead links are removed (their words stay) and the passages to update are named. Edit the HTML, save, then **Approve**.
+  - The worker updates the **same WordPress post**:
+    - only its content is sent; status, date, slug and URL stay, and the read-back confirms it;
+    - drafts are updated directly;
+    - a live post needs **Allow approved updates to live posts** on the website's Publishing permission card, and you must type `UPDATE LIVE POST`;
+    - if the post was edited in WordPress since the app saved it, nothing is changed (**conflict**). **Start from the WordPress version** makes that text the article's text and proposes again.
+  - The article in the app changes only after WordPress confirmed the update. **Roll back** proposes the previous text through the same approval.
+
 ## Data folder (`data\`, git-ignored)
 
 | Path | Contents |

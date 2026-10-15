@@ -6,6 +6,7 @@ import { humanizerTick } from './humanizer';
 import { workflowTick } from './workflow-queue';
 import { plagiarismTick } from './plagiarism';
 import { schedulerTick } from '@/lib/workflow/scheduler';
+import { scheduleDailyEvaluations } from '@/lib/refresh/service';
 import { pruneDiagnostics } from './maintenance';
 import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
@@ -26,6 +27,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'plagiarism-checks', intervalMs: 1000, run: async (c) => plagiarismTick(c.workerId, c.stopping) });
   // Publishing scheduler: database only, enqueues jobs, never opens a browser itself.
   registerLoop({ name: 'workflow-scheduler', intervalMs: 60_000, run: async () => void (await schedulerTick()) });
+  // Content refresh: one read-only evaluation per website and day (enqueues only).
+  registerLoop({ name: 'refresh-scheduler', intervalMs: 3600_000, run: async () => void (await scheduleDailyEvaluations()) });
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });
   registerLoop({ name: 'orphan-healer', intervalMs: 60_000, run: async () => void (await healOrphanedTasks()) });
   registerLoop({ name: 'retention', intervalMs: 6 * 3600_000, run: async () => void (await pruneDiagnostics()) });

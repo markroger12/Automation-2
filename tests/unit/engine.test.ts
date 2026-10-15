@@ -17,6 +17,7 @@ const CONV = 'https://chatgpt.com/c/0123456789abcdef0123456789abcdef';
 let flaky: 'ok' | 'transient-once' | 'always-transient' | 'fatal' = 'ok';
 let flakyCalls = 0;
 let localARuns = 0;
+let rejectAnswers = 0;
 
 function fakePipeline(): PipelineDefinition {
   const stage = (s: Omit<PipelineStage, 'dependsOn' | 'description'> & { dependsOn?: string[] }): PipelineStage => ({ description: s.label, dependsOn: [], ...s }) as PipelineStage;
@@ -43,6 +44,11 @@ function fakePipeline(): PipelineDefinition {
       run: async (ctx) => {
         const res = await ctx.askChatGPT('TITLES');
         if (res.status === 'waiting') return { outcome: 'waiting', message: 'Waiting for ChatGPT' };
+        if (rejectAnswers > 0) {
+          rejectAnswers--;
+          await ctx.rejectResponse(res.responseId, 'unparseable');
+          throw new errors.TransientError('unparseable answer; a fresh prompt will be sent');
+        }
         return { outcome: 'completed', output: res.text, prompt: res.prompt };
       },
     }),
@@ -117,6 +123,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   flaky = 'ok';
+  rejectAnswers = 0;
   flakyCalls = 0;
   localARuns = 0;
   await client.queueJob.updateMany({ where: { status: { in: ['WAITING', 'ACTIVE'] } }, data: { status: 'CANCELLED' } });
@@ -308,6 +315,26 @@ describe('stage engine', () => {
     await answerChatGPT();
     expect(await runNext(task.id)).toBe('paused');
     expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(2);
+  });
+
+  it('after a rejected answer, the next attempt sends the same prompt fresh (never “recovers” the rejected answer)', async () => {
+    // The owner's first live run: FAQS answers failed to parse; each retry recovered the same rejected answer from the page.
+    rejectAnswers = 1;
+    const site = await createWebsite(client);
+    const task = await createTask(client, site.id);
+    await lifecycle.ensureArticleRun(task.id, 'test');
+    expect(await runNext(task.id)).toBe('waiting');
+    const first = await answerChatGPT('not what we asked for');
+    expect(JSON.parse(first.job.payload).fresh).toBe(false);
+    expect(await runNext(task.id)).toBe('retry');
+    expect(await runNext(task.id)).toBe('waiting');
+    const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
+    expect(responses.map((r) => r.status)).toEqual(['REJECTED', 'PENDING']);
+    expect(responses[1].renderedPrompt).toBe(responses[0].renderedPrompt);
+    const retryJob = await client.queueJob.findFirstOrThrow({ where: { relatedId: responses[1].id } });
+    expect(JSON.parse(retryJob.payload).fresh).toBe(true);
+    await answerChatGPT();
+    expect(await runNext(task.id)).toBe('paused');
   });
 
   it('opens a new chat with a context primer when the conversation is lost', async () => {

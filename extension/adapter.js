@@ -413,11 +413,22 @@
 
   // ---------- HTML → Markdown (headings, paragraphs, lists, tables, emphasis, links) ----------
 
+  /** True when the page shows this element's text newlines as line breaks (CSS white-space pre / pre-wrap / pre-line). */
+  function keepsLineBreaks(el) {
+    try {
+      return Boolean(el) && /^(pre|pre-wrap|pre-line|break-spaces)$/.test(getComputedStyle(el).whiteSpace);
+    } catch (e) {
+      return false;
+    }
+  }
+
   function inlineMd(node) {
     let out = '';
     for (const child of node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
-        out += child.textContent.replace(/\s+/g, ' ');
+        // The Chat/Work layout renders a paragraph's soft line breaks as newlines kept by CSS, not as <br>:
+        // keep the lines the page shows ("QUESTION: …" / "ANSWER: …"), collapse other whitespace.
+        out += keepsLineBreaks(child.parentElement) ? child.textContent.replace(/[^\S\n]+/g, ' ').replace(/ ?\n ?/g, '\n') : child.textContent.replace(/\s+/g, ' ');
         continue;
       }
       if (child.nodeType !== Node.ELEMENT_NODE) continue;

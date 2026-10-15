@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.1.3');
+    expect(ext?.version).toBe('3.1.4');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -285,6 +285,19 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const two = await responseDone(second.responseId, 60_000);
     expect(two.resultText).toContain('beta');
     expect(two.resultText).not.toContain('alpha');
+  });
+
+  it('Chat/Work layout: line breaks the page shows inside a paragraph are kept (FAQ pairs parse)', async () => {
+    // The owner's FAQ answer: QUESTION/ANSWER lines in one paragraph, broken by CSS-kept newlines rather than <br>.
+    const pairs = Array.from({ length: 5 }, (_, i) => `QUESTION: Frage ${i + 1} zu Gloria Krass?\nANSWER: Antwort ${i + 1} in einem Satz.`);
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', softBreaks: true, answers: [pairs.join('\n\n')] };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('FAQ prompt on the new layout');
+    const done = await responseDone(req.responseId, 60_000);
+    expect(done.status).toBe('COMPLETED');
+    expect(done.resultText).toContain('QUESTION: Frage 1 zu Gloria Krass?\nANSWER: Antwort 1 in einem Satz.');
+    const { parseFaqs } = await import('@/modules/celebrity-writer/parsers');
+    expect(parseFaqs(done.resultText!)).toHaveLength(5);
   });
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {

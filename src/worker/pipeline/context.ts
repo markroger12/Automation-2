@@ -176,8 +176,13 @@ export function createContext(deps: ContextDeps): PipelineContext {
         newChat,
         attachments: options.attachments,
         expectImages: options.expectImages,
-        // Regenerations and conversation switches must never "recover" an older identical answer.
-        fresh: Boolean(options.fresh) || ops.length > 0 || Boolean(parseJson<Record<string, unknown>>(row.privateState, {}).regenerated),
+        // Regenerations, conversation switches and retries after a rejected/superseded answer must never "recover" an
+        // older identical answer from the page (it would be the rejected one again).
+        fresh:
+          Boolean(options.fresh) ||
+          ops.length > 0 ||
+          Boolean(parseJson<Record<string, unknown>>(row.privateState, {}).regenerated) ||
+          (await db.chatGPTResponse.count({ where: { taskId: task.id, stageKey: row.key, status: { in: ['REJECTED', 'SUPERSEDED'] }, operationId: { startsWith: `${task.id}:${row.key}${part}:` } } })) > 0,
         timeoutSec: deps.config.generationTimeoutSec,
         conversationSwitch: Boolean(lost),
       });

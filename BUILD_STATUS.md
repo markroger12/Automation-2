@@ -1085,3 +1085,44 @@ npm run build                                              # compiled
 - 3.1.3 on the owner's real ChatGPT page. The new layout's markers come from third-party reports.
 - **Citation chips inside answers** (the owner's screenshot shows a “BUNTE” source chip in a title option): their markup in the new layout is not known. Their text may end up in the saved answer until it is known.
 - What reloads the ChatGPT page during a job on the owner's PC. A reload is now recovered from.
+
+### Fourth report: TITLES → FINAL_ARTICLE worked; FAQS failed (extension 3.1.4)
+
+**Reported by the owner** (screenshots), with 3.1.3:
+- TITLES, RESEARCH, LONG_ARTICLE (18,494 characters) and FINAL_ARTICLE (8,927 characters) completed.
+- FAQS failed after 3 attempts: “Only 0 of 5 FAQs could be parsed.”
+- ChatGPT's answer was right: five “QUESTION: … / ANSWER: …” pairs, each pair on two lines.
+- The logs show the same 1,015-character answer saved three times, twice “recovered after interruption”.
+
+**Cause 1 — line breaks lost.**
+- The extension's HTML → Markdown conversion collapsed all whitespace inside text.
+- In the Chat/Work layout, a pair's two lines are most likely one paragraph whose line break is a newline kept by CSS (`white-space: pre-wrap`), not a `<br>`. This is inferred from the screenshot and the failure; the owner's page was not inspected.
+- So every pair arrived as “QUESTION: … ANSWER: …” on one line, and the parser needs ANSWER on its own line.
+
+**Cause 2 — retries reused the rejected answer.**
+- A rejected answer makes the stage retry under a new attempt number. That attempt was not marked fresh, so the extension found the identical FAQ prompt as the conversation's last turn and “recovered” its answer — the rejected one — instead of asking again.
+- Unit test: it fails on the old code (`fresh` false) and passes now.
+
+**Changes**
+- **Extension 3.1.4** keeps a text's newlines wherever the page shows them as line breaks (computed `white-space` pre / pre-wrap / pre-line / break-spaces) and collapses other whitespace as before.
+  - The fake renders such paragraphs with `softBreaks`.
+  - New integration test: five FAQ pairs arrive line by line and all parse. With the 3.1.3 adapter it fails with the pairs on one line, as in the owner's run.
+- **FAQ parser** also accepts “QUESTION: … ANSWER: …” on one line, but only with the upper-case labels the prompt asks for (also FRAGE/ANTWORT). Prose such as “the question: …” is never split. Unit test.
+- **Fresh retries:** after a REJECTED or SUPERSEDED answer for a stage, every later prompt for that stage is sent fresh; it is never recovered from the page.
+- **Tab discarding:** the automation tabs are marked not auto-discardable, so Chrome's memory saver cannot unload a page during a job. What reloaded the page on the owner's PC is still unknown, and this is a precaution, not a proven fix.
+
+**Commands run**
+```
+npx vitest run tests/unit/content.test.ts tests/unit/engine.test.ts   # new tests failed first (0 FAQs; fresh false), pass now
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "line breaks the page shows"
+                                                           # 3.1.3 adapter: failed (pairs on one line); 3.1.4: passed
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 37 files, 257 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 24/24, first attempt
+npm run build                                              # compiled
+```
+
+**Not verified here**
+- 3.1.4 on the owner's page.
+- The exact CSS of the new layout's answer paragraphs (inferred).
+- Stages saved earlier with 3.1.3 may have lost line breaks inside paragraphs. That is harmless for article prose and tables; the saved RESEARCH notes were not checked.

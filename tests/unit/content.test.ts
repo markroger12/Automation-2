@@ -25,6 +25,20 @@ describe('celebrity parsers', () => {
     expect(parseFaqs('FRAGE: Wie alt?\nANTWORT: 28 Jahre.')).toHaveLength(1);
   });
 
+  it('parses QUESTION/ANSWER pairs whose line breaks were lost (labels on one line), only with the upper-case labels', () => {
+    // The owner's first live run: the page's soft line breaks were collapsed, so every pair arrived on one line.
+    const oneLine =
+      'QUESTION: Wer ist Gloria Krass? ANSWER: Gloria Krass ist eine deutsche Filmagentin.\n\nQUESTION: Wie alt ist Gloria Krass? ANSWER: Ihr genaues Geburtsdatum ist nicht bestätigt.';
+    expect(parseFaqs(oneLine)).toEqual([
+      { question: 'Wer ist Gloria Krass?', answer: 'Gloria Krass ist eine deutsche Filmagentin.' },
+      { question: 'Wie alt ist Gloria Krass?', answer: 'Ihr genaues Geburtsdatum ist nicht bestätigt.' },
+    ]);
+    expect(parseFaqs('QUESTION: Wie alt? ANSWER: 28. QUESTION: Woher? ANSWER: Aus Wien.')).toHaveLength(2);
+    expect(parseFaqs('FRAGE: Wie alt? ANTWORT: 28 Jahre.')).toHaveLength(1);
+    // Ordinary prose that merely contains the words is not a FAQ.
+    expect(parseFaqs('The question: is she married? The answer: yes, since 2022.')).toHaveLength(0);
+  });
+
   it('rebuilds a clean two-column Quick Bio and flags malformed tables', () => {
     const ok = parseQuickBio('<table><tr><th>Attribute</th><th>Details</th></tr><tr><td>Full Name</td><td>Sydney Bernice Sweeney</td></tr><tr><td>Height</td><td>N/A</td></tr></table>', 'en', 3);
     expect(ok.rows).toEqual([

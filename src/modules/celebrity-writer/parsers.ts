@@ -38,14 +38,25 @@ export interface FaqItem {
 
 /** Parse "QUESTION: … / ANSWER: …" pairs (also accepts FRAGE/ANTWORT and Q:/A:). */
 export function parseFaqs(text: string): FaqItem[] {
+  const normalized = text.replace(/\r\n/g, '\n');
   const items: FaqItem[] = [];
   const re = /(?:^|\n)\s*\**(?:question|frage|q)\s*\d*\**\s*[:：]\s*\**\s*([\s\S]+?)\s*\n\s*\**(?:answer|antwort|a)\s*\d*\**\s*[:：]\s*\**\s*([\s\S]+?)(?=\n\s*\**(?:question|frage|q)\s*\d*\**\s*[:：]|$)/gi;
-  for (const m of text.replace(/\r\n/g, '\n').matchAll(re)) {
-    const question = m[1].replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
-    const answer = m[2].replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
-    if (question && answer) items.push({ question: question.endsWith('?') ? question : `${question}?`, answer });
+  for (const m of normalized.matchAll(re)) pushFaq(items, m[1], m[2]);
+  // Pairs whose line breaks were lost on the way ("QUESTION: … ANSWER: …" on one line). Only the upper-case
+  // labels the prompt asks for count here, so prose such as "the question: …" is never split into FAQs.
+  const sameLine: FaqItem[] = [];
+  const chunks = normalized.split(/(?:^|\s)\**(?:QUESTION|FRAGE)\s*\d*\**\s*[:：]/).slice(1);
+  for (const chunk of chunks) {
+    const m = /^([\s\S]+?)\s\**(?:ANSWER|ANTWORT)\s*\d*\**\s*[:：]([\s\S]+)$/.exec(chunk);
+    if (m) pushFaq(sameLine, m[1], m[2]);
   }
-  return items;
+  return sameLine.length > items.length ? sameLine : items;
+}
+
+function pushFaq(items: FaqItem[], rawQuestion: string, rawAnswer: string) {
+  const question = rawQuestion.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+  const answer = rawAnswer.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+  if (question && answer) items.push({ question: question.endsWith('?') ? question : `${question}?`, answer });
 }
 
 export interface BioRow {

@@ -71,7 +71,8 @@
       } else {
         const para = [];
         while (i < lines.length && lines[i].trim() && !/^(#{2,3} |\||- )/.test(lines[i])) para.push(lines[i++]);
-        out.push(`<p>${inline(para.join(' '))}</p>`);
+        // softBreaks: a paragraph's single newlines stay newlines, shown by CSS (as reported for the Chat/Work layout).
+        out.push(C.softBreaks ? `<p style="white-space:pre-wrap">${para.map(inline).join('\n')}</p>` : `<p>${inline(para.join(' '))}</p>`);
       }
     }
     return out.join('');

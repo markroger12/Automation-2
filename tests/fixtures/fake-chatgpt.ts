@@ -15,6 +15,8 @@ export interface FakeChatGptConfig {
    * "…:user" / "…:assistant" search units, [data-user-message-bubble] and [data-markdown-text-style="assistant-message"].
    */
   turnMarkup?: 'default' | 'article' | 'units';
+  /** Render a paragraph's single newlines as newlines kept by CSS (white-space: pre-wrap) instead of joining the lines. */
+  softBreaks?: boolean;
   /** 'short': user messages longer than 300 characters are shown shortened, with a "Show more" button. */
   userDisplay?: 'full' | 'short';
   chunkMs?: number;

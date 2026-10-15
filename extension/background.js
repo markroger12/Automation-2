@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.1.3';
+const EXTENSION_VERSION = '3.1.4';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'multi-tab', 'continue-generating', 'outbox'];
 
@@ -204,6 +204,8 @@ async function ensureTabs(managed) {
   if (managed.length >= wanted) return managed;
   // Open at most one new tab per tick (never spin up many tabs at once).
   const tab = await chrome.tabs.create({ url: serverCfg.chatgptUrl || 'https://chatgpt.com/', active: false });
+  // A working tab must not be discarded by Chrome's memory saver (that unloads the page in the middle of a job).
+  await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   tabState(tab.id).createdAt = Date.now();
   await setManagedTabIds([...managed, tab.id]);
   return [...managed, tab.id];
@@ -237,6 +239,7 @@ async function runOnTab(tabId, job) {
   t.job = job;
   t.terminal = false;
   const cp = await checkpoint(job.id, { tabId, operationId: job.operationId, job, step: 'claimed' });
+  await chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
   try {
     const target = targetUrl(job, t.url);
     const isRoot = /^https:\/\/chatgpt\.com\/?$/.test(target);

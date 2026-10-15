@@ -25,7 +25,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M10 Bulk campaigns and workflow | ✅ done (fake + real WordPress 6.5/6.7 scheduling verified; Search Console requests are manual, not automated) |
 | M11 Plagiarism evidence and hardening | ✅ done (plagiarism checker on a local fake web; hardening, diagnostics, a11y 0 violations; live checks in RELEASE_CHECKLIST §4 need the owner's PC) |
 | M12 Duplicate detector, quality report, router rules | ✅ done |
-| M13–M16 3.0 upgrades | ☐ |
+| M13 Research evidence ledger, internal-link decisions | ✅ done (local fake web; live sources not checked here) |
+| M14–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
 
 ---
@@ -642,3 +643,77 @@ Pipeline tests through the real engine:
 **Not verified here**
 - How often real ChatGPT articles about the same person cross the thresholds. The fact-like rule (≥ 30 % names/dates/numbers in a run of ≤ 20 words) and the HIGH/MEDIUM thresholds are first settings and may need tuning on real output.
 - Published posts not written by this app are compared by title only: their body text is not in the link index.
+
+## M13 — Research & Fact Checker evidence ledger, intelligent internal linking ✅
+
+**Working**
+- **Evidence ledger** (upgrade 03; `src/lib/research/`), built in the celebrity RESEARCH_EVIDENCE stage (no extra ChatGPT prompt):
+  - The research notes are split into **checkable claims**: birth, death, family/relationship, education, award, net worth, career. Each claim records its values: dates in English/German formats normalised to YYYY-MM-DD / YYYY-MM / YYYY, amounts, and names. It also records its nature (reported fact, estimate, or unverified claim/rumour) and its cited URLs. Birth, death, family and net worth count as **high impact**.
+  - Every cited page is fetched with the SSRF-safe fetcher and stored as a `SourceRecord`: OK, DEAD, BLOCKED, NOT_HTML or FAILED, with the fetch time. Records are cached for 7 days; “Re-check sources” fetches them again.
+  - A page counts as evidence only when it is **about the same person**: the name must appear, plus one context word from the notes (occupation groups with English/German equivalents; words inside URLs are ignored). Namesakes and disambiguation pages are not used, and are listed as off-topic.
+  - Each source is judged per claim as supports / contradicts / no mention, with an excerpt. Claim status:
+    - **VERIFIED** only with 2+ independent supporting sites;
+    - **SINGLE_SOURCE**, **ESTIMATE**, **DISPUTED** (rumour);
+    - **CONTRADICTED** (a source gives a different value; this is never hidden by other support);
+    - **UNVERIFIED**.
+  - Conflicting values inside the notes themselves (two birth dates) are surfaced.
+  - Results are stored as `ClaimEvidence` rows.
+- **Quality gate** (the `evaluateArticleEvidence` evidence section of the ArticleQualityReport):
+  - **Hard stop**: research notes leaking into the article (raw URLs, “Sources:”, “research notes”).
+  - **Review warning**:
+    - a contradicted high-impact claim;
+    - a high-impact claim that appears in the article without support (located by its values or names).
+  - **Notes only**: dead or off-topic sources, and having no checkable sources at all.
+- **Research Evidence page** (`/research-evidence`):
+  - articles with claims to check; the claim list with status, sources, excerpts and the contradiction detail (“source gives 1989-10-01, the notes say 1989-09-01”);
+  - every source with its status and fetch time.
+  - Owner decisions, audited `research.decision`:
+    - accept as it is;
+    - leave it out of the article;
+    - correct the value (a note of at least 5 characters is required; save stays disabled until then).
+  - Decisions are keyed by the claim's signature, so they survive a rebuild and resolve the matching review reason; clearing a decision is also supported.
+  - “Re-check sources” runs as a workflow job (`research.recheck`). “What changed since the last research” compares with the previous ledger of the same keyword.
+- **Intelligent internal linking — stored decisions** (upgrade 06, on top of the M7 index and anchors):
+  - every contextual-link decision is stored in `SuggestedInternalLink`:
+    - the line link (SELECTED);
+    - related posts placed in the body (SELECTED, with the anchor);
+    - related posts not placed because the per-article limit was reached (PROPOSED, with the anchor that would be used);
+    - no natural anchor, or only the focus keyword (NO_ANCHOR);
+    - unreachable (UNREACHABLE, with the reason);
+    - the top unrelated candidates (NOT_RELATED);
+  - shown as “Contextual link decisions” on the article Links tab. Each run replaces the task's rows (at most 40).
+- Migrations: `research_evidence` (SourceRecord, ClaimEvidence) and `internal_link_suggestions` (SuggestedInternalLink). Both are CREATE TABLE only, with no table rebuild.
+
+**Commands run (all passed)**
+```
+bash scripts/dev-create-migration.sh internal_link_suggestions
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 29 files, 206 tests (new: claims 8, ledger 6 on a local fake web)
+npx vitest run --config vitest.integration.config.ts <file>  # 8 files, 46 tests, file by file, first attempt
+                                                           # (links test now also checks the stored decisions:
+                                                           # line SELECTED, unrelated post NOT_RELATED, one website only)
+npm run build                                              # compiled
+npm run setup + seed + npm run start:all  # UI smoke on a throwaway data dir: celebrity task with notes and three cached
+                  # sources (one contradicting the birth date); /research-evidence lists it (1 sources disagree,
+                  # 1 disputed / rumour, 1 estimate, 1 one source); contradiction detail shown; “Leave it out” saved
+                  # only after a note; “Re-check sources” → this container has no internet, so all three sources
+                  # became DEAD (“DNS lookup failed”), shown honestly; the owner decision was kept after the rebuild;
+                  # no HTTP or console errors
+npm run audit:a11y                                         # 48/48 page+theme combinations, no violations (incl. /research-evidence)
+```
+Unit tests through the real ledger on a local fake web:
+- **Two independent sources** → VERIFIED. Estimates and rumours stay separate; dead links are notes.
+- **Caching**: sources are cached for a week; a re-check fetches them again.
+- **Conflicts and leaks**:
+  - conflicting birth dates are surfaced;
+  - an unsupported relationship claim in the article is a warning;
+  - leaked notes are a hard stop.
+- **No wrong-entity merge**: a TV presenter with the same name and a disambiguation page are not used as evidence for the musician.
+- **Owner decisions**: a correction keeps the source links, survives a rebuild and resolves the review reason.
+- **Stale facts**: changes since the previous research of the same keyword are listed.
+
+**Not verified here**
+- **Live sources**: real third-party pages, including Wikipedia, are not reachable from this container. The “about the same person” rule and the support/contradiction judgement are first settings, tested only on fixture pages.
+- **Claim extraction** uses patterns on the research notes, not a language model. Claims worded in unusual ways are not extracted; they are not invented either.
+- **Not used for linking yet**: the `Website.linkStrategy` column is still not used, and contextual anchors ignore headings (the anchor is the target post's own phrase found in body text).
+

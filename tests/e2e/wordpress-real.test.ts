@@ -70,7 +70,10 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
     browser.onWordPressContext(async (context: BrowserContext) => {
       setTimeout(async () => {
         const page = context.pages()[0];
-        if (!page || !/wp-login\.php/.test(page.url())) return;
+        if (!page) return;
+        // The PHP built-in server is single-threaded: a wp-cron loopback can hold the login page back for ~35 s.
+        if (!/wp-login\.php/.test(page.url())) await page.waitForURL(/wp-login\.php/, { timeout: 75_000 }).catch(() => {});
+        if (!/wp-login\.php/.test(page.url())) return;
         // Like a person: type only once the page has finished loading (the app ticks “Remember Me” on load).
         await page.waitForFunction('document.readyState === "complete" && !!document.getElementById("rememberme") && document.getElementById("rememberme").checked', null, { timeout: 30_000 }).catch(() => {});
         await page.fill('#user_login', USER).catch(() => {});

@@ -27,7 +27,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M12 Duplicate detector, quality report, router rules | ✅ done |
 | M13 Research evidence ledger, internal-link decisions | ✅ done (local fake web; live sources not checked here) |
 | M14 Image Studio and WordPress manager hardening | ✅ done (fake + real WordPress 6.5/6.7 verified; the owner's Chrome and live sites not verified here) |
-| M15–M16 3.0 upgrades | ☐ |
+| M15 Search Performance and Content Refresh | ✅ done (fixture exports + fake and real WordPress 6.5/6.7 verified; live Search Console data and live sites not verified here) |
+| M16 Analytics, Website Control, recovery, benchmark report | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
 
 ---
@@ -776,3 +777,76 @@ The smoke's first seed attempt failed: the script tried to update a stage the en
 - **Owner's setup**: the owner's Chrome profile, live WordPress sites (hosting overlays, security plugins, real Editor/Author accounts) and real timeouts during uploads. The lost-answer path is tested with a fake that drops the connection, and on real WordPress by simulating the lost answer.
 - **Concurrent uploads**: an upload that WordPress finishes *after* the retry's slug lookup could still produce a second copy. The retry waits 1.5 s first; nothing else guards this.
 - **Alt text**: the fallback text is generic by design; descriptive text still comes from the image plan, the photo check or the owner.
+
+## M15 — Search Performance (verified data only) and Content Refresh ✅
+
+**Working**
+- **Search Performance** (upgrade 10; `src/lib/search-performance/`, `/search-performance`):
+  - **Only owner-exported Search Console data**: Performance → Export → Download CSV, uploaded here as the zip or its CSV files. Nothing is fetched from Google, scraped or estimated.
+  - Reads English and German exports, compare exports (both periods), Pages/Queries/Dates/Filters; other tables (countries, devices) are listed as not used. The zip reader is bounded (entry count, sizes, declared size checked, no ZIP64/encryption); numbers in EN/DE notation; formula-like CSV cells are escaped on export.
+  - **Honest states**: no property → **NOT CONNECTED**; property but nothing imported → **NO VERIFIED DATA** (no numbers shown).
+  - **Refused**: pages of another property (domain or URL-prefix), search types other than Web, a missing period (no Dates.csv and no dates entered), and the same export twice. Removing an import is audited.
+  - **Trends**: 7/28/90-day windows with how many days have data; a change only when both periods are complete. Days are Search Console's Pacific-Time calendar days as exported, counted with UTC date arithmetic (tested across DST changes).
+  - **Pages and queries**: the latest reports, with pages matched to the app's articles (host without www, path without trailing slash).
+  - **Declining pages**: at least 10 clicks before and at most 70 % now, from a Compare export or the previous report of the same length.
+  - **Published articles without impressions**: articles at least 14 days old at report end. Not counted when the page export hit the 1,000-row cap, because absence from a capped list proves nothing.
+  - **Indexing**: requests (workflow), confirmed by the owner, and seen in search (impressions in imported data) are counted separately; a request is never indexing.
+  - CSV exports for pages, queries, declining and zero-impression lists.
+- **Content Refresh** (upgrade 11; `RefreshCandidate`, `ContentRevision`, `src/lib/refresh/`, `src/wordpress/refresh-apply.ts`, `/content-refresh`):
+  - **Evaluation is read-only**: daily per active website (idempotent per day), or **Evaluate now**; it runs in the evidence-job loop.
+  - **A candidate needs evidence**:
+    - a past edition year in the title or a heading, or “as of / Stand: <year>” (birth or wedding years in sentences never count);
+    - a dead link (HTTP 404/410; a missing domain only when other links in the run answered, so an offline PC does not report dead links — it says so);
+    - a contradicted high-impact claim from the evidence ledger;
+    - falling clicks or zero impressions from imported Search Console data.
+
+    Age alone never creates a candidate, it only adds priority, so a current evergreen article is left alone. Re-evaluation updates instead of duplicating, resolves fixed articles, and keeps a dismissal unless the evidence changes.
+  - **Revision**: a separate record proposed from the article's current text, with dead links unlinked (words kept) and the passages to update named. The owner edits the HTML (sanitized) and sees removed/new text blocks before approving. An unchanged revision cannot be approved, nor one whose article changed in the app meanwhile.
+  - **Approval → the SAME WordPress post** (control job `wp.refresh-apply`):
+    - only `content` is sent; status, date, slug and URL stay, and the read-back checks it (a changed state would open a critical recovery incident);
+    - drafts are updated directly;
+    - live posts need the site's “approved updates to live posts” switch (canPublish + typed acknowledgement, existing card) AND the typed `UPDATE LIVE POST`; it is checked again at apply time, so a post that went live after approval is **blocked**;
+    - edits made in WordPress since the app's last save stop it as **CONFLICT** with nothing changed. **Start from the WordPress version** adopts that text (the app's text stays in the history) and proposes again;
+    - a failed attempt (e.g. logged out) goes back to approved with the reason, the queued job retries, and the owner can **try again** or reject;
+    - the local article changes only after WordPress confirmed the update; a retry after a crash finds the content already there.
+  - **Rollback** proposes the previous text through the same approval and apply path. Everything is audited (`refresh.*`).
+- Sidebar: Content Refresh and Search Performance are no longer marked “soon”.
+- Migration `search_performance_content_refresh`: four CREATE TABLE statements, no table rebuild.
+
+**Commands run**
+```
+bash scripts/dev-create-migration.sh search_performance_content_refresh   # 4 × CREATE TABLE, no rebuild
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 33 files, 236 tests (new: zip/parser/trends/signals 9,
+                                                           # Search Performance 6, Content Refresh 6)
+npx vitest run --config vitest.integration.config.ts <file>  # 9 files, 54 tests, file by file, all on the first attempt
+                                                           # (new: content-refresh 5 against the fake WordPress)
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress              # 11/11 on WordPress 6.7-alpha and 11/11 on 6.5.5, fresh
+                                                           # databases (new: refresh of the now LIVE post)
+npm run build                                              # compiled
+npm run setup + seed + npm run start:all  # UI smoke on a throwaway data dir (see below)
+npm run audit:a11y                                         # 54/54 page+theme combinations, no violations
+```
+- **Integration** (fake WordPress), through the real worker code:
+  - a draft gets only `content` (request body checked), keeps status/date/slug/title, and the local text changes afterwards; a retry finds it applied;
+  - a post that went live after approval is BLOCKED, then updated with permission and the typed acknowledgement, with status `publish` and its date unchanged;
+  - an edit made in WordPress gives CONFLICT with nothing changed; continuing from the WordPress version applies cleanly and keeps the editor's paragraph;
+  - a rollback restores the text;
+  - an update while logged out goes back to approved with the reason, a second approval is refused while the job is queued, and it applies after login.
+- **Real WordPress** 6.7 and 6.5: on the post WordPress itself published in the scheduling test, the refresh is refused while the site does not allow live updates. With permission it changes only the content (status, `date_gmt`, slug and link identical when read back), and a later edit made in WordPress stops the next refresh with nothing changed.
+- **UI smoke** (Chromium, built app + real worker):
+  - NOT CONNECTED for the site without a property, NO VERIFIED DATA (no numbers) before the import;
+  - the fixture zip import, then the 7-day card “70 clicks −50 %”, the zero-impression list, the pages table linked to the article, the CSV export, and a duplicate import refused;
+  - Content Refresh: two candidates with “Outdated year”, the evergreen article not listed;
+  - proposed, edited and compared;
+  - live post: approval refused with the reason;
+  - draft: approval queued; the worker's attempt failed because this container has no Google Chrome, which is shown as “The update did not run: …”;
+  - no console errors except the two deliberate 409 refusals.
+
+The audit found one dark-mode contrast problem in existing code: job errors on the website page. Fixed.
+
+**Not verified here**
+- **Real Search Console exports**: no real Search Console account is available. The parser follows the export's column names (English and German, normal and Compare) and was tested on fixtures written to match. Unknown column names are reported as files not used rather than guessed.
+- **Indexing**: a URL Inspection API or automated indexing checks are not built.
+- **Content refresh text**: there is no ChatGPT-assisted rewrite. The owner writes the new text; only dead links are fixed automatically.
+- **Freshness wording**: only the listed marker phrases are recognised.

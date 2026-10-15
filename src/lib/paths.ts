@@ -25,6 +25,7 @@ export const dataPaths = {
   tools: () => path.join(dataDir(), 'tools'),
   workerLock: () => path.join(dataDir(), 'worker.lock'),
   uploads: () => path.join(dataDir(), 'uploads'),
+  reports: () => path.join(dataDir(), 'reports'),
 };
 
 export function ensureDataDirs(): void {

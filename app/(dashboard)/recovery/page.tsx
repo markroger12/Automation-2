@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 import { RUNNING_STATUSES } from '@/lib/domain';
 import { listBackups } from '@/lib/backup';
 import { Card, Chip, EmptyState, PageHeader, StatusChip, formatDateTime, formatRelative } from '@/components/ui';
-import { IncidentActions } from './actions';
+import { IncidentActions, StalledTaskActions } from './actions';
 
 export const metadata = { title: 'Recovery Center' };
 
@@ -116,6 +116,9 @@ export default async function RecoveryPage() {
                       <StatusChip status={t.status} />
                     </td>
                     <td className="text-xs">{formatRelative(t.updatedAt)}</td>
+                    <td className="text-right">
+                      <StalledTaskActions taskId={t.id} stage={t.stage} />
+                    </td>
                   </tr>
                 ))}
               </tbody>

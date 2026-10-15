@@ -29,7 +29,8 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "postinstall": "prisma generate",
     "test:e2e:wordpress": "vitest run --config vitest.e2e.config.ts",
-    "audit:a11y": "tsx scripts/a11y-audit.ts"
+    "audit:a11y": "tsx scripts/a11y-audit.ts",
+    "benchmark:report": "tsx scripts/benchmark-report.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

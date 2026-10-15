@@ -44,3 +44,31 @@ export function IncidentActions({ id, hasTask }: { id: string; hasTask: boolean 
     </div>
   );
 }
+
+/** A task running with no update for a long time: continue from its saved checkpoint (nothing is reset). */
+export function StalledTaskActions({ taskId, stage }: { taskId: string; stage: string | null }) {
+  const toast = useToast();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      size="sm"
+      loading={busy}
+      title="Continue from the saved checkpoint; finished stages are not repeated"
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await api(`/api/tasks/${taskId}/resume`, { method: 'POST' });
+          toast('success', `Resuming${stage ? ` from ${stage}` : ''}.`);
+          router.refresh();
+        } catch (e) {
+          toast('error', (e as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      Resume{stage ? ` from ${stage}` : ''}
+    </Button>
+  );
+}

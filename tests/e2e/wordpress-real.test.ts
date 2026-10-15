@@ -261,4 +261,47 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
     expect((await withClient((c) => c.getPost(t.wpPostId!)))!.status).toBe('draft');
     fs.rmSync(CLASSIC_TOGGLE!);
   });
+  it('approved workflow publishing (spec §14): the EXISTING draft is scheduled at its slot in WordPress local time, verified, then published by WordPress itself', async () => {
+    const schedule = await import('@/wordpress/schedule');
+    // A non-UTC WordPress clock makes "local time" meaningful (Berlin is UTC+2 in summer, UTC+1 in winter).
+    await withClient((c) => c.call('POST', '/wp/v2/settings', { json: { timezone: 'Europe/Berlin' } }));
+    const task = await newTask('schedule', 'Bill Kaulitz Tokio Hotel');
+    const t = await driver.drive(task.id);
+    expect(t.status, t.reviewReasons).toBe('COMPLETED');
+    const postId = t.wpPostId!;
+    const wf = await client.workflow.create({ data: { websiteId: site.id, name: 'e2e', active: false, slots: JSON.stringify(['9:00 AM']) } });
+    // Slot ~3 minutes ahead (the approved path refuses anything closer than 2.5 minutes), whole second.
+    const slot = new Date(Math.ceil((Date.now() + 190_000) / 1000) * 1000);
+    const kw = await client.workflowKeyword.create({ data: { workflowId: wf.id, keyword: 'Bill Kaulitz Tokio Hotel', normalizedKeyword: 'bill kaulitz tokio hotel', position: 1, writerType: 'CELEBRITY', status: 'READY', taskId: t.id, scheduledAt: slot } });
+    await client.slotReservation.create({ data: { websiteId: site.id, scheduledAt: slot, workflowKeywordId: kw.id } });
+
+    // Publishing not allowed for this website: nothing happens.
+    await client.website.update({ where: { id: site.id }, data: { canPublish: false, canPublishAcknowledgedAt: null } });
+    expect(await schedule.scheduleKeywordPost(kw.id)).toEqual({ skipped: 'publishing not allowed' });
+    expect((await withClient((c) => c.getPost(postId)))!.status).toBe('draft');
+
+    // Allowed (switch + typed acknowledgement): the same post becomes "future" at the slot.
+    await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date() } });
+    expect(await schedule.scheduleKeywordPost(kw.id)).toMatchObject({ scheduled: true, postId });
+    const future = (await withClient((c) => c.getPost(postId)))! as import('@/wordpress/client').WpPost & { date: string };
+    expect(future.status).toBe('future');
+    expect(future.id).toBe(postId);
+    expect(Date.parse(`${future.date_gmt}Z`)).toBe(slot.getTime());
+    const berlin = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(slot).replace(' ', 'T');
+    expect(future.date).toBe(berlin);
+    expect(await client.articleTask.count({ where: { websiteId: site.id, keyword: 'Bill Kaulitz Tokio Hotel' } })).toBe(1);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('SCHEDULED');
+
+    // Before the slot WordPress still shows "future"; the tool does not claim publication.
+    expect(await schedule.verifyKeywordPublished(kw.id)).toEqual({ published: false, status: 'future' });
+    // After the slot, WordPress's own cron publishes it; the tool reads the status back.
+    await new Promise((r) => setTimeout(r, Math.max(0, slot.getTime() - Date.now()) + 5_000));
+    await fetch(`${ADMIN!.replace(/wp-admin\/?$/, '')}wp-cron.php?doing_wp_cron=${Date.now() / 1000}`).catch(() => undefined);
+    const verified = await schedule.verifyKeywordPublished(kw.id);
+    expect(verified).toMatchObject({ published: true });
+    const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+    expect(row.status).toBe('PUBLISHED');
+    expect(row.publishedUrl).toBeTruthy();
+    await client.website.update({ where: { id: site.id }, data: { canPublish: false, canPublishAcknowledgedAt: null } });
+  }, 480_000);
 });

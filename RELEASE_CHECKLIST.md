@@ -15,7 +15,7 @@ Run before handing over a release. Each line says **where it can be verified**: 
 - [ ] `npm run typecheck` — 0 errors.
 - [ ] `npm test` — all unit tests pass.
 - [ ] `npm run test:integration` — all integration tests pass (run file by file if the machine is busy; see BUILD_STATUS).
-- [ ] `npm run test:e2e:wordpress` against a **disposable** WordPress (two versions): drafts, read-back verification, publish guard, featured image, Classic editor, approved scheduling path.
+- [ ] `npm run test:e2e:wordpress` against a **disposable** WordPress (two versions): drafts, read-back verification, publish guard, featured image and media idempotency, the session-expired pop-up, Classic editor, the approved scheduling path, and content refresh of a live post.
 - [ ] `npm run build` — compiles.
 - [ ] `npm run audit:a11y` with the app running — no serious or critical violations (light and dark).
 - [ ] `npm audit --omit=dev` — every finding either fixed or recorded with the reason it is accepted (BUILD_STATUS, M11b).
@@ -29,6 +29,8 @@ Run before handing over a release. Each line says **where it can be verified**: 
 - [ ] No CAPTCHA solving or detection evasion: human checks pause the work and ask the owner.
 - [ ] Exactly two active writers (Celebrity, Tigram); Celebrity Writer 2.0 records are read-only.
 - [ ] No faked numbers: Rank Math scores only as read from the editor; indexing only as recorded by the owner; plagiarism shown as evidence, never a score.
+- [ ] Search data only from imported Search Console exports (NOT CONNECTED / NO VERIFIED DATA otherwise); productivity counts only verified drafts with their WordPress post; estimates are labelled.
+- [ ] No silent edits to published content: a content refresh needs an approved revision, the site's live-update switch and the typed acknowledgement; edits made in WordPress stop it.
 - [ ] Diagnostic bundle contains no cookies, keys, tokens or passwords (unit test + open one bundle and search for `bas_`, `wordpress_logged_in`, `password`).
 
 ## 4. Owner PC — live checks (cannot be verified in the repository)
@@ -40,7 +42,13 @@ Run before handing over a release. Each line says **where it can be verified**: 
 - [ ] Plagiarism Evidence: Wikipedia and linked pages are read (coverage list “compared”); with a `SERPER_API_KEY`, search results appear.
 - [ ] Workflow on a site **with publishing allowed**: a draft is scheduled for its slot at the right local time and published by WordPress; on a draft-only site nothing is published.
 - [ ] Backup and restore: `npm run db:backup -- --media`, then restore it into a copy and open the dashboard.
-- [ ] **Throughput benchmark** (spec): with 3 article slots, at least 6 verified drafts per hour, measured end to end on real sites; record the numbers in BUILD_STATUS.
+- [ ] Site health (website page): **Test session** shows the login session, REST API, account permissions, editor and Rank Math as measured; one real draft save appears with its duration.
+- [ ] Research Evidence on a real celebrity article: cited pages are fetched (status OK), claims show their sources, and a contradicted fact is visible.
+- [ ] Duplicate Review: a second article on a related person on another site is compared without false alarms on shared facts.
+- [ ] Search Performance: import a real Search Console export (Performance → Export → Download CSV, with and without Compare). Check the period, the 7/28-day totals against Search Console, and that pages are matched to articles.
+- [ ] Content Refresh: on a draft, propose → edit → approve → the same WordPress post changes (status and date unchanged); with “approved updates to live posts” on, the same for a published post; an edit made in WordPress meanwhile stops it.
+- [ ] Website Control: pause one site and check that no new article starts there; **Check all sessions**; copy settings between two English sites.
+- [ ] **Throughput benchmark** (spec): with 3 article slots, run real articles for 2 hours, then `npm run benchmark:report -- <start time>`. It needs at least 6 verified drafts in each hour. Paste the report into BUILD_STATUS (PASS / FAIL / suspended with reasons).
 
 ## 5. Hand-over
 

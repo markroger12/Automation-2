@@ -178,6 +178,46 @@ The overall status is *healthy*, *needs attention*, *failing* or *no data yet*, 
     - if the post was edited in WordPress since the app saved it, nothing is changed (**conflict**). **Start from the WordPress version** makes that text the article's text and proposes again.
   - The article in the app changes only after WordPress confirmed the update. **Roll back** proposes the previous text through the same approval.
 
+## Productivity, websites and recovery
+
+- **Productivity** (sidebar) counts only verified drafts: an article counts once, when its WordPress draft was read back and verified. The post ID is kept as proof, and retries never count twice. The page shows:
+  - the last 15/60/120 minutes;
+  - the 14-day trend (Pakistan days);
+  - totals by website, writer and campaign;
+  - the slowest stages (p50/p90, retries, failures);
+  - ChatGPT limits and time in backoff;
+  - review and paused articles, quality-gate results, and the top reasons articles stopped;
+  - alerts (worker stopped, queue stall, high error rate, ChatGPT backoff);
+  - CSV exports.
+
+  **Target vs actual** checks the last two consecutive hours against 6 verified drafts each:
+  - **PASS** or **FAIL**;
+  - **claim suspended** when ChatGPT limits, logins/checks or a stopped worker interfered;
+  - **no work to measure** when nothing was queued.
+
+  The capacity figure is an estimate from measured medians and is labelled as one.
+- **2-hour benchmark**: run your live test with real ChatGPT and WordPress sessions, then `npm run benchmark:report -- <start time, e.g. 2026-10-15T09:00:00Z>`. It prints and saves (in `data\reports\`):
+  - the verified articles of each hour with their WordPress posts;
+  - stage timings and retries;
+  - stopped articles and versions;
+  - the PASS / FAIL / suspended verdict.
+
+  It starts no work.
+- **Website Control** (sidebar, under Websites) shows every website with:
+  - its language, time zone, session, measured health and categories;
+  - its editor, internal-link line, image template, prompt overrides, writer rules and Rank Math setting;
+  - its workflow, Search Console property, publishing permission and article counts.
+
+  Actions:
+  - **Pause/Resume**, **Priority** and **Max in progress** (0 = no limit) per site; audited.
+  - **Check all sessions** queues one session test per site.
+  - **Copy safe settings** copies overrides, writer rules, the Rank Math target, the image design (without the source's logo and fixed photos), and — only between sites of the same language — the internal-link line and prompt overrides. URLs, profiles, categories, publishing permission and the Search Console property are never copied.
+- **Recovery Center**: open incidents can be resumed from their saved checkpoint or retried. Articles running with no update for 30+ minutes have **Resume from <stage>** (finished stages are not repeated).
+- **SEO brief** (article → SEO tab): each article gets a suggested search intent and a brief, which you can edit. It contains the sections to cover, title/meta guidance, the FAQ focus and the keyword guideline.
+  - Intents: biography, family/relationship, net worth estimate, explainer, comparison, how-to.
+  - The brief is added to the writing prompt (LONG_ARTICLE / ARTICLE). To place it yourself, put `{{seo_brief}}` in the prompt; to turn it off, Settings → SEO → “Add the SEO brief to writing prompts”.
+  - An informational check shows which sections the article covers as headings. It never changes the SEO score and never makes the app add text.
+
 ## Data folder (`data\`, git-ignored)
 
 | Path | Contents |

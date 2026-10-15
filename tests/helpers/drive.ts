@@ -9,7 +9,13 @@ import { cannedAnswer } from './fake-answers';
 /** A text answer, an answer with generated images, or a permanent failure of that prompt (no retries left). */
 export type ScriptedAnswer = string | { text: string; images?: Buffer[] } | { fail: string };
 
-export function makeDriver(client: PrismaClient, answer: (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => ScriptedAnswer = cannedAnswer) {
+/**
+ * Scripted answers give every article the same text, which the Duplicate
+ * Content Detector would (correctly) pause as duplicated wording. Unless a
+ * test opts in with `detectDuplicates`, the driver records the owner's
+ * override for that reason — the same path an owner uses — before driving.
+ */
+export function makeDriver(client: PrismaClient, answer: (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => ScriptedAnswer = cannedAnswer, opts: { detectDuplicates?: boolean } = {}) {
   const respond = async () => {
     const jobs = await import('@/lib/chatgpt/jobs');
     let answered = 0;
@@ -53,6 +59,7 @@ export function makeDriver(client: PrismaClient, answer: (stageKey: string, prom
   const drive = async (taskId: string, stopWhen?: (status: string, stage: string | null) => boolean, maxSteps = 120) => {
     const queue = await import('@/lib/queue');
     const engine = await import('@/worker/pipeline/engine');
+    if (!opts.detectDuplicates) await allowFixtureDuplicates(client, taskId);
     for (let i = 0; i < maxSteps; i++) {
       const t = await client.articleTask.findUniqueOrThrow({ where: { id: taskId } });
       if (stopWhen?.(t.status, t.stage)) return t;
@@ -66,4 +73,11 @@ export function makeDriver(client: PrismaClient, answer: (stageKey: string, prom
   };
 
   return { drive, respond };
+}
+
+/** Owner override for scripted articles (they share their text by construction); see makeDriver. */
+export async function allowFixtureDuplicates(client: PrismaClient, taskId: string) {
+  const task = await client.articleTask.findUniqueOrThrow({ where: { id: taskId } });
+  const options = JSON.parse(task.options || '{}') as Record<string, unknown>;
+  if (!options.duplicateOverride) await client.articleTask.update({ where: { id: taskId }, data: { options: JSON.stringify({ ...options, duplicateOverride: { reason: 'Test fixture: scripted answers give every article the same text.', at: new Date().toISOString() } }) } });
 }

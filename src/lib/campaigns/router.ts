@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { ACTIVE_MODULE_KEYS, type ActiveModuleKey } from '../domain';
 
 /**
@@ -15,7 +16,7 @@ export interface RouteDecision {
   confidence: number;
   rationale: string;
   version: string;
-  source: 'RULE' | 'OVERRIDE' | 'CAMPAIGN';
+  source: 'RULE' | 'OVERRIDE' | 'CAMPAIGN' | 'SITE_RULE';
 }
 
 const w = (s: string) => s.split(/\s*,\s*/);
@@ -112,11 +113,46 @@ export function classifyKeyword(keyword: string, language = 'en'): RouteDecision
 }
 
 /** A routing result for a row: owner override > campaign default > rule (only when confident enough). */
-export function resolveWriter(input: { keyword: string; language?: string | null; override?: string | null; campaignDefault?: string | null; minConfidence?: number }): RouteDecision {
+/** A website's own routing rule: keywords containing the phrase (whole words) go to that writer. */
+export interface SiteRoutingRule {
+  contains: string;
+  writer: ActiveModuleKey;
+}
+
+export const routingRulesSchema = z
+  .array(z.object({ contains: z.string().trim().min(2, 'Each rule needs a phrase of at least 2 characters.').max(80), writer: z.enum(ACTIVE_MODULE_KEYS) }))
+  .max(50, 'At most 50 rules per website.');
+
+const words = (s: string) => ` ${s.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
+
+/** The first rule whose phrase occurs in the keyword as whole words (case-insensitive). */
+export function matchSiteRule(keyword: string, rules: SiteRoutingRule[] | null | undefined): SiteRoutingRule | null {
+  const kw = words(keyword);
+  return (rules ?? []).find((r) => words(r.contains).trim() && kw.includes(words(r.contains))) ?? null;
+}
+
+/** Stored rules, ignoring anything invalid (a bad entry never routes). */
+export function parseRoutingRules(json: string | null | undefined): SiteRoutingRule[] {
+  try {
+    const r = routingRulesSchema.safeParse(JSON.parse(json ?? '[]'));
+    return r.success ? r.data : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Writer for a keyword. Precedence: the row's own choice, the campaign
+ * default, the website's routing rules, then the classifier (UNKNOWN when
+ * unsure — the owner chooses). Only the two active writers are ever returned.
+ */
+export function resolveWriter(input: { keyword: string; language?: string | null; override?: string | null; campaignDefault?: string | null; siteRules?: SiteRoutingRule[] | null; minConfidence?: number }): RouteDecision {
   const override = normalizeWriter(input.override);
   if (override) return { writer: override, confidence: 1, rationale: 'Chosen for this row.', version: ROUTER_VERSION, source: 'OVERRIDE' };
   const campaignDefault = normalizeWriter(input.campaignDefault);
   if (campaignDefault) return { writer: campaignDefault, confidence: 1, rationale: 'Campaign default writer.', version: ROUTER_VERSION, source: 'CAMPAIGN' };
+  const siteRule = matchSiteRule(input.keyword, input.siteRules);
+  if (siteRule) return { writer: siteRule.writer, confidence: 1, rationale: `Website rule: keyword contains “${siteRule.contains}”.`, version: ROUTER_VERSION, source: 'SITE_RULE' };
   const rule = classifyKeyword(input.keyword, input.language ?? 'en');
   if (rule.writer && rule.confidence < (input.minConfidence ?? 0.7)) return { ...rule, writer: null, rationale: `${rule.rationale} Confidence ${Math.round(rule.confidence * 100)} % is below the automatic threshold.` };
   return rule;

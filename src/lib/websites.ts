@@ -4,6 +4,8 @@ import { countrySchema, EDITOR_TYPES, LANGUAGES } from './domain';
 import { siteOverridesSchema } from './settings-schema';
 import { slugify } from './paths';
 import { AppError } from './errors';
+import { audit } from './audit';
+import { parseRoutingRules, routingRulesSchema } from './campaigns/router';
 
 export function isValidTimezone(tz: string): boolean {
   try {
@@ -159,3 +161,27 @@ export async function updateWebsite(id: string, raw: unknown, client: Tx = db) {
 }
 
 export const PUBLISH_ACK_PHRASE = 'ALLOW PUBLISHING';
+
+/** Per-site writer routing rules (upgrade 05), checked after a row's own choice and before the classifier. */
+export async function getRoutingRules(id: string, client: Tx = db) {
+  const site = await client.website.findUnique({ where: { id }, select: { routingRules: true } });
+  if (!site) throw new AppError(404, 'NOT_FOUND', 'Website not found.');
+  return parseRoutingRules(site.routingRules);
+}
+
+export async function saveRoutingRules(id: string, raw: unknown, client: Tx = db) {
+  const site = await client.website.findUnique({ where: { id }, select: { id: true, name: true } });
+  if (!site) throw new AppError(404, 'NOT_FOUND', 'Website not found.');
+  const parsed = routingRulesSchema.safeParse((raw as { rules?: unknown })?.rules);
+  if (!parsed.success) throw new AppError(400, 'VALIDATION', parsed.error.issues[0]?.message ?? 'Invalid rules.');
+  const seen = new Set<string>();
+  const rules = parsed.data.filter((r) => {
+    const k = r.contains.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  await client.website.update({ where: { id }, data: { routingRules: JSON.stringify(rules) } });
+  await audit('website.routing-rules', 'Website', id, { website: site.name, rules: rules.length }, client);
+  return rules;
+}

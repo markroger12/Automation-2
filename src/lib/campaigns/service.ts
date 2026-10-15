@@ -11,7 +11,7 @@ import { getValue, setValue } from '../settings';
 import { createArticleTask } from '../tasks/create';
 import { requestCancel, retryTask } from '../tasks/lifecycle';
 import { parseImport, type ImportRow } from './parse';
-import { ROUTER_VERSION, normalizeWriter, resolveWriter } from './router';
+import { ROUTER_VERSION, normalizeWriter, parseRoutingRules, resolveWriter } from './router';
 import { isNearDuplicate } from './dedupe';
 
 /**
@@ -92,7 +92,7 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
     else if (!site.active) issues.push({ kind: 'ERROR', message: `${site.name} is inactive.` });
     const language = r.language ?? site?.language ?? null;
     if (r.writer && !normalizeWriter(r.writer)) issues.push({ kind: 'WRITER', message: `“${r.writer}” is not an active writer (use celebrity or tigram).` });
-    const decision = resolveWriter({ keyword: r.keyword, language, override: o.writer !== undefined ? o.writer : r.writer, campaignDefault: input.defaultWriter === 'AUTO' ? null : input.defaultWriter });
+    const decision = resolveWriter({ keyword: r.keyword, language, override: o.writer !== undefined ? o.writer : r.writer, campaignDefault: input.defaultWriter === 'AUTO' ? null : input.defaultWriter, siteRules: site ? parseRoutingRules(site.routingRules) : null });
     let category: Category | undefined;
     if (site) {
       const wanted = o.categoryId !== undefined ? o.categoryId : null;

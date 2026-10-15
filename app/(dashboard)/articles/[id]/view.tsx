@@ -14,6 +14,7 @@ import { WordPressTab } from './wordpress-tab';
 import { LinksTab } from './links-tab';
 import { HumanizerTab } from './humanizer-tab';
 import { OriginalityTab } from './originality-tab';
+import { QualityCard } from './quality-card';
 import { ACTIVE_MODULES } from '@/modules/registry';
 
 const REGENERABLE: Record<string, string[]> = Object.fromEntries(ACTIVE_MODULES.map((m) => [m.key, m.stages.filter((s) => s.regenerable).map((s) => s.key)]));
@@ -209,6 +210,9 @@ function OverviewTab({ task }: { task: SerializedTaskDetail }) {
   const opts = task.optionValues as Record<string, unknown>;
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <div className="lg:col-span-2">
+        <QualityCard taskId={task.id} />
+      </div>
       <Card title="Input (as submitted)">
         <KeyValue
           items={[

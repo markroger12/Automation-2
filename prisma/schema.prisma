@@ -57,6 +57,8 @@ model Website {
   allowLiveUpdates         Boolean         @default(false)
   searchConsoleProperty    String?
   settingsOverrides        String          @default("{}")
+  /// Per-site writer routing rules: [{ contains, writer }] checked before the classifier (upgrade 05).
+  routingRules             String          @default("[]")
   promptOverrides          String          @default("{}")
   linkStrategy             String          @default("{}")
   queueQuota               Int             @default(0)
@@ -169,6 +171,9 @@ model ArticleTask {
   humanizerRuns      HumanizerRun[]
   plagiarismChecks   PlagiarismCheck[]
   seoReports         SEOReport[]
+  fingerprints       ContentFingerprint[]
+  duplicateMatches   DuplicateMatch[]
+  qualityReports     ArticleQualityReport[]
   mediaAssets        MediaAsset[]
 
   @@index([status])
@@ -305,6 +310,62 @@ model PlagiarismCheck {
 
   @@index([taskId])
   @@index([createdAt])
+}
+
+/// Normalized paragraph hashes of an article (upgrade 07): fast exact-paragraph lookups across websites.
+model ContentFingerprint {
+  id        String      @id @default(cuid())
+  taskId    String
+  task      ArticleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  websiteId String
+  kind      String      @default("PARAGRAPH")
+  hash      String
+  words     Int
+  position  Int
+  createdAt DateTime    @default(now())
+
+  @@index([hash])
+  @@index([taskId])
+}
+
+/// Wording overlap between an article and another saved article, with evidence (never a verdict).
+model DuplicateMatch {
+  id              String      @id @default(cuid())
+  taskId          String
+  task            ArticleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  otherTaskId     String
+  otherTitle      String
+  otherWebsite    String
+  sameWebsite     Boolean
+  severity        String // HIGH | MEDIUM | LOW
+  wordingWords    Int
+  factWords       Int
+  longestRun      Int
+  nearSentences   Int
+  exactParagraphs Int
+  wordingShare    Float
+  excerpts        String      @default("[]")
+  status          String      @default("OPEN") // OPEN | OVERRIDDEN | CLEARED
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([taskId])
+  @@index([status, severity])
+}
+
+/// One quality evaluation of an article (upgrade 12): hard stops, warnings and the evidence per area.
+model ArticleQualityReport {
+  id        String      @id @default(cuid())
+  taskId    String
+  task      ArticleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stage     String // QUALITY_GATE | VERIFIED_COMPLETE
+  status    String // PASS | REVIEW | BLOCKED
+  hardStops String      @default("[]")
+  warnings  String      @default("[]")
+  sections  String      @default("{}")
+  createdAt DateTime    @default(now())
+
+  @@index([taskId, createdAt])
 }
 
 model PromptTemplate {

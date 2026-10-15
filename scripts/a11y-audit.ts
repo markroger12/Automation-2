@@ -17,7 +17,7 @@ if (!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base)) {
   process.exit(2);
 }
 
-const ROUTES = ['/', '/single-article', '/queue', '/campaigns', '/campaigns/new', '/history', '/writers', '/websites', '/prompts', '/editorial', '/humanizer', '/plagiarism', '/workflow', '/calendar', '/image-templates', '/settings', '/logs', '/diagnostics', '/recovery', '/automation-chrome', '/help'];
+const ROUTES = ['/', '/single-article', '/queue', '/campaigns', '/campaigns/new', '/history', '/writers', '/websites', '/prompts', '/editorial', '/humanizer', '/plagiarism', '/duplicates', '/workflow', '/calendar', '/image-templates', '/settings', '/logs', '/diagnostics', '/recovery', '/automation-chrome', '/help'];
 const axeSource = fs.readFileSync(path.join(process.cwd(), 'node_modules', 'axe-core', 'axe.min.js'), 'utf8');
 
 interface Violation {

@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { setupTestDb } from '../helpers/test-db';
+import { allowFixtureDuplicates } from '../helpers/drive';
 import { cannedAnswer } from '../helpers/fake-answers';
 
 /**
@@ -41,6 +42,7 @@ async function respond(language: 'en' | 'de') {
 }
 
 async function drive(taskId: string, language: 'en' | 'de', stopWhen?: (status: string, stage: string | null) => boolean) {
+  await allowFixtureDuplicates(client, taskId);
   for (let i = 0; i < 80; i++) {
     const t = await client.articleTask.findUniqueOrThrow({ where: { id: taskId } });
     if (stopWhen?.(t.status, t.stage)) return t;

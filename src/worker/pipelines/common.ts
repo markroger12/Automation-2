@@ -4,9 +4,13 @@ import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { assembleArticle, firstParagraphText, type AssemblyImage } from '@/lib/content/assembly';
 import { makeSlug, sentences, truncateAtWord } from '@/lib/content/text';
 import { runSeoChecks } from '@/lib/seo/checks';
-import { evaluateQuality } from '@/lib/quality/gate';
+import { evaluateQuality, type QualityFinding } from '@/lib/quality/gate';
+import { latestQualityReport, saveQualityReport, type QualitySections } from '@/lib/quality/report';
+import { runDuplicateCheck } from '@/lib/duplicates/service';
 import { baseVariables } from '@/lib/prompts/variables';
 import { recordMetric } from '@/lib/metrics';
+import { isNearDuplicate } from '@/lib/campaigns/dedupe';
+import { STOPWORDS } from '@/lib/plagiarism/text';
 import type { TemplateVars } from '@/lib/prompts/template';
 import type { StageManifest } from '@/modules/types';
 import type { PipelineContext, PipelineStage, StageResult } from '../pipeline/types';
@@ -60,6 +64,8 @@ export function precheck(manifest: StageManifest): PipelineStage {
   });
 }
 
+const contentWords = (s: string) => [...new Set(s.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])].filter((w) => w.length > 2 && !STOPWORDS.has(w));
+
 export function duplicatePrecheck(manifest: StageManifest): PipelineStage {
   return bind(manifest, {
     run: async (ctx) => {
@@ -70,18 +76,26 @@ export function duplicatePrecheck(manifest: StageManifest): PipelineStage {
       });
       const sameSite = others.filter((o) => o.websiteId === ctx.task.websiteId);
       const crossSite = others.filter((o) => o.websiteId !== ctx.task.websiteId);
+      // Near-duplicates on this website (word order, plurals, small typos; different numbers stay different).
+      const siteTasks = await db.articleTask.findMany({ where: { websiteId: ctx.task.websiteId, id: { not: ctx.task.id }, normalizedKeyword: { not: ctx.task.normalizedKeyword }, status: { notIn: ['CANCELLED', 'FAILED'] } }, select: { id: true, keyword: true, status: true }, orderBy: { createdAt: 'desc' }, take: 2000 });
+      const near = siteTasks.filter((o) => isNearDuplicate(o.keyword, ctx.task.keyword));
+      // Posts already published on this website whose title covers every content word of the keyword.
+      const words = contentWords(ctx.task.keyword);
+      const published = words.length >= 2 ? (await db.linkTarget.findMany({ where: { websiteId: ctx.task.websiteId, status: 'ACTIVE' }, select: { wpPostId: true, title: true, url: true }, take: 5000 })).filter((p) => { const tw = new Set(contentWords(p.title)); return words.every((w) => tw.has(w)); }) : [];
       const options = parseJson<Record<string, unknown>>(ctx.task.options, {});
-      if (sameSite.length && options.allowDuplicate !== true) {
+      if ((sameSite.length || near.length) && options.allowDuplicate !== true) {
+        const hits = [...sameSite.map((s) => ({ id: s.id, keyword: ctx.task.keyword, status: s.status })), ...near];
         throw new NeedsReviewError(
-          `“${ctx.task.keyword}” already has ${sameSite.length} article(s) on this website (${sameSite.map((s) => s.status.toLowerCase()).join(', ')}).`,
-          [`Duplicate keyword on ${sameSite[0].website.name}: see task ${sameSite[0].id}.`],
+          sameSite.length ? `“${ctx.task.keyword}” already has ${sameSite.length} article(s) on this website (${sameSite.map((s) => s.status.toLowerCase()).join(', ')}).` : `“${ctx.task.keyword}” is very similar to “${near[0].keyword}”, which already has an article on this website.`,
+          hits.slice(0, 5).map((h) => `Possible duplicate on this website: “${h.keyword}” (${h.status.toLowerCase()}), task ${h.id}.`),
           'If this is an intentional new version, use “Allow duplicate and continue”. Otherwise cancel this task.',
         );
       }
+      const warnings = published.slice(0, 3).map((p) => `A published post on this website already covers “${ctx.task.keyword}”: “${p.title}” (${p.url}). Make sure the new article has a different angle.`);
       return {
         outcome: 'completed',
-        data: { sameSite: sameSite.map((s) => s.id), crossSite: crossSite.map((s) => ({ id: s.id, website: s.website.name })) },
-        message: crossSite.length ? `Same keyword exists on ${crossSite.length} other website(s); the duplicate detector will compare wording at assembly.` : 'No duplicate keyword found',
+        data: { sameSite: sameSite.map((s) => s.id), near: near.map((n) => n.id), crossSite: crossSite.map((s) => ({ id: s.id, website: s.website.name })), publishedPosts: published.slice(0, 10), warnings },
+        message: [crossSite.length ? `Same keyword exists on ${crossSite.length} other website(s); wording is compared at the quality gate.` : '', published.length ? `${published.length} published post(s) on this website cover the keyword.` : ''].filter(Boolean).join(' ') || 'No duplicate keyword found',
       };
     },
   });
@@ -213,7 +227,7 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
       const categoryValid = Boolean(t.categoryId && site.categories.some((c) => c.id === t.categoryId));
       const assemblyNotes = ctx.stageJson<{ warnings: string[] }>('ASSEMBLY')?.warnings ?? [];
       const extraWarnings: string[] = [];
-      for (const key of ['EXTERNAL_LINKS', 'INTERNAL_LINKS', 'IMAGES', 'HUMANIZE', 'RESEARCH_EVIDENCE', 'QUICK_BIO', 'FAQS']) {
+      for (const key of ['DUPLICATE_PRECHECK', 'EXTERNAL_LINKS', 'INTERNAL_LINKS', 'IMAGES', 'HUMANIZE', 'RESEARCH_EVIDENCE', 'QUICK_BIO', 'FAQS']) {
         const w = ctx.stageJson<{ warnings?: string[] }>(key)?.warnings ?? [];
         extraWarnings.push(...w.map((x) => `${key}: ${x}`));
       }
@@ -232,10 +246,31 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
         imagesPresent: seo.metrics.images,
         extraWarnings,
       });
+      // Duplicate Content Detector: wording overlap with every saved article on all websites.
+      const dup = await runDuplicateCheck(t.id, articleHtml(ctx), ctx.config.duplicateSimilarityReview);
+      const top = dup.comparisons[0];
+      const dupFinding = (code: string): QualityFinding => ({
+        code,
+        message: `${Math.round((top?.wordingShare ?? 0) * 100)} % of the wording (longest identical run ${top?.longestRun ?? 0} words, ${top?.exactParagraphs ?? 0} identical paragraph(s)) repeats “${top?.otherTitle}” on ${top?.otherWebsite}. See Duplicate Review.`,
+        source: 'DUPLICATES',
+      });
+      if (dup.highest === 'HIGH' && !dup.overridden) result.hardStops.push(dupFinding('DUPLICATE_WORDING'));
+      else if (dup.highest === 'MEDIUM' && !dup.overridden) result.warnings.push(dupFinding('DUPLICATE_SIMILAR'));
+      result.passed = result.hardStops.length === 0;
       const options = parseJson<Record<string, unknown>>(t.options, {});
       const override = options.qualityOverride === true;
       const reasons = [...result.hardStops, ...result.warnings].map((f) => `${f.message} [${f.source}]`);
       await ctx.updateTask({ reviewReasons: JSON.stringify(reasons) });
+      const research = ctx.stageJson<{ sources?: unknown[]; uncertain?: unknown[]; warnings?: string[] }>('RESEARCH_EVIDENCE');
+      const sections: QualitySections = {
+        seo: { score: seo.score, threshold: ctx.config.reviewThreshold, failed: seo.checks.filter((c) => !c.passed).map((c) => c.label) },
+        structure: { words: seo.metrics.words, faqCount: seo.metrics.faqCount, expectedFaqCount: t.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount, quickBioRows: seo.metrics.quickBioRows, quickBioColumnsOk: seo.metrics.quickBioColumnsOk, emptyHeadings: seo.metrics.emptyHeadings, duplicateSentences: seo.metrics.duplicateSentences },
+        evidence: research ? { sources: research.sources?.length ?? 0, uncertain: research.uncertain?.length ?? 0, warnings: research.warnings ?? [] } : null,
+        duplicates: { highest: dup.highest, overridden: dup.overridden, overrideReason: dup.overrideReason, compared: dup.compared, matches: dup.comparisons.filter((c) => c.severity !== 'LOW').slice(0, 5).map((c) => ({ otherTaskId: c.otherTaskId, title: c.otherTitle, website: c.otherWebsite, severity: c.severity, wordingShare: c.wordingShare, longestRun: c.longestRun, factWords: c.factWords })) },
+        links: { external: seo.metrics.externalLinks, internalLinkLine: Boolean(seo.metrics.internalLinkLine) },
+        images: { count: seo.metrics.images, withAlt: seo.metrics.imagesWithAlt, required: ctx.config.images && ctx.config.imagesRequired },
+      };
+      await saveQualityReport(t.id, 'QUALITY_GATE', { hardStops: result.hardStops, warnings: result.warnings, sections, overridden: override });
       if (!result.passed && !override) {
         throw new NeedsReviewError(
           `Quality gate stopped before WordPress: ${result.hardStops.map((h) => h.message).join(' ')}`,
@@ -243,7 +278,7 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
           'Fix the listed items (edit, or regenerate the named stage), then Retry. Or use “Approve despite review reasons”.',
         );
       }
-      return { outcome: 'completed', data: { ...result, override }, message: result.passed ? (result.warnings.length ? `${result.warnings.length} warning(s) — draft will be flagged for review` : 'All quality checks passed') : 'Hard stops overridden by the owner' };
+      return { outcome: 'completed', data: { ...result, override, duplicates: sections.duplicates }, message: result.passed ? (result.warnings.length ? `${result.warnings.length} warning(s) — draft will be flagged for review` : 'All quality checks passed') : 'Hard stops overridden by the owner' };
     },
   });
 }
@@ -307,6 +342,23 @@ export async function finalizeTask(ctx: PipelineContext): Promise<void> {
       ...(status === 'COMPLETED' && !t.verifiedCompleteAt ? { verifiedCompleteAt: now } : {}),
     },
   });
+  // Final quality report: the gate's findings plus what WordPress and Rank Math confirmed (read back, never computed).
+  const gate = await latestQualityReport(t.id);
+  if (gate) {
+    const rm = parseJson<{ mode?: string; active?: boolean | null; score?: number | null; scoreVia?: string | null; fieldsVerified?: boolean | null } | null>((await db.articleStage.findUnique({ where: { taskId_key: { taskId: t.id, key: 'RANKMATH' } } }))?.outputJson, null);
+    const known = new Set([...gate.hardStops, ...gate.warnings].map((f) => `${f.message} [${f.source}]`));
+    const finalWarnings = Array.from(new Set(reasons)).filter((r) => !known.has(r)).map((r) => ({ code: 'FINAL', message: r, source: 'FINALIZE' }));
+    await saveQualityReport(t.id, 'VERIFIED_COMPLETE', {
+      hardStops: gate.hardStops,
+      warnings: [...gate.warnings, ...finalWarnings],
+      overridden: options.qualityOverride === true,
+      sections: {
+        ...gate.sections,
+        rankMath: rm ? { mode: rm.mode ?? 'unknown', active: rm.active ?? null, score: rm.score ?? null, scoreVia: rm.scoreVia ?? null, fieldsVerified: rm.fieldsVerified ?? null } : null,
+        wordpress: { postId: t.wpPostId, verified: verifiedDraft, status: t.wpPostStatus },
+      },
+    });
+  }
   if (status === 'COMPLETED' && !t.verifiedCompleteAt) {
     await recordMetric({
       kind: 'ARTICLE_VERIFIED',

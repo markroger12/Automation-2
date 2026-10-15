@@ -7,6 +7,8 @@ import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, formatDateTime, fo
 import { ControlActionButton } from '@/components/control-action';
 import { WebsiteForm, type WebsiteFormValues } from '../website-form';
 import { PublishingPermission } from './publishing';
+import { RoutingRules } from './routing-rules';
+import { parseRoutingRules } from '@/lib/campaigns/router';
 import { DangerZone } from './danger';
 
 export const metadata = { title: 'Website' };
@@ -174,6 +176,10 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
 
       <Card title="Settings" className="mt-6" description="Language, timezone, internal-link line, editor and per-site overrides.">
         <WebsiteForm initial={initial} categories={site.categories.map((c) => ({ id: c.id, name: c.name }))} />
+      </Card>
+
+      <Card title="Writer rules" className="mt-6" description="Bulk campaigns and the workflow send keywords that contain these words to the chosen writer. A writer chosen for a row still wins; without a matching rule the Smart Router decides.">
+        <RoutingRules websiteId={site.id} language={site.language} initial={parseRoutingRules(site.routingRules)} />
       </Card>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

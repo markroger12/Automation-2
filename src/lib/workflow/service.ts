@@ -5,7 +5,7 @@ import { AppError, badRequest, notFound } from '../errors';
 import { normalizeKeyword } from '../domain';
 import { parseJson } from '../json';
 import { parseImport } from '../campaigns/parse';
-import { normalizeWriter, resolveWriter } from '../campaigns/router';
+import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/router';
 import { retryTask } from '../tasks/lifecycle';
 import { DEFAULT_SLOT_TIMEZONE, isValidTimeZone, parseSlot, formatSlot, upcomingSlots } from './time';
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
@@ -68,6 +68,8 @@ export interface KeywordPreview {
   writerType: 'CELEBRITY' | 'TIGRAM' | 'UNKNOWN';
   detectionReason: string;
   detectionConfidence: number;
+  /** RULE | OVERRIDE | SITE_RULE — where the writer choice came from. */
+  detectionSource: string;
   duplicateOf: string | null;
   errors: string[];
 }
@@ -81,11 +83,11 @@ export async function previewKeywords(websiteId: string, text: string) {
   const existing = workflow ? await db.workflowKeyword.findMany({ where: { workflowId: workflow.id, status: { notIn: ['SKIPPED', 'FAILED'] } }, select: { keyword: true, normalizedKeyword: true, status: true } }) : [];
   const seen = new Map(existing.map((k) => [k.normalizedKeyword, `${k.keyword} (${k.status.toLowerCase()})`]));
   const rows: KeywordPreview[] = parsed.rows.map((r) => {
-    const decision = resolveWriter({ keyword: r.keyword, language: r.language ?? site.language, override: r.writer });
+    const decision = resolveWriter({ keyword: r.keyword, language: r.language ?? site.language, override: r.writer, siteRules: parseRoutingRules(site.routingRules) });
     const norm = normalizeKeyword(r.keyword);
     const duplicateOf = seen.get(norm) ?? null;
     if (!duplicateOf && r.keyword) seen.set(norm, `${r.keyword} (line ${r.line})`);
-    return { line: r.line, keyword: r.keyword, secondaryKeywords: r.secondaryKeywords, exampleTitle: r.exampleTitle, writerType: typeOf(decision.writer), detectionReason: decision.rationale, detectionConfidence: decision.confidence, duplicateOf, errors: r.errors };
+    return { line: r.line, keyword: r.keyword, secondaryKeywords: r.secondaryKeywords, exampleTitle: r.exampleTitle, writerType: typeOf(decision.writer), detectionReason: decision.rationale, detectionConfidence: decision.confidence, detectionSource: decision.source, duplicateOf, errors: r.errors };
   });
   return { problems: parsed.problems, rows };
 }
@@ -108,7 +110,7 @@ export async function addKeywords(websiteId: string, raw: unknown) {
       secondaryKeywords: JSON.stringify(r.secondaryKeywords),
       writerType: r.writerType,
       detectionReason: r.detectionReason,
-      detectionSource: 'RULE',
+      detectionSource: r.detectionSource,
       detectionConfidence: r.detectionConfidence,
       position: ++position,
     })),

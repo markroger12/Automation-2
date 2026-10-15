@@ -70,7 +70,6 @@ export const NAV_ITEMS: NavItem[] = [
 export const SOON_ROUTES = new Set<string>([
   '/website-control',
   '/research-evidence',
-  '/duplicates',
   '/content-refresh',
   '/productivity',
   '/search-performance',

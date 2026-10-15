@@ -13,16 +13,23 @@ export async function setupTestDb(): Promise<{ dir: string; file: string; client
   process.env.BAS_DATA_DIR = dir;
   process.env.DATABASE_URL = `file:${file}`;
   process.env.BAS_QUIET_LOGS = '1';
-  const client = new PrismaClient({ datasources: { db: { url: `file:${file}` } } });
+  // Migrations run on ONE connection: table rebuilds rely on per-connection PRAGMAs (foreign_keys=OFF),
+  // and a pooled client may run consecutive statements on different connections.
+  const migrator = new PrismaClient({ datasources: { db: { url: `file:${file}?connection_limit=1` } } });
   const migrationsDir = path.resolve(__dirname, '..', '..', 'prisma', 'migrations');
   const names = fs.readdirSync(migrationsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
-  for (const name of names) {
-    const sql = fs.readFileSync(path.join(migrationsDir, name, 'migration.sql'), 'utf8');
-    const statements = sql
-      .split(/;\s*\n/)
-      .map((s) => s.replace(/^\s*--.*$/gm, '').trim())
-      .filter(Boolean);
-    for (const statement of statements) await client.$executeRawUnsafe(statement);
+  try {
+    for (const name of names) {
+      const sql = fs.readFileSync(path.join(migrationsDir, name, 'migration.sql'), 'utf8');
+      const statements = sql
+        .split(/;\s*\n/)
+        .map((s) => s.replace(/^\s*--.*$/gm, '').trim())
+        .filter(Boolean);
+      for (const statement of statements) await migrator.$executeRawUnsafe(statement);
+    }
+  } finally {
+    await migrator.$disconnect();
   }
+  const client = new PrismaClient({ datasources: { db: { url: `file:${file}` } } });
   return { dir, file, client };
 }

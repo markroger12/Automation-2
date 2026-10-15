@@ -93,7 +93,7 @@ export async function verifyKeywordPublished(keywordId: string): Promise<Record<
       ? 'WordPress has not published this post 24 hours after its slot. WP-Cron may not be running on this website; it is still checked every 30 minutes.'
       : 'WordPress still shows “future” after the slot (WP-Cron may be delayed; it is checked again).';
     await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: message } });
-    return { published: false, status: 'future' };
+    return { published: false, status: post.status };
   }
   if (post?.status === 'draft') {
     // Unscheduled in WordPress: back to READY; the scheduler moves it to the next free slot.

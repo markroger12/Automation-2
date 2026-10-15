@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.1.2');
+    expect(ext?.version).toBe('3.1.3');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -247,6 +247,46 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(two.conversationUrl).toBe(one.conversationUrl);
   });
 
+  it('Chat/Work layout (no data-message-author-role): one prompt → one complete answer', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Prompt on the new layout');
+    const done = await responseDone(req.responseId, 60_000);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe('COMPLETED');
+    expect(done.resultText).toContain('## Answer heading');
+    expect(done.resultText).toContain('| Full Name | Example Person |');
+    expect(done.resultText).toContain('final paragraph');
+    expect(done.resultText).not.toContain('⧉');
+    expect((await fakeStats()).sends).toBe(1);
+  });
+
+  it('Chat/Work layout: after a reload the sent prompt is found and its answer recovered (sent once)', async () => {
+    fake = { variant: 'standard', mode: 'normal', chunkMs: 400, chunkSize: 15, historyDelayMs: 2000, turnMarkup: 'units' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Reloaded prompt on the new layout');
+    await waitJob(req.responseId, (j) => Boolean(j.progress && JSON.parse(j.progress).sent), 60_000, 'prompt sent');
+    await chatPage()!.reload();
+    const done = await responseDone(req.responseId, 90_000);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe('COMPLETED');
+    expect(done.recovered).toBe(true);
+    expect(done.resultText).toContain('final paragraph');
+    expect((await fakeStats()).sends).toBe(1);
+  });
+
+  it('Chat/Work layout: a follow-up prompt in the same conversation gets its own answer', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', answers: ['First answer: alpha.', 'Second answer: beta.'] };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const first = await request('First prompt on the new layout');
+    const one = await responseDone(first.responseId, 60_000);
+    expect(one.resultText).toContain('alpha');
+    const second = await request('Second prompt on the new layout', { conversationUrl: one.conversationUrl, newChat: false });
+    const two = await responseDone(second.responseId, 60_000);
+    expect(two.resultText).toContain('beta');
+    expect(two.resultText).not.toContain('alpha');
+  });
+
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {
     fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 10 };
     browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
@@ -278,6 +318,8 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(done.error).toMatch(/^UNCERTAIN: The app recorded this prompt as sent/);
     expect(done.error).toContain('restarted after: the ChatGPT page reloaded');
     expect(done.error).toContain('0 user turn(s)');
+    expect(done.error).toContain('markers: none of the known markers');
+    expect(done.error).toContain('prompt text not on the page');
     expect((await fakeStats()).sends).toBe(1);
   });
 

@@ -9,8 +9,12 @@ export interface FakeChatGptConfig {
   answerDelayMs?: number;
   /** After loading a /c/<id> page, render its turns only after this delay (the composer is ready at once). */
   historyDelayMs?: number;
-  /** 'article': each turn is an <article data-turn> around the role <div> (both match the adapter's selectors). */
-  turnMarkup?: 'default' | 'article';
+  /**
+   * 'article': each turn is an <article data-turn> around the role <div> (both match the adapter's selectors).
+   * 'units': the Chat/Work layout reported from Sept 2026 — no data-message-author-role; [data-turn-key] turns,
+   * "…:user" / "…:assistant" search units, [data-user-message-bubble] and [data-markdown-text-style="assistant-message"].
+   */
+  turnMarkup?: 'default' | 'article' | 'units';
   /** 'short': user messages longer than 300 characters are shown shortened, with a "Show more" button. */
   userDisplay?: 'full' | 'short';
   chunkMs?: number;

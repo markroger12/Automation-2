@@ -1040,3 +1040,48 @@ npm run build                                              # compiled
 **Not verified here**
 - 3.1.2 on the real ChatGPT.
 - What restarts the job on the owner's PC; the new stop message will show it if it happens again.
+
+### Third report: “0 user turn(s); 0 answer(s)” — the new ChatGPT layout (extension 3.1.3)
+
+**Reported by the owner.** The detailed stop message from 3.1.2 read: “restarted after: the ChatGPT page reloaded; page /c/6ad13db5-…; 0 user turn(s); 0 answer(s)”. The ChatGPT window showed the prompt and the complete answer on that page, and the owner's sidebar showed Scheduled / Library / Plugins / Explore.
+
+**Cause.** The extension found the composer, Send and Stop buttons, but no messages at all on the owner's page.
+- Developer reports from September 2026 describe a new ChatGPT “Chat / Work” layout, rolled out per account. It drops the `data-message-author-role`, `conversation-turn` and `.markdown` markers this adapter relied on.
+  - [steipete/oracle#517](https://github.com/steipete/oracle/issues/517)
+  - [chetwerikoff/orchestrator-pack#2171](https://github.com/chetwerikoff/orchestrator-pack/issues/2171)
+- Instead the turns carry:
+  - `data-turn-key` on each turn;
+  - `data-content-search-unit-key="…:user"` / `"…:assistant"` on the user and assistant units;
+  - `data-user-message-bubble` around the prompt text;
+  - `data-markdown-text-style="assistant-message"` around the answer;
+  - a composer in `form[data-chatgpt-composer]`.
+- These markers come from third-party reports, **not from the owner's page**. This container cannot open the real ChatGPT (HTTP 403, Cloudflare check).
+
+**Changes (3.1.3)**
+- **New selectors.** The new layout's markers are added as alternatives: user, assistant, turn, answer text, composer and Send. The old ones stay, and a turn matched by several selectors counts once (innermost match, from 3.1.2).
+- **Self-explaining stop message.** If no user turn is found, the message and the Diagnostics snapshot now list:
+  - which layout markers the page has (counts);
+  - where the prompt's first words sit in the page: tag and data-attribute names of their ancestors, no text.
+
+  A future layout change will then show its new markers directly.
+- **Fake ChatGPT `turnMarkup: 'units'`**, rendering that layout. New tests:
+  - one prompt gives one complete answer (headings and a table converted, the Copy control's text not included);
+  - a reload recovers the answer, sent once;
+  - a follow-up in the same conversation gets its own answer.
+- **Reproduced.** With the 3.1.2 adapter, the reload test fails with the owner's exact message (“restarted after: the ChatGPT page reloaded; page /c/…; 0 user turn(s)”).
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Chat/Work layout|really gone"
+                                                           # 4 passed (3.1.3)
+same reload test with the 3.1.2 adapter                    # failed: UNCERTAIN … 0 user turn(s) (reproduces the report)
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 37 files, 255 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 23/23, first attempt
+npm run build                                              # compiled
+```
+
+**Not verified here**
+- 3.1.3 on the owner's real ChatGPT page. The new layout's markers come from third-party reports.
+- **Citation chips inside answers** (the owner's screenshot shows a “BUNTE” source chip in a title option): their markup in the new layout is not known. Their text may end up in the saved answer until it is known.
+- What reloads the ChatGPT page during a job on the owner's PC. A reload is now recovered from.

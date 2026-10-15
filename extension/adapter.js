@@ -13,6 +13,8 @@
 
   const SELECTORS = {
     composer: [
+      // Chat/Work layout (Sept 2026): no #prompt-textarea; a ProseMirror textbox inside the composer form.
+      'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
       '#prompt-textarea[contenteditable="true"]',
       'div[contenteditable="true"]#prompt-textarea',
       'div.ProseMirror[contenteditable="true"]',
@@ -24,6 +26,7 @@
     composerExclusions: ['[data-testid*="canvas"]', '[class*="canvas"]', '[data-writing-block]', '.writing-block', '[aria-label*="Canvas"]'],
     sendButton: [
       'button[data-testid="send-button"]',
+      'form[data-chatgpt-composer] button[type="submit"]',
       '#composer-submit-button',
       'button[aria-label="Send prompt"]',
       'button[aria-label="Prompt senden"]',
@@ -37,10 +40,30 @@
       'button[aria-label*="Stopp"]',
       'button[aria-label*="Anhalten"]',
     ],
-    userMessage: ['[data-message-author-role="user"]', '[data-testid^="conversation-turn"][data-turn="user"]', 'article[data-turn="user"]'],
-    assistantMessage: ['[data-message-author-role="assistant"]', '[data-testid^="conversation-turn"][data-turn="assistant"]', 'article[data-turn="assistant"]'],
-    turn: ['[data-testid^="conversation-turn"]', 'article[data-turn]', 'main article'],
-    markdown: ['.markdown', '[class*="markdown"]', '.prose'],
+    // The Chat/Work layout rolled out from Sept 2026 has no data-message-author-role / conversation-turn markers:
+    // the user's text sits in [data-user-message-bubble] inside a "…:user" search unit, the answer in
+    // [data-markdown-text-style="assistant-message"] inside a "…:assistant" unit, each turn in [data-turn-key].
+    // Several selectors may match one turn; userMessages()/assistantMessages() keep the innermost match.
+    userMessage: [
+      '[data-message-author-role="user"]',
+      '[data-testid^="conversation-turn"][data-turn="user"]',
+      'article[data-turn="user"]',
+      '[data-user-message-bubble]',
+      '[data-content-search-unit-key$=":user"]',
+      '[data-chatgpt-search-unit-key$=":user"]',
+      '[data-message-role="user"]',
+    ],
+    assistantMessage: [
+      '[data-message-author-role="assistant"]',
+      '[data-testid^="conversation-turn"][data-turn="assistant"]',
+      'article[data-turn="assistant"]',
+      '[data-markdown-text-style="assistant-message"]',
+      '[data-content-search-unit-key$=":assistant"]',
+      '[data-chatgpt-search-unit-key$=":assistant"]',
+      '[data-message-role="assistant"]',
+    ],
+    turn: ['[data-testid^="conversation-turn"]', 'article[data-turn]', '[data-turn-key]', 'main article'],
+    markdown: ['.markdown', '[class*="markdown"]', '.prose', '[data-markdown-text-style="assistant-message"]'],
     nonAnswer: [
       '[data-testid*="reasoning"]',
       '[data-testid*="thinking"]',
@@ -288,7 +311,47 @@
     return null;
   }
 
-  /** Why no user turn matched (for the owner and Diagnostics): counts, lengths and the first difference. */
+  // Markers of the ChatGPT layouts this adapter knows, counted for the owner when nothing matches.
+  const LAYOUT_MARKERS = {
+    'data-message-author-role': '[data-message-author-role]',
+    'conversation-turn': '[data-testid^="conversation-turn"]',
+    'data-turn': '[data-turn]',
+    'data-turn-key': '[data-turn-key]',
+    'search-unit': '[data-content-search-unit-key], [data-chatgpt-search-unit-key]',
+    'user-bubble': '[data-user-message-bubble]',
+    'markdown-text-style': '[data-markdown-text-style]',
+    'data-message-role': '[data-message-role]',
+    article: 'main article',
+  };
+
+  function layoutMarkers() {
+    const found = [];
+    for (const [name, sel] of Object.entries(LAYOUT_MARKERS)) {
+      const n = document.querySelectorAll(sel).length;
+      if (n) found.push(`${name} ${n}`);
+    }
+    return found.length ? found.join(', ') : 'none of the known markers';
+  }
+
+  /** Where the prompt's first words sit in the page: tag and data-* attribute names of up to 8 ancestors (no text). */
+  function promptLocation(prompt) {
+    const needle = normalizeForHash(prompt).slice(0, 40);
+    if (!needle) return null;
+    const walker = document.createTreeWalker(document.querySelector('main') || document.body, NodeFilter.SHOW_TEXT);
+    let node = null;
+    while ((node = walker.nextNode())) if (normalizeForHash(node.textContent).includes(needle)) break;
+    if (!node) return 'prompt text not on the page';
+    const chain = [];
+    for (let el = node.parentElement; el && chain.length < 8 && el !== document.body; el = el.parentElement) {
+      const attrs = Array.from(el.attributes)
+        .filter((a) => a.name.startsWith('data-') || a.name === 'role')
+        .map((a) => (/^(data-turn|data-message-author-role|data-message-role|data-markdown-text-style|data-user-message-bubble|role)$/.test(a.name) ? `${a.name}=${a.value.slice(0, 20)}` : a.name));
+      chain.push(el.tagName.toLowerCase() + (attrs.length ? `[${attrs.join(' ')}]` : ''));
+    }
+    return `prompt text in ${chain.join(' < ')}`;
+  }
+
+  /** Why no user turn matched (for the owner and Diagnostics): counts, lengths, the first difference, the layout. */
   function promptMismatchReport(prompt) {
     const users = userMessages();
     const parts = [`page ${location.pathname}`, `${users.length} user turn(s)`, `${assistantMessages().length} answer(s)`];
@@ -300,6 +363,10 @@
       const cut = (t) => JSON.stringify(t.slice(i, i + 24));
       parts.push(`last user turn ${shown.length} chars vs prompt ${wanted.length}`);
       if (i < Math.max(shown.length, wanted.length)) parts.push(`first difference at char ${i}: page ${cut(shown)} vs prompt ${cut(wanted)}`);
+    } else {
+      parts.push(`markers: ${layoutMarkers()}`);
+      const where = promptLocation(prompt);
+      if (where) parts.push(where);
     }
     return parts.join('; ');
   }
@@ -507,6 +574,7 @@
         stopVisible: Boolean(findStopButton()),
         generating: isGenerating(),
         userTurns: userMessages().length,
+        layoutMarkers: layoutMarkers(),
         assistantTurns: answers.length,
         lastAnswerLength: last ? (last.innerText || '').length : 0,
         attachmentChips: attachmentChips().length,

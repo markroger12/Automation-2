@@ -6,6 +6,7 @@ import { api } from '@/lib/client/api';
 import { inertBody, sanitizeForDisplay } from '@/lib/html/sanitize-client';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { ImagesTab } from './images-tab';
+import { SeoBriefCard } from './seo-brief';
 import { Button, CopyButton, useToast } from '@/components/client';
 import { Field, Input, Textarea } from '@/components/form';
 import { Alert, Card, Chip, EmptyState, KeyValue, cx, formatDateTime } from '@/components/ui';
@@ -398,6 +399,7 @@ function SeoTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged: ()
   }
   return (
     <div className="space-y-6">
+      <SeoBriefCard taskId={task.id} readOnly={task.legacy} />
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <div className="text-muted text-xs">Internal SEO readiness</div>

@@ -1,3 +1,4 @@
+import { defaultSeoBrief } from '@/lib/seo/intent';
 import { z } from 'zod';
 import type { ArticleTask } from '@prisma/client';
 import { db, type Tx } from '../db';
@@ -101,6 +102,7 @@ export async function createArticleTask(raw: unknown, ctx: CreateContext, client
         workflowKeywordId: ctx.workflowKeywordId ?? null,
         benchmarkRunId: ctx.benchmarkRunId ?? null,
         routeDecision: JSON.stringify(ctx.routeDecision ?? { source: 'manual', moduleKey: input.moduleKey }),
+        seoBrief: JSON.stringify(defaultSeoBrief({ keyword: input.keyword, secondary: input.secondaryKeywords, moduleKey: input.moduleKey, language })),
         message: 'Queued — waiting for a free article slot.',
       },
     });

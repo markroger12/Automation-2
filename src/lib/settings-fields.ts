@@ -97,6 +97,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'enhanceCelebrityImages', label: 'Celebrity image enhancement', type: 'boolean', help: 'Requires a locally installed enhancement tool.' },
       { key: 'celebrityPhotoReview', label: 'Celebrity photo check (watermark/collage)', type: 'boolean' },
       { key: 'duplicateSimilarityReview', label: 'Duplicate similarity review threshold', type: 'number', min: 0.2, max: 1, step: 0.05 },
+      { key: 'seoBriefInPrompts', label: 'Add the SEO brief to writing prompts', type: 'boolean', help: 'The article’s search intent, sections to cover and keyword guideline (SEO tab) are added to the LONG_ARTICLE / ARTICLE prompt, unless the prompt places {{seo_brief}} itself.' },
     ],
   },
   {

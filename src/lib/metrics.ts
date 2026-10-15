@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { db, type Tx } from './db';
+import { APP_VERSION } from './version';
 
 export interface MetricInput {
   kind: string;
@@ -34,7 +35,8 @@ export async function recordMetric(input: MetricInput, client: Tx = db): Promise
         endedAt: input.endedAt,
         durationMs: Math.max(0, input.endedAt.getTime() - input.startedAt.getTime()),
         waitMs: input.waitMs ?? 0,
-        details: JSON.stringify(input.details ?? {}),
+        // The app version lets stage times be compared per release (regression baselines).
+        details: JSON.stringify({ version: APP_VERSION, ...(input.details ?? {}) }),
         dedupeKey: input.dedupeKey,
       },
     });

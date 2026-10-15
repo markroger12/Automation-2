@@ -139,6 +139,8 @@ model ArticleTask {
   metaDescription    String?
   slug               String?
   focusKeyword       String?
+  /// Search intent + editable SEO brief (upgrade 04), JSON; generated at creation, edited on the SEO tab.
+  seoBrief           String?
   metrics            String                  @default("{}")
   seoScore           Int?
   rankMathScore      Int?

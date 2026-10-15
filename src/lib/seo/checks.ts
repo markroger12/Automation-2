@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 import { countExact, countNormalized, normalizeText, sentences, stripTags, wordCount, words } from '../content/text';
 import { CONCLUSION_RE, FAQ_RE } from '../content/assembly';
+import { briefCoverage, INTENT_LABEL, type SeoBrief } from './intent';
 
 export interface SeoInput {
   html: string;
@@ -23,6 +24,8 @@ export interface SeoInput {
   externalLinksEnabled: boolean;
   internalLinksEnabled: boolean;
   imagesExpected: boolean;
+  /** The article's SEO brief (upgrade 04): its sections are checked for coverage (informational only). */
+  brief?: SeoBrief | null;
 }
 
 export interface SeoCheck {
@@ -200,6 +203,18 @@ export function runSeoChecks(input: SeoInput): SeoReport {
     { id: 'internal-link-line', label: 'Exactly one internal-link line at the end', passed: !input.internalLinksEnabled || internalLinkLine, severity: 'warning', weight: 3, detail: internalLinkLine ? 'Present' : 'Missing', fix: 'Add a related article from this site.' },
     { id: 'image-alt', label: 'Images have descriptive alt text', passed: imgs.length === imagesWithAlt && (!input.imagesExpected || imgs.length > 0), severity: imgs.length ? 'error' : 'warning', weight: 3, detail: `${imagesWithAlt}/${imgs.length} with alt text`, fix: 'Add descriptive alt text (not keyword stuffing).' },
   ];
+  if (input.brief) {
+    const cov = briefCoverage(input.html, input.brief);
+    checks.push({
+      id: 'brief-coverage',
+      label: `Covers the SEO brief (${INTENT_LABEL[input.brief.intent]})`,
+      passed: cov.missing.length === 0,
+      severity: 'info',
+      weight: 0,
+      detail: `${cov.covered.length}/${input.brief.sections.length} sections covered${cov.missing.length ? `; not found as a heading: ${cov.missing.join('; ')}` : ''}`,
+      fix: 'Cover the missing topic only with sourced facts, or edit the brief on the SEO tab. Never add text just to match the brief.',
+    });
+  }
   const scored = checks.filter((c) => c.severity !== 'info');
   const total = scored.reduce((s, c) => s + c.weight, 0);
   const passed = scored.filter((c) => c.passed).reduce((s, c) => s + c.weight, 0);

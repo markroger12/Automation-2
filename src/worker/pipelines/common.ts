@@ -4,6 +4,7 @@ import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { assembleArticle, firstParagraphText, type AssemblyImage } from '@/lib/content/assembly';
 import { makeSlug, sentences, truncateAtWord } from '@/lib/content/text';
 import { runSeoChecks } from '@/lib/seo/checks';
+import { parseSeoBrief } from '@/lib/seo/intent';
 import { evaluateQuality, type QualityFinding } from '@/lib/quality/gate';
 import { latestQualityReport, saveQualityReport, type QualitySections } from '@/lib/quality/report';
 import { runDuplicateCheck } from '@/lib/duplicates/service';
@@ -202,6 +203,7 @@ export function seoReportFor(ctx: PipelineContext, html: string) {
     externalLinksEnabled: ctx.config.externalLinks,
     internalLinksEnabled: ctx.config.internalLinks,
     imagesExpected: ctx.config.images && ctx.config.imagesRequired,
+    brief: parseSeoBrief(t.seoBrief),
   });
 }
 

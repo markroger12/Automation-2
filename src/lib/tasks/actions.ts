@@ -1,3 +1,4 @@
+import { parseSeoBrief } from '@/lib/seo/intent';
 import { z } from 'zod';
 import { db } from '../db';
 import { AppError } from '../errors';
@@ -197,6 +198,7 @@ export async function rerunSeo(taskId: string) {
     externalLinksEnabled: config.externalLinks,
     internalLinksEnabled: config.internalLinks,
     imagesExpected: config.images && config.imagesRequired,
+    brief: parseSeoBrief(task.seoBrief),
   });
   await db.sEOReport.create({ data: { taskId, source: 'INTERNAL', score: report.score, checks: JSON.stringify(report.checks), metrics: JSON.stringify(report.metrics) } });
   await db.articleTask.update({ where: { id: taskId }, data: { seoScore: report.score } });

@@ -7,6 +7,11 @@ import { renderTemplate, type TemplateVars } from '@/lib/prompts/template';
 import { languageInstruction } from '@/lib/chatgpt/language';
 import { createChatGPTRequest } from '@/lib/chatgpt/jobs';
 import { loadPromptTemplate, promptModuleFor } from '@/lib/prompts/load';
+import { getSettings } from '@/lib/settings';
+import { defaultSeoBrief, parseSeoBrief, seoBriefText } from '@/lib/seo/intent';
+
+/** Writing prompts that receive the SEO brief when the template does not place {{seo_brief}} itself. */
+const SEO_BRIEF_STAGES = ['LONG_ARTICLE', 'ARTICLE'];
 import type { EffectiveTaskConfig } from '@/lib/settings-schema';
 import type { AskOptions, ChatGPTOutcome, PipelineContext, PipelineDefinition, PipelineStage } from './types';
 
@@ -100,7 +105,11 @@ export function createContext(deps: ContextDeps): PipelineContext {
       await ctx.checkCancelled();
       const promptModule = deps.stage.prompt?.stageKey === promptStageKey ? deps.stage.prompt.moduleKey : promptModuleFor(deps.definition.moduleKey, promptStageKey);
       const template = await loadPromptTemplate(promptModule, promptStageKey, deps.website);
-      const vars = deps.definition.variables(ctx, extra);
+      // SEO brief (upgrade 04): available as {{seo_brief}}; appended to the writing prompts when the template does not place it.
+      const settings = await getSettings();
+      const brief = settings.seo.seoBriefInPrompts ? (parseSeoBrief(task.seoBrief) ?? defaultSeoBrief({ keyword: task.keyword, secondary: parseJson<string[]>(task.secondaryKeywords, []), moduleKey: task.moduleKey, language: task.language })) : null;
+      const briefText = brief ? seoBriefText(brief, task.language) : '';
+      const vars = { seo_brief: briefText, ...deps.definition.variables(ctx, extra) };
       const rendered = renderTemplate(template.content, vars);
       const requiredMissing = rendered.missing.filter((name) => template.variables.find((v) => v.name === name)?.required !== false);
       if (requiredMissing.length) {
@@ -110,6 +119,7 @@ export function createContext(deps: ContextDeps): PipelineContext {
         );
       }
       let prompt = rendered.text;
+      if (briefText && SEO_BRIEF_STAGES.includes(promptStageKey) && !template.content.includes('{{seo_brief}}')) prompt = `${prompt}\n\n${briefText}`;
       if (template.kind === 'text') prompt = `${prompt}\n\n${languageInstruction(task.language, task.targetCountry)}`;
 
       const part = options.part ? `:${options.part}` : '';

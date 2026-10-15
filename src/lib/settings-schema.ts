@@ -78,6 +78,8 @@ export const seoSettingsSchema = z.object({
   enhanceCelebrityImages: z.boolean().default(false),
   celebrityPhotoReview: z.boolean().default(false),
   duplicateSimilarityReview: z.number().min(0.2).max(1).default(0.45),
+  /** Add the article's SEO brief (search intent, sections, keyword guideline) to the writing prompt. */
+  seoBriefInPrompts: z.boolean().default(true),
 });
 
 export const advancedSettingsSchema = z.object({

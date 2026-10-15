@@ -4,6 +4,7 @@ import { registerControlHandler } from './control';
 import { launchAutomationChrome } from '@/lib/automation-chrome';
 import { deleteProfile, detectEditor, interactiveLogin, openAdminWindow, resetSession, syncCategories, testSession } from '@/wordpress/session';
 import { refreshLinkIndex } from '@/wordpress/link-index';
+import { scheduleKeywordPost, verifyKeywordPublished } from '@/wordpress/schedule';
 
 async function site(websiteId: unknown) {
   if (typeof websiteId !== 'string') throw new Error('Missing websiteId');
@@ -44,6 +45,9 @@ export function registerBuiltInControlHandlers(): void {
   registerControlHandler('wp.detect-editor', async (job, payload) => ({ editor: await detectEditor(await site(payload.websiteId ?? job.websiteId)) }));
   registerControlHandler('wp.open-browser', async (job, payload, { heartbeat }) => openAdminWindow(await site(payload.websiteId ?? job.websiteId), heartbeat));
   registerControlHandler('wp.reset-session', async (job, payload) => resetSession(await site(payload.websiteId ?? job.websiteId)));
+  // Approved publishing path: only READY workflow keywords on sites that allow publishing (see src/wordpress/schedule.ts).
+  registerControlHandler('wp.schedule', async (job, payload) => scheduleKeywordPost(String(payload.keywordId ?? job.relatedId)));
+  registerControlHandler('wp.verify-published', async (job, payload) => verifyKeywordPublished(String(payload.keywordId ?? job.relatedId)));
   registerControlHandler('chrome.launch', async () => {
     const result = launchAutomationChrome();
     await log({ category: 'extension', message: `Automation Chrome launched (PID ${result.pid ?? '?'}).` });

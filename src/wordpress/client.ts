@@ -206,6 +206,17 @@ export class WpClient {
     return data;
   }
 
+  /**
+   * Schedule a draft for a future time (the ONLY status change this client
+   * sends). The publish guard refuses it unless the caller holds a permit
+   * from withPublishPermit for this site and post (canPublish + acknowledgement).
+   */
+  async scheduleFuture(id: number, at: Date): Promise<WpPost> {
+    const dateGmt = at.toISOString().replace(/\.\d+Z$/, '');
+    const { data } = await this.call<WpPost>('POST', `/wp/v2/posts/${id}`, { json: { status: 'future', date_gmt: dateGmt } });
+    return data;
+  }
+
   // ---------------- terms ----------------
 
   /** Find a tag by exact name (case-insensitive), creating it when allowed. */

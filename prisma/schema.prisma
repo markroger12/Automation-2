@@ -474,6 +474,8 @@ model Workflow {
   maxBacklog       Int               @default(10)
   imagesOverride   String            @default("inherit") // inherit | on | off
   requestIndexing  Boolean           @default(false)
+  // Search Console property: "https://example.com/" (URL prefix) or "sc-domain:example.com"; null = the website URL.
+  searchConsoleProperty String?
   maxRetries       Int               @default(3)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt

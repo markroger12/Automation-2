@@ -77,6 +77,22 @@ export default function HelpPage() {
             </li>
           </ol>
         </Card>
+        <Card title="7 · Bulk campaigns and the workflow">
+          <ol className="list-decimal space-y-2 pl-5 text-sm">
+            <li>
+              <strong>Bulk Campaigns → New</strong>: paste keywords or load a CSV, check the preview (writer, category, duplicates), fix what it flags and create. One article is queued per ready row. Campaigns never publish.
+            </li>
+            <li>
+              <strong>Workflow</strong>: pick a website, add publishing slots in Pakistan time (for example <Code>9:00 AM</Code>), switch it on and add keywords. Articles start ahead of their slot; one that is late moves to the next free slot.
+            </li>
+            <li>
+              Publishing is off until you allow it for the website (with the typed acknowledgement). Until then, workflow articles stay drafts for you to publish. When allowed, the draft is scheduled in WordPress for its slot and checked after it.
+            </li>
+            <li>
+              <strong>Publishing Calendar</strong> shows reserved and free slots for two weeks. “Indexed” is only ever recorded by you after checking Search Console.
+            </li>
+          </ol>
+        </Card>
         <Card title="Backups & restore">
           <ul className="list-disc space-y-2 pl-5 text-sm">
             <li>

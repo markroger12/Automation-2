@@ -110,8 +110,18 @@ describe('only the WordPress client sends requests to WordPress', () => {
     expect(offenders).toEqual([]);
     // publish-guard.ts names the statuses it blocks; link-index.ts only READS already-published posts (GET filter).
     const readers = [path.join('wordpress', 'publish-guard.ts'), path.join('wordpress', 'link-index.ts')];
-    const publishers = files.filter((f) => !readers.some((r) => f.endsWith(r)) && /status:\s*['"](publish|future|private|pending)['"]/.test(fs.readFileSync(f, 'utf8')));
+    // The single scheduling call is WpClient.scheduleFuture (status "future" only)…
+    const clientFile = path.join('wordpress', 'client.ts');
+    const publishers = files.filter((f) => ![...readers, clientFile].some((r) => f.endsWith(r)) && /status:\s*['"](publish|future|private|pending)['"]/.test(fs.readFileSync(f, 'utf8')));
     expect(publishers).toEqual([]);
+    const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
+    expect(read(clientFile).match(/status:\s*['"](publish|future|private|pending)['"]/g)).toEqual(["status: 'future'"]);
+    // …called only by the approved scheduler, and only inside withPublishPermit (canPublish + acknowledgement, per post).
+    const callers = files.filter((f) => /\.scheduleFuture\(/.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(root, f));
+    expect(callers).toEqual([path.join('wordpress', 'schedule.ts')]);
+    const schedule = read(path.join('wordpress', 'schedule.ts'));
+    expect(schedule.match(/\.scheduleFuture\(/g)).toHaveLength(1);
+    expect(schedule).toMatch(/withPublishPermit\([^;]*?\.scheduleFuture\(/s);
   });
 });
 

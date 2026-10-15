@@ -1,7 +1,13 @@
-import { NotBuilt } from '@/components/not-built';
+import { PageHeader } from '@/components/ui';
+import { PublishingCalendar } from './calendar';
 
 export const metadata = { title: 'Publishing Calendar' };
 
 export default function CalendarPage() {
-  return <NotBuilt title={'Publishing Calendar'} milestone={'M10'} description={'Scheduled slots and published posts.'} />;
+  return (
+    <>
+      <PageHeader title="Publishing Calendar" description="Reserved and free publishing slots of every workflow, two weeks at a time. “Published” and “indexed” are shown only after they were verified." />
+      <PublishingCalendar />
+    </>
+  );
 }

@@ -361,12 +361,17 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       if (one) {
         const post = posts.get(Number(one[1]));
         if (!post) return json(404, { code: 'rest_post_invalid_id', message: 'Invalid post ID.' });
+        // Like WordPress cron: a scheduled post whose time has come is published.
+        if (post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
         if (method === 'GET') return json(200, restPost(post));
         if (method === 'DELETE') {
           post.status = 'trash';
           return json(200, restPost(post));
         }
         for (const k of ['title', 'content', 'slug', 'status'] as const) if (typeof data[k] === 'string') (post as unknown as Record<string, unknown>)[k] = data[k];
+        if (typeof data.date_gmt === 'string') post.date_gmt = data.date_gmt.replace(/Z$/, '').slice(0, 19);
+        // WordPress publishes immediately when "future" is requested for a time already passed.
+        if (post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
         if (Array.isArray(data.categories)) post.categories = data.categories as number[];
         if (Array.isArray(data.tags)) post.tags = data.tags as number[];
         if (typeof data.featured_media === 'number') post.featured_media = data.featured_media;

@@ -75,6 +75,4 @@ export const SOON_ROUTES = new Set<string>([
   '/content-refresh',
   '/productivity',
   '/search-performance',
-  '/workflow',
-  '/calendar',
 ]);

@@ -83,6 +83,14 @@ The test types these credentials itself (simulating you in the login window); th
 - The same humanizer runs inside every article as the HUMANIZE stage, always starting from the unedited text. Settings → Content controls whether it is on, which paragraphs it edits (all or only flagged ones), the batch size and the length tolerance.
 - **Celebrity Writer 2.0 is retired.** Old 2.0 articles stay readable (outputs, post IDs, logs, prompts) but can't be run, queued or edited. If a backup is ever needed, the retirement migration's changes can be undone with `npm run db:rollback-retirement -- <backup-file>` from `data\backups\migrations\`.
 
+## Campaigns and workflow
+
+- **Bulk Campaigns** (sidebar → Bulk Campaigns → New): paste keywords (one per line, `keyword | secondary1, secondary2 | example title`, CSV or tab-separated columns from a spreadsheet; up to 1,000 rows) or load a file. The preview checks every row before anything is created: the writer (the Smart Router picks Celebrity or Tigram and asks you when unsure), website and category, exact and near duplicates, existing tasks and already-published posts. Fix rows in the preview, then create; one article is queued per ready row and nothing is ever duplicated, even after a restart. Pause, resume, cancel, per-row retry/corrections and CSV export are on the campaign page. **Campaigns never publish.**
+- **Workflow** (sidebar → Workflow): a keyword queue per website. Set publishing slots as `h:mm AM/PM` in **Pakistan time** (Asia/Karachi; daylight-saving-safe for the website's own clock), optional weekdays, how many hours ahead to start writing and how many articles may wait at once. Each keyword gets its own slot (two articles never share one); an article that is not ready by its slot moves to the next free slot, and stops after the retry limit with the reason.
+- **Publishing stays off** until you switch it on for a website and type the acknowledgement (Websites → the website → Publishing permission). Without it, workflow articles stay **verified drafts**; once their slot passes they are marked “draft kept (publish yourself)”. With it, the verified draft is **scheduled** in WordPress for its slot (never published early), read back to confirm, and checked again after the slot. A post you trash or change in WordPress is left alone.
+- **Indexing**: the tool never claims a post is indexed. With “Remind me to request indexing” on, a Search Console link appears after publishing; you mark “indexing requested” and “indexed” yourself after checking.
+- **Publishing Calendar** (sidebar, under Workflow): reserved and free slots of every workflow, two weeks at a time, in Pakistan time.
+
 ## Data folder (`data\`, git-ignored)
 
 | Path | Contents |

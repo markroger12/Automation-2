@@ -167,6 +167,7 @@ model ArticleTask {
   stages             ArticleStage[]
   responses          ChatGPTResponse[]
   humanizerRuns      HumanizerRun[]
+  plagiarismChecks   PlagiarismCheck[]
   seoReports         SEOReport[]
   mediaAssets        MediaAsset[]
 
@@ -276,6 +277,31 @@ model HumanizerRun {
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   responses      ChatGPTResponse[]
+
+  @@index([taskId])
+  @@index([createdAt])
+}
+
+/// Plagiarism Evidence Checker run: evidence (matching passages + sources) and coverage, never a verdict.
+model PlagiarismCheck {
+  id         String       @id @default(cuid())
+  taskId     String?
+  task       ArticleTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  source     String // ARTICLE | PASTE
+  title      String
+  language   String
+  keyword    String       @default("")
+  inputHtml  String
+  /// { ownerArticles, linkedPages, wikipedia, search, urls: string[] }
+  options    String       @default("{}")
+  status     String       @default("QUEUED") // QUEUED | RUNNING | COMPLETED | FAILED | CANCELLED
+  message    String?
+  progress   String?
+  result     String       @default("{}")
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
 
   @@index([taskId])
   @@index([createdAt])

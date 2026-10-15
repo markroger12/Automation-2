@@ -23,7 +23,7 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M8 Images and templates | ✅ done (fake ChatGPT/Commons + real WordPress 6.5/6.7 verified; live ChatGPT images and live Commons not verified here) |
 | M9 Retire 2.0 + editorial tools | ✅ done (scripted-ChatGPT + full-stack agent-protocol smoke; live ChatGPT not verified here) |
 | M10 Bulk campaigns and workflow | ✅ done (fake + real WordPress 6.5/6.7 scheduling verified; Search Console requests are manual, not automated) |
-| M11 Plagiarism evidence and hardening | ☐ |
+| M11 Plagiarism evidence and hardening | 🟡 in progress — M11a Plagiarism Evidence Checker done; M11b hardening next |
 | M12–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
 
@@ -475,3 +475,54 @@ npm run start:all # UI smoke, throwaway data dir, Chromium, real worker: switchi
 - Search Console is not automated: the tool never clicks “Request indexing” and never reads index status. The owner opens the URL Inspection link and records “indexing requested” or “verified indexed”. Automating Search Console needs the owner's Google session, so it cannot be tested here.
 - WP-Cron on a low-traffic production site can publish late. The tool reports “still future” and adds a hint after 24 hours, but cannot make WordPress publish.
 - Live ChatGPT writing the workflow articles was not exercised (scripted answers only).
+
+## M11a — Plagiarism Evidence Checker ✅ (M11b hardening follows)
+
+**Working**
+- **Matching** (`src/lib/plagiarism/match.ts`, `text.ts`, pure and unit-tested):
+  - 5-word anchors locate overlaps, which count only as **verified exact runs of ≥ 8 identical words** (extended word by word in the source text);
+  - sentences without such a run are compared at **sentence level**: shared content words ÷ the sentence's content words (≥ 70 %, ≥ 6 words) and word order kept (longest common subsequence ≥ 60 %);
+  - **quotations** (“…”, „…“, «…», "…", `<blockquote>`, `<q>`) and **recurring site text** (a paragraph found verbatim in ≥ 3 other articles of the same website) are exempt and listed separately;
+  - fetched pages are read from their main content; navigation, footers, forms and scripts are dropped.
+- **Sources** (`src/lib/plagiarism/sources.ts`):
+  - the owner's saved articles on all websites (newest 500, excluding the checked one);
+  - pages linked from the article (≤ 10, never the website's own pages) and up to 10 URLs the owner adds;
+  - Wikipedia extracts for the topic, through the MediaWiki API (search + plain-text extracts, ≤ 3 articles);
+  - **optional** licensed search through Serper. Only when `SERPER_API_KEY` is in `.env`: ≤ 5 distinctive passages as exact-phrase queries, ≤ 8 result pages read. The key goes only to the API in a header and is never logged or stored. Search-engine result pages are never scraped. Without a key, search is reported as “not configured” and everything else works.
+  - Every page fetch uses the M7 SSRF-safe fetcher: public addresses only, re-checked on every redirect, size and time caps, no cookies.
+- **Result:**
+  - side-by-side evidence (your text | source, highlighted), per-source counts, and a coverage list of every source group and page (compared / could not read with the reason / skipped / not configured);
+  - the exempt matches, and limitations stated every time: what was not searched, that identical wording does not show who copied whom or whether use is permitted, that near matches can be legitimate, and that no number proves or disproves plagiarism.
+  - The counts shown are descriptive (“19 of 94 words in identical runs”, “in 1 of 4 documents compared”); there is **no score or verdict**.
+- **Runs:** `PlagiarismCheck` (new table, migration `plagiarism_checks`).
+  - Each check is a workflow-queue job run by its own worker loop, one at a time, so slow fetches never hold up campaign queueing. It is restart-safe (an interrupted check starts over) and can be cancelled.
+  - Input under 50 words, bad URLs, more than 10 URLs, or no source selected are refused with the reason.
+- **UI:**
+  - `/plagiarism`: saved article or pasted text; choose sources and extra URLs; history; detail with summary, evidence filter by source, coverage, “Not counted”, limitations and an evidence `.json` export.
+  - The article page has a new **Originality** tab (this article's checks plus “Check this article”).
+  - README/Help updated; the Editorial Tools hub shows the tool as available.
+
+**Commands run (all passed)**
+```
+bash scripts/dev-create-migration.sh plagiarism_checks     # PlagiarismCheck (new table only)
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 24 files, 179 tests (new: text model + matching 7, end-to-end check 3)
+npx vitest run --config vitest.integration.config.ts tests/integration/worker-toolchain.test.ts   # 1/1 (worker with the new loop)
+npm run build                                              # compiled (/plagiarism + 4 API routes)
+npm run start:all # UI smoke, throwaway data dir seeded with 5 saved articles on 2 websites, Chromium, real worker:
+                  # article → Originality tab → “Check this article” (article preselected) → finished: 19 of 94 words in an
+                  # identical run with another website's article, side by side; the shared newsletter line exempt as recurring
+                  # site text (in 3 other articles); Wikipedia “could not read: DNS lookup failed” (no internet here), search
+                  # “not configured”; pasted text → 26 of 61 words in 2 of 5 documents; evidence .json downloaded; text under
+                  # 50 words refused (the one 400 in the run); the article tab lists the check; no other console errors
+```
+The end-to-end test runs against a local fake web: a linked page with a copied sentence and a quote, a reworded page, a JavaScript-only page, a private-address URL, a Wikipedia API and a Serper API that checks the key header. Results: exact runs from the linked page, Wikipedia, another website's saved article and a search result; a sentence-level near match for the rewording; the quote exempt; the call to action exempt as site text; the JavaScript-only page and the private address listed as could-not-read with their reasons; the website's own pages never fetched; the key sent only in the header and absent from the stored result.
+
+**Found and fixed during M11a**
+- The summary first said “across 4 sources” while the page showed 1 source with findings: it counted sites whose only overlap was exempt text. It now says “in N of M documents compared”.
+- Recurring site text was listed once per article that repeats it. It is now listed once, with the count.
+
+**Not verified here**
+- Live Wikipedia, live web pages and the real Serper API (no internet in this environment; local fakes only). Serper's response format is taken from its documentation (`organic[].link`).
+- The near-match thresholds (70 % content words, 60 % word order) and the 3-article boilerplate rule are first settings, untested on real articles; they may need tuning.
+- German compound words and inflection are matched exactly (no stemming), so reworded German text yields fewer near matches than English.

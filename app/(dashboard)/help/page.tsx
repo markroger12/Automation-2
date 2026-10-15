@@ -77,6 +77,17 @@ export default function HelpPage() {
             </li>
           </ol>
         </Card>
+        <Card title="Plagiarism evidence">
+          <ol className="list-decimal space-y-2 pl-5 text-sm">
+            <li>
+              <strong>Editorial Tools → Plagiarism Evidence</strong> (or an article’s <strong>Originality</strong> tab): choose a saved article or paste text, pick what to compare with, add URLs if you like, and run the check.
+            </li>
+            <li>Identical runs of 8+ words and closely matching sentences appear next to their source. Quotations and text that repeats across your own site are listed separately and not counted.</li>
+            <li>
+              Web search is optional and uses a licensed API: add <Code>SERPER_API_KEY=…</Code> to <Code>.env</Code> and restart. The page never shows a plagiarism percentage — the coverage list tells you what was and wasn’t compared.
+            </li>
+          </ol>
+        </Card>
         <Card title="7 · Bulk campaigns and the workflow">
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>

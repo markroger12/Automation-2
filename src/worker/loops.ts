@@ -4,6 +4,7 @@ import { healOrphanedTasks, recoverOnStartup, sweepExpiredLeases } from './recov
 import { controlTick } from './control';
 import { humanizerTick } from './humanizer';
 import { workflowTick } from './workflow-queue';
+import { plagiarismTick } from './plagiarism';
 import { schedulerTick } from '@/lib/workflow/scheduler';
 import { pruneDiagnostics } from './maintenance';
 import { registerBuiltInPipelines } from './pipelines';
@@ -22,6 +23,7 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'control-queue', intervalMs: 1000, run: async (c) => controlTick(c.workerId, c.stopping) });
   registerLoop({ name: 'humanizer-queue', intervalMs: 1000, run: async (c) => humanizerTick(c.workerId, c.stopping) });
   registerLoop({ name: 'workflow-queue', intervalMs: 1000, run: async (c) => workflowTick(c.workerId, c.stopping) });
+  registerLoop({ name: 'plagiarism-checks', intervalMs: 1000, run: async (c) => plagiarismTick(c.workerId, c.stopping) });
   // Publishing scheduler: database only, enqueues jobs, never opens a browser itself.
   registerLoop({ name: 'workflow-scheduler', intervalMs: 60_000, run: async () => void (await schedulerTick()) });
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });

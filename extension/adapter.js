@@ -201,12 +201,24 @@
     return null;
   }
 
+  /**
+   * One element per turn, in page order. The selectors are alternatives, but one page can match several
+   * (a turn <article data-turn="user"> around a <div data-message-author-role="user">): keep the innermost
+   * match, otherwise every turn counts twice and indexes point at the wrong turn.
+   */
+  function turnElements(selectors) {
+    const all = qsAll(selectors);
+    return all
+      .filter((el) => !all.some((other) => other !== el && el.contains(other)))
+      .sort((a, b) => (a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  }
+
   function userMessages() {
-    return qsAll(SELECTORS.userMessage);
+    return turnElements(SELECTORS.userMessage);
   }
 
   function assistantMessages() {
-    return qsAll(SELECTORS.assistantMessage);
+    return turnElements(SELECTORS.assistantMessage);
   }
 
   function messageText(el) {
@@ -224,16 +236,37 @@
     return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  /** Find a user turn whose text is exactly this prompt (normalized SHA-256), newest first. */
-  async function findSubmittedPrompt(promptHash, prompt) {
+  /**
+   * Looser text for comparing a prompt with how the page shows it: no whitespace at all, Unicode compatibility
+   * forms (NBSP, full-width), and one form of quotes, dashes and ellipses.
+   */
+  function looseText(text) {
+    return String(text)
+      .normalize('NFKC')
+      .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+      .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"')
+      .replace(/[\u2010-\u2015\u2212]/g, '-')
+      .replace(/\u2026/g, '...')
+      .replace(/\s+/g, '')
+      .toLowerCase();
+  }
+
+  const LOOSE_PREFIX = 200;
+
+  /**
+   * Find the user turn that is this prompt, newest first.
+   * Without evidence only an exact match counts (normalized SHA-256; very long prompts: same 300-char prefix and
+   * length within 1%). With evidence — the app recorded that it sent this prompt — the page's own rendering may
+   * differ: a loose match of the whole text, or the LAST user turn starting with the prompt's first 200 loose
+   * characters (a long prompt shown shortened, or with extra UI text), also counts.
+   */
+  async function findSubmittedPrompt(promptHash, prompt, opts) {
     const users = userMessages();
     for (let i = users.length - 1; i >= 0; i--) {
       const text = normalizeForHash(messageText(users[i]));
       if (!text) continue;
       if ((await sha256Hex(text)) === promptHash) return { element: users[i], index: i, match: 'hash' };
     }
-    // Conservative fallback for very long prompts rendered with UI decorations:
-    // same 300-char prefix and length within 1%.
     const wanted = normalizeForHash(prompt);
     for (let i = users.length - 1; i >= 0; i--) {
       const text = normalizeForHash(messageText(users[i]));
@@ -241,7 +274,34 @@
         return { element: users[i], index: i, match: 'prefix' };
       }
     }
+    if (!(opts && opts.evidence)) return null;
+    const loose = looseText(prompt);
+    for (let i = users.length - 1; i >= 0; i--) {
+      if (looseText(messageText(users[i])) === loose) return { element: users[i], index: i, match: 'loose' };
+    }
+    const last = users.length - 1;
+    if (last >= 0) {
+      const shown = looseText(messageText(users[last]));
+      const k = Math.min(LOOSE_PREFIX, loose.length);
+      if (k > 0 && shown.length >= k && shown.slice(0, k) === loose.slice(0, k)) return { element: users[last], index: last, match: 'last-turn-prefix' };
+    }
     return null;
+  }
+
+  /** Why no user turn matched (for the owner and Diagnostics): counts, lengths and the first difference. */
+  function promptMismatchReport(prompt) {
+    const users = userMessages();
+    const parts = [`page ${location.pathname}`, `${users.length} user turn(s)`, `${assistantMessages().length} answer(s)`];
+    if (users.length) {
+      const shown = normalizeForHash(messageText(users[users.length - 1]));
+      const wanted = normalizeForHash(prompt);
+      let i = 0;
+      while (i < shown.length && i < wanted.length && shown[i] === wanted[i]) i++;
+      const cut = (t) => JSON.stringify(t.slice(i, i + 24));
+      parts.push(`last user turn ${shown.length} chars vs prompt ${wanted.length}`);
+      if (i < Math.max(shown.length, wanted.length)) parts.push(`first difference at char ${i}: page ${cut(shown)} vs prompt ${cut(wanted)}`);
+    }
+    return parts.join('; ');
   }
 
   /** Assistant turn(s) that come after the given user turn in document order. */
@@ -475,6 +535,8 @@
     normalizeForHash,
     sha256Hex,
     findSubmittedPrompt,
+    promptMismatchReport,
+    looseText,
     assistantAfter,
     finalAnswerElement,
     genericAnswerAfter,

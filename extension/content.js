@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.1.1';
+  const EXTENSION_VERSION = '3.1.2';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -31,12 +31,32 @@
     }
   }
 
+  function connectJobPort(jobId) {
+    const port = chrome.runtime.connect({ name: `bas-job:${jobId}` });
+    port.onMessage.addListener((m) => {
+      if (m && m.type === 'cancel' && current && current.job.id === jobId) current.cancelled = true;
+    });
+    port.onDisconnect.addListener(() => {
+      if (current && current.port === port) current.port = null;
+    });
+    return port;
+  }
+
   function post(type, data) {
-    if (!current || !current.port) return;
+    if (!current) return;
+    // The background service worker may have been restarted by Chrome (its end of the port is gone):
+    // reconnect instead of silently dropping progress or the finished answer.
+    if (!current.port) {
+      try {
+        current.port = connectJobPort(current.job.id);
+      } catch (e) {
+        return;
+      }
+    }
     try {
       current.port.postMessage(Object.assign({ type, jobId: current.job.id }, data || {}));
     } catch (e) {
-      /* background restarting; it will resync via resume */
+      current.port = null;
     }
   }
 
@@ -278,10 +298,16 @@
     while (Date.now() < deadline) {
       checkCancelled();
       await sleep(1000);
-      const found = await A.findSubmittedPrompt(job.promptHash, job.prompt);
+      const found = await A.findSubmittedPrompt(job.promptHash, job.prompt, { evidence: true });
       if (found) return found;
     }
     return null;
+  }
+
+  /** The conversation the prompt was sent in, if the app recorded it. */
+  function recordedConversationUrl(job) {
+    const url = (job.reconcile && job.reconcile.conversationUrl) || (job.localCheckpoint && job.localCheckpoint.conversationUrl) || null;
+    return url && /^https:\/\/chatgpt\.com\/c\/[0-9a-f-]{20,}$/i.test(url) ? url : null;
   }
 
   async function runJob(job, config, port) {
@@ -296,11 +322,20 @@
       // evidence, only the LAST user turn may be ours (crash right after Send),
       // and never for a deliberate fresh regeneration of an identical prompt.
       const evidence = (job.reconcile && job.reconcile.sentAt) || (job.localCheckpoint && job.localCheckpoint.sentAt);
-      let existing = await A.findSubmittedPrompt(job.promptHash, job.prompt);
+      let existing = await A.findSubmittedPrompt(job.promptHash, job.prompt, { evidence: Boolean(evidence) });
       if (!existing && evidence) {
         // After a reload the real ChatGPT shows the composer before the conversation's turns: give them time to render.
         progress('looking for the already-sent prompt in this conversation');
         existing = await waitForSubmittedPrompt(job, config);
+        // Restarted on another page (e.g. a new chat): open the recorded conversation once; the reloaded page resumes the job.
+        const recorded = recordedConversationUrl(job);
+        const navKey = `bas-reconcile-nav:${job.id}`;
+        if (!existing && recorded && location.origin + location.pathname !== recorded && !sessionStorage.getItem(navKey)) {
+          sessionStorage.setItem(navKey, '1');
+          progress('opening the conversation the prompt was sent in');
+          location.assign(recorded);
+          return;
+        }
       }
       const isLastUserTurn = existing && existing.index === A.userMessages().length - 1;
       if (existing && (evidence || (isLastUserTurn && !job.fresh))) {
@@ -311,7 +346,8 @@
         return;
       }
       if (evidence) {
-        throw new JobError('ERROR', 'The app recorded this prompt as sent, but it is not visible in this conversation. Paused for review instead of resending.', { uncertain: true });
+        const why = `restarted after: ${job.resumedBy || 'a new claim'}; ${A.promptMismatchReport(job.prompt)}`;
+        throw new JobError('ERROR', `The app recorded this prompt as sent, but it is not visible in this conversation (${why}). Paused for review instead of resending.`, { uncertain: true });
       }
 
       progress('typing the prompt');
@@ -353,13 +389,7 @@
         sendResponse({ ok: false, error: 'busy' });
         return;
       }
-      const port = chrome.runtime.connect({ name: `bas-job:${msg.job.id}` });
-      port.onMessage.addListener((m) => {
-        if (m && m.type === 'cancel' && current && current.job.id === msg.job.id) current.cancelled = true;
-      });
-      port.onDisconnect.addListener(() => {
-        if (current && current.port === port) current.port = null;
-      });
+      const port = connectJobPort(msg.job.id);
       sendResponse({ ok: true });
       void runJob(msg.job, msg.config || {}, port);
       return;

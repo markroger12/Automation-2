@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.1.1';
+const EXTENSION_VERSION = '3.1.2';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'multi-tab', 'continue-generating', 'outbox'];
 
@@ -249,7 +249,7 @@ async function runOnTab(tabId, job) {
       await waitReady(tabId, 60_000);
     }
     t.started = true;
-    await sendRun(tabId, job, cp);
+    await sendRun(tabId, job, cp, job.reconcile ? 'the app offered the job again (the earlier run did not report back)' : null);
   } catch (e) {
     t.busy = false;
     t.job = null;
@@ -258,20 +258,23 @@ async function runOnTab(tabId, job) {
   }
 }
 
-async function sendRun(tabId, job, cp) {
-  const local = cp && cp.sentAt ? { sentAt: cp.sentAt, userTurnsBefore: cp.userTurnsBefore } : null;
-  const res = await chrome.tabs.sendMessage(tabId, { type: 'run', job: Object.assign({}, job, { localCheckpoint: local }), config: serverCfg });
+/** `resumedBy` says why a job runs again (shown to the owner if the sent prompt cannot be found). */
+async function sendRun(tabId, job, cp, resumedBy) {
+  const local = cp && cp.sentAt ? { sentAt: cp.sentAt, userTurnsBefore: cp.userTurnsBefore, conversationUrl: cp.conversationUrl || null } : null;
+  const res = await chrome.tabs.sendMessage(tabId, { type: 'run', job: Object.assign({}, job, { localCheckpoint: local, resumedBy: resumedBy || null }), config: serverCfg });
   if (!res || !res.ok) throw new Error('content script refused the job: ' + (res && res.error));
 }
 
 async function finishTab(tabId, jobId) {
   const t = tabState(tabId);
-  if (t.jobId !== jobId) return;
-  t.busy = false;
-  t.started = false;
-  t.jobId = null;
-  t.job = null;
-  t.terminal = true;
+  if (t.jobId === jobId) {
+    t.busy = false;
+    t.started = false;
+    t.jobId = null;
+    t.job = null;
+    t.terminal = true;
+  }
+  // Even when this worker restarted and has not restored the tab yet: the job is finished, never resume it.
   await dropCheckpoint(jobId);
 }
 
@@ -394,7 +397,7 @@ chrome.runtime.onConnect.addListener((port) => {
     try {
       await loadConfig();
       if (msg.type === 'progress') {
-        if (msg.sent) await checkpoint(jobId, { sent: true, sentAt: msg.sentAt || new Date().toISOString(), conversationUrl: msg.conversationUrl || null });
+        if (msg.sent) await checkpoint(jobId, Object.assign({ sent: true, sentAt: msg.sentAt || new Date().toISOString() }, msg.conversationUrl ? { conversationUrl: msg.conversationUrl } : {}));
         const res = await api('progress', { tabId: String(tabId), jobId, step: String(msg.step || '').slice(0, 200), sent: Boolean(msg.sent), sentAt: msg.sentAt, conversationUrl: msg.conversationUrl || null, diagnostics: msg.snapshot || {} }).catch((e) => ({ ok: false, error: e.message }));
         if (res && res.cancel) port.postMessage({ type: 'cancel' });
       } else if (msg.type === 'needs-human') {
@@ -446,7 +449,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Resume a job whose content script was reloaded mid-run (it reconciles before any resend).
         if (t.busy && t.job && t.started && !t.port) {
           const cp = await getCheckpoint(t.job.id);
-          if (cp && cp.step !== 'navigating') setTimeout(() => sendRun(tabId, t.job, cp).catch((e) => (lastError = e.message)), 500);
+          if (cp && cp.step !== 'navigating') setTimeout(() => sendRun(tabId, t.job, cp, 'the ChatGPT page reloaded').catch((e) => (lastError = e.message)), 500);
         }
         return sendResponse({ ok: true });
       }
@@ -596,7 +599,7 @@ async function restoreAfterWorkerRestart() {
       if (pong) {
         t.ready = true;
         t.url = pong.url;
-        if (!pong.busy) await sendRun(cp.tabId, cp.job, cp);
+        if (!pong.busy) await sendRun(cp.tabId, cp.job, cp, 'Chrome restarted the extension background');
       }
     } catch (e) {
       await api('release', { tabId: String(cp.tabId), jobId, reason: 'Service worker restarted and the tab is gone' }).catch(() => {});

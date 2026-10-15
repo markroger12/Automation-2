@@ -261,6 +261,8 @@ async function reportChatGPTProgressLocked(
     // "sent" is sticky: once proven sent, never forget it.
     sent: Boolean(previous.sent || input.progress.sent),
     sentAt: previous.sentAt ?? input.progress.sentAt,
+    // A page that reloaded into a new chat reports no conversation: keep the one the prompt was sent in.
+    conversationUrl: input.progress.conversationUrl || previous.conversationUrl,
     diagnostics: input.progress.diagnostics ? Object.fromEntries(Object.entries(input.progress.diagnostics).slice(0, 40)) : previous.diagnostics,
     updatedAt: new Date().toISOString(),
   };

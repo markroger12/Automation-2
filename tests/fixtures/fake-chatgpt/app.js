@@ -113,15 +113,19 @@
     const turnHtml = turns
       .map((t, i) => {
         if (t.role === 'user') {
+          const shortened = C.userDisplay === 'short' && t.text.length > 300;
+          const body = shortened ? `<div class="whitespace-pre-wrap">${esc(t.text.slice(0, 300))}…</div><button type="button">Show more</button>` : `<div class="whitespace-pre-wrap">${esc(t.text)}</div>`;
+          if (C.turnMarkup === 'article') return `<article data-testid="conversation-turn-${i}" data-turn="user"><h5 class="sr-only">You said:</h5><div data-message-author-role="user">${body}</div></article>`;
           return std
-            ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="user"><div class="whitespace-pre-wrap">${esc(t.text)}</div></div></div>`
-            : `<article data-turn="user"><div class="whitespace-pre-wrap">${esc(t.text)}</div></article>`;
+            ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="user">${body}</div></div>`
+            : `<article data-turn="user">${body}</article>`;
         }
         if (t.error) return `<div data-testid="conversation-turn-${i}"><div role="alert" class="text-token-text-error">${esc(t.error)}</div></div>`;
         const tool = t.tool ? `<div data-testid="tool-call-block">Searching the web for sources…</div><details><summary>Thought for 3s</summary><div class="markdown">Planning: I will search first.</div></details>` : '';
         const isLast = i === turns.length - 1;
         const img = t.image ? (isLast && window.__generating ? '<div class="image-placeholder">Creating image…</div>' : `<img alt="Generated image" src="${t.image}" width="1024" height="576">`) : '';
         const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>`;
+        if (C.turnMarkup === 'article') return `<article data-testid="conversation-turn-${i}" data-turn="assistant"><h6 class="sr-only">ChatGPT said:</h6><div data-message-author-role="assistant">${content}</div></article>`;
         return std
           ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="assistant">${content}</div></div>`
           : `<article data-turn="assistant">${content}</article>`;

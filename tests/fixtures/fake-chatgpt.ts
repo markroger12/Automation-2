@@ -9,6 +9,10 @@ export interface FakeChatGptConfig {
   answerDelayMs?: number;
   /** After loading a /c/<id> page, render its turns only after this delay (the composer is ready at once). */
   historyDelayMs?: number;
+  /** 'article': each turn is an <article data-turn> around the role <div> (both match the adapter's selectors). */
+  turnMarkup?: 'default' | 'article';
+  /** 'short': user messages longer than 300 characters are shown shortened, with a "Show more" button. */
+  userDisplay?: 'full' | 'short';
   chunkMs?: number;
   chunkSize?: number;
   challengeClearsAfterMs?: number;

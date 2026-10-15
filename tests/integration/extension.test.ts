@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.1.1');
+    expect(ext?.version).toBe('3.1.2');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -216,6 +216,68 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(done.status).toBe('COMPLETED');
     expect(done.recovered).toBe(true);
     expect(done.resultText).toContain('final paragraph');
+    expect((await fakeStats()).sends).toBe(1);
+  });
+
+  it('nested turn markup: a long prompt shown shortened is still recognised after a reload (sent once)', async () => {
+    fake = { variant: 'standard', mode: 'normal', chunkMs: 400, chunkSize: 15, historyDelayMs: 2000, turnMarkup: 'article', userDisplay: 'short' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const prompt = ['Generate several credible blog titles for: "Gloria Krass" (reader-focused).', '', ...Array.from({ length: 30 }, (_, i) => `Rule ${i + 1}: keep every title natural and specific.`)].join('\n');
+    const req = await request(prompt);
+    await waitJob(req.responseId, (j) => Boolean(j.progress && JSON.parse(j.progress).sent), 60_000, 'prompt sent');
+    await chatPage()!.reload();
+    const done = await responseDone(req.responseId, 90_000);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe('COMPLETED');
+    expect(done.recovered).toBe(true);
+    expect((await fakeStats()).sends).toBe(1);
+  });
+
+  it('nested turn markup: a follow-up prompt in the same conversation gets its own answer, not the previous one', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'article', answers: ['First answer: alpha.', 'Second answer: beta.'] };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const first = await request('First prompt with nested turns');
+    const one = await responseDone(first.responseId, 60_000);
+    expect(one.resultText).toContain('alpha');
+    const second = await request('Second prompt with nested turns', { conversationUrl: one.conversationUrl, newChat: false });
+    const two = await responseDone(second.responseId, 60_000);
+    expect(two.status).toBe('COMPLETED');
+    expect(two.resultText).toContain('beta');
+    expect(two.resultText).not.toContain('alpha');
+    expect(two.conversationUrl).toBe(one.conversationUrl);
+  });
+
+  it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {
+    fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 10 };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Reloaded into a new chat prompt');
+    await waitJob(req.responseId, (j) => Boolean(j.progress && JSON.parse(j.progress).conversationUrl), 60_000, 'conversation recorded');
+    await chatPage()!.goto('https://chatgpt.com/');
+    const done = await responseDone(req.responseId, 120_000);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe('COMPLETED');
+    expect(done.recovered).toBe(true);
+    expect((await fakeStats()).sends).toBe(1);
+  });
+
+  it('a sent prompt that is really gone stops for review and says why', async () => {
+    fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 5 };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Prompt that disappears');
+    await waitJob(req.responseId, (j) => Boolean(j.progress && JSON.parse(j.progress).conversationUrl), 60_000, 'conversation recorded');
+    const page = chatPage()!;
+    await page.evaluate(() => {
+      const id = location.pathname.split('/').pop()!;
+      const convs = JSON.parse(localStorage.getItem('fake:convs') || '{}');
+      convs[id] = { turns: [] };
+      localStorage.setItem('fake:convs', JSON.stringify(convs));
+    });
+    await page.reload();
+    const done = await responseDone(req.responseId, 120_000);
+    expect(done.status).toBe('FAILED');
+    expect(done.error).toMatch(/^UNCERTAIN: The app recorded this prompt as sent/);
+    expect(done.error).toContain('restarted after: the ChatGPT page reloaded');
+    expect(done.error).toContain('0 user turn(s)');
     expect((await fakeStats()).sends).toBe(1);
   });
 

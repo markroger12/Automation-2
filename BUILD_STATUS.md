@@ -1001,3 +1001,42 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 **Not verified here**
 - The fix against the real ChatGPT on the owner's PC.
 - What reloaded the ChatGPT page during the TITLES job.
+
+### Second report: TITLES stopped again with 3.1.1 (extension 3.1.2)
+
+**Reported by the owner** (screenshots):
+- Retry worked: the uncertain prompt was superseded and a fresh one (`…:TITLES:a1:s1`) was sent.
+- In ChatGPT, both prompts and both complete answers (with “Recommended Title:”) were visible, in two conversations.
+- The task stopped again with the same UNCERTAIN message.
+
+So the restarted job did not recognise its own prompt even though ChatGPT had answered it. Two things are **not known**, because this container cannot open the real ChatGPT:
+- what restarts the job on the owner's PC;
+- what exactly differs on the real page.
+
+3.1.2 makes the recovery tolerant of the likely differences and reports the rest. Each change is tested on the fake page; three of the new tests fail with 3.1.1 with the owner's error.
+- **Each turn counted once.** The adapter's selectors are alternatives, but a turn wrapped as `<article data-turn="user">` around `<div data-message-author-role="user">` matches two of them. Every turn then counted twice, and turn indexes could point at the wrong turn. The extension now keeps the innermost match, in page order.
+  - Regression test: with nested markup, a follow-up prompt in the same conversation gets its own answer. It passes with 3.1.1 too, so it only guards against regressions.
+- **Looser matching, only with evidence.** When the app has recorded that it sent this prompt, two more matches count:
+  - the same text ignoring whitespace, quote and dash variants and Unicode compatibility forms;
+  - the last user turn starting with the prompt's first 200 such characters, as when a long prompt is shown shortened.
+
+  Without that record only exact matches count, as before. Test: nested markup, a long prompt shown shortened, page reloaded (fails with 3.1.1).
+- **Reload into a new chat.** The extension opens the recorded conversation once and recovers the answer. The server now keeps the recorded conversation when a later progress report has none. Test (fails with 3.1.1).
+- **Lost connection to the extension's background.** If Chrome restarts the background service worker, the page reconnects instead of silently dropping progress and the finished answer. The record of a finished job is always removed, so it is never resumed.
+- **Clearer stop message.** If the prompt is still not found, the message now names what restarted the job (page reload, background restart, or the app offering the job again). It also says what the page showed: path, user turns, answers, lengths and the first difference. Test (fails with 3.1.1).
+
+**Commands run**
+```
+npx tsc --noEmit                                           # 0 errors
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "<the 4 new tests>"
+                                                           # with 3.1.1: 3 failed (UNCERTAIN), the follow-up test passed
+                                                           # with 3.1.2: 4 passed
+npx vitest run                                             # 37 files, 255 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 20/20, first attempt
+npx vitest run --config vitest.integration.config.ts tests/integration/worker-toolchain.test.ts   # 1/1
+npm run build                                              # compiled
+```
+
+**Not verified here**
+- 3.1.2 on the real ChatGPT.
+- What restarts the job on the owner's PC; the new stop message will show it if it happens again.

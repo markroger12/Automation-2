@@ -12,10 +12,11 @@ import { evaluateQuality } from '@/lib/quality/gate';
 import type { StageManifest } from '@/modules/types';
 import { firstPage, withSiteContext, withWordPressSlot } from '@/wordpress/browser';
 import { siteRef } from '@/wordpress/session';
-import { WpClient } from '@/wordpress/client';
-import { contentHash, editorContent, saveDraft, sameArticle, type DraftInput, type EditorKind } from '@/wordpress/drafts';
+import { WpApiError, WpClient } from '@/wordpress/client';
+import { contentHash, editorContent, mapApiError, NO_PERMISSION_REASON, RemoteEditedError, saveDraft, sameArticle, type DraftInput, type EditorKind } from '@/wordpress/drafts';
 import { inspectInEditor, type EditorInspection } from '@/wordpress/editor';
-import { prepareArticleMedia } from '@/wordpress/media';
+import { prepareArticleMedia, uploadAssetWithRetry, type UploadHow } from '@/wordpress/media';
+import { observe } from '@/lib/site-health';
 import { fieldsMatch, LOCAL_FIXABLE, type LocalFixId, type RankMathRecommendation } from '@/wordpress/rank-math';
 import type { PipelineContext, PipelineStage, StageResult } from '../pipeline/types';
 import { articleHtml, assembleForTask, bind, bodyForAssembly, metaFromIntro, seoReportFor, waiting } from './common';
@@ -81,17 +82,17 @@ function draftInput(ctx: PipelineContext, site: Website, html: string, editor: E
   };
 }
 
-/** Featured image (from the image stage, M8): uploaded once per site, reused on retries. */
-async function featuredMedia(client: WpClient, ctx: PipelineContext): Promise<number | null> {
+/** Featured image (from the image stage, M8): uploaded once per site, reused on retries, never uploaded twice. */
+async function featuredMedia(client: WpClient, ctx: PipelineContext): Promise<{ id: number; how: UploadHow } | null> {
   const asset = await db.mediaAsset.findFirst({ where: { taskId: ctx.taskId, role: 'FEATURED', status: { in: ['READY', 'UPLOADED'] } }, orderBy: { createdAt: 'desc' } });
   if (!asset) return null;
-  if (asset.wpMediaId && (await client.getMedia(asset.wpMediaId))) return asset.wpMediaId;
-  const fs = await import('node:fs/promises');
-  const { fromDataRelative } = await import('@/lib/paths');
-  const bytes = await fs.readFile(fromDataRelative(asset.filePath));
-  const uploaded = await client.uploadMedia({ bytes, filename: asset.filePath.split('/').pop() ?? 'featured.webp', mime: asset.mime ?? 'image/webp', altText: asset.altText, title: ctx.task.selectedTitle });
-  await db.mediaAsset.update({ where: { id: asset.id }, data: { wpMediaId: uploaded.id, wpUrl: uploaded.url, status: 'UPLOADED' } });
-  return uploaded.id;
+  const r = await uploadAssetWithRetry(client, asset, { altText: asset.altText, title: ctx.task.selectedTitle });
+  return { id: r.id, how: r.how };
+}
+
+/** Keep the WordPress version of a draft edited there, for the owner's comparison (WordPress tab). */
+async function rememberRemoteEdit(ctx: PipelineContext, error: unknown) {
+  if (error instanceof RemoteEditedError) await ctx.setPrivateState({ remoteEdit: { ...error.remote, capturedAt: new Date().toISOString() } });
 }
 
 async function clearWpOptions(ctx: PipelineContext) {
@@ -116,21 +117,55 @@ export function wordpressDraft(manifest: StageManifest): PipelineStage {
       const timeoutMs = settings.browser.navigationTimeoutSec * 1000;
       await ctx.progress(ctx.task.wpPostId ? `Reopening WordPress draft #${ctx.task.wpPostId}…` : 'Saving the WordPress draft…');
       let mediaWarnings: string[] = [];
-      const outcome = await withWordPress(site, 'draft', async (context) => {
-        const client = await WpClient.connect(context, siteRef(site), { timeoutMs, taskId: ctx.taskId });
-        const media = await prepareArticleMedia(client, html, ctx.taskId);
-        mediaWarnings = media.warnings;
-        const input = draftInput(ctx, site, media.html, knownEditor(site), await featuredMedia(client, ctx));
-        input.options.timeoutMs = Math.max(timeoutMs, 90_000);
-        return saveDraft(client, input, async (data) => {
-          await ctx.updateTask(data);
+      const started = Date.now();
+      let mediaCounts = { uploaded: 0, reused: 0, adopted: 0, failed: 0 };
+      let outcome: Awaited<ReturnType<typeof saveDraft>>;
+      try {
+        outcome = await withWordPress(site, 'draft', async (context) => {
+          const client = await WpClient.connect(context, siteRef(site), { timeoutMs, taskId: ctx.taskId });
+          const media = await prepareArticleMedia(client, html, ctx.taskId);
+          mediaWarnings = media.warnings;
+          mediaCounts = { uploaded: media.uploaded, reused: media.reused, adopted: media.adopted, failed: media.failed };
+          let featured: Awaited<ReturnType<typeof featuredMedia>> = null;
+          try {
+            featured = await featuredMedia(client, ctx);
+            if (featured) mediaCounts[featured.how]++;
+          } catch (error) {
+            if (error instanceof LoginRequiredError) throw error;
+            // Like body images: the draft is saved without it (the owner sees why).
+            mediaCounts.failed++;
+            mediaWarnings.push(`The featured image could not be uploaded (${(error as Error).message}); the draft was saved without it.`);
+          }
+          const input = draftInput(ctx, site, media.html, knownEditor(site), featured?.id ?? null);
+          input.options.timeoutMs = Math.max(timeoutMs, 90_000);
+          return saveDraft(client, input, async (data) => {
+            await ctx.updateTask(data);
+          });
         });
-      });
+      } catch (error) {
+        await rememberRemoteEdit(ctx, error);
+        const message = (error as Error).message;
+        await observe(site.id, 'DRAFT_SAVE', 'FAIL', message, { durationMs: Date.now() - started, taskId: ctx.taskId });
+        if (error instanceof LoginRequiredError) await observe(site.id, 'SESSION', 'FAIL', `Session expired during a draft save: ${message}`, { taskId: ctx.taskId });
+        const noPermission =
+          (error instanceof WpApiError && (error.status === 403 || error.code === 'rest_cannot_create' || error.code === 'rest_cannot_edit')) || (error instanceof NeedsReviewError && error.reasons.includes(NO_PERMISSION_REASON));
+        if (noPermission) {
+          await observe(site.id, 'PERMISSIONS', 'FAIL', 'WordPress refused the signed-in account: it may not create or edit posts.', { taskId: ctx.taskId });
+          if (error instanceof WpApiError) throw mapApiError(error);
+        }
+        throw error;
+      }
+      const touched = mediaCounts.uploaded + mediaCounts.adopted + mediaCounts.failed;
+      if (touched) {
+        await observe(site.id, 'MEDIA_UPLOAD', mediaCounts.failed ? 'FAIL' : 'OK', `${mediaCounts.uploaded} uploaded, ${mediaCounts.adopted} found from an interrupted upload, ${mediaCounts.reused} reused, ${mediaCounts.failed} failed`, { taskId: ctx.taskId, details: mediaCounts });
+      }
+      if (ctx.privateState<{ remoteEdit?: unknown }>().remoteEdit) await ctx.setPrivateState({ remoteEdit: null });
+      await observe(site.id, 'DRAFT_SAVE', 'OK', `Draft #${outcome.postId} ${outcome.action}`, { durationMs: Date.now() - started, taskId: ctx.taskId, details: { postId: outcome.postId, action: outcome.action } });
       await clearWpOptions(ctx);
       await ctx.log(`WordPress draft #${outcome.postId} ${outcome.action}; verified status “${outcome.status}”.`, 'info', { warnings: outcome.warnings });
       return {
         outcome: 'completed',
-        data: { ...outcome, editor: knownEditor(site), warnings: [...outcome.warnings, ...mediaWarnings] },
+        data: { ...outcome, editor: knownEditor(site), media: mediaCounts, warnings: [...outcome.warnings, ...mediaWarnings] },
         message: `Draft #${outcome.postId} ${outcome.action === 'unchanged' ? 'already up to date' : outcome.action}`,
       };
     },
@@ -225,9 +260,16 @@ async function setRankMathFields(client: WpClient, ctx: PipelineContext) {
 /** Push the task's current article to the existing draft (conflict-checked and verified). */
 async function pushContent(client: WpClient, ctx: PipelineContext, site: Website, editor: EditorKind) {
   const media = await prepareArticleMedia(client, articleHtml(ctx), ctx.taskId);
-  return saveDraft(client, draftInput(ctx, site, media.html, editor, null), async (data) => {
-    await ctx.updateTask(data);
-  });
+  try {
+    const outcome = await saveDraft(client, draftInput(ctx, site, media.html, editor, null), async (data) => {
+      await ctx.updateTask(data);
+    });
+    if (ctx.privateState<{ remoteEdit?: unknown }>().remoteEdit) await ctx.setPrivateState({ remoteEdit: null });
+    return outcome;
+  } catch (error) {
+    await rememberRemoteEdit(ctx, error);
+    throw error;
+  }
 }
 
 export function rankMath(manifest: StageManifest): PipelineStage {

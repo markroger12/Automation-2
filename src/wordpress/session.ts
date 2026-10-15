@@ -7,12 +7,14 @@ import { getSettings } from '@/lib/settings';
 import { profileDirForSlug } from '@/lib/paths';
 import { audit } from '@/lib/audit';
 import { resumeLoginPausedTasks } from '@/lib/tasks/lifecycle';
-import { anyOf } from './selectors';
+import { anyOf, selectorsFor } from './selectors';
 import { boundedGoto, captureScreenshot, closeSiteContext, dismissOverlays, firstPage, withSiteContext, type SiteRef } from './browser';
 import { withOwnerWindowPermit } from './publish-guard';
 import { WpClient } from './client';
 import { LoginRequiredError } from '@/lib/pipeline-errors';
 import { parseJson } from '@/lib/json';
+import { observe } from '@/lib/site-health';
+import { evaluatePermissions } from './permissions';
 
 export type SessionCheck = { state: 'ACTIVE' | 'LOGIN_REQUIRED' | 'ERROR'; detail: string; url?: string; adminLanguage?: string | null };
 
@@ -24,11 +26,26 @@ async function overrides(): Promise<Record<string, string[]>> {
   return (await getSettings()).advanced.selectorOverrides;
 }
 
+/**
+ * WordPress's own “Your session has expired” pop-up (wp-auth-check) is
+ * showing. Each selector is checked on its own: the pop-up's wrapper has no
+ * size of its own in real WordPress (its children are fixed-position), so
+ * only the dialog box inside it counts as visible.
+ */
+export async function sessionExpiredPopup(page: Page, sel: Record<string, string[]> = {}): Promise<boolean> {
+  for (const s of selectorsFor('sessionExpired', sel)) {
+    if (await page.locator(s).first().isVisible().catch(() => false)) return true;
+  }
+  return false;
+}
+
 /** True when the page is an authenticated wp-admin page. */
 export async function isLoggedIn(page: Page, sel: Record<string, string[]> = {}): Promise<boolean> {
   const url = page.url();
   if (/wp-login\.php/i.test(url)) return false;
   if (!/\/wp-admin\//i.test(url)) return false;
+  // WordPress keeps the admin page but shows its “session expired” pop-up when the login cookie is gone.
+  if (await sessionExpiredPopup(page, sel)) return false;
   return (await page.locator(anyOf('loggedIn', sel)).count().catch(() => 0)) > 0;
 }
 
@@ -42,6 +59,9 @@ export async function checkSessionOnPage(page: Page, site: SiteRef, timeoutMs: n
   await page.waitForSelector(`${anyOf('loggedIn', sel)}, ${anyOf('loginForm', sel)}`, { timeout: Math.min(timeoutMs, 20_000) }).catch(() => {});
   const lang = await page.evaluate(() => document.documentElement.getAttribute('lang')).catch(() => null);
   if (await isLoggedIn(page, sel)) return { state: 'ACTIVE', detail: 'Logged in to wp-admin.', url: page.url(), adminLanguage: lang };
+  if (await sessionExpiredPopup(page, sel)) {
+    return { state: 'LOGIN_REQUIRED', detail: 'WordPress shows its “session expired” pop-up. Use “Log in” and sign in yourself.', url: page.url(), adminLanguage: lang };
+  }
   if (/wp-login\.php/i.test(page.url()) || (await page.locator(anyOf('loginForm', sel)).count()) > 0) {
     return { state: 'LOGIN_REQUIRED', detail: 'WordPress shows the login page. Use “Log in” and sign in yourself.', url: page.url(), adminLanguage: lang };
   }
@@ -50,7 +70,7 @@ export async function checkSessionOnPage(page: Page, site: SiteRef, timeoutMs: n
 
 function pickCapabilities(raw: string | null | undefined): Record<string, unknown> {
   const d = parseJson<Record<string, unknown>>(raw, {});
-  return Object.fromEntries(Object.entries(d).filter(([k]) => ['rest', 'rankMath', 'restError'].includes(k)));
+  return Object.fromEntries(Object.entries(d).filter(([k]) => ['rest', 'rankMath', 'restError', 'permissions'].includes(k)));
 }
 
 async function recordSession(site: Website, check: SessionCheck, extra: Record<string, unknown> = {}) {
@@ -86,15 +106,30 @@ export async function testSession(site: Website): Promise<SessionCheck> {
       try {
         const client = await WpClient.connect(context, siteRef(site), { timeoutMs: timeout });
         capabilities = { rest: true, rankMath: client.hasRankMath };
+        try {
+          capabilities.permissions = evaluatePermissions(await client.currentUser(), { createMissingTags: settings.workflow.createMissingTags });
+        } catch (error) {
+          capabilities.permissions = { status: 'WARN', message: `Could not read the account's permissions: ${(error as Error).message}` };
+        }
       } catch (error) {
         capabilities = { rest: false, restError: (error as Error).message };
       }
     }
     return check;
   });
+  const permissions = capabilities.permissions as { status: 'OK' | 'WARN' | 'FAIL'; message: string } | undefined;
   if (result.state === 'ACTIVE' && capabilities.rest === false) result.detail += ` But the REST API is not reachable: ${String(capabilities.restError)}`;
-  else if (result.state === 'ACTIVE') result.detail += capabilities.rankMath ? ' REST API reachable; Rank Math detected.' : ' REST API reachable; Rank Math NOT detected.';
+  else if (result.state === 'ACTIVE') {
+    result.detail += capabilities.rankMath ? ' REST API reachable; Rank Math detected.' : ' REST API reachable; Rank Math NOT detected.';
+    if (permissions && permissions.status !== 'OK') result.detail += ` ${permissions.message}`;
+  }
   await recordSession(site, result, capabilities);
+  await observe(site.id, 'SESSION', result.state === 'ACTIVE' ? 'OK' : 'FAIL', result.state === 'ACTIVE' ? 'Logged in to wp-admin.' : result.detail);
+  if (result.state === 'ACTIVE') {
+    await observe(site.id, 'REST', capabilities.rest === false ? 'FAIL' : 'OK', capabilities.rest === false ? `Not reachable: ${String(capabilities.restError)}` : 'Reachable for the logged-in account.');
+    if (capabilities.rest !== false) await observe(site.id, 'RANK_MATH', capabilities.rankMath ? 'OK' : 'WARN', capabilities.rankMath ? 'Rank Math detected.' : 'Rank Math not detected (Rank Math steps are skipped).');
+    if (permissions) await observe(site.id, 'PERMISSIONS', permissions.status, permissions.message);
+  }
   await log({ level: result.state === 'ACTIVE' ? 'info' : 'warn', category: 'wordpress', message: `${site.name}: session ${result.state} — ${result.detail}` });
   return result;
 }
@@ -135,6 +170,7 @@ export async function interactiveLogin(site: Website, heartbeat: () => Promise<b
     return { state: 'LOGIN_REQUIRED', detail: `No sign-in detected within ${Math.round(timeoutMs / 60000)} minutes.` } as SessionCheck;
   });
   await recordSession(site, result, { via: 'interactive-login' });
+  await observe(site.id, 'SESSION', result.state === 'ACTIVE' ? 'OK' : 'FAIL', result.state === 'ACTIVE' ? 'Signed in manually in the login window.' : result.detail);
   await log({ level: result.state === 'ACTIVE' ? 'info' : 'warn', category: 'wordpress', message: `${site.name}: login window finished — ${result.detail}` });
   return result;
 }
@@ -291,6 +327,7 @@ export async function detectEditor(site: Website): Promise<'GUTENBERG' | 'CLASSI
     return 'UNKNOWN' as const;
   });
   await db.website.update({ where: { id: site.id }, data: { detectedEditor: editor } });
+  await observe(site.id, 'EDITOR', editor === 'UNKNOWN' ? 'WARN' : 'OK', editor === 'UNKNOWN' ? 'Neither the block editor nor the Classic editor was found on post-new.php.' : `${editor === 'GUTENBERG' ? 'Block editor (Gutenberg)' : 'Classic editor'} detected.`);
   await log({ category: 'wordpress', message: `${site.name}: editor detected as ${editor}.` });
   return editor;
 }

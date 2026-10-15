@@ -10,6 +10,9 @@ import { PublishingPermission } from './publishing';
 import { RoutingRules } from './routing-rules';
 import { parseRoutingRules } from '@/lib/campaigns/router';
 import { DangerZone } from './danger';
+import { SiteHealth } from './site-health';
+import { siteHealth } from '@/lib/site-health';
+import { failedWordPressTasks } from '@/lib/wordpress-resave';
 
 export const metadata = { title: 'Website' };
 
@@ -20,11 +23,13 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
     include: { wordpressProfile: true, categories: { orderBy: { name: 'asc' } }, _count: { select: { tasks: true } } },
   });
   if (!site) notFound();
-  const [jobs, audits, blockedAttempts, linkTargets] = await Promise.all([
+  const [jobs, audits, blockedAttempts, linkTargets, health, failedWp] = await Promise.all([
     db.queueJob.findMany({ where: { queue: 'control', websiteId: id }, orderBy: { createdAt: 'desc' }, take: 8 }),
     db.auditLog.findMany({ where: { entityType: 'Website', entityId: id, action: { not: 'publish.blocked' } }, orderBy: { createdAt: 'desc' }, take: 10 }),
     db.auditLog.count({ where: { entityType: 'Website', entityId: id, action: 'publish.blocked' } }),
     db.linkTarget.groupBy({ by: ['status'], where: { websiteId: id }, _count: { _all: true } }),
+    siteHealth(id),
+    failedWordPressTasks(id),
   ]);
   const linkCount = (status: string) => linkTargets.find((g) => g.status === status)?._count._all ?? 0;
   const profile = site.wordpressProfile;
@@ -117,6 +122,7 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
                 { label: 'Editor', value: `${site.editorType === 'AUTO' ? 'auto' : site.editorType.toLowerCase()} · detected ${site.detectedEditor?.toLowerCase() ?? '—'}` },
                 { label: 'REST API (drafts)', value: diag.rest === true ? 'reachable with the logged-in session' : diag.rest === false ? <span className="text-amber-600">not reachable — {String(diag.restError ?? '')}</span> : 'not tested yet (Test session)' },
                 { label: 'Rank Math', value: diag.rest === true ? (diag.rankMath ? 'detected' : 'not detected') : '—' },
+                { label: 'Account permissions', value: diag.rest === true ? String((diag.permissions as { message?: string } | undefined)?.message ?? 'not checked yet (Test session)') : '—' },
                 {
                   label: 'Internal link index',
                   value: site.linkIndexSyncedAt
@@ -173,6 +179,10 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
           )}
         </Card>
       </div>
+
+      <Card title="Site health" className="mt-6" description="Measured results only: session tests, REST and permission checks, editor detection, draft saves and media uploads (kept 30 days).">
+        <SiteHealth websiteId={site.id} health={health} failed={failedWp} />
+      </Card>
 
       <Card title="Settings" className="mt-6" description="Language, timezone, internal-link line, editor and per-site overrides.">
         <WebsiteForm initial={initial} categories={site.categories.map((c) => ({ id: c.id, name: c.name }))} />

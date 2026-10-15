@@ -274,6 +274,27 @@ export class WpClient {
     }
   }
 
+  /**
+   * Media item by its exact slug. WordPress derives an attachment's slug from
+   * the uploaded file name, so a unique upload name finds an upload whose
+   * answer was lost (timeout) instead of uploading it twice.
+   */
+  async findMediaBySlug(slug: string): Promise<{ id: number; source_url: string; alt_text: string } | null> {
+    const { data } = await this.call<{ id: number; source_url: string; alt_text: string; slug: string }[]>('GET', '/wp/v2/media', { query: { slug, context: 'edit', _fields: 'id,source_url,alt_text,slug', per_page: 5 } });
+    const hit = Array.isArray(data) ? data.find((m) => m.slug === slug) : undefined;
+    return hit ? { id: hit.id, source_url: hit.source_url, alt_text: hit.alt_text } : null;
+  }
+
+  async updateMediaAlt(id: number, altText: string): Promise<void> {
+    await this.call('POST', `/wp/v2/media/${id}`, { json: { alt_text: altText } });
+  }
+
+  /** The signed-in account (name, roles and capabilities; WordPress returns these to the account itself). */
+  async currentUser(): Promise<{ id: number; name: string; roles: string[]; capabilities: Record<string, boolean> }> {
+    const { data } = await this.call<{ id: number; name: string; roles?: string[]; capabilities?: Record<string, boolean> }>('GET', '/wp/v2/users/me', { query: { context: 'edit', _fields: 'id,name,roles,capabilities' } });
+    return { id: data.id, name: data.name, roles: data.roles ?? [], capabilities: data.capabilities ?? {} };
+  }
+
   // ---------------- Rank Math ----------------
 
   /** Rank Math's own REST endpoint used by its editor sidebar. */

@@ -26,7 +26,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M11 Plagiarism evidence and hardening | ✅ done (plagiarism checker on a local fake web; hardening, diagnostics, a11y 0 violations; live checks in RELEASE_CHECKLIST §4 need the owner's PC) |
 | M12 Duplicate detector, quality report, router rules | ✅ done |
 | M13 Research evidence ledger, internal-link decisions | ✅ done (local fake web; live sources not checked here) |
-| M14–M16 3.0 upgrades | ☐ |
+| M14 Image Studio and WordPress manager hardening | ✅ done (fake + real WordPress 6.5/6.7 verified; the owner's Chrome and live sites not verified here) |
+| M15–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
 
 ---
@@ -717,3 +718,61 @@ Unit tests through the real ledger on a local fake web:
 - **Claim extraction** uses patterns on the research notes, not a language model. Claims worded in unusual ways are not extracted; they are not invented either.
 - **Not used for linking yet**: the `Website.linkStrategy` column is still not used, and contextual anchors ignore headings (the anchor is the target post's own phrase found in body text).
 
+## M14 — Image Studio and WordPress manager hardening ✅
+
+**Working**
+- **Alt text** (upgrade 08; `src/images/alt-text.ts`), applied to every rendered image before it is stored:
+  - “Image of …” / “Bild von …” is dropped (“Photo of …” stays, it says what kind of image it is);
+  - text over 125 characters is shortened at a word boundary;
+  - file names (`IMG_2041.jpg`, `DSC_0042`), web addresses, one-word labels, a repeated keyword and the same text on two images are replaced with a neutral text: the article title for the featured image, “*Subject*: article image 2/3” for body images (German: “Artikelbild”). It never claims to know what an image shows;
+  - every change is listed in the image notes. Alt text the owner edits in the article wins over the stored one.
+- **Media uploads happen once**, even when an answer is lost (`src/wordpress/media.ts`):
+  - each image is uploaded under a unique name (file name + asset tag), so its WordPress slug is known in advance;
+  - `uploadStartedAt` is set before the upload and cleared with the answer. If it is still set on a retry, the Media Library is searched for that slug and a hit is adopted instead of uploading again;
+  - one immediate retry per image; an image that still fails is left out of the draft with a note (featured image included — before, a failed featured upload failed the whole save); the text is always saved;
+  - missing alt text on an adopted or reused WordPress item is filled in.
+- **Site health** (upgrade 09; `SiteHealthObservation`, `src/lib/site-health.ts`), measured results only, kept 30 days:
+  - recorded by session tests, the login window, editor detection, every draft save (with duration and outcome) and every upload run;
+  - the website page's **Site health** card: overall healthy / needs attention / failing / no data yet with the reasons, the latest result per check, the last 24 hours (saves, failures, median save time) and recent observations;
+  - a later successful save clears an older session/REST/permission *failure*; it does not clear a warning such as “may not upload images”.
+- **Account permissions**: the session test reads `/wp/v2/users/me` (the account's own roles and capabilities):
+  - may not create posts → failing;
+  - may not upload images, or may not create tags when tag creation is on → warning;
+  - a draft refused by WordPress (`rest_cannot_create`) stops with that reason and is recorded.
+- **Session detection**: WordPress's own “session expired” pop-up (wp-auth-check) now counts as logged out, verified against the real markup of WordPress 6.7 and 6.5. In real WordPress the pop-up's wrapper has no size of its own, so the dialog box inside it is what is checked. The hidden pop-up present on every admin page does not count.
+- **Batch re-save**: the Site health card lists the articles stopped at a WordPress step (draft, Rank Math, verification) with the error.
+  - **Re-save selected** gives each one the WordPress tab's “Save to WordPress again”: the stored draft is reopened (never duplicated), reasons from the WordPress steps are re-evaluated, and a draft edited in WordPress still stops for the owner's decision.
+  - It is refused while the site is paused or logged out; only listed articles can be re-saved; audited `wordpress.batch-resave`.
+- **Change preview for conflicts**: when a draft was edited in WordPress, the WordPress version is captured at that moment. The article's WordPress tab shows **Changes made in WordPress**: the text blocks only in WordPress (what “Overwrite” would replace) and only in the app, compared without markup.
+- Migration `site_health_media_upload_marker`: one nullable column and one new table, no table rebuild.
+
+**Commands run**
+```
+bash scripts/dev-create-migration.sh site_health_media_upload_marker   # ALTER TABLE ADD COLUMN + CREATE TABLE (no rebuild)
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 30 files, 215 tests (new: alt text, permissions, upload names,
+                                                           # site health incl. pruning and superseding, version comparison)
+npx vitest run --config vitest.integration.config.ts <file>  # 8 files, 49 tests, file by file
+                                                           # (new: lost upload answers + alt text; permissions, health and
+                                                           # the expired pop-up; no-permission draft + batch re-save)
+npm run build                                              # compiled
+npm run setup + seed + npm run start:all  # UI smoke on a throwaway data dir: WordPress tab “Changes made in WordPress”:
+                  # 2 blocks only in WordPress, 1 only in the app; website Site health: needs attention, reasons
+                  # “Account permissions: … may not upload images …” and “1 media upload(s) failed”, last 24 h line,
+                  # 1 article stopped at a WordPress step; Re-save disabled with nothing selected; Re-save → queued →
+                  # the worker ran the WordPress step, which failed here because this container has no Google Chrome
+                  # (“Chromium distribution 'chrome' is not found”) and was recorded as a failed draft save;
+                  # no HTTP or console errors
+npm run audit:a11y                                         # 50/50 page+theme combinations, no violations (now also a
+                                                           # website page and an article page)
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress              # WordPress 6.7-alpha: 9/10, WordPress 6.5.5: 9/10 (fresh databases)
+WP_E2E_ADMIN_URL=… npx vitest run --config vitest.e2e.config.ts -t "session expired"   # after the fix: 1/1 on 6.7 and on 6.5
+```
+The real-WordPress run found a bug in the new pop-up detection. Real WordPress 6.7 and 6.5 show the session-expired pop-up with a zero-size wrapper, and the first version checked only that wrapper, so the real pop-up was not recognised. Fixed: each selector is now checked on its own, and the dialog box counts. The fake WordPress now mimics this layout, so the integration test would catch the old behaviour. The other new real-WordPress test passed on both versions on the first run: WordPress derives the predicted slug from the upload name, the lost upload is adopted, and only one media item exists.
+
+The smoke's first seed attempt failed: the script tried to update a stage the engine had not created yet. Fixed in the seed (all stages before the WordPress step are created and marked done); app code was not involved.
+
+**Not verified here**
+- **Owner's setup**: the owner's Chrome profile, live WordPress sites (hosting overlays, security plugins, real Editor/Author accounts) and real timeouts during uploads. The lost-answer path is tested with a fake that drops the connection, and on real WordPress by simulating the lost answer.
+- **Concurrent uploads**: an upload that WordPress finishes *after* the retry's slug lookup could still produce a second copy. The retry waits 1.5 s first; nothing else guards this.
+- **Alt text**: the fallback text is generic by design; descriptive text still comes from the image plan, the photo check or the owner.

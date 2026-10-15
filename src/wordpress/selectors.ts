@@ -3,11 +3,13 @@
  * (Settings → Advanced → selectorOverrides) are tried first. Supports English
  * and German admin interfaces.
  */
-export const SELECTORS_VERSION = '2026.10.14-2';
+export const SELECTORS_VERSION = '2026.10.15-1';
 
 export const SELECTORS = {
   loggedIn: ['#wpadminbar', 'body.wp-admin', '#adminmenu'],
   loginForm: ['#loginform', 'form[name="loginform"]', 'input#user_login'],
+  /** WordPress's “session expired” pop-up over an admin page (wp-auth-check); the dialog box, not its zero-size wrapper. */
+  sessionExpired: ['#wp-auth-check-wrap:not(.hidden) #wp-auth-check', '#wp-auth-check-wrap:not(.hidden) .wp-auth-fallback-expired'],
   gutenbergRoot: ['body.block-editor-page', '.block-editor', '.edit-post-layout', '.editor-editor-interface'],
   classicEditor: ['#postdivrich', '#wp-content-wrap', 'textarea#content'],
   classicPublishBox: ['#submitdiv', '#publishing-action'],

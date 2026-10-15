@@ -173,6 +173,42 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     expect((await client.recoveryIncident.findUniqueOrThrow({ where: { id: incident.id } })).status).toBe('RESOLVED');
   });
 
+  it('an account that may not write posts stops with a clear reason; a batch re-save finishes it once the account may (no duplicate)', async () => {
+    const wp = await startFakeWordPress({ role: 'subscriber' });
+    servers.push(wp);
+    const site = await loggedInSite(wp, 'Read Only Blog');
+    await client.website.update({ where: { id: site.id }, data: { settingsOverrides: JSON.stringify({ content: {}, seo: { rankMathMode: 'off' }, workflow: {} }) } });
+    const driver = makeDriver(client);
+    const task = await celebTask(site, 'Dua Lipa Callum Turner', 'no-permission');
+    let t = await driver.drive(task.id);
+    expect(t.status).toBe('NEEDS_REVIEW');
+    expect(t.message).toMatch(/may not create or edit this post \(rest_cannot_create\)/);
+    expect(wp.posts.size).toBe(0);
+    const { siteHealth } = await import('@/lib/site-health');
+    const health = await siteHealth(site.id);
+    expect(health.latest.DRAFT_SAVE?.status).toBe('FAIL');
+    expect(health.latest.PERMISSIONS?.status).toBe('FAIL');
+    expect(health.overall).toBe('FAIL');
+    const resave = await import('@/lib/wordpress-resave');
+    const failed = await resave.failedWordPressTasks(site.id);
+    expect(failed.map((f) => [f.id, f.stageKey])).toEqual([[task.id, 'WORDPRESS_DRAFT']]);
+    // Not while logged out: the re-save would only stop again.
+    await client.browserProfile.update({ where: { id: site.wordpressProfileId! }, data: { sessionState: 'LOGIN_REQUIRED' } });
+    await expect(resave.resaveFailedWordPressTasks(site.id)).rejects.toThrow(/not logged in/);
+    await client.browserProfile.update({ where: { id: site.wordpressProfileId! }, data: { sessionState: 'ACTIVE' } });
+    // An ID that is not on the list is never re-saved.
+    await expect(resave.resaveFailedWordPressTasks(site.id, ['not-a-listed-task'])).rejects.toThrow(/No article/);
+    wp.options.role = 'author';
+    const r = await resave.resaveFailedWordPressTasks(site.id, [task.id]);
+    expect(r).toEqual({ requeued: [task.id], failed: [] });
+    t = await driver.drive(task.id);
+    expect(t.status, `${t.message} ${t.reviewReasons}`).toBe('COMPLETED');
+    expect(wp.posts.size).toBe(1);
+    expect(await resave.failedWordPressTasks(site.id)).toEqual([]);
+    expect((await siteHealth(site.id)).latest.DRAFT_SAVE?.status).toBe('OK');
+    expect(await client.auditLog.count({ where: { action: 'wordpress.batch-resave', entityId: site.id } })).toBe(1);
+  });
+
   it('an expired WordPress login pauses the task; it resumes after the owner logs in again', async () => {
     const wp = await startFakeWordPress();
     servers.push(wp);

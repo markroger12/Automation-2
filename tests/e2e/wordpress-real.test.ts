@@ -82,6 +82,9 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
     expect(login.state).toBe('ACTIVE');
     const tested = await session.testSession(site);
     expect(tested.detail).toMatch(/REST API reachable/);
+    // The real /wp/v2/users/me answer: the disposable admin may write drafts and upload images.
+    const profile = await client.browserProfile.findFirstOrThrow({ where: { websites: { some: { id: site.id } } } });
+    expect(JSON.parse(profile.diagnostics).permissions).toMatchObject({ status: 'OK', canCreatePosts: true, canUploadFiles: true, roles: ['administrator'] });
     // A dedicated category so "exactly one category" is meaningful.
     const name = `BAS E2E ${Date.now()}`;
     await withClient((c) => c.call('POST', '/wp/v2/categories', { json: { name } }));
@@ -165,6 +168,14 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
     expect(t.message).toMatch(/edited in WordPress/);
     let post = await withClient((c) => c.getPost(t0.wpPostId!));
     expect(post!.content.raw).toContain('rewrote this draft by hand');
+    // The WordPress version is kept for the owner's comparison (WordPress tab → Changes made in WordPress).
+    const stage = await client.articleStage.findFirstOrThrow({ where: { taskId: t0.id, key: 'WORDPRESS_DRAFT' } });
+    const captured = JSON.parse(stage.privateState).remoteEdit;
+    expect(captured).toMatchObject({ postId: t0.wpPostId, content: expect.stringContaining('rewrote this draft by hand') });
+    const { compareVersions } = await import('@/wordpress/compare');
+    const cmp = compareVersions(t.editedHtml ?? t.assembledHtml ?? '', captured.content);
+    expect(cmp.onlyInWordPress).toEqual(['The owner rewrote this draft by hand.']);
+    expect(cmp.onlyInApp).toContain('Frequently Asked Questions');
     await actions.resaveToWordPress(t0.id, { mode: 'overwrite-remote' });
     t = await driver.drive(t0.id);
     expect(t.status).toBe('COMPLETED');
@@ -240,6 +251,57 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
     t = await driver.drive(t0.id);
     expect(t.status).toBe('COMPLETED');
     expect((await client.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } })).wpMediaId).toBe(uploaded.wpMediaId);
+  });
+
+  it('media idempotency on real WordPress: an upload whose answer was lost is found by its slug, not uploaded again', async () => {
+    const t0 = await client.articleTask.findFirstOrThrow({ where: { websiteId: site.id, keyword: 'Tom Kaulitz Heidi Klum' } });
+    const sharp = (await import('sharp')).default;
+    const webp = await sharp({ create: { width: 120, height: 68, channels: 3, background: { r: 20, g: 140, b: 90 } } }).webp().toBuffer();
+    fs.mkdirSync(`${process.env.BAS_DATA_DIR}/media`, { recursive: true });
+    fs.writeFileSync(`${process.env.BAS_DATA_DIR}/media/Tom Kaulitz_lost-1.webp`, webp);
+    const asset = await client.mediaAsset.create({ data: { taskId: t0.id, websiteId: site.id, role: 'BODY1', origin: 'RENDERED', filePath: 'media/Tom Kaulitz_lost-1.webp', sha256: 'e2e-lost', mime: 'image/webp', altText: 'Tom Kaulitz on stage' } });
+    const media = await import('@/wordpress/media');
+    const { filename, slug } = media.wpUploadName(asset);
+    await withClient(async (c) => {
+      // The "lost" upload: WordPress stores the file, the app never sees the answer (only the marker is set).
+      const lost = await c.uploadMedia({ bytes: webp, filename, mime: 'image/webp' });
+      await client.mediaAsset.update({ where: { id: asset.id }, data: { uploadStartedAt: new Date() } });
+      const r = await media.uploadAssetOnce(c, await client.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } }));
+      expect(r).toMatchObject({ id: lost.id, how: 'adopted' });
+      // WordPress derived exactly the predicted slug, and only one item carries it.
+      expect(await c.findMediaBySlug(slug)).toMatchObject({ id: lost.id });
+      const { data } = await c.call<{ id: number }[]>('GET', '/wp/v2/media', { query: { search: slug, per_page: 20 } });
+      expect(data.map((m) => m.id)).toEqual([lost.id]);
+      // Missing alt text on the adopted item is filled in.
+      expect((await c.getMedia(lost.id))!.alt_text).toBe('Tom Kaulitz on stage');
+      const again = await media.uploadAssetOnce(c, await client.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } }));
+      expect(again).toMatchObject({ id: lost.id, how: 'reused' });
+    });
+    expect(await client.mediaAsset.findUniqueOrThrow({ where: { id: asset.id } })).toMatchObject({ uploadStartedAt: null, status: 'UPLOADED' });
+  });
+
+  it('WordPress’s own “session expired” pop-up is recognised as logged out (real wp-auth-check markup)', async () => {
+    const { chromium } = await import('playwright');
+    const { browserLaunchBase } = await import('@/lib/browser-launch');
+    // A throwaway browser (not the site profile): the test signs in to the disposable site, then drops the cookies.
+    const b = await chromium.launch({ ...browserLaunchBase(), headless: true });
+    try {
+      const context = await b.newContext();
+      const page = await context.newPage();
+      await page.goto(`${ADMIN}`);
+      await page.fill('#user_login', USER);
+      await page.fill('#user_pass', PASS);
+      await page.click('#wp-submit');
+      await page.waitForSelector('#wpadminbar', { timeout: 60_000 });
+      expect(await session.isLoggedIn(page)).toBe(true); // the hidden pop-up on every admin page does not count
+      await context.clearCookies();
+      await page.evaluate('window.wp && wp.heartbeat && wp.heartbeat.connectNow()');
+      await page.waitForSelector('#wp-auth-check-wrap:not(.hidden) #wp-auth-check', { timeout: 60_000 });
+      expect(await session.sessionExpiredPopup(page)).toBe(true);
+      expect(await session.isLoggedIn(page)).toBe(false);
+    } finally {
+      await b.close();
+    }
   });
 
   it.skipIf(!CLASSIC_TOGGLE)('Classic editor: detected from the editor, re-saved as plain HTML, and the Classic Publish button is blocked', async () => {

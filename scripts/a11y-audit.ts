@@ -31,12 +31,16 @@ const browser = await chromium.launch({ ...browserLaunchBase(), headless: true }
 let serious = 0;
 try {
   const routes = [...ROUTES];
-  // Include one article page when there is one.
+  // Include one article page and one website page when there are some.
   {
     const page = await browser.newPage();
-    await page.goto(`${base}/queue`);
-    const href = await page.locator('a[href^="/articles/"]').first().getAttribute('href', { timeout: 3000 }).catch(() => null);
-    if (href) routes.push(href.split('?')[0]);
+    for (const [list, prefix] of [['/queue', '/articles/'], ['/websites', '/websites/']] as const) {
+      await page.goto(`${base}${list}`);
+      await page.locator(`a[href^="${prefix}"]`).first().waitFor({ timeout: 5000 }).catch(() => {});
+      const hrefs = await page.locator(`a[href^="${prefix}"]`).evaluateAll((as) => as.map((a) => a.getAttribute('href') ?? '')).catch(() => [] as string[]);
+      const href = hrefs.map((h) => h.split('?')[0]).find((h) => /^\/(articles|websites)\/[a-z0-9]{20,}$/.test(h));
+      if (href) routes.push(href);
+    }
     await page.close();
   }
   for (const scheme of ['light', 'dark'] as const) {

@@ -241,7 +241,7 @@ export const wordpressActionSchema = z
   })
   .refine((v) => v.mode !== 'adopt' || v.adoptPostId, { message: 'Choose the post to use.', path: ['adoptPostId'] });
 
-const WP_REASON = /^(Rank Math|WordPress draft|Draft #|Final check|The draft could not|Post #|An earlier save may have created)/;
+const WP_REASON = /^(Rank Math|WordPress draft|WordPress user|WordPress rejected|Draft #|Final check|The draft could not|Post #|An earlier save may have created)/;
 
 /** WordPress-step settings as they are NOW (the owner may have changed them before re-saving). */
 async function currentWordPressConfig(task: { websiteId: string; options: string }): Promise<Partial<EffectiveTaskConfig>> {

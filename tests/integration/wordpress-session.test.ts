@@ -157,6 +157,49 @@ describe('WordPress sessions (fake WordPress fixture)', () => {
     expect((await session.testSession(site)).state).toBe('ACTIVE');
   });
 
+  it('checks the account permissions, records site health and recognises the “session expired” pop-up', async () => {
+    const wp = await startFakeWordPress({ role: 'contributor' });
+    servers.push(wp);
+    const site = await siteFor(wp, 'Contributor Blog');
+    expect((await session.interactiveLogin(site, async () => true, 60_000)).state).toBe('ACTIVE');
+    const { siteHealth } = await import('@/lib/site-health');
+    // Every admin page carries WordPress's hidden pop-up; hidden, it must not count as logged out.
+    let check = await session.testSession(site);
+    expect(check.state).toBe('ACTIVE');
+    expect(check.detail).toMatch(/may not upload images/);
+    const profile = await client.browserProfile.findUniqueOrThrow({ where: { id: (await client.website.findUniqueOrThrow({ where: { id: site.id } })).wordpressProfileId! } });
+    expect(JSON.parse(profile.diagnostics).permissions).toMatchObject({ status: 'WARN', canCreatePosts: true, canUploadFiles: false, roles: ['contributor'] });
+    let health = await siteHealth(site.id);
+    expect(health.overall).toBe('WARN');
+    expect(health.latest.SESSION?.status).toBe('OK');
+    expect(health.latest.REST?.status).toBe('OK');
+    expect(health.latest.PERMISSIONS?.status).toBe('WARN');
+    expect(health.latest.RANK_MATH?.status).toBe('WARN');
+    // A subscriber may not write posts at all.
+    wp.options.role = 'subscriber';
+    check = await session.testSession(site);
+    expect(check.detail).toMatch(/may not create posts/);
+    health = await siteHealth(site.id);
+    expect(health.overall).toBe('FAIL');
+    expect(health.reasons.join(' ')).toMatch(/Account permissions: .*may not create posts/);
+    // WordPress's own pop-up after the login cookie expired → logged out, not an unexpected page.
+    wp.options.role = 'administrator';
+    wp.options.expiredPopup = true;
+    check = await session.testSession(site);
+    expect(check.state).toBe('LOGIN_REQUIRED');
+    expect(check.detail).toMatch(/session expired/);
+    health = await siteHealth(site.id);
+    expect(health.overall).toBe('FAIL');
+    expect(health.sessionState).toBe('LOGIN_REQUIRED');
+    wp.options.expiredPopup = false;
+    expect((await session.testSession(site)).state).toBe('ACTIVE');
+    expect(await session.detectEditor(site)).toBe('GUTENBERG');
+    health = await siteHealth(site.id);
+    expect(health.latest.EDITOR).toMatchObject({ status: 'OK' });
+    expect(health.latest.PERMISSIONS?.status).toBe('OK');
+    expect(health.recent.length).toBeGreaterThanOrEqual(12);
+  });
+
   it('rejects invalid website input with field errors and duplicate URLs', async () => {
     await expect(websites.createWebsite({ name: 'x', publicUrl: 'notaurl', language: 'en', targetCountry: 'United States', timezone: 'Mars/Base' })).rejects.toThrow();
     const wp = await startFakeWordPress();

@@ -194,7 +194,8 @@ export async function saveDraft(client: WpClient, input: DraftInput, persist: (d
     const remoteChanged =
       Boolean(input.existing.wpContentHash) && contentHash(remoteContent) !== input.existing.wpContentHash && !sameArticle(content, remoteContent) && action !== 'adopted';
     if (remoteChanged && !input.options.overwriteRemoteEdits) {
-      throw new NeedsReviewError(
+      throw new RemoteEditedError(
+        { postId: post.id, modifiedGmt: post.modified_gmt, content: remoteContent.slice(0, 400_000) },
         `Draft #${post.id} was edited in WordPress after the app saved it (modified ${post.modified_gmt} UTC). The app did not overwrite those edits.`,
         [`Draft #${post.id} has edits made in WordPress.`],
         'Compare the versions. Keep the WordPress version, or use “Overwrite WordPress draft” to save the app version.',
@@ -309,12 +310,30 @@ async function resolveTags(client: WpClient, names: string[], create: boolean, w
   return Array.from(new Set(ids));
 }
 
-function mapApiError(error: WpApiError): Error {
+/**
+ * The draft was edited in WordPress after the app saved it. Carries the
+ * WordPress version so the owner can see what an overwrite would replace.
+ */
+export class RemoteEditedError extends NeedsReviewError {
+  constructor(
+    public readonly remote: { postId: number; modifiedGmt: string; content: string },
+    message: string,
+    reasons: string[],
+    nextAction: string,
+  ) {
+    super(message, reasons, nextAction);
+  }
+}
+
+/** Review reason used when WordPress refuses the signed-in account (site health reads it). */
+export const NO_PERMISSION_REASON = 'WordPress user lacks permission to save drafts.';
+
+export function mapApiError(error: WpApiError): Error {
   if (error.code === 'rest_invalid_param' || error.code === 'rest_invalid_term') {
     return new NeedsReviewError(`WordPress rejected the draft: ${error.message}`, [`WordPress rejected a field (${error.code}). The category or a tag may no longer exist.`], 'Sync categories on the website page, choose the category again, then Retry.');
   }
   if (error.status === 403 || error.code === 'rest_cannot_create' || error.code === 'rest_cannot_edit') {
-    return new NeedsReviewError(`The logged-in WordPress user may not create or edit this post (${error.code ?? error.status}).`, ['WordPress user lacks permission to save drafts.'], 'Log in with a user that can edit posts (Editor or Administrator), then Retry.');
+    return new NeedsReviewError(`The logged-in WordPress user may not create or edit this post (${error.code ?? error.status}).`, [NO_PERMISSION_REASON], 'Log in with a user that can edit posts (Editor or Administrator), then Retry.');
   }
   return new TransientError(error.message);
 }

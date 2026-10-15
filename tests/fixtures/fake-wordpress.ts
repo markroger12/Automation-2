@@ -28,7 +28,21 @@ export interface FakeWpOptions {
   rankMathScoreCap?: number;
   /** Number of upcoming post creates whose HTTP answer is dropped after the post was created. */
   dropCreateAcks?: number;
+  /** Number of upcoming media uploads whose HTTP answer is dropped after the file was stored. */
+  dropMediaAcks?: number;
+  /** Role of the signed-in account (capabilities as in WordPress core). */
+  role?: 'administrator' | 'editor' | 'author' | 'contributor' | 'subscriber';
+  /** Admin pages show WordPress's “session expired” pop-up (as after a heartbeat with an expired cookie). */
+  expiredPopup?: boolean;
 }
+
+const ROLE_CAPS: Record<NonNullable<FakeWpOptions['role']>, string[]> = {
+  administrator: ['read', 'edit_posts', 'upload_files', 'publish_posts', 'manage_categories'],
+  editor: ['read', 'edit_posts', 'upload_files', 'publish_posts', 'manage_categories'],
+  author: ['read', 'edit_posts', 'upload_files', 'publish_posts'],
+  contributor: ['read', 'edit_posts'],
+  subscriber: ['read'],
+};
 
 export interface FakePost {
   id: number;
@@ -52,7 +66,7 @@ export interface FakeWp {
   requests: { method: string; path: string; body: string }[];
   posts: Map<number, FakePost>;
   tags: { id: number; name: string; slug: string }[];
-  media: Map<number, { id: number; bytes: number; mime: string; filename: string; alt: string; url: string }>;
+  media: Map<number, { id: number; bytes: number; mime: string; filename: string; slug: string; alt: string; url: string }>;
   close(): Promise<void>;
   /** Forget all sessions (simulates an expired login). */
   logoutAll(): void;
@@ -207,6 +221,9 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     rankMath: opts.rankMath ?? false,
     rankMathScoreCap: opts.rankMathScoreCap ?? 100,
     dropCreateAcks: opts.dropCreateAcks ?? 0,
+    dropMediaAcks: opts.dropMediaAcks ?? 0,
+    role: opts.role ?? 'administrator',
+    expiredPopup: opts.expiredPopup ?? false,
     categories: opts.categories ?? [
       { id: 1, name: opts.language === 'de' ? 'Allgemein' : 'Uncategorized', slug: opts.language === 'de' ? 'allgemein' : 'uncategorized', count: 3 },
       { id: 7, name: 'Celebrities', slug: 'celebrities', count: 12 },
@@ -222,6 +239,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
   const media: FakeWp['media'] = new Map();
   let nextId = 100;
   const t = (en: string, de: string) => (options.language === 'de' ? de : en);
+  const can = (cap: string) => ROLE_CAPS[options.role].includes(cap);
 
   const addPost = (p: Partial<FakePost> & { title: string }): FakePost => {
     const id = p.id ?? nextId++;
@@ -315,6 +333,10 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       let data: Record<string, unknown> = {};
       if (body && /json/.test(String(req.headers['content-type'] ?? ''))) data = JSON.parse(body) as Record<string, unknown>;
       if (restRoute === '/' || restRoute === '') return json(200, { name: 'Fake WP', namespaces: ['oembed/1.0', 'wp/v2', ...(options.rankMath ? ['rankmath/v1'] : [])] });
+      if (restRoute === '/wp/v2/users/me' && method === 'GET') {
+        if (!authed) return json(401, { code: 'rest_not_logged_in', message: 'You are not currently logged in.' });
+        return json(200, { id: 1, name: 'Fake Owner', roles: [options.role], capabilities: Object.fromEntries(ROLE_CAPS[options.role].map((c) => [c, true])) });
+      }
       if (restRoute === '/wp/v2/categories') {
         const perPage = Number(url.searchParams.get('per_page') ?? '10');
         const page = Number(url.searchParams.get('page') ?? '1');
@@ -342,6 +364,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       }
       if (restRoute === '/wp/v2/posts') {
         if (method === 'POST') {
+          if (!can('edit_posts')) return json(403, { code: 'rest_cannot_create', message: 'Sorry, you are not allowed to create posts as this user.' });
           const cats = (data.categories as number[] | undefined) ?? [1];
           if (cats.some((c) => !options.categories.some((x) => x.id === c))) return json(400, { code: 'rest_invalid_param', message: 'Invalid parameter(s): categories' });
           const post = addPost({ title: String(data.title ?? ''), content: String(data.content ?? ''), slug: String(data.slug ?? ''), status: String(data.status ?? 'draft'), categories: cats, tags: (data.tags as number[]) ?? [], featured_media: Number(data.featured_media ?? 0) });
@@ -379,11 +402,26 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
         return json(200, restPost(post));
       }
       if (restRoute === '/wp/v2/media' && method === 'POST') {
+        if (!can('upload_files')) return json(403, { code: 'rest_cannot_create', message: 'Sorry, you are not allowed to upload files.' });
         const filename = /filename="([^"]+)"/.exec(String(req.headers['content-disposition'] ?? ''))?.[1] ?? 'upload.bin';
         const id = nextId++;
-        const item = { id, bytes: Number(req.headers['content-length'] ?? body.length), mime: String(req.headers['content-type'] ?? ''), filename, alt: '', url: `${baseUrl}/wp-content/uploads/${filename}` };
+        // Like WordPress: the attachment slug comes from the file name (unique: a taken slug gets a suffix).
+        const base = slugify(filename.replace(/\.[^.]+$/, ''));
+        let slug = base;
+        for (let n = 2; [...media.values()].some((m) => m.slug === slug); n++) slug = `${base}-${n}`;
+        const item = { id, bytes: Number(req.headers['content-length'] ?? body.length), mime: String(req.headers['content-type'] ?? ''), filename, slug, alt: '', url: `${baseUrl}/wp-content/uploads/${filename}` };
         media.set(id, item);
-        return json(201, { id, source_url: item.url, mime_type: item.mime, alt_text: '' });
+        if (options.dropMediaAcks > 0) {
+          options.dropMediaAcks--;
+          req.socket.destroy(); // the file is stored, but the answer is lost
+          return;
+        }
+        return json(201, { id, source_url: item.url, mime_type: item.mime, alt_text: '', slug });
+      }
+      if (restRoute === '/wp/v2/media' && method === 'GET') {
+        const slug = url.searchParams.get('slug');
+        const list = [...media.values()].filter((m) => !slug || m.slug === slug);
+        return json(200, list.map((m) => ({ id: m.id, source_url: m.url, alt_text: m.alt, slug: m.slug })));
       }
       const mediaOne = /^\/wp\/v2\/media\/(\d+)$/.exec(restRoute);
       if (mediaOne) {
@@ -403,7 +441,10 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
 
     if (p.startsWith('/wp-admin')) {
       if (!loggedIn && p !== '/wp-admin/admin-ajax.php') return redirect(`/wp-login.php?redirect_to=${encodeURIComponent(p + url.search)}&reauth=1`);
-      const adminBar = `<div id="wpadminbar">${t('Howdy', 'Willkommen')}</div><ul id="adminmenu"></ul>`;
+      // WordPress prints its (hidden) session-expired pop-up on every admin page; it shows when the login cookie is gone.
+      // Like WordPress: the wrapper has no size of its own (its children are fixed-position).
+      const authCheck = `<div id="wp-auth-check-wrap" class="${options.expiredPopup ? '' : 'hidden'}" style="${options.expiredPopup ? '' : 'display:none'}"><div id="wp-auth-check-bg" style="position:fixed;inset:0"></div><div id="wp-auth-check" style="position:fixed;top:40px;left:40px;width:300px;height:200px"><div class="wp-auth-check-close"></div>${t('Session expired', 'Sitzung abgelaufen')}</div></div>`;
+      const adminBar = `<div id="wpadminbar">${t('Howdy', 'Willkommen')}</div><ul id="adminmenu"></ul>${authCheck}`;
       const overlay = options.overlay ? `<div id="hostinger-onboarding-overlay" style="position:fixed;inset:0;background:#000;z-index:99999">Hostinger</div>` : '';
       if (p === '/wp-admin/' || p === '/wp-admin/index.php') {
         return send(200, html(options.language, `${adminBar}${overlay}<h1>${t('Dashboard', 'Übersicht')}</h1>`, 'wp-admin'));

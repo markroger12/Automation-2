@@ -7,6 +7,7 @@ import { fromDataRelative } from '@/lib/paths';
 import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { parseSiteImageSettings, presetSingle, type ImageTemplate } from '@/lib/image-template';
 import { outputSize, renderCleanImage, renderTemplate } from '@/images/render';
+import { normalizeAltText, type AltSlot } from '@/images/alt-text';
 import { hammingDistance, storeRendered } from '@/images/store';
 import { collectCommonsGallery } from '@/images/sources/wikimedia';
 import { loadTemplateAssets } from '@/images/site-templates';
@@ -81,6 +82,14 @@ async function renderAll(ctx: PipelineContext, plan: RenderPlan, notes: string[]
   const title = (ctx.task.selectedTitle ?? ctx.task.seoTitle ?? ctx.task.keyword).trim();
   await supersedeRendered(ctx.taskId);
   const slots: ImageSlot[] = [];
+  // Descriptive, distinct alt text per slot (upgrade 08); problems are listed in the image notes.
+  const usedAlt: string[] = [];
+  const altFor = (slot: AltSlot, raw: string) => {
+    const r = normalizeAltText(raw, slot, { subject: ctx.task.keyword, keyword: ctx.task.focusKeyword ?? ctx.task.keyword, title, language: ctx.task.language, others: usedAlt });
+    if (r.issues.length) notes.push(`${slot} alt text: ${r.issues.join('; ')}${r.fallback ? ` → used “${r.alt}”` : ''}.`);
+    usedAlt.push(r.alt);
+    return r.alt;
+  };
 
   if (plan.featuredPhotos.length || templatePhotoSlots(settings.featured) === 0) {
     let template = settings.featured;
@@ -91,15 +100,17 @@ async function renderAll(ctx: PipelineContext, plan: RenderPlan, notes: string[]
     }
     const photos = await Promise.all(plan.featuredPhotos.map((p) => readAsset(p.asset)));
     const r = await renderTemplate({ template, photos, focus: plan.featuredPhotos.map((p) => p.focus ?? null), logo, fixedPhotos, vars: { title, site: site.name, keyword: ctx.task.keyword } }, opts);
-    const a = await storeRendered({ buffer: r.buffer, mime: r.mime, taskId: ctx.taskId, websiteId: site.id, role: 'FEATURED', altText: plan.featuredAlt, slug: ctx.task.slug, sourceUrl: plan.featuredPhotos[0]?.asset.sourceUrl ?? null });
-    slots.push({ slot: 'FEATURED', mediaAssetId: a.id, alt: plan.featuredAlt, sourceAssetIds: plan.featuredPhotos.map((p) => p.asset.id), width: r.width, height: r.height, bytes: r.buffer.length });
+    const alt = altFor('FEATURED', plan.featuredAlt);
+    const a = await storeRendered({ buffer: r.buffer, mime: r.mime, taskId: ctx.taskId, websiteId: site.id, role: 'FEATURED', altText: alt, slug: ctx.task.slug, sourceUrl: plan.featuredPhotos[0]?.asset.sourceUrl ?? null });
+    slots.push({ slot: 'FEATURED', mediaAssetId: a.id, alt, sourceAssetIds: plan.featuredPhotos.map((p) => p.asset.id), width: r.width, height: r.height, bytes: r.buffer.length });
   }
   for (const [slotName, b] of [['BODY1', plan.body1], ['BODY2', plan.body2]] as const) {
     if (!b) continue;
     const src = await readAsset(b.asset);
     const r = settings.body ? await renderTemplate({ template: settings.body, photos: [src], logo, fixedPhotos, vars: { title, site: site.name, keyword: ctx.task.keyword } }, opts) : await renderCleanImage(src, opts);
-    const a = await storeRendered({ buffer: r.buffer, mime: r.mime, taskId: ctx.taskId, websiteId: site.id, role: slotName, altText: b.alt, slug: ctx.task.slug, sourceUrl: b.asset.sourceUrl });
-    slots.push({ slot: slotName, mediaAssetId: a.id, alt: b.alt, sourceAssetIds: [b.asset.id], html: figure(slotName, { id: a.id, width: r.width, height: r.height }, b.alt), width: r.width, height: r.height, bytes: r.buffer.length });
+    const alt = altFor(slotName, b.alt);
+    const a = await storeRendered({ buffer: r.buffer, mime: r.mime, taskId: ctx.taskId, websiteId: site.id, role: slotName, altText: alt, slug: ctx.task.slug, sourceUrl: b.asset.sourceUrl });
+    slots.push({ slot: slotName, mediaAssetId: a.id, alt, sourceAssetIds: [b.asset.id], html: figure(slotName, { id: a.id, width: r.width, height: r.height }, alt), width: r.width, height: r.height, bytes: r.buffer.length });
   }
   return slots;
 }

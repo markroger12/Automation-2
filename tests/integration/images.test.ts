@@ -166,6 +166,43 @@ describe('Image Studio (IMAGES stage)', () => {
     expect(wp.media.size).toBe(3); // no duplicate media on retry
   });
 
+  it('lost upload answers are found again by slug (no duplicate media) and unusable alt text is replaced', async () => {
+    const wp = await startFakeWordPress({ dropMediaAcks: 2 });
+    servers.push(wp);
+    const site = await loggedInSite(wp, 'Lossy Blog');
+    const colors = [await solid(200, 40, 40), await solid(40, 160, 60), await solid(40, 60, 200)];
+    let gen = 0;
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
+      if (/3-image plan/.test(prompt)) return `FEATURED: A laptop on a desk | ALT: IMG_2041.jpg\nBODY1: A setup wizard | ALT: Image of setup wizard steps in a browser\nBODY2: The same wizard again | ALT: image of setup wizard steps in a browser`;
+      if (/clean editorial illustration/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
+      return cannedAnswer(stageKey, prompt, language, keyword);
+    };
+    const driver = makeDriver(client, answer);
+    const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'How to Install WordPress', secondaryKeywords: 'hosting', websiteId: site.id, idempotencyKey: 'img:lossy-1' }, { source: 'SINGLE' });
+    const t = await driver.drive(task.id);
+    expect(t.status, t.reviewReasons).toBe('COMPLETED');
+    const data = await stageData(t.id, 'IMAGES');
+    const alts = data.slots.map((s: { alt: string }) => s.alt);
+    expect(alts[0]).toBe(t.selectedTitle); // a file name is no alt text: the article title is used
+    expect(alts[1]).toBe('Setup wizard steps in a browser'); // “Image of …” dropped
+    expect(alts[2]).toBe('How to Install WordPress: article image 3'); // the same text twice → neutral fallback
+    expect(data.notes.join(' ')).toMatch(/FEATURED alt text: looks like a file name/);
+    expect(data.notes.join(' ')).toMatch(/BODY2 alt text: .*same text as another image/);
+    // The first two uploads reached WordPress but their answers were lost: found by slug, not uploaded again.
+    const uploads = wp.requests.filter((r) => r.method === 'POST' && /\/wp\/v2\/media$/.test(decodeURIComponent(r.path).split('?')[0]));
+    expect(uploads).toHaveLength(3);
+    expect(wp.media.size).toBe(3);
+    expect(new Set([...wp.media.values()].map((m) => m.alt))).toEqual(new Set(alts));
+    expect((await stageData(t.id, 'WORDPRESS_DRAFT')).media).toEqual({ uploaded: 1, reused: 0, adopted: 2, failed: 0 });
+    const post = [...wp.posts.values()][0];
+    expect((post.content.match(/<!-- wp:image \{"id":\d+/g) ?? []).length).toBe(2);
+    const assets = await client.mediaAsset.findMany({ where: { taskId: t.id, role: { in: ['FEATURED', 'BODY1', 'BODY2'] }, status: 'UPLOADED' } });
+    expect(assets).toHaveLength(3);
+    expect(assets.every((a) => a.uploadStartedAt === null && a.wpMediaId)).toBe(true);
+    const health = await client.siteHealthObservation.findMany({ where: { websiteId: site.id, kind: { in: ['MEDIA_UPLOAD', 'DRAFT_SAVE'] } } });
+    expect(health.map((h) => [h.kind, h.status]).sort()).toEqual([['DRAFT_SAVE', 'OK'], ['MEDIA_UPLOAD', 'OK']]);
+  });
+
   it('celebrity article: bounded Commons gallery, logos/small files/duplicates/near-duplicate crops skipped, distinct photos per slot', async () => {
     const a = await solid(180, 90, 60);
     const b = await solid(60, 110, 170);

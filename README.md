@@ -109,6 +109,29 @@ The test types these credentials itself (simulating you in the login window); th
 - **Article → Images tab** — rendered images with alt text, the photos that were collected, your own uploads (used before anything searched or generated) and “Don’t use” for any source photo. **Regenerate images** re-renders and updates the same WordPress draft.
 - Celebrity articles collect a bounded photo gallery from Wikimedia Commons (12 MB cap, private hosts blocked, exact and near-duplicates removed); general articles ask ChatGPT for an image plan and three images through the extension. Missing images never block the text: the draft continues without them, or waits for review if the site requires images. No image-rights or licensing checks are performed (owner decision); the source URL is stored for reference only.
 - After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture).
+- **Alt text** is checked for every rendered image:
+  - “Image of …” is dropped and long text is shortened to 125 characters;
+  - file names, web addresses, one-word labels, keyword stuffing and the same text on two images are replaced with a neutral text (the article title for the featured image, “*Subject*: article image 2/3” for body images);
+  - every change is listed in the image notes. Alt text you edit in the article wins.
+- **Uploads happen once.** Each image is uploaded under a unique name, so if an upload's answer is lost (timeout), the next attempt finds it in the Media Library instead of uploading it again. An image that cannot be uploaded is left out of the draft with a note; the text is still saved.
+
+## WordPress health
+
+On each website page, **Site health** shows only measured results, kept for 30 days:
+- session tests;
+- whether the REST API answers the logged-in account;
+- the account's permissions (create posts, upload images, create tags);
+- the detected editor and Rank Math;
+- every draft save (with duration) and media upload.
+
+The overall status is *healthy*, *needs attention*, *failing* or *no data yet*, with the reasons. **Test session** runs the checks again.
+
+- **Articles stopped at a WordPress step** (draft save, Rank Math, verification) are listed there. **Re-save selected** gives each one “Save to WordPress again”:
+  - the stored draft is reopened, never duplicated;
+  - a draft edited in WordPress still stops for your decision;
+  - it is refused while the site is paused or logged out.
+- **Edited in WordPress?** The article's WordPress tab shows **Changes made in WordPress**: the text only in the WordPress version (what an overwrite would replace) next to the text only in the app version. Read it before choosing “Overwrite WordPress draft”.
+- WordPress's own “session expired” pop-up counts as logged out. An account that may not write posts stops with that reason instead of a generic error.
 
 ## Editorial tools
 

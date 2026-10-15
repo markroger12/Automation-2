@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ExternalLink, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
@@ -120,6 +120,8 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
         </p>
       </Card>
 
+      {remoteEdited ? <RemoteChanges taskId={task.id} /> : null}
+
       {candidates.length ? (
         <Card title="Which post is this article?">
           <Alert tone="warning">An earlier save may have created a draft, but its confirmation was lost and several matching posts exist. Nothing new was created. Choose the right one, or create a new draft.</Alert>
@@ -237,5 +239,69 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
         {pending ? MODE_TEXT[pending.mode].body : null}
       </ConfirmDialog>
     </div>
+  );
+}
+
+interface RemoteComparison {
+  remote: { postId: number; modifiedGmt: string; capturedAt: string } | null;
+  onlyInWordPress?: string[];
+  onlyInApp?: string[];
+  unchanged?: number;
+}
+
+/** What an overwrite would replace: the WordPress version captured when the conflict was found, compared with the app's article. */
+function RemoteChanges({ taskId }: { taskId: string }) {
+  const [data, setData] = useState<RemoteComparison | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api<RemoteComparison>(`/api/tasks/${taskId}/wordpress/remote`)
+      .then((d) => live && setData(d))
+      .catch((e: Error) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [taskId]);
+  return (
+    <Card title="Changes made in WordPress" description="Text blocks compared after removing markup. The WordPress version was read when the conflict was found.">
+      {error ? <Alert tone="danger">{error}</Alert> : null}
+      {!data && !error ? <p className="text-muted text-sm">Loading the comparison…</p> : null}
+      {data && !data.remote ? <p className="text-muted text-sm">No WordPress version was captured for this conflict. Use “Save again” to read it again.</p> : null}
+      {data?.remote ? (
+        <div className="space-y-3 text-sm">
+          <p className="text-muted">
+            Draft #{data.remote.postId}, modified in WordPress {data.remote.modifiedGmt} UTC · read {formatDateTime(data.remote.capturedAt)} · {data.unchanged} block(s) unchanged
+          </p>
+          <div>
+            <h3 className="font-medium">Only in WordPress ({data.onlyInWordPress?.length ?? 0}) — an overwrite replaces these</h3>
+            {data.onlyInWordPress?.length ? (
+              <ul className="mt-1 space-y-1">
+                {data.onlyInWordPress.map((b, i) => (
+                  <li key={i} className="rounded border-l-4 border-amber-500 bg-amber-50 px-2 py-1 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100">
+                    {b}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted">None (only markup or spacing changed).</p>
+            )}
+          </div>
+          <div>
+            <h3 className="font-medium">Only in the app version ({data.onlyInApp?.length ?? 0})</h3>
+            {data.onlyInApp?.length ? (
+              <ul className="mt-1 space-y-1">
+                {data.onlyInApp.map((b, i) => (
+                  <li key={i} className="rounded border-l-4 border-indigo-500 bg-indigo-50 px-2 py-1 text-indigo-950 dark:bg-indigo-950/40 dark:text-indigo-100">
+                    {b}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted">None.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </Card>
   );
 }

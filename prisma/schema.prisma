@@ -33,40 +33,40 @@ model BrowserProfile {
 }
 
 model Website {
-  id                       String          @id @default(cuid())
+  id                       String                  @id @default(cuid())
   name                     String
-  slug                     String          @unique
+  slug                     String                  @unique
   publicUrl                String
   adminUrl                 String
-  active                   Boolean         @default(true)
-  paused                   Boolean         @default(false)
+  active                   Boolean                 @default(true)
+  paused                   Boolean                 @default(false)
   wordpressProfileId       String?
-  wordpressProfile         BrowserProfile? @relation(fields: [wordpressProfileId], references: [id], onDelete: SetNull)
+  wordpressProfile         BrowserProfile?         @relation(fields: [wordpressProfileId], references: [id], onDelete: SetNull)
   defaultCategoryId        String?
-  editorType               String          @default("AUTO") // AUTO | GUTENBERG | CLASSIC
+  editorType               String                  @default("AUTO") // AUTO | GUTENBERG | CLASSIC
   detectedEditor           String?
-  language                 String          @default("en") // en | de
-  targetCountry            String          @default("United States")
-  timezone                 String          @default("UTC")
-  internalLinkLine         String          @default("Also read:")
+  language                 String                  @default("en") // en | de
+  targetCountry            String                  @default("United States")
+  timezone                 String                  @default("UTC")
+  internalLinkLine         String                  @default("Also read:")
   logoPath                 String?
-  imageSettings            String          @default("{}")
-  imageTemplate            String          @default("{}")
-  canPublish               Boolean         @default(false)
+  imageSettings            String                  @default("{}")
+  imageTemplate            String                  @default("{}")
+  canPublish               Boolean                 @default(false)
   canPublishAcknowledgedAt DateTime?
-  allowLiveUpdates         Boolean         @default(false)
+  allowLiveUpdates         Boolean                 @default(false)
   searchConsoleProperty    String?
-  settingsOverrides        String          @default("{}")
+  settingsOverrides        String                  @default("{}")
   /// Per-site writer routing rules: [{ contains, writer }] checked before the classifier (upgrade 05).
-  routingRules             String          @default("[]")
-  promptOverrides          String          @default("{}")
-  linkStrategy             String          @default("{}")
-  queueQuota               Int             @default(0)
-  priority                 Int             @default(0)
+  routingRules             String                  @default("[]")
+  promptOverrides          String                  @default("{}")
+  linkStrategy             String                  @default("{}")
+  queueQuota               Int                     @default(0)
+  priority                 Int                     @default(0)
   rankMathTarget           Int?
   notes                    String?
-  createdAt                DateTime        @default(now())
-  updatedAt                DateTime        @updatedAt
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
   categories               Category[]
   tasks                    ArticleTask[]
   workflows                Workflow[]
@@ -75,6 +75,7 @@ model Website {
   linkIndexSyncedAt        DateTime?
   linkIndexFullSyncAt      DateTime?
   campaigns                Campaign[]
+  healthObservations       SiteHealthObservation[]
 }
 
 model Category {
@@ -93,50 +94,50 @@ model Category {
 }
 
 model ArticleTask {
-  id                 String            @id @default(cuid())
+  id                 String                  @id @default(cuid())
   moduleKey          String
   websiteId          String
-  website            Website           @relation(fields: [websiteId], references: [id], onDelete: Restrict)
+  website            Website                 @relation(fields: [websiteId], references: [id], onDelete: Restrict)
   categoryId         String?
   categoryName       String?
   categoryExternalId Int?
   keyword            String
   normalizedKeyword  String
   exampleTitle       String?
-  secondaryKeywords  String            @default("[]")
+  secondaryKeywords  String                  @default("[]")
   targetCountry      String
   language           String
-  status             String            @default("QUEUED")
+  status             String                  @default("QUEUED")
   stage              String?
-  percent            Int               @default(0)
+  percent            Int                     @default(0)
   message            String?
-  errors             String            @default("[]")
-  reviewReasons      String            @default("[]")
+  errors             String                  @default("[]")
+  reviewReasons      String                  @default("[]")
   nextAction         String?
   pausedFor          String? // chatgpt-login | chatgpt-human-check | wordpress-login | usage-limit
-  cancelRequested    Boolean           @default(false)
-  options            String            @default("{}")
-  configSnapshot     String            @default("{}")
-  titleOptions       String            @default("[]")
+  cancelRequested    Boolean                 @default(false)
+  options            String                  @default("{}")
+  configSnapshot     String                  @default("{}")
+  titleOptions       String                  @default("[]")
   recommendedTitle   String?
   selectedTitle      String?
   titleApprovedAt    DateTime?
   articleApprovedAt  DateTime?
   researchNotes      String?
-  outputs            String            @default("{}")
+  outputs            String                  @default("{}")
   bodyHtml           String?
   editedHtml         String?
   editedAt           DateTime?
   assembledHtml      String?
-  faqs               String            @default("[]")
-  quickBio           String            @default("[]")
+  faqs               String                  @default("[]")
+  quickBio           String                  @default("[]")
   quickBioHtml       String?
-  tags               String            @default("[]")
+  tags               String                  @default("[]")
   seoTitle           String?
   metaDescription    String?
   slug               String?
   focusKeyword       String?
-  metrics            String            @default("{}")
+  metrics            String                  @default("{}")
   seoScore           Int?
   rankMathScore      Int?
   rankMathVerifiedAt DateTime?
@@ -152,18 +153,18 @@ model ArticleTask {
   wpVerifiedAt       DateTime? // last full read-back verification (VERIFIED_COMPLETE)
   rankMathReport     String? // JSON: fields, score, recommendations, correction rounds (read from WordPress, never computed)
   verifiedCompleteAt DateTime?
-  idempotencyKey     String            @unique
-  version            Int               @default(0)
-  priority           Int               @default(0)
-  source             String            @default("SINGLE") // SINGLE | BULK | WORKFLOW | BENCHMARK | REFRESH
+  idempotencyKey     String                  @unique
+  version            Int                     @default(0)
+  priority           Int                     @default(0)
+  source             String                  @default("SINGLE") // SINGLE | BULK | WORKFLOW | BENCHMARK | REFRESH
   campaignId         String?
   campaignRowId      String?
   workflowKeywordId  String?
   benchmarkRunId     String?
-  routeDecision      String            @default("{}")
-  legacy             Boolean           @default(false)
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  routeDecision      String                  @default("{}")
+  legacy             Boolean                 @default(false)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
   startedAt          DateTime?
   completedAt        DateTime?
   stages             ArticleStage[]
@@ -615,25 +616,25 @@ model CampaignRow {
 }
 
 model Workflow {
-  id               String            @id @default(cuid())
-  websiteId        String
-  website          Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
-  name             String
-  active           Boolean           @default(false)
-  writerPreference String            @default("AUTO") // AUTO | celebrity-writer | tigram-writer
-  weekdays         String            @default("[]") // [] = every day; 0=Sunday
-  slots            String            @default("[]") // ["9:00 AM", ...] Asia/Karachi
-  slotTimezone     String            @default("Asia/Karachi")
-  writeAheadHours  Int               @default(24)
-  maxBacklog       Int               @default(10)
-  imagesOverride   String            @default("inherit") // inherit | on | off
-  requestIndexing  Boolean           @default(false)
+  id                    String            @id @default(cuid())
+  websiteId             String
+  website               Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  name                  String
+  active                Boolean           @default(false)
+  writerPreference      String            @default("AUTO") // AUTO | celebrity-writer | tigram-writer
+  weekdays              String            @default("[]") // [] = every day; 0=Sunday
+  slots                 String            @default("[]") // ["9:00 AM", ...] Asia/Karachi
+  slotTimezone          String            @default("Asia/Karachi")
+  writeAheadHours       Int               @default(24)
+  maxBacklog            Int               @default(10)
+  imagesOverride        String            @default("inherit") // inherit | on | off
+  requestIndexing       Boolean           @default(false)
   // Search Console property: "https://example.com/" (URL prefix) or "sc-domain:example.com"; null = the website URL.
   searchConsoleProperty String?
-  maxRetries       Int               @default(3)
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  keywords         WorkflowKeyword[]
+  maxRetries            Int               @default(3)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  keywords              WorkflowKeyword[]
 }
 
 model WorkflowKeyword {
@@ -675,33 +676,54 @@ model SlotReservation {
 }
 
 model MediaAsset {
-  id         String       @id @default(cuid())
-  taskId     String?
-  task       ArticleTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  websiteId  String?
-  website    Website?     @relation(fields: [websiteId], references: [id], onDelete: SetNull)
-  role       String // FEATURED | BODY1 | BODY2 | GALLERY | UPLOAD (owner photo for a task) | LOGO | TEMPLATE_PHOTO (site template library)
-  responseId String? // ChatGPTResponse that produced this image (generated images)
-  origin     String // GENERATED | UPLOADED | WIKIMEDIA | CHATGPT | RENDERED
-  sourceUrl  String?
-  filePath   String
-  sha256     String
-  phash      String?
-  width      Int?
-  height     Int?
-  bytes      Int?
-  mime       String?
-  altText    String?
-  wpMediaId  Int?
-  wpUrl      String?
-  status     String       @default("READY") // READY | UPLOADED | REJECTED | FAILED
-  notes      String?
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  id              String       @id @default(cuid())
+  taskId          String?
+  task            ArticleTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  websiteId       String?
+  website         Website?     @relation(fields: [websiteId], references: [id], onDelete: SetNull)
+  role            String // FEATURED | BODY1 | BODY2 | GALLERY | UPLOAD (owner photo for a task) | LOGO | TEMPLATE_PHOTO (site template library)
+  responseId      String? // ChatGPTResponse that produced this image (generated images)
+  origin          String // GENERATED | UPLOADED | WIKIMEDIA | CHATGPT | RENDERED
+  sourceUrl       String?
+  filePath        String
+  sha256          String
+  phash           String?
+  width           Int?
+  height          Int?
+  bytes           Int?
+  mime            String?
+  altText         String?
+  wpMediaId       Int?
+  wpUrl           String?
+  /// Set before a Media Library upload starts and cleared when its answer arrives. Still set on a retry =
+  /// the earlier upload may have reached WordPress; it is looked up by its unique slug before uploading again.
+  uploadStartedAt DateTime?
+  status          String       @default("READY") // READY | UPLOADED | REJECTED | FAILED
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   @@index([taskId, role])
   @@index([sha256])
   @@index([responseId])
+}
+
+/// Per-site WordPress health evidence (upgrade 09): measured results of session tests, REST reachability,
+/// account permissions, editor detection, draft saves and media uploads. Nothing is estimated.
+model SiteHealthObservation {
+  id         String   @id @default(cuid())
+  websiteId  String
+  website    Website  @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  kind       String // SESSION | REST | PERMISSIONS | EDITOR | RANK_MATH | DRAFT_SAVE | MEDIA_UPLOAD
+  status     String // OK | WARN | FAIL
+  message    String
+  durationMs Int?
+  taskId     String?
+  details    String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([websiteId, kind, createdAt])
+  @@index([websiteId, createdAt])
 }
 
 model DataMigration {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
@@ -34,6 +34,49 @@ function stageData<T>(task: SerializedTaskDetail, key: string): { status: string
 }
 
 const short = (url: string) => url.replace(/^https?:\/\//, '').slice(0, 70);
+
+interface Suggestion {
+  id: string;
+  url: string;
+  title: string;
+  kind: string;
+  anchor: string | null;
+  score: number;
+  status: string;
+  note: string | null;
+}
+const SUGGESTION_STATUS: Record<string, { label: string; tone: 'success' | 'info' | 'warning' | 'neutral' | 'danger' }> = {
+  SELECTED: { label: 'placed', tone: 'success' },
+  PROPOSED: { label: 'held back', tone: 'info' },
+  NO_ANCHOR: { label: 'no natural anchor', tone: 'neutral' },
+  UNREACHABLE: { label: 'unreachable', tone: 'danger' },
+};
+
+/** Related posts considered for contextual links in the body, and what happened to each. */
+function SuggestionList({ taskId }: { taskId: string }) {
+  const [rows, setRows] = useState<Suggestion[] | null>(null);
+  useEffect(() => {
+    void api<{ suggestions: Suggestion[] }>(`/api/tasks/${taskId}/link-suggestions`).then((r) => setRows(r.suggestions.filter((s) => s.kind === 'CONTEXTUAL'))).catch(() => setRows([]));
+  }, [taskId]);
+  if (!rows?.length) return null;
+  return (
+    <>
+      <h4 className="mt-4 mb-2 text-sm font-semibold">Contextual link decisions</h4>
+      <ul className="space-y-1.5 text-sm">
+        {rows.map((r) => (
+          <li key={r.id}>
+            <Chip tone={SUGGESTION_STATUS[r.status]?.tone ?? 'neutral'}>{SUGGESTION_STATUS[r.status]?.label ?? r.status.toLowerCase()}</Chip>{' '}
+            {r.anchor ? <span>“{r.anchor}” → </span> : null}
+            <a className="text-indigo-600 underline" href={r.url} target="_blank" rel="noreferrer">
+              {r.title}
+            </a>
+            {r.note ? <span className="text-muted text-xs"> · {r.note}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged: () => Promise<void> }) {
   const toast = useToast();
@@ -179,6 +222,7 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
                 </ul>
               </>
             ) : null}
+            <SuggestionList taskId={task.id} />
           </>
         )}
       </Card>

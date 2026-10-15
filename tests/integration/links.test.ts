@@ -193,6 +193,12 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
     expect(int.reason).toMatch(/most related/);
     expect(int.candidates.map((c: { title: string }) => c.title)).not.toContain('Tom Kaulitz Heidi Klum wedding photos');
     expect(t.assembledHtml).toContain(`<p data-bas-internal-link="1"><strong>Also read:</strong> <a href="${wp.url}/?p=${related.id}" rel="noopener">Heidi Klum: Her Modeling Career</a></p>`);
+    // What was considered is stored (SuggestedInternalLink): the chosen line target, unrelated candidates, never the draft.
+    const sugg = await client.suggestedInternalLink.findMany({ where: { taskId: t.id } });
+    expect(sugg.find((x) => x.kind === 'LINE')).toMatchObject({ status: 'SELECTED', url: `${wp.url}/?p=${related.id}`, title: 'Heidi Klum: Her Modeling Career' });
+    expect(sugg.find((x) => x.title === 'Best Pasta Recipes')).toMatchObject({ kind: 'CANDIDATE', status: 'NOT_RELATED' });
+    expect(sugg.some((x) => /wedding photos/.test(x.title))).toBe(false);
+    expect(new Set(sugg.map((x) => x.websiteId))).toEqual(new Set([s.id]));
   });
 
   it('first post on a site: no internal line, an honest warning; later the index picks up a newly published post and a changed URL', async () => {

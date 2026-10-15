@@ -209,13 +209,34 @@ export function internalLinks(manifest: StageManifest): PipelineStage {
       // Contextual links where a related post's own phrase already appears in the body.
       const contextual: InternalLinkData['contextual'] = [];
       const bodyText = stripTags(ctx.task.bodyHtml ?? '');
-      for (const r of ranked.filter((x) => x.related && x.target.id !== chosen?.id && x.target.url !== chosen?.url)) {
-        if (contextual.length >= ctx.config.maxContextualInternalLinks) break;
-        const anchor = findAnchor(bodyText, r.target);
-        if (!anchor || normalizeText(anchor) === normalizeText(ctx.task.focusKeyword ?? ctx.task.keyword)) continue;
-        const v = await check(r.target.url);
-        if (v.ok) contextual.push({ anchor, url: v.finalUrl, title: r.target.title });
+      type Suggestion = { targetId: string | null; url: string; title: string; kind: string; anchor: string | null; score: number; reasons: string[]; status: string; note: string | null };
+      const suggestions: Suggestion[] = [];
+      if (chosen) {
+        const r = ranked.find((x) => x.target.id === chosen!.id);
+        suggestions.push({ targetId: chosen.id ?? null, url: chosen.url, title: chosen.title, kind: 'LINE', anchor: null, score: r?.score ?? 0, reasons: r?.reasons ?? [], status: 'SELECTED', note: chosen.reason });
       }
+      for (const r of ranked.filter((x) => x.related && x.target.id !== chosen?.id && x.target.url !== chosen?.url)) {
+        const base = { targetId: r.target.id, url: r.target.url, title: r.target.title, kind: 'CONTEXTUAL', score: r.score, reasons: r.reasons };
+        const anchor = findAnchor(bodyText, r.target);
+        if (!anchor || normalizeText(anchor) === normalizeText(ctx.task.focusKeyword ?? ctx.task.keyword)) {
+          suggestions.push({ ...base, anchor: null, status: 'NO_ANCHOR', note: anchor ? 'the only matching phrase is the focus keyword' : 'no natural phrase for it in the body' });
+          continue;
+        }
+        if (contextual.length >= ctx.config.maxContextualInternalLinks) {
+          suggestions.push({ ...base, anchor, status: 'PROPOSED', note: `not placed: at most ${ctx.config.maxContextualInternalLinks} contextual internal link(s)` });
+          continue;
+        }
+        const v = await check(r.target.url);
+        if (v.ok) {
+          contextual.push({ anchor, url: v.finalUrl, title: r.target.title });
+          suggestions.push({ ...base, url: v.finalUrl, anchor, status: 'SELECTED', note: null });
+        } else suggestions.push({ ...base, anchor, status: 'UNREACHABLE', note: v.note });
+      }
+      for (const r of ranked.filter((x) => !x.related && x.target.id !== chosen?.id).slice(0, 5)) suggestions.push({ targetId: r.target.id, url: r.target.url, title: r.target.title, kind: 'CANDIDATE', anchor: null, score: r.score, reasons: r.reasons, status: 'NOT_RELATED', note: null });
+      await db.$transaction([
+        db.suggestedInternalLink.deleteMany({ where: { taskId: ctx.taskId } }),
+        db.suggestedInternalLink.createMany({ data: suggestions.slice(0, 40).map((x) => ({ ...x, taskId: ctx.taskId, websiteId: site.id, reasons: JSON.stringify(x.reasons) })) }),
+      ]);
       const data: InternalLinkData = {
         line: chosen ? lineText : null,
         url: chosen?.url ?? null,

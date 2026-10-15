@@ -173,6 +173,7 @@ model ArticleTask {
   seoReports         SEOReport[]
   fingerprints       ContentFingerprint[]
   claims             ClaimEvidence[]
+  linkSuggestions    SuggestedInternalLink[]
   duplicateMatches   DuplicateMatch[]
   qualityReports     ArticleQualityReport[]
   mediaAssets        MediaAsset[]
@@ -412,6 +413,26 @@ model ClaimEvidence {
 
   @@index([taskId])
   @@index([status])
+}
+
+/// What the internal-link stage considered for an article (upgrade 06), and why each target was or was not used.
+model SuggestedInternalLink {
+  id        String      @id @default(cuid())
+  taskId    String
+  task      ArticleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  websiteId String
+  targetId  String?
+  url       String
+  title     String
+  kind      String // LINE | CONTEXTUAL | CANDIDATE
+  anchor    String?
+  score     Float
+  reasons   String      @default("[]")
+  status    String // SELECTED | PROPOSED | NO_ANCHOR | UNREACHABLE | NOT_RELATED
+  note      String?
+  createdAt DateTime    @default(now())
+
+  @@index([taskId])
 }
 
 model PromptTemplate {

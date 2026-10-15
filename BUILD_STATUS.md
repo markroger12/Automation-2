@@ -1221,3 +1221,54 @@ Not re-run here: the real-WordPress e2e. Its one link assertion (`<a href="…"`
 - **Not known from the report:** whether the owner switched off “Missing images → Needs review” rather than “Article images”, or switched images off after this article had started. The report did not include the settings snapshot.
 - **Change:** the article report now includes the settings the article ran with (`settingsUsed`) and its form options. Unit test.
 - **Image sources, as the spec says:** celebrity articles collect a photo gallery (Wikimedia Commons here) for the site's template; Tigram/general articles generate their images with ChatGPT.
+
+## Owner request: celebrity photos as in the earlier tool (ChatGPT image search gallery; extension 3.2.0)
+
+The owner asked for celebrity images to work as in their earlier tool ([markroger12/automation](https://github.com/markroger12/automation)). I read that tool's `src/worker/pipelines/stages/images.ts`, its `IMAGE_SEARCH_PROMPT` and its extension's `collectGallery`. It worked like this:
+- ChatGPT is asked to “search the web for real photos of <name> and show them as an image gallery”.
+- The extension opens the gallery, steps through it with “Next” and saves up to 10 large pictures plus the thumbnails.
+- Pictures on hosts the extension may not read are reported as links; the app downloads them.
+- Small pictures and duplicates are dropped, and the rest go into the featured design and two body images.
+
+**Built the same way here**
+- **Setting:** Settings → SEO, links & images → **Celebrity photo source**: ChatGPT image search gallery (default), gallery then Wikimedia Commons, or Commons only. The owner's own uploads always come first.
+- **Prompt:** a new editable prompt, **Celebrity — Image search**, with the earlier tool's text. It uses the Quick Bio full name, otherwise the keyword. The prompt count is now 15.
+- **Extension 3.2.0:**
+  - for a job marked as an image search, after the answer it opens ChatGPT's picture viewer, steps through it, and saves up to 10 large pictures plus the thumbnails it may read (same origin, or ChatGPT's image hosts);
+  - every other picture is reported as a link;
+  - it adds host permissions for `images.openai.com` and `*.mm.bing.net`, as in the earlier tool.
+- **Server:**
+  - the completion accepts `imageLinks` (20 at most, http(s) only), stored on the response (migration `chatgpt_response_image_links`, ADD COLUMN);
+  - the IMAGES stage downloads the links through the SSRF-safe fetcher (12 MB cap);
+  - it skips pictures under 250 px, exact duplicates and near-duplicates, and orders the rest largest first;
+  - then the existing photo check (optional), distinct photos per slot, the site template and alt text apply.
+- **Images tab:** gallery entries are labelled “ChatGPT image search”.
+
+**Tests**
+- **Extension, fake ChatGPT:** the fake now shows a gallery with a viewer for image-search prompts, plus one picture from another site. The extension opens the viewer once, saves the four large pictures (1024×576) and the thumbnails, and reports the other site's picture as a link.
+- **Pipeline (scripted ChatGPT):**
+  - the image search was asked once, with the person's name;
+  - 3 usable photos: two gallery pictures plus the link, downloaded; the 240×135 thumbnail was skipped;
+  - FEATURED, BODY1 and BODY2 use distinct photos, and Commons was not asked.
+- The existing Commons tests now set the Commons source explicitly.
+
+**Not verified here**
+- The real ChatGPT gallery markup: the thumbnails, the viewer (`[role="dialog"]`) and its Next / Close buttons. The selectors follow the earlier tool's extension, which worked against the real ChatGPT of its time.
+- Whether the real gallery's pictures are readable by the extension or arrive as links.
+
+**Commands run**
+```
+bash scripts/dev-create-migration.sh chatgpt_response_image_links   # ALTER TABLE ChatGPTResponse ADD COLUMN imageLinks
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 38 files, 261 tests. 4 expectations changed with the
+                                                           # feature and were updated:
+                                                           # - the Single Article e2e lists one more prompt (IMAGES
+                                                           #   photo search); the German-language-line check now
+                                                           #   applies to text prompts only (the search is an image
+                                                           #   prompt, as in the earlier tool);
+                                                           # - the allowed host permissions now include the two
+                                                           #   gallery hosts;
+                                                           # - the prompt seed counts 15.
+npx vitest run --config vitest.integration.config.ts <each file>   # all 10 files pass (extension 26/26, images 8/8)
+npm run build                                              # compiled
+```

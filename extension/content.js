@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.1.5';
+  const EXTENSION_VERSION = '3.2.0';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -297,6 +297,86 @@
     return ids;
   }
 
+  /** Bytes of a displayed picture: same-origin/blob/data in the page, ChatGPT's image hosts through the background. */
+  async function readPicture(src) {
+    const url = new URL(src, location.href);
+    if (url.origin === location.origin || url.protocol === 'blob:' || url.protocol === 'data:') {
+      const res = await fetch(src, { credentials: 'include' });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return { base64: await blobToBase64(blob), mime: blob.type || 'image/jpeg' };
+    }
+    if (!A.isPictureHost(url)) return null;
+    const res = await chrome.runtime.sendMessage({ type: 'fetch-image', url: src });
+    return res && res.ok ? { base64: res.base64, mime: res.mime || 'image/jpeg' } : null;
+  }
+
+  /**
+   * Image search (as in the owner's earlier tool): open the picture gallery ChatGPT shows with its answer, step through
+   * it with “Next” like a person and save up to 10 large pictures, plus the thumbnails. Pictures this extension may not
+   * read are reported as links; the app downloads those through its own safe fetcher. Returns { images, imageLinks }.
+   */
+  async function collectGallery(job, userEl, config) {
+    const deadline = Date.now() + (config.galleryWaitSec || 90) * 1000;
+    let thumbs = A.galleryThumbs(userEl);
+    while (!thumbs.length && Date.now() < deadline) {
+      checkCancelled();
+      progress(`waiting for the picture gallery (${document.images.length} picture(s) on the page)`);
+      await sleep(2000);
+      userEl = (await A.sentPromptTurn(job.promptHash, job.prompt, { priorKeys: null, fallbackIndex: -1 })) || userEl;
+      thumbs = A.galleryThumbs(userEl);
+    }
+    if (!thumbs.length) return { images: [], imageLinks: [], note: 'ChatGPT showed no picture gallery.' };
+    const picked = [];
+    const seen = new Set();
+    const add = (img) => {
+      const src = img.currentSrc || img.src;
+      if (!src || seen.has(src) || picked.length >= 10) return;
+      seen.add(src);
+      picked.push({ src, width: img.naturalWidth || 0, height: img.naturalHeight || 0 });
+    };
+    try {
+      thumbs[0].click();
+      await sleep(1200);
+      for (let step = 0; step < 12 && picked.length < 10; step++) {
+        const dialog = A.galleryDialog();
+        if (!dialog) break;
+        const big = Array.from(dialog.querySelectorAll('img')).filter((i) => (i.naturalWidth || 0) >= 200);
+        big.sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight);
+        if (big[0]) add(big[0]);
+        const next = A.galleryNextButton(dialog);
+        if (!next || next.disabled) break;
+        next.click();
+        await sleep(900);
+      }
+      A.closeGalleryDialog();
+    } catch (e) {
+      /* the thumbnails are enough */
+    }
+    thumbs.forEach(add);
+    const images = [];
+    const imageLinks = [];
+    for (const [i, p] of picked.entries()) {
+      checkCancelled();
+      progress(`saving gallery pictures (${i + 1}/${picked.length})`);
+      let data = null;
+      try {
+        data = await readPicture(p.src);
+      } catch (e) {
+        data = null;
+      }
+      if (!data) {
+        if (/^https?:/i.test(p.src)) imageLinks.push({ url: p.src.slice(0, 1900), width: p.width, height: p.height });
+        continue;
+      }
+      const mime = /^image\/(png|jpeg|webp|gif)$/.test(data.mime) ? data.mime : 'image/jpeg';
+      const up = await chrome.runtime.sendMessage({ type: 'upload-image', jobId: job.id, name: `gallery-${i + 1}`, mime, dataBase64: data.base64, sourceUrl: /^https?:/i.test(p.src) ? p.src.slice(0, 1900) : null });
+      if (up && up.ok) images.push({ mediaAssetId: up.mediaAssetId });
+      else if (/^https?:/i.test(p.src)) imageLinks.push({ url: p.src.slice(0, 1900), width: p.width, height: p.height });
+    }
+    return { images, imageLinks: imageLinks.slice(0, 20), note: null };
+  }
+
   /** Poll (bounded) for a prompt the app recorded as sent; null if it never shows up. */
   async function waitForSubmittedPrompt(job, config) {
     const deadline = Date.now() + (config.reconcileWaitSec || 30) * 1000;
@@ -346,8 +426,9 @@
       if (existing && (evidence || (isLastUserTurn && !job.fresh))) {
         progress(`found the prompt already sent (${existing.match}); recovering its answer instead of resending`, { sent: true, sentAt: new Date().toISOString() });
         const answer = await waitForAnswer({ job, priorKeys: null, fallbackIndex: existing.index }, config, job.expectImages);
-        const images = job.expectImages ? await uploadImages(job, answer.images) : [];
-        post('complete', { text: answer.text, html: answer.html, images, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
+        const gallery = job.expectGallery ? await collectGallery(job, existing.element, config) : null;
+        const images = gallery ? gallery.images : job.expectImages ? await uploadImages(job, answer.images) : [];
+        post('complete', { text: answer.text, html: answer.html, images, imageLinks: gallery ? gallery.imageLinks : undefined, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
         return;
       }
       if (evidence) {
@@ -372,9 +453,11 @@
       progress('prompt sent; waiting for the answer', { sent: true, sentAt });
       void userEl;
       const answer = await waitForAnswer({ job, priorKeys, fallbackIndex: before }, config, job.expectImages);
-      const images = job.expectImages && answer.images.length ? await uploadImages(job, answer.images) : [];
-      if (!answer.text && !images.length) throw new JobError('ERROR', 'The answer was empty.');
-      post('complete', { text: answer.text, html: answer.html, images, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
+      const gallery = job.expectGallery ? await collectGallery(job, await A.sentPromptTurn(job.promptHash, job.prompt, { priorKeys, fallbackIndex: before }), config) : null;
+      const images = gallery ? gallery.images : job.expectImages && answer.images.length ? await uploadImages(job, answer.images) : [];
+      const imageLinks = gallery ? gallery.imageLinks : [];
+      if (!answer.text && !images.length && !imageLinks.length) throw new JobError('ERROR', 'The answer was empty.');
+      post('complete', { text: answer.text || (gallery && gallery.note) || '', html: answer.html, images, imageLinks: gallery ? imageLinks : undefined, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
     } catch (error) {
       const code = error instanceof JobError ? error.code : 'ERROR';
       const extra = error instanceof JobError ? error.extra : {};

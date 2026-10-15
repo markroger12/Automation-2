@@ -26,6 +26,8 @@ export interface ChatGPTJobPayload {
   newChat: boolean;
   attachments: { mediaAssetId: string; name: string; mime: string }[];
   expectImages: boolean;
+  /** Image search: after the answer, open ChatGPT's picture gallery and save its pictures (celebrity photos). */
+  expectGallery?: boolean;
   /** Deliberate re-send of an identical prompt (regeneration): recover only with evidence. */
   fresh?: boolean;
   timeoutSec: number;
@@ -64,6 +66,7 @@ export async function createChatGPTRequest(
     newChat: boolean;
     attachments?: ChatGPTJobPayload['attachments'];
     expectImages?: boolean;
+    expectGallery?: boolean;
     fresh?: boolean;
     timeoutSec: number;
     conversationSwitch?: boolean;
@@ -95,6 +98,7 @@ export async function createChatGPTRequest(
     newChat: input.newChat || !isRealConversationUrl(input.task.conversationUrl),
     attachments: input.attachments ?? [],
     expectImages: Boolean(input.expectImages),
+    expectGallery: Boolean(input.expectGallery),
     fresh: Boolean(input.fresh),
     timeoutSec: input.timeoutSec,
     language: input.task.language,
@@ -285,14 +289,26 @@ async function reportChatGPTProgressLocked(
 }
 
 export async function completeChatGPTJob(
-  input: { jobId: string; tabId: string; text: string; html?: string | null; conversationUrl?: string | null; recovered?: boolean; reused?: boolean; elapsedMs?: number; images?: { mediaAssetId: string }[] },
+  input: {
+    jobId: string;
+    tabId: string;
+    text: string;
+    html?: string | null;
+    conversationUrl?: string | null;
+    recovered?: boolean;
+    reused?: boolean;
+    elapsedMs?: number;
+    images?: { mediaAssetId: string }[];
+    imageLinks?: { url: string; width?: number; height?: number }[];
+  },
   client: Tx = db,
 ): Promise<{ ok: boolean; error?: string }> {
   const { job, error } = await ownedJob(input.jobId, input.tabId, client);
   if (!job || error) return { ok: false, error: error ?? 'Unknown job' };
   const payload = parsePayload<ChatGPTJobPayload>(job);
   const text = normalizeResponseText(input.text ?? '');
-  if (!text && !(input.images && input.images.length)) {
+  const imageLinks = (input.imageLinks ?? []).filter((l) => /^https?:\/\//i.test(l.url)).slice(0, 20);
+  if (!text && !(input.images && input.images.length) && !imageLinks.length) {
     await failChatGPTJob({ jobId: job.id, tabId: input.tabId, code: 'ERROR', message: 'Empty answer received from ChatGPT' }, client);
     return { ok: false, error: 'Empty answer' };
   }
@@ -315,6 +331,7 @@ export async function completeChatGPTJob(
         status: 'COMPLETED',
         resultText: text,
         resultHtml: input.html ? input.html.slice(0, 2_000_000) : null,
+        imageLinks: imageLinks.length ? JSON.stringify(imageLinks) : null,
         conversationUrl,
         responseFingerprint: responseFingerprint(text),
         recovered: Boolean(input.recovered),

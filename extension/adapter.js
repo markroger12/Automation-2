@@ -342,6 +342,42 @@
     return users[opts.fallbackIndex] || null;
   }
 
+  // ---------- Image-search gallery (celebrity photos, as in the owner's earlier tool) ----------
+
+  /** Hosts whose pictures the background may read (they are in the manifest's host permissions). */
+  function isPictureHost(url) {
+    const u = typeof url === 'string' ? new URL(url, location.href) : url;
+    if (u.protocol !== 'https:') return false;
+    return u.hostname === 'chatgpt.com' || u.hostname === 'images.openai.com' || /(^|\.)oaiusercontent\.com$/.test(u.hostname) || /(^|\.)mm\.bing\.net$/.test(u.hostname) || u.hostname === 'oaidalleapiprodscus.blob.core.windows.net';
+  }
+
+  /** Picture thumbnails ChatGPT shows after this user turn (not avatars, icons, logos or the composer). */
+  function galleryThumbs(userEl) {
+    return Array.from(document.images).filter((img) => {
+      const src = img.currentSrc || img.src || '';
+      if (!/^(https?:|blob:)/.test(src)) return false;
+      if (userEl && (userEl.contains(img) || !(userEl.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING))) return false;
+      if (img.closest('form, nav, aside, [data-testid*="composer"]')) return false;
+      if (/avatar|favicon|logo|icon/i.test(`${img.alt || ''} ${src} ${img.className || ''}`)) return false;
+      const r = img.getBoundingClientRect();
+      return r.width >= 60 && r.height >= 60;
+    });
+  }
+
+  function galleryDialog() {
+    return qs(['[role="dialog"]']);
+  }
+
+  function galleryNextButton(dialog) {
+    return qs(['button[aria-label*="Next" i]', 'button[aria-label*="Weiter" i]', 'button[aria-label*="Nächste" i]', 'button[data-testid*="next" i]'], dialog);
+  }
+
+  function closeGalleryDialog() {
+    const close = qs(['[role="dialog"] button[aria-label*="Close" i]', '[role="dialog"] button[aria-label*="Schließen" i]']);
+    if (close) close.click();
+    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }
+
   // Markers of the ChatGPT layouts this adapter knows, counted for the owner when nothing matches.
   const LAYOUT_MARKERS = {
     'data-message-author-role': '[data-message-author-role]',
@@ -647,6 +683,11 @@
     findSubmittedPrompt,
     sentPromptTurn,
     turnKey,
+    isPictureHost,
+    galleryThumbs,
+    galleryDialog,
+    galleryNextButton,
+    closeGalleryDialog,
     promptMismatchReport,
     looseText,
     assistantAfter,

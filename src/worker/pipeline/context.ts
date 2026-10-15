@@ -131,7 +131,7 @@ export function createContext(deps: ContextDeps): PipelineContext {
           orderBy: { completedAt: 'desc' },
         });
         if (reusable && reusable.resultText !== null) {
-          return { status: 'completed', responseId: reusable.id, text: reusable.resultText, html: reusable.resultHtml, conversationUrl: reusable.conversationUrl, prompt, reused: reusable.operationId !== baseOp, images: await imagesFor(reusable.id) };
+          return { status: 'completed', responseId: reusable.id, text: reusable.resultText, html: reusable.resultHtml, conversationUrl: reusable.conversationUrl, prompt, reused: reusable.operationId !== baseOp, images: await imagesFor(reusable.id), imageLinks: parseJson(reusable.imageLinks, []) };
         }
       }
       // Find the latest operation of this attempt (switch suffixes :s1, :s2 … after lost conversations).
@@ -142,7 +142,7 @@ export function createContext(deps: ContextDeps): PipelineContext {
           if (latest.renderedPrompt !== prompt && !latest.renderedPrompt.endsWith(prompt)) {
             await ctx.log('Saved answer belongs to a different prompt version; a fresh prompt will be sent.', 'warn');
           } else {
-            return { status: 'completed', responseId: latest.id, text: latest.resultText, html: latest.resultHtml, conversationUrl: latest.conversationUrl, prompt, reused: false, images: await imagesFor(latest.id) };
+            return { status: 'completed', responseId: latest.id, text: latest.resultText, html: latest.resultHtml, conversationUrl: latest.conversationUrl, prompt, reused: false, images: await imagesFor(latest.id), imageLinks: parseJson(latest.imageLinks, []) };
           }
         }
         if (latest.status === 'PENDING') return { status: 'waiting', prompt };
@@ -176,6 +176,7 @@ export function createContext(deps: ContextDeps): PipelineContext {
         newChat,
         attachments: options.attachments,
         expectImages: options.expectImages,
+        expectGallery: options.expectGallery,
         // Regenerations, conversation switches and retries after a rejected/superseded answer must never "recover" an
         // older identical answer from the page (it would be the rejected one again).
         fresh:

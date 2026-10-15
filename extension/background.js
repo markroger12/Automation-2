@@ -14,9 +14,9 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.1.5';
+const EXTENSION_VERSION = '3.2.0';
 const DEFAULT_SERVER = 'http://localhost:3000';
-const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'multi-tab', 'continue-generating', 'outbox'];
+const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox'];
 
 let cfg = null;
 let serverCfg = {
@@ -419,7 +419,17 @@ chrome.runtime.onConnect.addListener((port) => {
         pageLogin = true;
         chrome.notifications.clear(`bas-human-${tabId}`);
       } else if (msg.type === 'complete') {
-        await outboxPush('complete', { tabId: String(tabId), jobId, text: msg.text, html: msg.html || null, images: Array.isArray(msg.images) && msg.images.length ? msg.images : undefined, conversationUrl: msg.conversationUrl || null, recovered: Boolean(msg.recovered), elapsedMs: msg.elapsedMs });
+        await outboxPush('complete', {
+          tabId: String(tabId),
+          jobId,
+          text: msg.text,
+          html: msg.html || null,
+          images: Array.isArray(msg.images) && msg.images.length ? msg.images : undefined,
+          imageLinks: Array.isArray(msg.imageLinks) && msg.imageLinks.length ? msg.imageLinks.slice(0, 20) : undefined,
+          conversationUrl: msg.conversationUrl || null,
+          recovered: Boolean(msg.recovered),
+          elapsedMs: msg.elapsedMs,
+        });
         await finishTab(tabId, jobId);
         setTimeout(() => void tick(), 500);
       } else if (msg.type === 'fail') {
@@ -480,10 +490,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
       case 'fetch-image': {
-        // Generated images on ChatGPT's image CDN only (host permissions limit this further).
+        // Pictures on ChatGPT's own image hosts only: generated images and the image-search gallery
+        // (host permissions limit this further).
         try {
           const url = new URL(msg.url);
-          const allowed = url.protocol === 'https:' && (/\.oaiusercontent\.com$/.test(url.hostname) || url.hostname === 'oaidalleapiprodscus.blob.core.windows.net' || url.hostname === 'chatgpt.com');
+          const allowed =
+            url.protocol === 'https:' &&
+            (/\.oaiusercontent\.com$/.test(url.hostname) || url.hostname === 'oaidalleapiprodscus.blob.core.windows.net' || url.hostname === 'chatgpt.com' || url.hostname === 'images.openai.com' || /(^|\.)mm\.bing\.net$/.test(url.hostname));
           if (!allowed) return sendResponse({ ok: false, error: 'not an image host of ChatGPT' });
           const res = await fetch(url.toString(), { credentials: 'include' });
           if (!res.ok) return sendResponse({ ok: false, error: 'HTTP ' + res.status });

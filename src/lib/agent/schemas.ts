@@ -56,6 +56,11 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
     reused: z.boolean().optional(),
     elapsedMs: z.number().int().min(0).max(24 * 3600 * 1000).optional(),
     images: z.array(z.object({ mediaAssetId: id })).max(12).optional(),
+    /** Image-search gallery pictures the extension could not download itself (fetched later by the app). */
+    imageLinks: z
+      .array(z.object({ url: z.string().max(2000).regex(/^https?:\/\//), width: z.number().int().min(0).max(50_000).optional(), height: z.number().int().min(0).max(50_000).optional() }))
+      .max(20)
+      .optional(),
   }),
   z.object({
     action: z.literal('fail'),

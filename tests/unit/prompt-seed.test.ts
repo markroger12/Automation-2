@@ -15,9 +15,9 @@ beforeAll(async () => {
 describe('prompt seeding never overwrites owner edits', () => {
   it('creates defaults once and is idempotent', async () => {
     const first = await seedPrompts(client);
-    expect(first[0]).toMatch(/14 created/);
+    expect(first[0]).toMatch(/15 created/);
     const second = await seedPrompts(client);
-    expect(second[0]).toMatch(/0 created, 14 unchanged/);
+    expect(second[0]).toMatch(/0 created, 15 unchanged/);
   });
 
   it('keeps a customized prompt across a shipped upgrade', async () => {

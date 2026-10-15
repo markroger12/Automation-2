@@ -103,7 +103,8 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const final = await drive(task.id, 'en');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
     // The humanizer sends the body in two ~1,200-word batches.
-    expect(responses.map((r) => r.stageKey)).toEqual(['TITLES', 'RESEARCH', 'LONG_ARTICLE', 'FINAL_ARTICLE', 'FAQS', 'QUICK_BIO', 'EXTERNAL_LINKS', 'HUMANIZE', 'HUMANIZE']);
+    // IMAGES: the celebrity photo search (ChatGPT image-search gallery, the default photo source).
+    expect(responses.map((r) => r.stageKey)).toEqual(['TITLES', 'RESEARCH', 'LONG_ARTICLE', 'FINAL_ARTICLE', 'FAQS', 'QUICK_BIO', 'EXTERNAL_LINKS', 'IMAGES', 'HUMANIZE', 'HUMANIZE']);
     const titles = responses[0].renderedPrompt;
     expect(titles).toContain(`Primary keyword: "${KEYWORD}"`);
     expect(titles).toContain(`Reference title for direction only: "${EXAMPLE}"`);
@@ -162,8 +163,9 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const final = await drive(task.id, 'de');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id } });
     const perStage = responses.reduce<Record<string, number>>((m, x) => ({ ...m, [x.stageKey]: (m[x.stageKey] ?? 0) + 1 }), {});
-    expect(perStage).toEqual({ TITLES: 1, RESEARCH: 1, LONG_ARTICLE: 1, FINAL_ARTICLE: 1, FAQS: 1, QUICK_BIO: 1, EXTERNAL_LINKS: 1, HUMANIZE: 1 });
-    expect(responses.every((x) => x.renderedPrompt.endsWith('Schreibe vollständig auf Deutsch für Leserinnen und Leser in Deutschland.'))).toBe(true);
+    expect(perStage).toEqual({ TITLES: 1, RESEARCH: 1, LONG_ARTICLE: 1, FINAL_ARTICLE: 1, FAQS: 1, QUICK_BIO: 1, EXTERNAL_LINKS: 1, IMAGES: 1, HUMANIZE: 1 });
+    // Text prompts carry the German language line; the photo search (an image prompt, like the earlier tool's) does not.
+    expect(responses.filter((x) => x.stageKey !== 'IMAGES').every((x) => x.renderedPrompt.endsWith('Schreibe vollständig auf Deutsch für Leserinnen und Leser in Deutschland.'))).toBe(true);
     expect(responses.find((x) => x.stageKey === 'TITLES')!.renderedPrompt).toContain('Ein deutlich anderer Beispieltitel');
     expect(final.assembledHtml).toContain('<h2>Kurzbiografie von Tom Kaulitz</h2>');
     expect(final.assembledHtml).toContain('<h2>Häufig gestellte Fragen</h2>');
@@ -247,7 +249,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(0);
     await actions.allowDuplicate(task.id);
     t = await drive(task.id, 'en');
-    expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(9);
+    expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(10); // includes the IMAGES photo search
     expect(t.assembledHtml).toContain('Frequently Asked Questions');
   });
 });

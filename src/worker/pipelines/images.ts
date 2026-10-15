@@ -10,6 +10,7 @@ import { outputSize, renderCleanImage, renderTemplate } from '@/images/render';
 import { normalizeAltText, type AltSlot } from '@/images/alt-text';
 import { hammingDistance, storeRendered } from '@/images/store';
 import { collectCommonsGallery } from '@/images/sources/wikimedia';
+import { collectChatGPTGallery } from '@/images/sources/chatgpt-gallery';
 import { loadTemplateAssets } from '@/images/site-templates';
 import type { StageManifest } from '@/modules/types';
 import type { PipelineContext, PipelineStage, StageResult } from '../pipeline/types';
@@ -18,8 +19,9 @@ import { bind, waiting } from './common';
 /**
  * IMAGES: a 16:9 featured image (site template: photo/illustration, title,
  * logo) and two clean body images. Celebrity articles use a bounded photo
- * gallery (owner uploads first, then Wikimedia Commons); general articles use
- * an image plan and ChatGPT image generation. Every optional part degrades
+ * gallery (owner uploads first, then ChatGPT's image-search gallery and/or
+ * Wikimedia Commons, per Settings); general articles use an image plan and
+ * ChatGPT image generation. Every optional part degrades
  * safely: missing images are reported, never faked, and never block the text.
  * No image-rights/licensing checks exist by design (owner decision).
  */
@@ -207,20 +209,31 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const name = confirmedFullName(quickBio) ?? ctx.task.keyword;
   const state = ctx.privateState<CelebState>();
 
-  // 1. Gallery: owner uploads first, then a bounded Wikimedia Commons search (collected once per run).
+  // 1. Gallery: owner uploads first, then the configured photo source (collected once per run):
+  //    ChatGPT's image-search gallery (as in the owner's earlier tool) and/or a bounded Wikimedia Commons search.
   let galleryIds = state.galleryIds;
   if (!galleryIds) {
     const uploads = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'UPLOAD', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' } });
     const ids = uploads.map((u) => u.id);
     const galleryNotes: string[] = [];
-    if (ids.length < 4) {
+    const source = ctx.config.celebrityPhotoSource ?? 'chatgpt';
+    const timeoutMs = settings.advanced.linkCheckTimeoutSec * 1000 * 2;
+    if (ids.length < 4 && source !== 'commons') {
+      const res = await ctx.askChatGPT('IMAGE_SEARCH', { person_name: name }, { part: 'gallery', newChat: true, expectGallery: true });
+      if (res.status === 'waiting') return waiting(`Waiting for ChatGPT: photo gallery of ${name}`);
+      await ctx.progress(`Saving gallery photos of ${name}…`);
+      const g = await collectChatGPTGallery({ uploadedIds: res.images.map((i) => i.mediaAssetId), links: res.imageLinks, taskId: ctx.taskId, websiteId: ctx.task.websiteId, responseId: res.responseId, max: 6 - ids.length, timeoutMs });
+      ids.push(...g.assets.map((a) => a.id));
+      galleryNotes.push(`ChatGPT image search: ${g.assets.length} usable photo(s).`, ...g.notes.slice(0, 6));
+    }
+    if (ids.length < 4 && (source === 'commons' || (source === 'chatgpt-then-commons' && ids.length < 2))) {
       try {
         await ctx.progress(`Collecting photos of ${name}…`);
-        const g = await collectCommonsGallery({ name, taskId: ctx.taskId, websiteId: ctx.task.websiteId, max: 6 - ids.length, timeoutMs: settings.advanced.linkCheckTimeoutSec * 1000 * 2 });
+        const g = await collectCommonsGallery({ name, taskId: ctx.taskId, websiteId: ctx.task.websiteId, max: 6 - ids.length, timeoutMs });
         ids.push(...g.assets.map((a) => a.id));
         galleryNotes.push(...g.notes.slice(0, 6));
       } catch (error) {
-        galleryNotes.push(`Photo search unavailable: ${(error as Error).message}`);
+        galleryNotes.push(`Wikimedia Commons unavailable: ${(error as Error).message}`);
       }
     }
     galleryIds = ids;
@@ -262,7 +275,7 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   // 3. Distinct photos per design slot (never the same photo twice).
   if (!usable.length) {
     notes.push(`No usable photo of ${name} was found.`);
-    return finish(ctx, { slots: [], gallery: gallery.map((g) => ({ id: g.id, source: g.origin, sourceUrl: g.sourceUrl, title: g.notes ?? '', used: false })), notes, warnings: [] });
+    return finish(ctx, { slots: [], gallery: gallery.map((g) => ({ id: g.id, source: sourceLabel(g.origin), sourceUrl: g.sourceUrl, title: g.notes ?? '', used: false })), notes, warnings: [] });
   }
   const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
   const featuredNeeds = Math.max(1, templatePhotoSlots(parseSiteImageSettings(site.imageSettings).featured));
@@ -282,7 +295,11 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     notes,
   );
   const used = new Set(slots.flatMap((s) => s.sourceAssetIds));
-  return finish(ctx, { slots, gallery: gallery.map((g) => ({ id: g.id, source: g.origin === 'UPLOADED' ? 'your upload' : g.origin === 'WIKIMEDIA' ? 'Wikimedia Commons' : g.origin, sourceUrl: g.sourceUrl, title: g.notes ?? '', used: used.has(g.id) })), notes, warnings: [] });
+  return finish(ctx, { slots, gallery: gallery.map((g) => ({ id: g.id, source: sourceLabel(g.origin), sourceUrl: g.sourceUrl, title: g.notes ?? '', used: used.has(g.id) })), notes, warnings: [] });
+}
+
+function sourceLabel(origin: string): string {
+  return origin === 'UPLOADED' ? 'your upload' : origin === 'WIKIMEDIA' ? 'Wikimedia Commons' : origin === 'CHATGPT' ? 'ChatGPT image search' : origin;
 }
 
 export function imagesStage(manifest: StageManifest): PipelineStage {

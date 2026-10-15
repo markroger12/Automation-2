@@ -134,6 +134,7 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
         reused: body.reused,
         elapsedMs: body.elapsedMs,
         images: body.images,
+        imageLinks: body.imageLinks,
       });
     case 'fail':
       return failChatGPTJob({ jobId: body.jobId, tabId: body.tabId, code: body.code, message: body.message, retryAfterSec: body.retryAfterSec ?? null, uncertain: body.uncertain, diagnostics: body.diagnostics });
@@ -220,6 +221,7 @@ async function describeJob(job: QueueJob, payload: ChatGPTJobPayload, reconcile:
     conversationUrl: payload.conversationUrl,
     newChat: payload.newChat,
     expectImages: payload.expectImages,
+    expectGallery: Boolean(payload.expectGallery),
     fresh: Boolean(payload.fresh),
     timeoutSec: payload.timeoutSec,
     language: payload.language,

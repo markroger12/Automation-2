@@ -7,7 +7,7 @@ import { cannedAnswer } from './fake-answers';
  * extension uses (no live ChatGPT).
  */
 /** A text answer, an answer with generated images, or a permanent failure of that prompt (no retries left). */
-export type ScriptedAnswer = string | { text: string; images?: Buffer[] } | { fail: string };
+export type ScriptedAnswer = string | { text: string; images?: Buffer[]; imageLinks?: { url: string; width?: number; height?: number }[] } | { fail: string };
 
 /**
  * Scripted answers give every article the same text, which the Duplicate
@@ -47,6 +47,8 @@ export function makeDriver(client: PrismaClient, answer: (stageKey: string, prom
         tabId: `t${answered}`,
         text,
         images,
+        // Image-search gallery pictures on other hosts, as the extension reports them.
+        imageLinks: typeof a !== 'string' && 'imageLinks' in a ? a.imageLinks : undefined,
         conversationUrl: 'https://chatgpt.com/c/11111111-2222-4333-8444-555555555555',
       });
       answered++;

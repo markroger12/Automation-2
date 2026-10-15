@@ -37,7 +37,12 @@ Run before handing over a release. Each line says **where it can be verified**: 
 
 - [ ] Automation Chrome wizard: all five steps green; **Send test prompt** returns ChatGPT's answer.
 - [ ] One **Celebrity** and one **Tigram** article from Single Article reach a verified WordPress draft on a real site (English), and one German article.
-- [ ] Images: featured image and body images render with the site template and upload once; photos from Wikimedia Commons are reachable.
+- [ ] Images: featured image and body images render with the site template and upload once.
+- [ ] Celebrity photos from the **ChatGPT image search gallery**:
+  - after the Image search prompt, the gallery is opened and stepped through;
+  - the Images tab lists the saved pictures as “ChatGPT image search”;
+  - three distinct photos are used for the three slots.
+  - With the Commons source: photos from Wikimedia Commons are reachable.
 - [ ] Rank Math (if installed): focus keyword, SEO title and description visible in the editor; the score shown is the one Rank Math displays.
 - [ ] Plagiarism Evidence: Wikipedia and linked pages are read (coverage list “compared”); with a `SERPER_API_KEY`, search results appear.
 - [ ] Workflow on a site **with publishing allowed**: a draft is scheduled for its slot at the right local time and published by WordPress; on a draft-only site nothing is published.

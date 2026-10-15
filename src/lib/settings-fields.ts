@@ -96,6 +96,17 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'imageOutputSize', label: 'Image output size', type: 'select', options: [{ value: '1200x675', label: '1200 × 675' }, { value: '1920x1080', label: '1920 × 1080' }] },
       { key: 'imageMaxBytes', label: 'Image file-size budget (bytes)', type: 'number', min: 50000, max: 5000000 },
       { key: 'enhanceCelebrityImages', label: 'Celebrity image enhancement', type: 'boolean', help: 'Requires a locally installed enhancement tool.' },
+      {
+        key: 'celebrityPhotoSource',
+        label: 'Celebrity photo source',
+        type: 'select',
+        options: [
+          { value: 'chatgpt', label: 'ChatGPT image search gallery' },
+          { value: 'chatgpt-then-commons', label: 'ChatGPT gallery, then Wikimedia Commons' },
+          { value: 'commons', label: 'Wikimedia Commons only' },
+        ],
+        help: 'Your own uploads on the Images tab are always used first. The ChatGPT gallery: ChatGPT searches the web and shows photos of the person; the extension saves them.',
+      },
       { key: 'celebrityPhotoReview', label: 'Celebrity photo check (watermark/collage)', type: 'boolean' },
       { key: 'duplicateSimilarityReview', label: 'Duplicate similarity review threshold', type: 'number', min: 0.2, max: 1, step: 0.05 },
       { key: 'seoBriefInPrompts', label: 'Add the SEO brief to writing prompts', type: 'boolean', help: 'The article’s search intent, sections to cover and keyword guideline (SEO tab) are added to the LONG_ARTICLE / ARTICLE prompt, unless the prompt places {{seo_brief}} itself.' },

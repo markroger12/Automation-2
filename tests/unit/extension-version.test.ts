@@ -20,8 +20,9 @@ describe('extension version constants', () => {
     expect(manifest.permissions.sort()).toEqual(['alarms', 'notifications', 'storage', 'tabs']);
     expect(manifest.host_permissions).not.toContain('https://*/*');
     expect(manifest.host_permissions).not.toContain('<all_urls>');
-    // ChatGPT, its two generated-image CDNs (image capture, M8) and the local app — nothing else.
-    const allowed = ['https://chatgpt.com/*', 'https://*.oaiusercontent.com/*', 'https://oaidalleapiprodscus.blob.core.windows.net/*', 'http://localhost/*', 'http://127.0.0.1/*'];
+    // ChatGPT, its two generated-image CDNs (image capture, M8), the two hosts of its image-search gallery
+    // (celebrity photos, as in the owner's earlier tool) and the local app — nothing else.
+    const allowed = ['https://chatgpt.com/*', 'https://*.oaiusercontent.com/*', 'https://oaidalleapiprodscus.blob.core.windows.net/*', 'https://images.openai.com/*', 'https://*.mm.bing.net/*', 'http://localhost/*', 'http://127.0.0.1/*'];
     expect(manifest.host_permissions.filter((h) => !allowed.includes(h))).toEqual([]);
   });
 });

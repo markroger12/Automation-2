@@ -25,6 +25,10 @@ export interface FakeChatGptConfig {
   chunkSize?: number;
   challengeClearsAfterMs?: number;
   answers?: string[];
+  /** Image-search answers (prompt mentions an “image gallery”): show this many gallery thumbnails with a viewer. */
+  galleryCount?: number;
+  /** Extra gallery pictures on other hosts (the extension reports these as links). */
+  galleryLinks?: string[];
 }
 
 const APP = fs.readFileSync(path.join(__dirname, 'fake-chatgpt', 'app.js'), 'utf8');
@@ -35,16 +39,19 @@ const APP = fs.readFileSync(path.join(__dirname, 'fake-chatgpt', 'app.js'), 'utf
  */
 export async function installFakeChatGPT(context: BrowserContext, getConfig: () => FakeChatGptConfig): Promise<void> {
   // A generated-image file as the image CDN would serve it (a different colour per file id).
-  const imageFor = (id: string) => {
+  const imageFor = (id: string, thumb = false) => {
     const n = Number(/(\d+)/.exec(id)?.[1] ?? '1');
-    return sharp({ create: { width: 1024, height: 576, channels: 3, background: { r: (n * 70) % 255, g: (n * 130) % 255, b: (n * 50 + 90) % 255 } } })
+    // Gallery thumbnails are small (like the real gallery); the viewer shows the large picture.
+    return sharp({ create: { width: thumb ? 240 : 1024, height: thumb ? 135 : 576, channels: 3, background: { r: (n * 70) % 255, g: (n * 130) % 255, b: (n * 50 + 90) % 255 } } })
       .png()
       .toBuffer();
   };
+  // A news site's picture shown in the gallery: it loads in the page, but the extension may not read it (other host).
+  await context.route('https://news.example/**', async (route) => route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor('news_9') }));
   await context.route('https://chatgpt.com/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
-    if (url.pathname === '/backend-api/estuary/content') return route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor(url.searchParams.get('id') ?? '') });
+    if (url.pathname === '/backend-api/estuary/content') return route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor(url.searchParams.get('id') ?? '', url.searchParams.get('thumb') === '1') });
     if (req.resourceType() !== 'document') return route.fulfill({ status: 404, body: '' });
     const config = JSON.stringify(getConfig()).replace(/</g, '\\u003c');
     await route.fulfill({

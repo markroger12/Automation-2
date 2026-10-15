@@ -22,11 +22,11 @@ let fake: FakeChatGptConfig = {};
 let browser: Awaited<ReturnType<typeof launchWithExtension>> | null = null;
 let siteId: string;
 
-async function request(prompt: string, opts: { conversationUrl?: string | null; newChat?: boolean; expectImages?: boolean; attachments?: { mediaAssetId: string; name: string; mime: string }[] } = {}) {
+async function request(prompt: string, opts: { conversationUrl?: string | null; newChat?: boolean; expectImages?: boolean; expectGallery?: boolean; attachments?: { mediaAssetId: string; name: string; mime: string }[] } = {}) {
   const task = await createTask(client, siteId, { keyword: prompt.slice(0, 30) });
   if (opts.conversationUrl) await client.articleTask.update({ where: { id: task.id }, data: { conversationUrl: opts.conversationUrl } });
   const fresh = await client.articleTask.findUniqueOrThrow({ where: { id: task.id } });
-  const res = await jobs.createChatGPTRequest({ task: fresh, stageKey: 'TITLES', attempt: 1, operationId: `${task.id}:TITLES:a1`, prompt, newChat: opts.newChat ?? !opts.conversationUrl, timeoutSec: 120, attachments: opts.attachments, expectImages: opts.expectImages });
+  const res = await jobs.createChatGPTRequest({ task: fresh, stageKey: 'TITLES', attempt: 1, operationId: `${task.id}:TITLES:a1`, prompt, newChat: opts.newChat ?? !opts.conversationUrl, timeoutSec: 120, attachments: opts.attachments, expectImages: opts.expectImages, expectGallery: opts.expectGallery });
   return { taskId: task.id, ...res };
 }
 
@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.1.5');
+    expect(ext?.version).toBe('3.2.0');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -316,6 +316,22 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(three.resultText).toContain('gamma');
     expect(three.recovered).toBe(false);
     expect((await fakeStats()).sends).toBe(3);
+  });
+
+  it('image search (celebrity photos, as in the owner’s earlier tool): opens the gallery, saves its pictures, reports other hosts as links', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryCount: 4, galleryLinks: ['https://news.example/photo-1.jpg'] };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Search the web for real photos of Gloria Krass and show them as an image gallery.', { expectGallery: true });
+    const done = await responseDone(req.responseId, 90_000);
+    expect(done.status).toBe('COMPLETED');
+    expect(done.resultText).toContain('Here are recent photos.');
+    const assets = await client.mediaAsset.findMany({ where: { responseId: req.responseId } });
+    // The viewer's four large pictures (1024×576) were saved, plus the small thumbnails (filtered later by the app).
+    expect(assets.filter((a) => (a.width ?? 0) >= 1000)).toHaveLength(4);
+    expect(assets.every((a) => a.role === 'GALLERY' && a.origin === 'CHATGPT')).toBe(true);
+    expect(JSON.parse(done.imageLinks!)).toEqual([expect.objectContaining({ url: 'https://news.example/photo-1.jpg' })]);
+    expect(await chatPage()!.evaluate(() => (window as unknown as { __galleryOpened?: number }).__galleryOpened)).toBe(1);
+    expect((await fakeStats()).sends).toBe(1);
   });
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {

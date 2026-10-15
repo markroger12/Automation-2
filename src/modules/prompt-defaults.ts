@@ -168,6 +168,21 @@ Output only one line per image:
 <number>: watermark=yes|no | collage=yes|no | alt=<description of 12 words or fewer>`,
   },
   {
+    moduleKey: 'celebrity-writer',
+    stageKey: 'IMAGE_SEARCH',
+    name: 'Celebrity — Image search',
+    description: 'Asks ChatGPT to search the web and show a picture gallery of the person; the extension saves the pictures (owner\'s earlier tool).',
+    version: 1,
+    kind: 'image',
+    previousHashes: [],
+    variables: [v('person_name', 'The person: the Quick Bio full name, otherwise the keyword', true, 'stage')],
+    content: `Search the web for real photos of {{person_name}} and show them as an image gallery.
+
+Show at least 10 different, recent, high-quality photos in which the face of {{person_name}} is clearly visible, for example portraits, red carpet and event photos.
+No drawings, no AI-made pictures, no memes, no collages and no screenshots of articles.
+Do not write an article; one short caption line is enough.`,
+  },
+  {
     moduleKey: 'tigram-writer',
     stageKey: 'ARTICLE',
     name: 'Tigram — Article',

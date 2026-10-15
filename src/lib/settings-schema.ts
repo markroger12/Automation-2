@@ -79,6 +79,11 @@ export const seoSettingsSchema = z.object({
   imageMaxBytes: z.number().int().min(50_000).max(5_000_000).default(350_000),
   enhanceCelebrityImages: z.boolean().default(false),
   celebrityPhotoReview: z.boolean().default(false),
+  /**
+   * Where celebrity photos come from (after the owner's own uploads): ChatGPT's image-search gallery through the
+   * extension (as in the owner's earlier tool), Wikimedia Commons, or the gallery first with Commons as a fallback.
+   */
+  celebrityPhotoSource: z.enum(['chatgpt', 'commons', 'chatgpt-then-commons']).default('chatgpt'),
   duplicateSimilarityReview: z.number().min(0.2).max(1).default(0.45),
   /** Add the article's SEO brief (search intent, sections, keyword guideline) to the writing prompt. */
   seoBriefInPrompts: z.boolean().default(true),
@@ -172,6 +177,7 @@ export interface EffectiveTaskConfig {
   imageOutputSize: '1200x675' | '1920x1080';
   imageMaxBytes: number;
   celebrityPhotoReview: boolean;
+  celebrityPhotoSource: 'chatgpt' | 'commons' | 'chatgpt-then-commons';
   manualTitleApproval: boolean;
   manualArticleApproval: boolean;
   reviewThreshold: number;
@@ -212,6 +218,7 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     imageOutputSize: pick(site.seo.imageOutputSize, global.seo.imageOutputSize),
     imageMaxBytes: global.seo.imageMaxBytes,
     celebrityPhotoReview: global.seo.celebrityPhotoReview,
+    celebrityPhotoSource: global.seo.celebrityPhotoSource,
     manualTitleApproval: pick(options.manualTitleApproval, site.workflow.manualTitleApproval, global.workflow.manualTitleApproval),
     manualArticleApproval: pick(options.manualArticleApproval, site.workflow.manualArticleApproval, global.workflow.manualArticleApproval),
     reviewThreshold: pick(options.reviewThreshold, site.seo.reviewThreshold, global.seo.reviewThreshold),

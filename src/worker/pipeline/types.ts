@@ -23,6 +23,8 @@ export interface AskOptions {
   fresh?: boolean;
   attachments?: ChatGPTAttachment[];
   expectImages?: boolean;
+  /** Image search: the extension also saves the picture gallery ChatGPT shows with its answer. */
+  expectGallery?: boolean;
   /** Distinguishes several prompts within one stage (e.g. humanizer batches). */
   part?: string;
 }
@@ -37,6 +39,8 @@ export type ChatGPTOutcome =
       prompt: string;
       reused: boolean;
       images: { mediaAssetId: string }[];
+      /** Gallery pictures the extension could not download itself (image search). */
+      imageLinks: { url: string; width?: number; height?: number }[];
     }
   | { status: 'waiting'; prompt: string };
 

@@ -132,10 +132,15 @@
         const tool = t.tool ? `<div data-testid="tool-call-block">Searching the web for sources…</div><details><summary>Thought for 3s</summary><div class="markdown">Planning: I will search first.</div></details>` : '';
         const isLast = i === turns.length - 1;
         const img = t.image ? (isLast && window.__generating ? '<div class="image-placeholder">Creating image…</div>' : `<img alt="Generated image" src="${t.image}" width="1024" height="576">`) : '';
-        const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>`;
+        const doneStreaming = !(isLast && window.__generating);
+        const gallery =
+          t.gallery && doneStreaming
+            ? `<div class="image-gallery">${Array.from({ length: t.gallery }, (_, k) => `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`).join('')}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
+            : '';
+        const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>${gallery}`;
         if (C.turnMarkup === 'article') return `<article data-testid="conversation-turn-${i}" data-turn="assistant"><h6 class="sr-only">ChatGPT said:</h6><div data-message-author-role="assistant">${content}</div></article>`;
         if (C.turnMarkup === 'units') {
-          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${md(t.text || '')}</div><div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
+          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${md(t.text || '')}</div>${gallery}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
         }
         return std
           ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="assistant">${content}</div></div>`
@@ -161,7 +166,12 @@
     const chips = (window.__chips || []).map((n) => `<div data-testid="attachment-tile">${esc(n)}</div>`).join('');
     const keepDraft = document.querySelector('#prompt-textarea, textarea');
     const draft = keepDraft ? (keepDraft.tagName === 'TEXTAREA' ? keepDraft.value : keepDraft.innerHTML) : '';
-    root.innerHTML = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form></main>`;
+    const dlg = window.__dlg;
+    const dialog =
+      dlg && dlg.count
+        ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+        : '';
+    root.innerHTML = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form></main>${dialog}`;
     const ed = document.querySelector('#prompt-textarea, textarea');
     if (ed && draft && !generating) {
       if (ed.tagName === 'TEXTAREA') ed.value = draft;
@@ -175,6 +185,35 @@
     if (!ed) return '';
     return ed.tagName === 'TEXTAREA' ? ed.value : ed.innerText;
   }
+
+  // Gallery viewer: a thumbnail opens it, Next steps through the pictures, Close / Escape closes it.
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    const thumb = t.closest('.gal-thumb');
+    if (thumb) {
+      const imgs = document.querySelectorAll('.gal-thumb');
+      window.__dlg = { k: Number(thumb.getAttribute('data-k')), count: imgs.length };
+      window.__galleryOpened = (window.__galleryOpened || 0) + 1;
+      render();
+      return;
+    }
+    if (t.closest('[role="dialog"] button[aria-label="Next"]') && window.__dlg) {
+      window.__dlg = { ...window.__dlg, k: Math.min(window.__dlg.count - 1, window.__dlg.k + 1) };
+      render();
+      return;
+    }
+    if (t.closest('[role="dialog"] button[aria-label="Close"]')) {
+      window.__dlg = null;
+      render();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && window.__dlg) {
+      window.__dlg = null;
+      render();
+    }
+  });
 
   function wire() {
     const send = document.querySelector('[data-testid="send-button"], button[aria-label="Send prompt"]');
@@ -237,7 +276,9 @@
       image = `/backend-api/estuary/content?id=file_${S.sends}&sig=test`;
       full = full.slice(6).trim();
     }
-    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0, image });
+    const galleryAnswer = C.galleryCount && /image gallery/i.test(text);
+    if (galleryAnswer) full = 'Here are recent photos.';
+    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0, image, gallery: galleryAnswer ? C.galleryCount : 0, galleryLinks: galleryAnswer ? C.galleryLinks || [] : [] });
     save(id, turns);
     window.__generating = true;
     render();

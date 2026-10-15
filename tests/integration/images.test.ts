@@ -7,7 +7,7 @@ import type { BrowserContext } from 'playwright';
 import type { PrismaClient, Website } from '@prisma/client';
 import { setupTestDb } from '../helpers/test-db';
 import { configureTestBrowser } from '../helpers/browser';
-import { makeDriver } from '../helpers/drive';
+import { makeDriver, type ScriptedAnswer } from '../helpers/drive';
 import { cannedAnswer } from '../helpers/fake-answers';
 import { startFakeWordPress, type FakeWp } from '../fixtures/fake-wordpress';
 
@@ -97,7 +97,7 @@ beforeAll(async () => {
       return res.end(JSON.stringify({ query: { pages: commonsPages } }));
     }
     const file = files.get(url.pathname.slice(1));
-    if (host === 'upload.wikimedia.org' && file) {
+    if ((host === 'upload.wikimedia.org' || host === 'news.example') && file) {
       res.writeHead(200, { 'Content-Type': 'image/jpeg' });
       return res.end(file);
     }
@@ -107,10 +107,13 @@ beforeAll(async () => {
   await new Promise<void>((r) => commons.listen(0, '127.0.0.1', r));
   PORT = (commons.address() as AddressInfo).port;
   net.setLinkNetworkForTests(async (host) => {
-    if (['commons.wikimedia.org', 'upload.wikimedia.org'].includes(host)) return [{ address: '127.0.0.1', family: 4 }];
+    if (['commons.wikimedia.org', 'upload.wikimedia.org', 'news.example'].includes(host)) return [{ address: '127.0.0.1', family: 4 }];
     throw new Error('ENOTFOUND');
-  }, ['commons.wikimedia.org', 'upload.wikimedia.org']);
+  }, ['commons.wikimedia.org', 'upload.wikimedia.org', 'news.example']);
   (await import('@/images/sources/wikimedia')).setCommonsApiBaseForTests(`http://commons.wikimedia.org:${PORT}/w/api.php`);
+  // These tests cover the Wikimedia Commons source; the ChatGPT image-search source switches it on itself.
+  const { updateSettings } = await import('@/lib/settings');
+  await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
 });
 
 afterAll(async () => {
@@ -236,6 +239,46 @@ describe('Image Studio (IMAGES stage)', () => {
     const gallery = await client.mediaAsset.findMany({ where: { taskId: t.id, origin: 'WIKIMEDIA' } });
     expect(gallery.every((g) => g.sourceUrl?.includes('commons.wikimedia.org'))).toBe(true);
     expect(t.assembledHtml).toContain('alt="Photo of Tom Kaulitz"');
+  });
+
+  it('celebrity article, ChatGPT image search (owner’s earlier tool): gallery pictures and downloaded links, thumbnails skipped, distinct photos per slot', async () => {
+    const { updateSettings } = await import('@/lib/settings');
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' } });
+    try {
+      files.set('news-photo.jpg', await solid(30, 140, 200));
+      const pictures = [await solid(200, 60, 60), await solid(60, 200, 60), await solid(10, 10, 10, 240, 135)];
+      const searches: string[] = [];
+      const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string): ScriptedAnswer => {
+        if (/show them as an image gallery/.test(prompt)) {
+          searches.push(prompt);
+          return { text: 'Here are recent photos.', images: pictures, imageLinks: [{ url: `http://news.example:${PORT}/news-photo.jpg`, width: 1600, height: 1067 }] };
+        }
+        return cannedAnswer(stageKey, prompt, language, keyword);
+      };
+      const site = await offlineSite('Celeb Gallery');
+      await addLogo(site.id);
+      const driver = makeDriver(client, answer);
+      const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
+      const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Tom Kaulitz Heidi Klum', websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'img:celeb-gallery' }, { source: 'SINGLE' });
+      const t = await driver.drive(task.id);
+      expect(searches).toHaveLength(1);
+      expect(searches[0]).toMatch(/real photos of Tom Kaulitz/);
+      const data = await stageData(t.id, 'IMAGES');
+      const notes = data.notes.join(' | ');
+      expect(notes).toMatch(/ChatGPT image search: 3 usable photo\(s\)/);
+      expect(notes).toMatch(/1 gallery picture\(s\) downloaded from their links/);
+      expect(notes).toMatch(/smaller than 250 px/);
+      expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+      const sources = data.slots.flatMap((s: { sourceAssetIds: string[] }) => s.sourceAssetIds);
+      expect(new Set(sources).size).toBe(sources.length);
+      const linked = await client.mediaAsset.findFirst({ where: { taskId: t.id, origin: 'CHATGPT', sourceUrl: { contains: 'news.example' } } });
+      expect(linked).not.toBeNull();
+      expect(data.gallery.every((g: { source: string }) => g.source === 'ChatGPT image search')).toBe(true);
+      // Commons was not asked (source: ChatGPT gallery only).
+      expect(await client.mediaAsset.count({ where: { taskId: t.id, origin: 'WIKIMEDIA' } })).toBe(0);
+    } finally {
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
+    }
   });
 
   it('degrades safely: no photos → text-only with a note, or review when images are required', async () => {

@@ -254,6 +254,9 @@ model ChatGPTResponse {
   renderedPrompt      String
   resultText          String?
   resultHtml          String?
+  /// Image-search gallery pictures the extension could not download itself: JSON [{ url, width?, height? }],
+  /// fetched by the IMAGES stage through the SSRF-safe fetcher.
+  imageLinks          String?
   conversationUrl     String?
   responseFingerprint String?
   recovered           Boolean       @default(false)

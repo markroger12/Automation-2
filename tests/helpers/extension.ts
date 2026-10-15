@@ -24,6 +24,9 @@ export async function launchWithExtension(options: { serverOrigin: string; key: 
   await installFakeChatGPT(context, options.config);
   let sw = context.serviceWorkers()[0];
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 30_000 });
+  // On a busy machine the worker can be reported before its extension APIs are bound: wait for chrome.storage.
+  const ready = await waitFor(() => sw.evaluate(() => Boolean((globalThis as { chrome?: { storage?: { local?: unknown } } }).chrome?.storage?.local)).catch(() => false), 15_000, 'extension service worker APIs', 200);
+  void ready;
   await sw.evaluate(async ({ origin, key }) => {
     await chrome.storage.local.set({ serverOrigin: origin, key });
   }, { origin: options.serverOrigin, key: options.key });

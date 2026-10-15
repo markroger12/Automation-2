@@ -1215,3 +1215,9 @@ Not re-run here: the real-WordPress e2e. Its one link assertion (`<a href="…"`
 **Not verified here**
 - The new same-person rule on the real pages: the fetched page texts are not in the report.
 - Why commons.wikimedia.org does not resolve on the owner's PC.
+
+**Follow-up (owner question: “images were off, why Wikimedia?”).**
+- **Why the photo search ran:** the IMAGES stage runs only when the article's settings have images on. The settings are fixed when the article starts, and this article's settings had images on.
+- **Not known from the report:** whether the owner switched off “Missing images → Needs review” rather than “Article images”, or switched images off after this article had started. The report did not include the settings snapshot.
+- **Change:** the article report now includes the settings the article ran with (`settingsUsed`) and its form options. Unit test.
+- **Image sources, as the spec says:** celebrity articles collect a photo gallery (Wikimedia Commons here) for the site's template; Tigram/general articles generate their images with ChatGPT.

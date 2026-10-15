@@ -63,6 +63,9 @@ export async function articleReport(taskId: string) {
       tags: json(task.tags),
       metrics: json(task.metrics),
       conversationUrl: task.conversationUrl,
+      // The settings this article runs with, fixed when it started (later changes in Settings do not apply to it).
+      settingsUsed: json(task.configSnapshot),
+      options: json(task.options),
       wordpress: { postId: task.wpPostId, editUrl: task.wpEditUrl, status: task.wpPostStatus, draftAt: task.wpDraftAt, verifiedAt: task.wpVerifiedAt, slug: task.wpSlug },
       createdAt: task.createdAt,
       startedAt: task.startedAt,

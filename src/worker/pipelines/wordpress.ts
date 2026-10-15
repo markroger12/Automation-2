@@ -411,7 +411,13 @@ async function runRankMath(ctx: PipelineContext): Promise<StageResult> {
   // C. Report — the score is only what Rank Math showed; never computed here.
   const reasons: string[] = [];
   if (active && !fieldCheck.ok) reasons.push(...fieldCheck.problems.map((p) => `Rank Math field check: ${p}`));
-  if (active && score === null) reasons.push('Rank Math score could not be read from the editor (not verified).');
+  if (active && score === null) {
+    reasons.push(
+      rm?.zeroOnly
+        ? 'Rank Math showed 0 / 100 for the whole check: it had not analysed the content in the editor, so no score is verified. Open the draft in WordPress to see the real score.'
+        : 'Rank Math score could not be read from the editor (not verified).',
+    );
+  }
   if (active && score !== null && score < target) {
     const open = (rm?.recommendations ?? []).filter((r) => r.state === 'fail').map((r) => r.text);
     reasons.push(`Rank Math score ${score} is below the target ${target} after ${rounds.length} correction round(s).${open.length ? ` Open: ${open.slice(0, 5).join(' · ')}` : ''}`);

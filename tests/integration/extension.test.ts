@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.1.4');
+    expect(ext?.version).toBe('3.1.5');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -298,6 +298,24 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(done.resultText).toContain('QUESTION: Frage 1 zu Gloria Krass?\nANSWER: Antwort 1 in einem Satz.');
     const { parseFaqs } = await import('@/modules/celebrity-writer/parsers');
     expect(parseFaqs(done.resultText!)).toHaveLength(5);
+  });
+
+  it('long conversation with only the last turns in the page: each follow-up finds its own prompt and answer', async () => {
+    // The owner's live run: after the long article stages, QUICK_BIO waited 600 s although ChatGPT had answered.
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', virtualize: 2, answers: ['First answer: alpha.', 'Second answer: beta.', 'Third answer: gamma.'] };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const first = await request('First prompt in a long conversation');
+    const one = await responseDone(first.responseId, 60_000);
+    expect(one.resultText).toContain('alpha');
+    const second = await request('Second prompt in a long conversation', { conversationUrl: one.conversationUrl, newChat: false });
+    const two = await responseDone(second.responseId, 60_000);
+    expect(two.status).toBe('COMPLETED');
+    expect(two.resultText).toContain('beta');
+    const third = await request('Third prompt in a long conversation', { conversationUrl: one.conversationUrl, newChat: false });
+    const three = await responseDone(third.responseId, 60_000);
+    expect(three.resultText).toContain('gamma');
+    expect(three.recovered).toBe(false);
+    expect((await fakeStats()).sends).toBe(3);
   });
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {

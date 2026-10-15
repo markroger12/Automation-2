@@ -26,6 +26,11 @@ export interface FakeWpOptions {
   rankMath?: boolean;
   /** Highest score the fake panel will show (to test an unreachable target). */
   rankMathScoreCap?: number;
+  /**
+   * Rank Math before its analysis has run: its store reports 0 and the panel shows "0 / 100".
+   * 'store-zero': the panel shows the real score after 4 s (the store stays 0); 'never': it stays 0. Default 'off'.
+   */
+  rankMathPending?: 'off' | 'store-zero' | 'never';
   /** Number of upcoming post creates whose HTTP answer is dropped after the post was created. */
   dropCreateAcks?: number;
   /** Number of upcoming media uploads whose HTTP answer is dropped after the file was stored. */
@@ -164,7 +169,7 @@ function gutenbergPage(o: FakeWp['options'], post: FakePost, adminBar: string, o
             didPostSaveRequestSucceed: function () { return ok; }
           };
           if (store === 'core/block-editor') return { getBlocks: function () { return ready ? blocks : []; } };
-          ${o.rankMath ? `if (store === 'rank-math') return { getKeywords: function () { return post.meta.rank_math_focus_keyword || ''; }, getSerpTitle: function () { return post.meta.rank_math_title || ''; }, getSerpDescription: function () { return post.meta.rank_math_description || ''; } };` : ''}
+          ${o.rankMath ? `if (store === 'rank-math') return { getKeywords: function () { return post.meta.rank_math_focus_keyword || ''; }, getSerpTitle: function () { return post.meta.rank_math_title || ''; }, getSerpDescription: function () { return post.meta.rank_math_description || ''; }${o.rankMathPending !== 'off' ? ', getSEOScore: function () { return 0; }' : ''} };` : ''}
           return null;
         },
         dispatch: function (store) {
@@ -174,7 +179,13 @@ function gutenbergPage(o: FakeWp['options'], post: FakePost, adminBar: string, o
         }
       } };
       window.__basPublish = function () { return save('publish'); };
-      ${rm ? `setTimeout(function () { document.getElementById('rm-score').textContent = ${JSON.stringify(`${rm.score} / 100`)}; }, 900);` : ''}
+      ${
+        !rm
+          ? ''
+          : o.rankMathPending !== 'off'
+            ? `setTimeout(function () { document.getElementById('rm-score').textContent = '0 / 100'; }, 300);${o.rankMathPending === 'store-zero' ? ` setTimeout(function () { document.getElementById('rm-score').textContent = ${JSON.stringify(`${rm.score} / 100`)}; }, 4000);` : ''}`
+            : `setTimeout(function () { document.getElementById('rm-score').textContent = ${JSON.stringify(`${rm.score} / 100`)}; }, 900);`
+      }
     })();`;
   return html(
     o.language,
@@ -220,6 +231,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     overlay: opts.overlay ?? false,
     rankMath: opts.rankMath ?? false,
     rankMathScoreCap: opts.rankMathScoreCap ?? 100,
+    rankMathPending: opts.rankMathPending ?? 'off',
     dropCreateAcks: opts.dropCreateAcks ?? 0,
     dropMediaAcks: opts.dropMediaAcks ?? 0,
     role: opts.role ?? 'administrator',

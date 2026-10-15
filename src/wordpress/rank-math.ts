@@ -34,6 +34,8 @@ export interface RankMathReading {
   scoreText: string | null;
   scoreVia: string | null;
   recommendations: RankMathRecommendation[];
+  /** Rank Math showed only 0 during the whole check: it had not analysed the content (no score verified). */
+  zeroOnly?: boolean;
 }
 
 /** "82 / 100", "82/100", "SEO: 82", "82" → 82. Anything else → null (never guessed). */

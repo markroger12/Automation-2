@@ -3,11 +3,11 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Ban, ExternalLink, Play, RotateCcw } from 'lucide-react';
+import { Ban, Download, ExternalLink, Play, RotateCcw } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, CopyButton, RelativeTime, Tabs, useToast } from '@/components/client';
-import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, cx, formatDateTime, formatDuration } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, buttonClasses, cx, formatDateTime, formatDuration } from '@/components/ui';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
 import { ArticleExtraTabs, EXTRA_TABS } from './extra-tabs';
 import { WordPressTab } from './wordpress-tab';
@@ -114,7 +114,11 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
           </span>
         }
         actions={
-          task.legacy ? null : (
+          <>
+            <a className={buttonClasses('secondary')} href={`/api/tasks/${task.id}/report`} download title="Everything about this article (stages, prompts, answers, checks, logs) in one file, to keep or share for support">
+              <Download className="h-4 w-4" /> Report
+            </a>
+            {task.legacy ? null : (
             <>
               {task.status === 'LOGIN_REQUIRED' || task.status === 'PAUSED' ? (
                 <Button onClick={() => void action('resume')} loading={busy === 'resume'}>
@@ -137,7 +141,8 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
                 </a>
               ) : null}
             </>
-          )
+            )}
+          </>
         }
       />
 

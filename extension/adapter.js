@@ -277,38 +277,69 @@
   const LOOSE_PREFIX = 200;
 
   /**
-   * Find the user turn that is this prompt, newest first.
-   * Without evidence only an exact match counts (normalized SHA-256; very long prompts: same 300-char prefix and
-   * length within 1%). With evidence — the app recorded that it sent this prompt — the page's own rendering may
-   * differ: a loose match of the whole text, or the LAST user turn starting with the prompt's first 200 loose
-   * characters (a long prompt shown shortened, or with extra UI text), also counts.
+   * Does this user turn show this prompt? Exact: normalized SHA-256, or for very long prompts the same 300-char
+   * prefix and length within 1%. With evidence — the app recorded that it sent this prompt — the page's own
+   * rendering may differ: a loose match of the whole text, or (only for the newest user turn) the prompt's first
+   * 200 loose characters, as when a long prompt is shown shortened or with extra UI text.
    */
-  async function findSubmittedPrompt(promptHash, prompt, opts) {
-    const users = userMessages();
-    for (let i = users.length - 1; i >= 0; i--) {
-      const text = normalizeForHash(messageText(users[i]));
-      if (!text) continue;
-      if ((await sha256Hex(text)) === promptHash) return { element: users[i], index: i, match: 'hash' };
-    }
+  async function promptTurnMatch(el, promptHash, prompt, opts) {
+    const text = normalizeForHash(messageText(el));
+    if (!text) return null;
+    if ((await sha256Hex(text)) === promptHash) return 'hash';
     const wanted = normalizeForHash(prompt);
-    for (let i = users.length - 1; i >= 0; i--) {
-      const text = normalizeForHash(messageText(users[i]));
-      if (wanted.length > 2000 && text.slice(0, 300) === wanted.slice(0, 300) && Math.abs(text.length - wanted.length) / wanted.length < 0.01) {
-        return { element: users[i], index: i, match: 'prefix' };
-      }
-    }
+    if (wanted.length > 2000 && text.slice(0, 300) === wanted.slice(0, 300) && Math.abs(text.length - wanted.length) / wanted.length < 0.01) return 'prefix';
     if (!(opts && opts.evidence)) return null;
     const loose = looseText(prompt);
+    const shown = looseText(text);
+    if (shown === loose) return 'loose';
+    const k = Math.min(LOOSE_PREFIX, loose.length);
+    if (opts.isLast && k > 0 && shown.length >= k && shown.slice(0, k) === loose.slice(0, k)) return 'last-turn-prefix';
+    return null;
+  }
+
+  /** Find the user turn that is this prompt, newest first (see promptTurnMatch for what counts). */
+  async function findSubmittedPrompt(promptHash, prompt, opts) {
+    const users = userMessages();
+    // Exact matches first (any turn), then the evidence-only loose rules.
     for (let i = users.length - 1; i >= 0; i--) {
-      if (looseText(messageText(users[i])) === loose) return { element: users[i], index: i, match: 'loose' };
+      const match = await promptTurnMatch(users[i], promptHash, prompt, null);
+      if (match) return { element: users[i], index: i, match };
     }
-    const last = users.length - 1;
-    if (last >= 0) {
-      const shown = looseText(messageText(users[last]));
-      const k = Math.min(LOOSE_PREFIX, loose.length);
-      if (k > 0 && shown.length >= k && shown.slice(0, k) === loose.slice(0, k)) return { element: users[last], index: last, match: 'last-turn-prefix' };
+    if (!(opts && opts.evidence)) return null;
+    for (let i = users.length - 1; i >= 0; i--) {
+      const match = await promptTurnMatch(users[i], promptHash, prompt, { evidence: true, isLast: i === users.length - 1 });
+      if (match) return { element: users[i], index: i, match };
     }
     return null;
+  }
+
+  /**
+   * A stable key for a turn, independent of which turns the page currently renders (long conversations keep only
+   * the last turns in the DOM, so positions shift): the search-unit key, the message id or the turn's test id.
+   */
+  function turnKey(el) {
+    const holder = el.closest('[data-content-search-unit-key], [data-chatgpt-search-unit-key], [data-message-id], [data-testid^="conversation-turn"]');
+    if (!holder) return null;
+    return holder.getAttribute('data-content-search-unit-key') || holder.getAttribute('data-chatgpt-search-unit-key') || holder.getAttribute('data-message-id') || holder.getAttribute('data-testid');
+  }
+
+  /**
+   * The user turn of a prompt this tab just sent: the newest turn showing the prompt that was not on the page before
+   * sending (by turn key). Falls back to the newest new turn, then to the position counted before sending.
+   */
+  async function sentPromptTurn(promptHash, prompt, opts) {
+    const users = userMessages();
+    const isNew = (el) => {
+      const key = turnKey(el);
+      return !key || !opts.priorKeys || !opts.priorKeys.includes(key);
+    };
+    for (let i = users.length - 1; i >= 0; i--) {
+      if (!isNew(users[i])) continue;
+      if (await promptTurnMatch(users[i], promptHash, prompt, { evidence: true, isLast: i === users.length - 1 })) return users[i];
+    }
+    const newest = users[users.length - 1];
+    if (newest && opts.priorKeys && turnKey(newest) && isNew(newest)) return newest;
+    return users[opts.fallbackIndex] || null;
   }
 
   // Markers of the ChatGPT layouts this adapter knows, counted for the owner when nothing matches.
@@ -614,6 +645,8 @@
     normalizeForHash,
     sha256Hex,
     findSubmittedPrompt,
+    sentPromptTurn,
+    turnKey,
     promptMismatchReport,
     looseText,
     assistantAfter,

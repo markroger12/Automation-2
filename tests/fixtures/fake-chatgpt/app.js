@@ -111,8 +111,11 @@
       return;
     }
     const turns = id && !window.__historyHidden ? convs[id].turns : [];
+    // virtualize: like a long real conversation, only the last N turns are in the DOM (indexes stay absolute).
+    const first = C.virtualize ? Math.max(0, turns.length - C.virtualize) : 0;
     const turnHtml = turns
       .map((t, i) => {
+        if (i < first) return '';
         if (t.role === 'user') {
           const shortened = C.userDisplay === 'short' && t.text.length > 300;
           const body = shortened ? `<div class="whitespace-pre-wrap">${esc(t.text.slice(0, 300))}…</div><button type="button">Show more</button>` : `<div class="whitespace-pre-wrap">${esc(t.text)}</div>`;

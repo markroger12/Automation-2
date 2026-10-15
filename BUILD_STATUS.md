@@ -1126,3 +1126,52 @@ npm run build                                              # compiled
 - 3.1.4 on the owner's page.
 - The exact CSS of the new layout's answer paragraphs (inferred).
 - Stages saved earlier with 3.1.3 may have lost line breaks inside paragraphs. That is harmless for article prose and tables; the saved RESEARCH notes were not checked.
+
+### Fifth report: first live article reached WordPress (draft #7479); slow QUICK_BIO, Rank Math “0”, report download (extension 3.1.5)
+
+**Reported by the owner** (screenshots and console output), with 3.1.4:
+- The article went through every stage. WordPress draft #7479 was created and verified as a draft.
+- The article stopped at **Needs review** with four reasons:
+  - three unsupported family/relationship claims from the research evidence;
+  - “Rank Math score 0 is below the target 75 after 0 correction round(s)”.
+- **QUICK_BIO took 11.2 min:** “No complete answer within 600s → retry-reconcile”, then the answer was “recovered after interruption” a minute later.
+- **EXTERNAL_LINKS took 6.1 min**, also “recovered after interruption”.
+- The owner asked how to send the full details of an article.
+
+**Cause 1 — the answer was looked up by position.**
+- The extension counted the user turns on the page before sending and then waited for the answer after turn number N.
+- Long ChatGPT conversations keep only their last turns in the page. After the long LONG_ARTICLE and FINAL_ARTICLE answers, turn N was not the new prompt, so the answer was never found until the job timed out.
+- After the restart, the prompt was found by its text and the answer recovered at once.
+- The fake ChatGPT can now keep only the last N turns in the page (`virtualize`). New test: three prompts in one long conversation. The current extension stalled on the second prompt (“Timed out waiting for ChatGPT response”), like the owner's QUICK_BIO.
+- **3.1.5** finds the user turn of the prompt it just sent by its text and by a turn key that was not on the page before sending (search-unit key, message id or turn test id), never by position alone.
+
+**Cause 2 — Rank Math's pre-analysis 0 was taken as the score.**
+- Rank Math reports 0 (in its data store and its panel) until it has analysed the content. The reader accepted three equal reads of 0 as the score.
+- Now 0 means “not analysed yet”. After 3 s of zeros the Rank Math panel is opened, and only a positive score that holds for three reads is a result.
+- If Rank Math shows only 0 during the whole check, no score is claimed. The review reason then says so: “Rank Math showed 0 / 100 for the whole check …”.
+- The fake WordPress can now simulate this (`rankMathPending`). Two new tests:
+  - with the old reader, the delayed-score test fails with score 0, as in the owner's run; with the new reader it gets the real score;
+  - a Rank Math that never analyses claims no score and gives the new reason.
+- **Not verified on the owner's site:** whether their Rank Math analyses in the automated editor at all. If it never does, the draft will now say “not verified” instead of “0”.
+
+**New — article report.** The article page has a **Report** button. It downloads one JSON file with everything about that article, for support. Strings pass through the diagnostic bundle's redaction. Unit test. The file holds:
+- the task and its review reasons, every stage with its prompt and output, and every ChatGPT exchange (prompt, answer, status, recovered);
+- the quality reports, SEO reports and the research evidence;
+- internal-link decisions, WordPress / Rank Math verification, recovery incidents and the article's logs.
+
+**Not investigated yet.** The three “unsupported family/relationship claim” reasons quote sentences that read like research commentary in the article: “Der geplante Titel … ist durch die Recherche eindeutig gedeckt”, “Diese Quellen reichen aus …”. Where they came from needs the article's report.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "only the last turns in the page"
+                                                           # 3.1.4: timed out on the second prompt; 3.1.5: passed
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts -t "Rank Math still at 0|never analyses"
+                                                           # old reader: score 0 (fails); new: real score / no score + reason
+npx vitest run tests/unit/article-report.test.ts           # 1 passed
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 38 files, 258 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts          # 25/25
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts   # 10/10
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-session.test.ts  # 6/6
+npm run build                                              # compiled
+```

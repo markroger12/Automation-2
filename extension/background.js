@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.1.4';
+const EXTENSION_VERSION = '3.1.5';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'multi-tab', 'continue-generating', 'outbox'];
 

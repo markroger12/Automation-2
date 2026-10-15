@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.1.4';
+  const EXTENSION_VERSION = '3.1.5';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -182,7 +182,12 @@
    * { text, html }. The anchor is re-resolved on every check because the page
    * re-renders (React) and replaces DOM nodes.
    */
-  async function waitForAnswer(userIndex, config, expectImages) {
+  /**
+   * `anchor` = { job, priorKeys, fallbackIndex }: the prompt's user turn is found by its text (and, after a send, by a
+   * turn key that was not on the page before), never by position alone — long conversations keep only their last
+   * turns in the page, so positions shift.
+   */
+  async function waitForAnswer(anchor, config, expectImages) {
     const timeoutMs = (config.generationTimeoutSec || 600) * 1000;
     const started = Date.now();
     let lastText = '';
@@ -205,7 +210,7 @@
       }
       const limit = A.limitInfo();
       const generating = A.isGenerating();
-      const userEl = A.userMessages()[userIndex] || null;
+      const userEl = await A.sentPromptTurn(anchor.job.promptHash, anchor.job.prompt, anchor);
       const assistants = userEl ? A.assistantAfter(userEl) : [];
       let answerEl = null;
       let errorTurn = null;
@@ -340,7 +345,7 @@
       const isLastUserTurn = existing && existing.index === A.userMessages().length - 1;
       if (existing && (evidence || (isLastUserTurn && !job.fresh))) {
         progress(`found the prompt already sent (${existing.match}); recovering its answer instead of resending`, { sent: true, sentAt: new Date().toISOString() });
-        const answer = await waitForAnswer(existing.index, config, job.expectImages);
+        const answer = await waitForAnswer({ job, priorKeys: null, fallbackIndex: existing.index }, config, job.expectImages);
         const images = job.expectImages ? await uploadImages(job, answer.images) : [];
         post('complete', { text: answer.text, html: answer.html, images, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
         return;
@@ -357,6 +362,7 @@
       const confirm = await chrome.runtime.sendMessage({ type: 'pre-send-check', jobId: job.id });
       if (confirm && confirm.cancel) throw new JobError('CANCELLED', 'Cancelled before sending');
       const before = A.userMessages().length;
+      const priorKeys = A.userMessages().map(A.turnKey).filter(Boolean);
       await chrome.runtime.sendMessage({ type: 'checkpoint', jobId: job.id, operationId: job.operationId, step: 'sending', userTurnsBefore: before }).catch(() => {});
       const userEl = await sendOnce(before);
       const sentAt = new Date().toISOString();
@@ -365,7 +371,7 @@
       for (let i = 0; i < 40 && !realConversationUrl(); i++) await sleep(500);
       progress('prompt sent; waiting for the answer', { sent: true, sentAt });
       void userEl;
-      const answer = await waitForAnswer(before, config, job.expectImages);
+      const answer = await waitForAnswer({ job, priorKeys, fallbackIndex: before }, config, job.expectImages);
       const images = job.expectImages && answer.images.length ? await uploadImages(job, answer.images) : [];
       if (!answer.text && !images.length) throw new JobError('ERROR', 'The answer was empty.');
       post('complete', { text: answer.text, html: answer.html, images, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });

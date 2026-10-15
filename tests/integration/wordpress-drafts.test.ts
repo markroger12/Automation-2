@@ -111,6 +111,36 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     expect(await client.productionMetric.count({ where: { kind: 'ARTICLE_VERIFIED', taskId: task.id } })).toBe(1);
   });
 
+  it('Rank Math still at 0 while it analyses: the real score is waited for, never reported as 0', async () => {
+    // The owner's first live draft was reported as "Rank Math score 0": Rank Math shows 0 until its analysis has run.
+    const wp = await startFakeWordPress({ rankMath: true, rankMathPending: 'store-zero' });
+    servers.push(wp);
+    const site = await loggedInSite(wp, 'RM Pending');
+    const driver = makeDriver(client, answer);
+    const task = await celebTask(site, 'Tom Kaulitz Heidi Klum', 'rm-pending');
+    const t = await driver.drive(task.id);
+    const report = await stageData(task.id, 'RANKMATH');
+    expect(report.score).toBeGreaterThan(0);
+    expect(t.rankMathScore).toBe(report.score);
+    expect(report.scoreText).toBe(`${report.score} / 100`);
+    expect(t.reviewReasons ?? '').not.toMatch(/Rank Math score 0 /);
+  });
+
+  it('Rank Math that never analyses: no score is claimed and the review reason says why', async () => {
+    const wp = await startFakeWordPress({ rankMath: true, rankMathPending: 'never' });
+    servers.push(wp);
+    const site = await loggedInSite(wp, 'RM Never');
+    const driver = makeDriver(client, answer);
+    const task = await celebTask(site, 'Tom Kaulitz Heidi Klum', 'rm-never');
+    const t = await driver.drive(task.id);
+    expect(t.status).toBe('NEEDS_REVIEW');
+    expect(t.rankMathScore).toBeNull();
+    expect(t.reviewReasons).toMatch(/Rank Math showed 0 \/ 100 for the whole check/);
+    expect(t.reviewReasons).not.toMatch(/below the target/);
+    const report = await stageData(task.id, 'RANKMATH');
+    expect(report.score).toBeNull();
+  });
+
   it('an unreachable Rank Math target stops after the bounded rounds with specific review reasons', async () => {
     const wp = await startFakeWordPress({ rankMath: true, rankMathScoreCap: 60 });
     servers.push(wp);

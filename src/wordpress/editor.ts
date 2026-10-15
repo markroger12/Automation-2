@@ -88,11 +88,27 @@ async function readRankMath(page: Page, opts: InspectOptions): Promise<RankMathR
   const script = rankMathReadScript({ score: selectorsFor('rankMathScore', opts.selectorOverrides), recommendations: selectorsFor('rankMathRecommendations', opts.selectorOverrides) });
   const deadline = Date.now() + (opts.rankMathWaitMs ?? 20_000);
   type Raw = Omit<RankMathReading, 'score'> & { storeScore: number | null };
+  // Rank Math shows 0 (in its store and its panel) until it has analysed the content: 0 is "not computed yet",
+  // never a result. Prefer a positive store value, then a positive panel value.
+  const scoreOf = (raw: Raw): { score: number | null; via: string | null; zero: boolean } => {
+    const panel = parseRankMathScore(raw.scoreText);
+    if (raw.storeScore !== null && raw.storeScore > 0) return { score: raw.storeScore, via: 'store', zero: false };
+    if (panel !== null && panel > 0) return { score: panel, via: raw.scoreVia, zero: false };
+    return { score: null, via: null, zero: raw.storeScore === 0 || panel === 0 };
+  };
   let last: Raw | null = null;
+  let lastScore: { score: number | null; via: string | null; zero: boolean } = { score: null, via: null, zero: false };
+  let sawPositive = false;
+  let sawZero = false;
   let stable = 0;
   let previousScore: number | null = null;
   let openedPanel = false;
   const started = Date.now();
+  const openPanel = async () => {
+    openedPanel = true;
+    const trigger = page.locator(anyOf('rankMathTabTrigger', opts.selectorOverrides)).first();
+    if ((await trigger.count().catch(() => 0)) > 0) await trigger.click({ timeout: 3000 }).catch(() => {});
+  };
   while (Date.now() < deadline) {
     const raw = (await page.evaluate(script).catch(() => null)) as Raw | null;
     // Nothing from Rank Math on the page after a few seconds: it is not active in this editor.
@@ -102,29 +118,30 @@ async function readRankMath(page: Page, opts: InspectOptions): Promise<RankMathR
     }
     if (raw) {
       last = raw;
-      const score = raw.storeScore ?? parseRankMathScore(raw.scoreText);
+      lastScore = scoreOf(raw);
+      if (lastScore.zero) sawZero = true;
+      const score = lastScore.score;
+      if (score !== null) sawPositive = true;
       if (score !== null && score === previousScore) stable++;
       else stable = 0;
       previousScore = score;
       // Rank Math recalculates as the editor settles: require three equal reads.
       if (score !== null && stable >= 2 && (raw.recommendations.length > 0 || openedPanel)) break;
-      if (score !== null && stable >= 2 && !openedPanel) {
-        openedPanel = true;
-        const trigger = page.locator(anyOf('rankMathTabTrigger', opts.selectorOverrides)).first();
-        if ((await trigger.count().catch(() => 0)) > 0) await trigger.click({ timeout: 3000 }).catch(() => {});
-      }
+      // Opening the Rank Math panel shows its checks and makes it analyse the content if it has not yet.
+      if (!openedPanel && ((score !== null && stable >= 2) || (score === null && Date.now() - started > 3000))) await openPanel();
     }
     await page.waitForTimeout(700);
   }
-  const score = last ? (last.storeScore ?? parseRankMathScore(last.scoreText)) : null;
+  const score = lastScore.score !== null && (stable >= 2 || lastScore.via === 'store') ? lastScore.score : null;
   return {
     present: Boolean(last?.present),
     fields: last?.fields ?? { focusKeyword: null, title: null, description: null },
     fieldsVia: last?.fieldsVia ?? null,
-    score: stable >= 2 || last?.storeScore !== null ? score : null,
+    score,
     scoreText: last?.scoreText ?? null,
-    scoreVia: last?.storeScore !== null && last?.storeScore !== undefined ? 'store' : (last?.scoreVia ?? null),
+    scoreVia: score !== null ? lastScore.via : null,
     recommendations: last?.recommendations ?? [],
+    zeroOnly: score === null && sawZero && !sawPositive,
   };
 }
 

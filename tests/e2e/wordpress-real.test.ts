@@ -297,6 +297,10 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
       await page.click('#wp-submit');
       await page.waitForSelector('#wpadminbar', { timeout: 60_000 });
       expect(await session.isLoggedIn(page)).toBe(true); // the hidden pop-up on every admin page does not count
+      // The admin bar renders before the footer scripts: connectNow() is a no-op until heartbeat.js has loaded,
+      // and the next regular dashboard tick is 60 s away.
+      await page.waitForFunction('!!(window.wp && wp.heartbeat && wp.heartbeat.connectNow)', null, { timeout: 30_000 });
+      await page.waitForLoadState('load');
       await context.clearCookies();
       await page.evaluate('window.wp && wp.heartbeat && wp.heartbeat.connectNow()');
       await page.waitForSelector('#wp-auth-check-wrap:not(.hidden) #wp-auth-check', { timeout: 60_000 });

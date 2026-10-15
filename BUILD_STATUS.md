@@ -24,7 +24,8 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M9 Retire 2.0 + editorial tools | ✅ done (scripted-ChatGPT + full-stack agent-protocol smoke; live ChatGPT not verified here) |
 | M10 Bulk campaigns and workflow | ✅ done (fake + real WordPress 6.5/6.7 scheduling verified; Search Console requests are manual, not automated) |
 | M11 Plagiarism evidence and hardening | ✅ done (plagiarism checker on a local fake web; hardening, diagnostics, a11y 0 violations; live checks in RELEASE_CHECKLIST §4 need the owner's PC) |
-| M12–M16 3.0 upgrades | ☐ |
+| M12 Duplicate detector, quality report, router rules | ✅ done |
+| M13–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
 
 ---
@@ -582,3 +583,62 @@ npm run start:all # smokes in Chromium against the built app + real worker:
 - The live checks in `RELEASE_CHECKLIST.md` §4 (real ChatGPT, real WordPress sites, Rank Math, live web sources, backup/restore on the owner's PC) and the **throughput benchmark** (≥ 6 verified drafts/hour). They need the owner's accounts and internet.
 - The CSP still allows inline scripts (`'unsafe-inline'`) because the Next.js bootstrap needs them. A nonce-based CSP would require rendering every page dynamically and is not done. HTML is sanitized before display instead.
 - Screen-reader testing by a person (axe only finds what can be detected automatically).
+
+## M12 — Duplicate Content Detector, unified quality report, router rules ✅
+
+**Working**
+- **Duplicate Content Detector** (upgrade 07; `src/lib/duplicates/`):
+  - **Before drafting** (DUPLICATE_PRECHECK, before any ChatGPT prompt):
+    - an exact or near-duplicate keyword on the same website (word order, plurals, small typos; different numbers stay different) pauses for review unless the owner allows a separate version;
+    - a published post on the same website whose title covers every content word of the keyword becomes a warning;
+    - the same keyword on other websites is noted, and their wording is compared at the quality gate.
+  - **At the quality gate**: the article is compared with every saved article on all websites (newest 500) using the plagiarism matcher (verified identical runs of 8+ words, sentence-level near matches, identical paragraphs).
+    - Runs made mostly of names, dates and numbers are counted as **shared facts**, not duplication, so two articles about the same person do not trip it. Text that recurs across the website (in 3+ other articles) is exempt.
+    - Severity: **HIGH** = at least 45 % of the words in duplicated runs (setting `duplicateSimilarityReview`), a 60-word identical run, or 3 identical paragraphs; **MEDIUM** = a third of that share, a 25-word run, 1 identical paragraph, or 4 similar sentences; **LOW** otherwise.
+    - HIGH stops the article before WordPress (hard stop `DUPLICATE_WORDING`); MEDIUM is a review warning; LOW is only recorded.
+    - Paragraph fingerprints (`ContentFingerprint`) and every overlap with its evidence (`DuplicateMatch`) are stored.
+  - **Duplicate Review** (`/duplicates`):
+    - overlaps side by side (identical wording / similar sentence / shared facts) with counts and the other article and website;
+    - actions: keep with a reason (at least 10 characters, audited `duplicate.override`, the paused article continues from the quality gate), write the text again (regenerates the writing stage), edit it yourself, or withdraw an override;
+    - nothing is deleted or rewritten automatically.
+- **ArticleQualityReport** (upgrade 12; `src/lib/quality/report.ts`):
+  - one stored record per evaluation: the gate's hard stops and warnings, each linked to its source stage, plus per-area evidence (SEO readiness and unmet checks, structure, research sources/uncertainty, duplicates, links, images);
+  - a second record after the WordPress step adds the draft read-back and Rank Math values as read from the editor;
+  - status PASS / REVIEW / BLOCKED, shown as a **Quality report** card on the article Overview. Nothing is computed to make a check pass.
+- **Smart Article Router — website rules** (upgrade 05):
+  - per-site rules (“keyword contains *phrase* → writer”, whole words, case-insensitive, at most 50, de-duplicated, audited `website.routing-rules`);
+  - precedence: the row's own choice > campaign default > website rule > classifier (UNKNOWN still asks you);
+  - used by Bulk Campaigns and the workflow, which now store the decision source (`SITE_RULE`); invalid stored rules never route;
+  - a **Writer rules** card on the website page with a “Try a keyword” preview; only the two active writers can be chosen.
+- **Upgrade safety**: migration `duplicates_quality_reports` adds three tables and a `Website` column, which makes Prisma rebuild the `Website` table (copy, drop, rename).
+  - Verified on a copy of a real smoke database (4 websites with categories, workflows, keywords, slot reservations, link targets and tasks): `npm run setup` took a backup, applied it, and left every row count identical, with no foreign-key violations.
+  - A new integration test (`migration-upgrade`) repeats this with the real `prisma migrate deploy` for the latest Website rebuild.
+- Test helper: scripted ChatGPT answers give every article identical text, which the detector rightly pauses. The test driver therefore records the owner's override (same path, with that reason) unless a test opts in with `detectDuplicates`. The new duplicate tests opt in.
+
+**Commands run (all passed)**
+```
+bash scripts/dev-create-migration.sh duplicates_quality_reports   # 3 new tables + Website.routingRules (Website table rebuilt)
+npm run setup  # on a copy of the M10b smoke database seeded with categories and link targets: backup written, 2 migrations
+               # applied, Website 4 / Category 4 / Workflow 4 / WorkflowKeyword 12 / SlotReservation 11 / LinkTarget 4 /
+               # ArticleTask 11 / ArticleStage 45 / QueueJob 14 / AuditLog 16 rows before and after; foreign_key_check empty
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 27 files, 192 tests (new: comparison + router rules 8, pipeline 4)
+npx vitest run --config vitest.integration.config.ts <file>  # 8 files, 46 tests, file by file, first attempt (new: migration-upgrade 1)
+npm run build                                              # compiled
+npm run start:all # UI smoke, throwaway data dir: two articles on two sites seeded with the real duplicate check + report;
+                  # /duplicates: heavy overlap “98 % … longest run 265 words · 8 identical paragraphs”, passages expand,
+                  # “Keep” disabled until a reason is typed, kept → “Kept by you” with the reason, withdraw → back to open;
+                  # article Overview: Quality report “stopped before WordPress” with the hard stop; website Writer rules:
+                  # rule added, “Try a keyword” → Celebrity Article Writer “Website rule: keyword contains ‘net worth’”,
+                  # saved and still there after reload; no HTTP or console errors
+npm run audit:a11y                                         # 46/46 page+theme combinations without any violation (incl. /duplicates)
+```
+Pipeline tests through the real engine:
+- A second article repeating the first's wording stops at the gate as `DUPLICATE_WORDING`, before any WordPress call. One HIGH match with the evidence, fingerprints stored, report BLOCKED.
+- A 2-character reason is refused. A proper reason is audited and the article continues to the WordPress step; the report records the override, and withdrawing it reopens the match.
+- A near-duplicate keyword pauses at the precheck without a single ChatGPT prompt. A published post covering the keyword is a warning. The other website's identical wording is still caught at the gate, naming that website.
+- A campaign preview routes by the website rule.
+
+**Not verified here**
+- How often real ChatGPT articles about the same person cross the thresholds. The fact-like rule (≥ 30 % names/dates/numbers in a run of ≤ 20 words) and the HIGH/MEDIUM thresholds are first settings and may need tuning on real output.
+- Published posts not written by this app are compared by title only: their body text is not in the link index.

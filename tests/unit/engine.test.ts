@@ -176,11 +176,14 @@ describe('stage engine', () => {
     await lifecycle.ensureArticleRun(task.id, 'test');
     expect(await runNext(task.id)).toBe('waiting');
     await answerChatGPT();
+    const failedAt = Date.now();
     expect(await runNext(task.id)).toBe('retry');
     let t = await client.articleTask.findUniqueOrThrow({ where: { id: task.id } });
     expect(t.message).toMatch(/Retry 1\/2/);
     const job = await client.queueJob.findFirstOrThrow({ where: { taskId: task.id, queue: 'article', status: 'WAITING' } });
-    expect(job.runAt.getTime()).toBeGreaterThan(Date.now());
+    // Backoff of 1 s (base delay, no jitter with random 0.5), measured from the failure: a loaded machine may pass
+    // that second before this line runs, so comparing with "now" was flaky.
+    expect(job.runAt.getTime()).toBeGreaterThanOrEqual(failedAt + 1000);
     expect(await runNext(task.id)).toBe('completed');
     t = await client.articleTask.findUniqueOrThrow({ where: { id: task.id } });
     expect(t.status).toBe('COMPLETED');
@@ -278,6 +281,33 @@ describe('stage engine', () => {
     expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(1);
     const resp = await client.chatGPTResponse.findFirstOrThrow({ where: { taskId: task.id } });
     expect(resp.recovered).toBe(true);
+  });
+
+  it('an uncertain prompt stops for review; the owner’s Retry then sends a fresh prompt (once)', async () => {
+    const site = await createWebsite(client);
+    const task = await createTask(client, site.id);
+    await lifecycle.ensureArticleRun(task.id, 'test');
+    expect(await runNext(task.id)).toBe('waiting');
+    const claim = await chatgpt.claimChatGPTJob({ installId: 'inst', tabId: 'tabU' });
+    if (!('job' in claim)) throw new Error('expected claim');
+    await chatgpt.reportChatGPTProgress({ jobId: claim.job.id, tabId: 'tabU', progress: { step: 'sent', sent: true, sentAt: new Date().toISOString(), conversationUrl: CONV } });
+    await chatgpt.failChatGPTJob({ jobId: claim.job.id, tabId: 'tabU', code: 'ERROR', message: 'The app recorded this prompt as sent, but it is not visible in this conversation.', uncertain: true });
+    await runNext(task.id);
+    const stopped = await client.articleTask.findUniqueOrThrow({ where: { id: task.id } });
+    expect(stopped.status).toBe('NEEDS_REVIEW');
+    expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(1);
+
+    // Retry is the owner's decision after checking ChatGPT: a new prompt is sent, the uncertain one is kept as history.
+    await lifecycle.retryTask(task.id);
+    expect(await runNext(task.id)).toBe('waiting');
+    const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
+    expect(responses).toHaveLength(2);
+    expect(responses[0].status).toBe('SUPERSEDED');
+    expect(responses[0].error).toMatch(/^UNCERTAIN/);
+    expect(responses[1].status).toBe('PENDING');
+    await answerChatGPT();
+    expect(await runNext(task.id)).toBe('paused');
+    expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(2);
   });
 
   it('opens a new chat with a context primer when the conversation is lost', async () => {

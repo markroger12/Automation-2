@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.1.0');
+    expect(ext?.version).toBe('3.1.1');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -198,6 +198,21 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     await waitJob(req.responseId, (j) => Boolean(j.progress && JSON.parse(j.progress).sent), 60_000, 'prompt sent');
     await chatPage()!.reload();
     const done = await responseDone(req.responseId, 90_000);
+    expect(done.status).toBe('COMPLETED');
+    expect(done.recovered).toBe(true);
+    expect(done.resultText).toContain('final paragraph');
+    expect((await fakeStats()).sends).toBe(1);
+  });
+
+  it('after a reload, waits for a slowly rendered conversation instead of reporting the sent prompt as missing', async () => {
+    // Seen on the owner's PC: the real ChatGPT shows the composer before the conversation's turns after a reload.
+    fake = { variant: 'standard', mode: 'normal', chunkMs: 400, chunkSize: 15, historyDelayMs: 6000 };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Slow history prompt');
+    await waitJob(req.responseId, (j) => Boolean(j.progress && JSON.parse(j.progress).sent), 60_000, 'prompt sent');
+    await chatPage()!.reload();
+    const done = await responseDone(req.responseId, 90_000);
+    expect(done.error).toBeNull();
     expect(done.status).toBe('COMPLETED');
     expect(done.recovered).toBe(true);
     expect(done.resultText).toContain('final paragraph');

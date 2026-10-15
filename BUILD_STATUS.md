@@ -963,3 +963,41 @@ WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress              # final: 11/11 on W
 - Real throughput, real stage timings, ChatGPT 429 behaviour and Chrome health under load; all figures above come from seeded or scripted runs.
 - How well the intent rules match real keywords, and whether the appended brief improves real ChatGPT articles.
 - Chrome memory/health as a signal for the adaptive slots: not measured. Slots adapt to ChatGPT 429s, as since M2.
+
+## After M16 — first run on the owner's PC: TITLES stopped as “uncertain” (fixed; extension 3.1.1)
+
+**Reported by the owner** (Windows, Node 26.12.0, Google Chrome; console output pasted into the session):
+- `npm install`, `npm run setup` (15 migrations, 14 prompts, Chrome and Edge found), `npm run build` and `npm run start:all` worked.
+- Automation Chrome launched and extension 3.1.0 connected.
+- On a German site, the owner signed in to WordPress in the visible window. The app then detected Gutenberg, synced 9 categories and reported the session ACTIVE with Rank Math detected.
+- The first Single Article stopped right after the TITLES prompt was sent. It went to **Needs review** with “UNCERTAIN: The app recorded this prompt as sent, but it is not visible in this conversation”.
+- The article's **Retry** did not help (see below).
+
+**Cause 1 — the extension gave up on a reloaded page too early.** Reproduced here.
+- When the ChatGPT page reloads during a job, the extension restarts the job and first looks for the prompt it already sent, so it never sends it twice.
+- It looked once, as soon as the composer appeared. The real ChatGPT shows the composer before the conversation's turns, so the prompt was not there yet.
+- The fake ChatGPT now has an option that renders the turns 6 s after the composer. With the old extension, the new test fails with the owner's exact error. With 3.1.1 the extension keeps looking for up to 30 s, finds the prompt and recovers the answer; the fake counts one send.
+- Why the page reloaded on the owner's PC is **not known yet**. The failure snapshot from Diagnostics was requested.
+
+**Cause 2 — Retry after an uncertain prompt sent nothing.** Retry reset the stage to the same operation, which found the same uncertain prompt and stopped for review again; a new unit test failed this way. Retry is now the owner's decision to send again:
+- the uncertain prompt is kept as history (SUPERSEDED);
+- its Recovery Center incident is resolved;
+- a fresh prompt is sent once.
+
+**Also (test only)**: the backoff assertion in `tests/unit/engine.test.ts` compared with the current time and failed once on a loaded machine. It now measures from the failure.
+
+**Commands run**
+```
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 37 files, 255 tests (new: Retry after an uncertain prompt)
+npm run build                                              # compiled
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "slowly rendered"
+                                                           # old content.js: fails with “UNCERTAIN: The app recorded…”
+                                                           # (reproduces the owner's error); with the fix: passes
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 16/16 (15 earlier
+                                                           # + the new slow-render test), first attempt
+```
+
+**Not verified here**
+- The fix against the real ChatGPT on the owner's PC.
+- What reloaded the ChatGPT page during the TITLES job.

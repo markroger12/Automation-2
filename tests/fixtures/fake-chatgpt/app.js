@@ -109,7 +109,7 @@
       root.innerHTML = `<main><div class="error">Unable to load conversation ${esc(id)}</div></main>`;
       return;
     }
-    const turns = id ? convs[id].turns : [];
+    const turns = id && !window.__historyHidden ? convs[id].turns : [];
     const turnHtml = turns
       .map((t, i) => {
         if (t.role === 'user') {
@@ -259,6 +259,15 @@
     window.__generating = true;
     render();
     setTimeout(() => stream(id), 200);
+  }
+
+  // Like the real app: the composer is ready before a loaded conversation's turns are rendered.
+  if (C.historyDelayMs && convId()) {
+    window.__historyHidden = true;
+    setTimeout(() => {
+      window.__historyHidden = false;
+      render();
+    }, C.historyDelayMs);
   }
 
   // After a reload mid-generation the "server" keeps generating (like the real app).

@@ -89,12 +89,22 @@ export async function retryTask(taskId: string, client: Tx = db): Promise<{ resu
     throw new AppError(409, 'CONFLICT', `Only failed, cancelled, paused or review tasks can be retried (current: ${task.status}).`);
   }
   await client.articleStage.updateMany({ where: { taskId, status: { in: ['FAILED', 'RUNNING'] } }, data: { status: 'PENDING', error: null, attempts: 0 } });
+  // A prompt whose fate ChatGPT could not prove stops the task until the owner decides. Retry is that decision:
+  // the uncertain prompt is kept as history (superseded) and a fresh one is sent. Without this, the same
+  // operation was found again and the task went straight back to review.
+  const uncertain = await client.chatGPTResponse.updateMany({ where: { taskId, status: 'FAILED', error: { startsWith: 'UNCERTAIN' } }, data: { status: 'SUPERSEDED' } });
+  if (uncertain.count) {
+    await client.recoveryIncident.updateMany({
+      where: { taskId, status: 'OPEN', kind: 'UNCERTAIN_PROMPT' },
+      data: { status: 'RESOLVED', resolvedAt: new Date(), resolution: 'Owner chose Retry: a fresh prompt is sent.' },
+    });
+  }
   await client.articleTask.update({
     where: { id: taskId },
     data: { status: 'QUEUED', cancelRequested: false, message: 'Retry queued — resuming from the first unfinished stage.', nextAction: null },
   });
   const result = await ensureArticleRun(taskId, 'retry', client);
-  await audit('task.retry', 'ArticleTask', taskId, { from: task.status }, client);
+  await audit('task.retry', 'ArticleTask', taskId, { from: task.status, uncertainPromptsSuperseded: uncertain.count }, client);
   return { result };
 }
 

@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.1.0';
+  const EXTENSION_VERSION = '3.1.1';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -272,6 +272,18 @@
     return ids;
   }
 
+  /** Poll (bounded) for a prompt the app recorded as sent; null if it never shows up. */
+  async function waitForSubmittedPrompt(job, config) {
+    const deadline = Date.now() + (config.reconcileWaitSec || 30) * 1000;
+    while (Date.now() < deadline) {
+      checkCancelled();
+      await sleep(1000);
+      const found = await A.findSubmittedPrompt(job.promptHash, job.prompt);
+      if (found) return found;
+    }
+    return null;
+  }
+
   async function runJob(job, config, port) {
     current = { job, port, cancelled: false, step: 'start', startedAt: Date.now(), pausedMs: 0 };
     try {
@@ -284,7 +296,12 @@
       // evidence, only the LAST user turn may be ours (crash right after Send),
       // and never for a deliberate fresh regeneration of an identical prompt.
       const evidence = (job.reconcile && job.reconcile.sentAt) || (job.localCheckpoint && job.localCheckpoint.sentAt);
-      const existing = await A.findSubmittedPrompt(job.promptHash, job.prompt);
+      let existing = await A.findSubmittedPrompt(job.promptHash, job.prompt);
+      if (!existing && evidence) {
+        // After a reload the real ChatGPT shows the composer before the conversation's turns: give them time to render.
+        progress('looking for the already-sent prompt in this conversation');
+        existing = await waitForSubmittedPrompt(job, config);
+      }
       const isLastUserTurn = existing && existing.index === A.userMessages().length - 1;
       if (existing && (evidence || (isLastUserTurn && !job.fresh))) {
         progress(`found the prompt already sent (${existing.match}); recovering its answer instead of resending`, { sent: true, sentAt: new Date().toISOString() });

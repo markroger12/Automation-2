@@ -4,7 +4,7 @@ import { log } from '../log';
 import { parseJson } from '../json';
 import { safeFetch, LinkFetchError } from '../links/net';
 import { htmlSegments } from '../plagiarism/text';
-import { aboutSubject, extractClaims, internalConflicts, judge, locateInArticle, statusFor, type ClaimStatus, type ExtractedClaim, type Verdict } from './claims';
+import { aboutSubject, extractClaims, identityContext, internalConflicts, judge, locateInArticle, statusFor, type ClaimStatus, type ExtractedClaim, type Verdict } from './claims';
 
 /**
  * Evidence ledger (upgrade 03): claims from the research notes, checked
@@ -17,26 +17,6 @@ import { aboutSubject, extractClaims, internalConflicts, judge, locateInArticle,
 const SOURCE_TTL_MS = 7 * 24 * 3600_000;
 const MAX_SOURCES = 12;
 /** Occupations named in the notes, with their English/German equivalents (a source in either language counts). */
-const OCCUPATIONS: string[][] = [
-  ['actor', 'actress', 'schauspieler', 'schauspielerin'],
-  ['singer', 'sänger', 'sängerin'],
-  ['rapper'],
-  ['musician', 'musiker', 'musikerin'],
-  ['guitarist', 'gitarrist'],
-  ['drummer', 'schlagzeuger'],
-  ['model'],
-  ['presenter', 'host', 'moderator', 'moderatorin'],
-  ['footballer', 'soccer player', 'fußballer', 'fußballspieler'],
-  ['athlete', 'sportler', 'sportlerin'],
-  ['author', 'writer', 'autor', 'autorin', 'schriftsteller'],
-  ['director', 'regisseur', 'regisseurin'],
-  ['producer', 'produzent', 'produzentin'],
-  ['comedian', 'komiker', 'komikerin'],
-  ['politician', 'politiker', 'politikerin'],
-  ['youtuber'],
-  ['influencer'],
-  ['chef', 'koch', 'köchin'],
-];
 
 export interface EvidenceEntry {
   sourceId: string;
@@ -79,11 +59,8 @@ export async function getSource(url: string, now = new Date(), opts: { force?: b
 }
 
 /** Words that tell this person apart from namesakes: secondary keywords and occupations named early in the notes. */
-export function contextWords(notes: string, secondary: string[]): string[] {
-  // URLs are not prose: “…/presenter/…” in a link must not make “presenter” an occupation.
-  const head = notes.replace(/https?:\/\/[^\s)\]>"'<]+/g, ' ').slice(0, 1500).toLowerCase();
-  const occupations = OCCUPATIONS.filter((group) => group.some((o) => new RegExp(`\\b${o}\\b`).test(head))).flat();
-  return [...new Set([...secondary.map((s) => s.toLowerCase()).filter((s) => s.length > 3), ...occupations])].slice(0, 12);
+export function contextWords(notes: string, secondary: string[], keyword = ''): string[] {
+  return identityContext(notes, secondary, keyword);
 }
 
 const signature = (c: { claimType: string; values: string }) => `${c.claimType}:${JSON.stringify(parseJson<ExtractedClaim['values']>(c.values, { dates: [], amounts: [], names: [] }))}`;
@@ -105,7 +82,7 @@ export async function buildLedger(taskId: string, now = new Date(), opts: { refe
   const notes = task.researchNotes ?? '';
   const claims = extractClaims(notes, task.keyword);
   const conflicts = internalConflicts(claims);
-  const context = contextWords(notes, parseJson<string[]>(task.secondaryKeywords, []));
+  const context = contextWords(notes, parseJson<string[]>(task.secondaryKeywords, []), task.keyword);
   const urls = [...new Set([...claims.flatMap((c) => c.citations), ...[...notes.matchAll(/https?:\/\/[^\s)\]>"'<]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ''))])].slice(0, MAX_SOURCES);
   const sources = [];
   for (const url of urls) sources.push(await getSource(url, now, { force: opts.refetch }));
@@ -184,7 +161,10 @@ export async function evaluateArticleEvidence(taskId: string, html: string): Pro
     if (c.highImpact && c.status === 'CONTRADICTED') warnings.push(`Sources disagree on the ${TYPE_LABEL[c.claimType]}: “${c.claimText.slice(0, 120)}”. Check it in Research Evidence.`);
     else if (c.highImpact && at !== null && (c.status === 'UNVERIFIED' || c.status === 'DISPUTED')) {
       unsupportedInArticle++;
-      warnings.push(`The article states an unsupported ${TYPE_LABEL[c.claimType]} claim (paragraph ${at + 1}): “${c.claimText.slice(0, 120)}”. Verify it, word it neutrally or leave it out.`);
+      // Quote what the ARTICLE says there, then the research note it was matched to.
+      warnings.push(
+        `The article states an unsupported ${TYPE_LABEL[c.claimType]} claim in paragraph ${at + 1}: “${paragraphs[at].slice(0, 160)}” (research note: “${c.claimText.slice(0, 100)}”). Verify it, word it neutrally or leave it out.`,
+      );
     }
   }
   return { warnings, hardStops, summary: { claims: claims.length, verified: claims.filter((c) => c.status === 'VERIFIED').length, contradicted: claims.filter((c) => c.status === 'CONTRADICTED').length, unsupportedInArticle } };

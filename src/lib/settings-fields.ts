@@ -55,6 +55,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'faqCount', label: 'Celebrity FAQ count', type: 'number', min: 1, max: 15 },
       { key: 'tigramFaqCount', label: 'Tigram FAQ count', type: 'number', min: 3, max: 12 },
       { key: 'quickBioRows', label: 'Quick Bio rows', type: 'number', min: 6, max: 20 },
+      { key: 'boldLinks', label: 'Bold links', type: 'boolean', help: 'Every link in the article (sources, internal links and the “read more” line) is shown in bold.' },
       { key: 'minKeywordOccurrences', label: 'Keyword occurrences — advisory minimum', type: 'number', min: 0, max: 100 },
       { key: 'maxKeywordOccurrences', label: 'Keyword occurrences — advisory maximum', type: 'number', min: 0, max: 100 },
       { key: 'keywordDensityCeilingPct', label: 'Keyword density warning ceiling (%)', type: 'number', min: 0.5, max: 10, step: 0.1 },

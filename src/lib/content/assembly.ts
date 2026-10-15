@@ -22,6 +22,8 @@ export interface AssemblyInput {
   faqs?: FaqItem[];
   internalLink?: { line: string; url: string; title: string } | null;
   images?: AssemblyImage[];
+  /** Wrap every link's text in <strong> (Settings → Content → Bold links). */
+  boldLinks?: boolean;
 }
 
 export interface AssemblyResult {
@@ -146,7 +148,8 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
   if (input.internalLink) {
     parts.push(`<p data-bas-internal-link="1"><strong>${esc(input.internalLink.line)}</strong> <a href="${esc(input.internalLink.url)}">${esc(input.internalLink.title)}</a></p>`);
   }
-  const html = sanitizeArticleHtml(parts.join('\n'));
+  const joined = sanitizeArticleHtml(parts.join('\n'));
+  const html = input.boldLinks ? boldenLinks(joined) : joined;
   const $$ = load(`<body>${html}</body>`);
   return {
     html,
@@ -161,6 +164,19 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
       removedSections,
     },
   };
+}
+
+/** Every link's text in <strong>, unless the link is already bold (inside or around it). Idempotent. */
+export function boldenLinks(html: string): string {
+  const $ = load(`<body>${html}</body>`);
+  let changed = false;
+  $('a[href]').each((_, el) => {
+    const a = $(el);
+    if (!a.text().trim() || a.closest('strong, b').length || a.find('strong, b').length || a.find('img').length) return;
+    a.html(`<strong>${a.html() ?? ''}</strong>`);
+    changed = true;
+  });
+  return changed ? ($('body').html() ?? html) : html;
 }
 
 function injectAfterFirstParagraph(html: string, insert: string): string {

@@ -152,10 +152,19 @@ function statements(notes: string): { text: string; urls: string[] }[] {
   return out;
 }
 
+/**
+ * Editorial commentary in research notes — about the planned title, the article to be written, or how good the
+ * sources are — is not a statement about the person (live run: “Der geplante Titel … ist durch die Recherche
+ * eindeutig gedeckt” became a family claim).
+ */
+const EDITORIAL =
+  /(geplante[nrs]?\s+titel|planned\s+title|für\s+den\s+(späteren\s+|eigentlichen\s+)?artikel|for\s+the\s+(later\s+|final\s+)?article|recherchefazit|research\s+(summary|conclusion)|diese\s+quellen|these\s+sources|durch\s+die\s+recherche|the\s+research\s+(supports|covers|shows)|redaktionelle\s+empfehlung|editorial\s+recommendation)/i;
+
 export function extractClaims(notes: string, keyword: string): ExtractedClaim[] {
   const subject = subjectTokens(keyword);
   const claims: ExtractedClaim[] = [];
   for (const s of statements(notes)) {
+    if (EDITORIAL.test(s.text)) continue;
     const type = TYPE_PATTERNS.find(([, re]) => re.test(s.text))?.[0];
     if (!type) continue;
     const dates = findDates(s.text).map((d) => d.value);
@@ -167,6 +176,73 @@ export function extractClaims(notes: string, keyword: string): ExtractedClaim[] 
     claims.push({ type, text: s.text.slice(0, 600), values: { dates, amounts, names }, nature, highImpact: HIGH_IMPACT.includes(type), citations: [...new Set(s.urls)] });
   }
   return claims.slice(0, 60);
+}
+
+export const OCCUPATIONS: string[][] = [
+  ['actor', 'actress', 'schauspieler', 'schauspielerin'],
+  ['singer', 'sänger', 'sängerin'],
+  ['rapper'],
+  ['musician', 'musiker', 'musikerin'],
+  ['guitarist', 'gitarrist'],
+  ['drummer', 'schlagzeuger'],
+  ['model'],
+  ['presenter', 'host', 'moderator', 'moderatorin'],
+  ['footballer', 'soccer player', 'fußballer', 'fußballspieler'],
+  ['athlete', 'sportler', 'sportlerin'],
+  ['author', 'writer', 'autor', 'autorin', 'schriftsteller'],
+  ['director', 'regisseur', 'regisseurin'],
+  ['producer', 'produzent', 'produzentin'],
+  ['comedian', 'komiker', 'komikerin'],
+  ['politician', 'politiker', 'politikerin'],
+  ['youtuber'],
+  ['influencer'],
+  ['chef', 'koch', 'köchin'],
+  ['agent', 'agentin', 'filmagent', 'filmagentin', 'talent agent', 'film agent', 'literary agent'],
+  ['entrepreneur', 'businesswoman', 'businessman', 'unternehmer', 'unternehmerin', 'geschäftsfrau', 'geschäftsmann'],
+];
+
+/** Words of a secondary keyword that never identify a person (SEO topics, question words, relations). */
+const GENERIC_KEYWORD_WORDS = new Set(
+  (
+    'alter age alt old kinder kind children child kids sohn son tochter daughter wikipedia wiki vermögen net worth networth größe height gewicht weight ' +
+    'instagram tiktok youtube twitter facebook freund freundin boyfriend girlfriend partner partnerin ehemann ehefrau husband wife mann frau ' +
+    'eltern parents mutter vater mother father familie family geschwister siblings herkunft nationalität nationality religion geburtstag birthday ' +
+    'geburtsort birthplace biografie biography bio heute today jetzt now aktuell news tot dead gestorben death todesursache wer who ist is was what ' +
+    'wie how warum why beruf job karriere career hochzeit wedding verheiratet married getrennt divorced scheidung divorce dating affäre ' +
+    'und and von of the der die das den dem des mit with'
+  ).split(' '),
+);
+
+/**
+ * Words that tell this person apart from a namesake: what each secondary keyword adds to the person's name (e.g.
+ * “sascha hehn” from “Sascha Hehn Gloria Krass”), without generic SEO words, plus occupations named at the start of
+ * the research notes. Whole SEO phrases such as “gloria krass alter” never identify anyone and are not used.
+ */
+export function identityContext(notes: string, secondary: string[], keyword: string): string[] {
+  const subject = new Set(subjectTokens(keyword).map((t) => t.toLowerCase()));
+  const fromKeywords: string[] = [];
+  for (const phrase of secondary) {
+    const words = phrase
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}'’.-]+/u)
+      .filter(Boolean);
+    // Consecutive words that are neither the subject's name nor generic form one identifying phrase.
+    let run: string[] = [];
+    const flush = () => {
+      const p = run.join(' ');
+      if (p.length > 3) fromKeywords.push(p);
+      run = [];
+    };
+    for (const w of words) {
+      if (subject.has(w) || GENERIC_KEYWORD_WORDS.has(w)) flush();
+      else run.push(w);
+    }
+    flush();
+  }
+  // URLs are not prose: “…/presenter/…” in a link must not make “presenter” an occupation.
+  const head = notes.replace(/https?:\/\/[^\s)\]>"'<]+/g, ' ').slice(0, 1500).toLowerCase();
+  const occupations = OCCUPATIONS.filter((group) => group.some((o) => new RegExp(`(?<![\\p{L}])${o}(?![\\p{L}])`, 'u').test(head))).flat();
+  return [...new Set([...fromKeywords, ...occupations])].slice(0, 16);
 }
 
 // ---------------------------------------------------------------- matching against a source

@@ -183,7 +183,8 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
     expect(ext.accepted.map((a: { phrase: string }) => a.phrase).sort()).toEqual(['Heidi Klum', 'relationship']);
     expect(reasons['Tokio Hotel']).toMatch(/does not appear/); // only in the Quick Bio, not in the body text
     expect(t.assembledHtml).toContain(`href="${u('www.imdb.com', '/name/nm0000456/')}"`);
-    expect(t.assembledHtml).toMatch(/<a href="[^"]*Interpersonal_relationship" data-bas-link="ext" rel="noopener">relationship<\/a>/);
+    // Bold links are on by default (Settings → Content → Bold links): the link text is wrapped in <strong>.
+    expect(t.assembledHtml).toMatch(/<a href="[^"]*Interpersonal_relationship" data-bas-link="ext" rel="noopener"><strong>relationship<\/strong><\/a>/);
     expect((t.assembledHtml!.match(/data-bas-link="ext"/g) ?? []).length).toBe(2);
     const logs = await client.log.findMany({ where: { taskId: t.id, message: { startsWith: 'Link ' } } });
     expect(logs.length).toBe(ext.accepted.length + ext.rejected.length);
@@ -192,7 +193,7 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
     expect(int.url).toBe(`${wp.url}/?p=${related.id}`);
     expect(int.reason).toMatch(/most related/);
     expect(int.candidates.map((c: { title: string }) => c.title)).not.toContain('Tom Kaulitz Heidi Klum wedding photos');
-    expect(t.assembledHtml).toContain(`<p data-bas-internal-link="1"><strong>Also read:</strong> <a href="${wp.url}/?p=${related.id}" rel="noopener">Heidi Klum: Her Modeling Career</a></p>`);
+    expect(t.assembledHtml).toContain(`<p data-bas-internal-link="1"><strong>Also read:</strong> <a href="${wp.url}/?p=${related.id}" rel="noopener"><strong>Heidi Klum: Her Modeling Career</strong></a></p>`);
     // What was considered is stored (SuggestedInternalLink): the chosen line target, unrelated candidates, never the draft.
     const sugg = await client.suggestedInternalLink.findMany({ where: { taskId: t.id } });
     expect(sugg.find((x) => x.kind === 'LINE')).toMatchObject({ status: 'SELECTED', url: `${wp.url}/?p=${related.id}`, title: 'Heidi Klum: Her Modeling Career' });

@@ -1175,3 +1175,43 @@ npx vitest run --config vitest.integration.config.ts tests/integration/wordpress
 npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-session.test.ts  # 6/6
 npm run build                                              # compiled
 ```
+
+### Sixth report: the article report of draft #7479 — research-evidence false alarms, no images, bold links
+
+**What the owner's report file shows** (`article-report-gloria-krass.json`, from the new Report button):
+- **Timings:** TITLES 49 s, RESEARCH 3.8 min, LONG_ARTICLE 2.8 min, FINAL_ARTICLE 78 s, FAQS 46 s, HUMANIZE 64 s. QUICK_BIO 11.2 min and EXTERNAL_LINKS 6.1 min were before 3.1.5.
+- **Research sentences were not in the article.** The sentences quoted in two of the four review reasons (“Der geplante Titel … ist durch die Recherche eindeutig gedeckt”, “Diese Quellen reichen aus …”) appear **only in the research notes**; neither the body nor the assembled article contains them.
+  - The research checker had taken this editorial commentary as family claims.
+  - It matched them to an article paragraph that says Gloria Krass is Sascha Hehn's wife.
+  - The warning then quoted the research sentence, not the article's.
+- **Only 1 of 12 sources was used** (joyn.de); 10 were “off-topic”.
+  - 6 were “about a different Gloria Krass”: the agency's own site and contact page, the XING profile, BUNTE and BILD. The “same person” check required one of the four secondary keywords as a whole phrase (“gloria krass alter”, “gloria krass kinder”, “sascha hehn gloria krass”, “gloria krass wikipedia”), and pages almost never contain SEO phrases verbatim.
+  - 4 “did not mention Gloria Krass” in the fetched text. One of them, t-online 2015, names only “Gloria”. RTL and GALA may serve consent pages to automated fetches; the app does not get around those.
+- **Images: none.** “Photo search unavailable: DNS lookup failed for commons.wikimedia.org”. The owner's PC returned no DNS address for Wikimedia Commons, while the other sites in the same run resolved. This must be checked on the owner's network.
+- **Rank Math 0:** the pre-analysis zero fixed in 3.1.5.
+
+**Changes**
+- **“Same person” context:** taken from what each secondary keyword adds to the name, without generic SEO words (age, children, Wikipedia, wife, …). “Sascha Hehn Gloria Krass” gives “sascha hehn”; “Gloria Krass Alter” gives nothing.
+  - Added the occupations film agent (DE/EN) and entrepreneur (DE/EN).
+  - A namesake still never counts.
+  - Unit test with the live run's keywords; a namesake page is still refused.
+- **Editorial commentary is not a claim:** sentences about the planned title, the article to be written or the sources' adequacy are skipped. Unit test with the live run's sentences.
+- **Clearer warning:** an unsupported-claim warning now quotes the **article's** paragraph and then the research note it was matched to.
+- **Bold links (owner request; not in the spec):** a new setting, Settings → Content → Bold links, on by default. It wraps the text of every link in the assembled article in `<strong>`: source links, contextual internal links and the read-more line. Links that are already bold are left alone, and running it twice changes nothing. Unit test.
+
+**Commands run**
+```
+npx vitest run tests/unit/research-claims.test.ts tests/unit/research-ledger.test.ts tests/unit/content.test.ts
+                                                           # new tests failed first, all pass now
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 38 files, 261 tests
+npx vitest run --config vitest.integration.config.ts <each file>   # all 10 files pass. links.test.ts first failed 1/5:
+                                                           # it expected link text without <strong>; expectations
+                                                           # updated for bold links (on by default), then 5/5
+npm run build                                              # compiled
+```
+Not re-run here: the real-WordPress e2e. Its one link assertion (`<a href="…"`, the start of the tag) still holds with bold links.
+
+**Not verified here**
+- The new same-person rule on the real pages: the fetched page texts are not in the report.
+- Why commons.wikimedia.org does not resolve on the owner's PC.

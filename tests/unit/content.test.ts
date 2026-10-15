@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseFaqs, parseQuickBio, parseTitles, confirmedFullName, analyzeResearch } from '@/modules/celebrity-writer/parsers';
 import { cleanModelMarkdown, markdownToHtml, dedupeBlocks } from '@/lib/content/markdown';
 import { sanitizeArticleHtml } from '@/lib/html/sanitize';
-import { assembleArticle } from '@/lib/content/assembly';
+import { assembleArticle, boldenLinks } from '@/lib/content/assembly';
 import { runSeoChecks, type SeoInput } from '@/lib/seo/checks';
 import { evaluateQuality } from '@/lib/quality/gate';
 import { countExact, countNormalized, detectLanguage, makeSlug, parseSecondaryKeywords } from '@/lib/content/text';
@@ -85,6 +85,24 @@ describe('markdown, sanitizing and cleanup', () => {
   it('normalizes ChatGPT answers (preambles, citation tokens, single fence)', () => {
     expect(normalizeResponseText('Sure! Here is the article you asked for:\n\n## Title\nText citeturn0search1 more.\n\nLet me know if you want changes.')).toBe('## Title\nText  more.');
     expect(normalizeResponseText('```\nQUESTION: a?\nANSWER: b\n```')).toBe('QUESTION: a?\nANSWER: b');
+  });
+});
+
+describe('bold links (owner request)', () => {
+  it('wraps every link text in <strong> — source links, internal links and the read-more line — once, and only when switched on', () => {
+    const body =
+      '<p>Intro with a <a href="https://www.bunte.de/x" data-bas-link="ext" rel="noopener">BUNTE</a> report.</p><h2>Career</h2><p>See <a href="https://site.example/a" data-bas-link="int">her agency</a> and <strong><a href="https://x.example">already bold</a></strong>.</p><h2>Conclusion</h2><p>End.</p>';
+    const input = { bodyHtml: body, language: 'de', moduleKey: 'celebrity-writer', internalLink: { line: 'Das könnte Ihnen gefallen:', url: 'https://site.example/b', title: 'Another article' } };
+    const bold = assembleArticle({ ...input, boldLinks: true }).html;
+    expect(bold).toContain('<a href="https://www.bunte.de/x" data-bas-link="ext" rel="noopener"><strong>BUNTE</strong></a>');
+    expect(bold).toMatch(/<a href="https:\/\/site\.example\/a"[^>]*><strong>her agency<\/strong><\/a>/);
+    expect(bold).toMatch(/<a href="https:\/\/site\.example\/b"[^>]*><strong>Another article<\/strong><\/a>/);
+    expect(bold).toMatch(/<strong><a href="https:\/\/x\.example"[^>]*>already bold<\/a><\/strong>/);
+    expect(bold.match(/<strong><strong>/g)).toBeNull();
+    expect(boldenLinks(bold)).toBe(bold);
+    const plain = assembleArticle({ ...input, boldLinks: false }).html;
+    expect(plain).toContain('>BUNTE</a>');
+    expect(plain).not.toContain('<strong>BUNTE</strong>');
   });
 });
 

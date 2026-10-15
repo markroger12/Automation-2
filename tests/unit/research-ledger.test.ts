@@ -116,7 +116,8 @@ describe('research evidence ledger', () => {
     const article = '<p>Tom Kaulitz was born on September 1, 1989 in Leipzig.</p><p>He is dating Ria Sommerfeld, fans say.</p><p>Sources: https://en.wikipedia.org/wiki/Tom_Kaulitz</p>';
     const ev = await ledger.evaluateArticleEvidence(t, article);
     expect(ev.warnings.join(' ')).toMatch(/Sources disagree on the birth date/);
-    expect(ev.warnings.join(' ')).toMatch(/unsupported family\/relationship claim \(paragraph 2\)/);
+    // The warning quotes what the ARTICLE says in that paragraph, then the research note it came from.
+    expect(ev.warnings.join(' ')).toMatch(/unsupported family\/relationship claim in paragraph 2: “He is dating Ria Sommerfeld, fans say\.” \(research note: “He has been dating Ria Sommerfeld/);
     expect(ev.hardStops[0]).toMatch(/raw source list appear in the article \(paragraph 3/);
     expect((await client.claimEvidence.findFirstOrThrow({ where: { taskId: t, claimType: 'BIRTH' } })).articleParagraph).toBe(0);
     // Not stating the rumour clears that warning; omitting a claim is always allowed.

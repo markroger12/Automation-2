@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aboutSubject, extractClaims, findAmounts, findDates, internalConflicts, judge, locateInArticle, statusFor, type ExtractedClaim } from '@/lib/research/claims';
+import { aboutSubject, extractClaims, findAmounts, findDates, identityContext, internalConflicts, judge, locateInArticle, statusFor, type ExtractedClaim } from '@/lib/research/claims';
 
 const NOTES = `## Identity
 - Tom Kaulitz was born on September 1, 1989 in Leipzig, Germany. (https://en.wikipedia.org/wiki/Tom_Kaulitz)
@@ -65,6 +65,31 @@ describe('research claims — sources', () => {
     expect(aboutSubject({ title: 'Bill Kaulitz', text: 'Bill is the singer.' }, 'Tom Kaulitz').reason).toMatch(/does not mention tom kaulitz/i);
     expect(aboutSubject({ title: 'Chris Evans', text: 'Chris Evans may refer to: Chris Evans (actor), Chris Evans (presenter).' }, 'Chris Evans').reason).toMatch(/disambiguation/);
     expect(aboutSubject({ title: 'Chris Evans (presenter)', text: 'Chris Evans is an English radio presenter and TV host.' }, 'Chris Evans', ['actor', 'marvel', 'captain america']).reason).toMatch(/different chris evans/);
+  });
+
+  it('the identifying context is what the secondary keywords add to the name, not the whole SEO phrases (owner live run)', () => {
+    // Live run: “Gloria Krass Alter / Kinder / Wikipedia / Sascha Hehn Gloria Krass” were required verbatim, so BUNTE, BILD
+    // and the agency's own site counted as “about a different Gloria Krass”.
+    const ctx = identityContext('Gloria Krass ist eine deutsche Filmagentin und Unternehmerin.', ['Gloria Krass Alter', 'Gloria Krass Kinder', 'Sascha Hehn Gloria Krass', 'Gloria Krass Wikipedia'], 'Gloria Krass');
+    expect(ctx).toContain('sascha hehn');
+    expect(ctx).toContain('filmagentin');
+    expect(ctx).not.toContain('gloria krass alter');
+    expect(ctx.some((c) => /gloria|krass|alter|kinder|wikipedia/.test(c))).toBe(false);
+    expect(aboutSubject({ title: 'Heimliche Hochzeit', text: 'Sascha Hehn hat zum ersten Mal Ja gesagt. Seine Frau Gloria Krass führt eine Agentur.' }, 'Gloria Krass', ctx).ok).toBe(true);
+    expect(aboutSubject({ title: 'Gloria Krass Agency', text: 'Gloria Krass ist Filmagentin und vertritt Regisseure.' }, 'Gloria Krass', ctx).ok).toBe(true);
+    // A namesake still never counts.
+    expect(aboutSubject({ title: 'Gloria Krass', text: 'Gloria Krass ist Lehrerin in Wien.' }, 'Gloria Krass', ctx).reason).toMatch(/different gloria krass/);
+  });
+
+  it('editorial commentary in the notes (about the planned title, the article or the sources) is not a claim', () => {
+    const notes = [
+      'Der geplante Titel „Gloria Krass: Wer ist die Ehefrau von Sascha Hehn?“ ist durch die Recherche eindeutig gedeckt.',
+      'Diese Quellen reichen aus, um Gloria Krass als eigenständige Unternehmerin und als Ehefrau von Sascha Hehn ausführlich vorzustellen.',
+      'Für den Artikel reicht die Information, dass Krass Medienberichten zufolge einen erwachsenen Sohn aus einer früheren Beziehung hat.',
+      'Gloria Krass ist seit 2022 mit Sascha Hehn verheiratet.',
+    ].join('\n');
+    const texts = extractClaims(notes, 'Gloria Krass').map((c) => c.text);
+    expect(texts).toEqual(['Gloria Krass ist seit 2022 mit Sascha Hehn verheiratet.']);
   });
 
   it('judges support and contradiction with an excerpt', () => {

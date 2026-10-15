@@ -55,6 +55,8 @@ export const contentSettingsSchema = z.object({
   humanizerLengthTolerancePct: z.number().int().min(5).max(50).default(20),
   /** all = every eligible paragraph (spec default); flagged = only paragraphs the local editor flagged (fewer ChatGPT prompts). */
   humanizerScope: z.enum(['all', 'flagged']).default('all'),
+  /** Show every link in the article in bold (owner request): the link text is wrapped in <strong>. */
+  boldLinks: z.boolean().default(true),
 });
 
 export const seoSettingsSchema = z.object({

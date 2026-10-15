@@ -22,7 +22,7 @@ Evidence-based progress log. A milestone is only marked done when the listed com
 | M7 Links and general writer | ✅ done (local fake-web + real WordPress index verified; live third-party sites not checked here) |
 | M8 Images and templates | ✅ done (fake ChatGPT/Commons + real WordPress 6.5/6.7 verified; live ChatGPT images and live Commons not verified here) |
 | M9 Retire 2.0 + editorial tools | ✅ done (scripted-ChatGPT + full-stack agent-protocol smoke; live ChatGPT not verified here) |
-| M10 Bulk campaigns and workflow | 🟡 in progress — M10a Bulk Campaigns + Smart Router done; M10b scheduler/calendar next |
+| M10 Bulk campaigns and workflow | ✅ done (fake + real WordPress 6.5/6.7 scheduling verified; Search Console requests are manual, not automated) |
 | M11 Plagiarism evidence and hardening | ☐ |
 | M12–M16 3.0 upgrades | ☐ |
 | Throughput benchmark (≥6 verified drafts/hour) | ☐ not run — requires owner-authenticated ChatGPT + WordPress |
@@ -369,7 +369,7 @@ npm run start:all # full-stack smoke, throwaway data dir: real Next.js + real wo
 - Live ChatGPT answering the humanizer prompt (scripted answers and a scripted agent-protocol client only). How often real rewrites pass the fact locks is unmeasured; the thresholds (45 % content-word overlap, ±20 % length) may need tuning on real output.
 - Name and entity checks are heuristics (capitalized-word runs; new-entity detection in English only), so they can miss a renamed entity or reject a legitimate rewrite.
 
-## M10a — Bulk Campaigns and Smart Router ✅ (M10b workflow scheduler follows)
+## M10a — Bulk Campaigns and Smart Router ✅
 
 **Working**
 - **Import** (`src/lib/campaigns/parse.ts`):
@@ -410,3 +410,68 @@ Service tests: 1,000-row fixture → exactly 1,000 tasks and 1,000 article jobs 
 **Found and fixed during M10a**
 - The existing-task lookup for a 1,000-row preview exceeded SQLite's bound-variable limit, so it now runs in chunks.
 
+## M10b — Workflow scheduler, approved publishing path, Publishing Calendar ✅
+
+**Working**
+- **Workflow per website** (`/workflow`, `src/lib/workflow/service.ts`):
+  - settings: on/off, writer (Auto = Smart Router, or one of the two writers), daily `h:mm AM/PM` slots in Asia/Karachi, active weekdays (none = every day), write-ahead hours (0 = start as soon as queued), backlog cap (default 10), images (inherit/on/off), retry cap, “remind me to request indexing” and the Search Console property;
+  - switching on without a slot, an invalid slot or an unknown time zone is refused; slots are normalized and sorted;
+  - keyword import uses the campaign parser (lines, `keyword | secondary | title`, CSV, pasted spreadsheet columns) with a preview; duplicates within the workflow are left out unless kept on purpose;
+  - queue actions: choose writer, skip/restore, to top, retry (fresh retry budget and the next free slot), and owner-recorded “indexing requested” / “verified indexed” (only after publishing).
+- **Slot math** (`src/lib/workflow/time.ts`): wall times in the slot zone are converted to UTC with an offset search that handles DST gaps (the instant after the gap) and overlaps (the earlier instant); weekdays are evaluated in the slot zone. Unit-tested against Asia/Karachi, Europe/Berlin (both 2026 transitions) and America/New_York.
+- **Scheduler tick** (`src/lib/workflow/scheduler.ts`, worker loop every 60 s) **only changes database rows and enqueues jobs**; it never opens a browser:
+  - starts articles (one standard task per keyword, idempotency key `workflow-kw:<id>`, source WORKFLOW) within the backlog cap and the write-ahead horizon, each into its own slot: `SlotReservation` is unique per (website, time), so two articles can never share a slot;
+  - keywords with an unclear writer wait with “Choose a writer for this keyword.”; Celebrity keywords need the website's default category;
+  - syncs each keyword with its task: verified draft → READY; failed → automatic retry up to the cap, then FAILED with the reason; cancelled → SKIPPED; tasks waiting on the owner show why;
+  - an article not ready by its slot (or, on publishing sites, a draft not scheduled in time) moves to the next free slot; after the retry cap it stops as FAILED with the reason and frees its slot;
+  - draft-only websites: once its slot passes, a verified draft is marked “draft kept (publish yourself)” and leaves the backlog;
+  - publishing websites: one `wp.schedule` control job per keyword and slot; after the slot, one `wp.verify-published` job per half hour until WordPress shows the post published.
+- **Approved publishing path** (`src/wordpress/schedule.ts`):
+  - runs only when the website has publishing switched on **with** the typed acknowledgement; otherwise the draft is not touched and the keyword shows why;
+  - schedules the **existing** verified draft as a WordPress “future” post at its slot (`date_gmt`, so WordPress shows it at the right local time), only inside `withPublishPermit` for that post, then reads the post back and requires status “future” and the same minute;
+  - never publishes early: a slot less than ~2.5 minutes away moves to the next free slot instead;
+  - repeat jobs are no-ops; a post that is no longer a draft is left alone with the reason;
+  - after the slot, publication is verified by reading the status back. “future” is re-checked, with a WP-Cron hint after 24 h. A draft goes back to READY for the next free slot. A trashed, deleted or otherwise changed post is left alone and the keyword stops as FAILED.
+  - The static publish-guard test now also enforces that `scheduleFuture` (the only `status: 'future'` write) is called only from `wordpress/schedule.ts` and only inside `withPublishPermit`.
+- **Indexing:** never claimed by the tool. A Search Console URL Inspection link (for the configured URL-prefix or domain property) appears after publishing; “indexing requested” and “verified indexed” are recorded only from the owner's own actions, and a request is labelled “not evidence of indexing”.
+- **Publishing Calendar** (`/calendar`): reserved and free slots of every workflow for two weeks at a time, grouped by day in Pakistan time, with status, article and live-post links, website filter, free-slot toggle and a draft-only notice.
+- README and Help: Campaigns and workflow sections.
+
+**Commands run (all passed)**
+```
+bash scripts/dev-create-migration.sh workflow_search_console_property   # Workflow.searchConsoleProperty (ADD COLUMN only)
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 22 files, 169 tests, three consecutive clean runs after the test-DB fix
+                                                           # (new: slot math 2, Search Console property 1, scheduler 6; publish-guard scan tightened)
+npx vitest run --config vitest.integration.config.ts <file>  # 7 files, 44 tests, run file by file: extension 15, images 6, links 5,
+                                                           # drafts 7, session 4, toolchain 1, workflow-publish 6 (new)
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-session.test.ts
+                                                           # 5/5 after the Remember-Me fix (new test fails without the fix: ACTIVE)
+WP_E2E_ADMIN_URL=… npm run test:e2e:wordpress               # 8/8 on WordPress 6.7-alpha-58716 and 8/8 on WordPress 6.5.5, fresh disposable
+                                                           # databases, first attempt each. New test: with the WordPress clock on
+                                                           # Europe/Berlin the existing draft is left alone without permission; with it,
+                                                           # it becomes “future” at its slot (date_gmt and Berlin-local date read back),
+                                                           # then WordPress's own cron publishes it and the tool verifies it (~208 s)
+npm run build                                              # compiled (/workflow, /calendar and the workflow/calendar APIs)
+npm run start:all # UI smoke, throwaway data dir, Chromium, real worker: switching on without slots refused (the one 400
+                  # in the run); slots 9:00 AM + 3:30 pm added and normalized; next slots shown in Pakistan time and on the
+                  # website's clock; 4 pasted keywords → preview leaves the duplicate out → 3 added; the worker's scheduler
+                  # started 2 articles into separate slots and flagged “jaguar” for a writer; Tigram chosen → it started
+                  # on a later tick; calendar: reserved + free slots per day, draft-only notice, free-slot toggle, next
+                  # two weeks, website filter; no console errors other than that deliberate 400
+```
+
+**Found and fixed during M10b**
+- **Draft-only websites would have stalled.** Verified drafts stayed READY forever and counted against the backlog cap, so after 10 drafts the workflow stopped writing. Once its slot passes, such a draft is now marked “draft kept (publish yourself)” and leaves the backlog.
+- **Endless checks on a removed post.** A scheduled post trashed, deleted or changed in WordPress was re-checked every 30 minutes forever. It is now left alone and the keyword stops as FAILED with the reason. A post set back to draft returns to READY for the next free slot.
+- **Spec gap:** the per-site Search Console property (URL-prefix or domain) was missing; the inspection link always used the website URL.
+- **Retry could leave a keyword stuck.** Retry cleared the slot, so the keyword never came back. Retry now reserves the next free slot, and the tick also gives a slot to any slotless keyword.
+- **The “Choose a writer” flag was never shown** while the backlog was full. It is now set right away.
+- **A sign-in without “Remember Me” was reported as active.** WordPress then issues a session-only cookie that the browser drops when the login window closes, so the next job found the login page. The login now checks the sign-in cookie and asks the owner to log in again with “Remember Me” ticked. A new integration test fails without the fix. This was found through the WordPress 6.5 e2e run: its first attempt failed in setup (`REST API reachable` expected, the login page shown) because the simulated owner submitted before the page finished loading, i.e. before the app ticked “Remember Me”. This is very likely the unexplained first-run 6.5 setup failure noted in M8. The simulated owner now waits for the page like a person would.
+- **Unit test files failed at random** (“table … already exists”) because the test helper applied migrations through a pooled client: the table rebuild in the M9 migration relies on a per-connection PRAGMA. Migrations now run on one connection. Test-only; `npm run setup` uses `prisma migrate deploy` and was not affected.
+- The first integration attempt again sat in `extension.test.ts` for over six minutes at low CPU while other test runs shared the machine, and was stopped by hand. Re-run alone: 15/15 in 251 s, and 15/15 again in the final file-by-file run.
+
+**Not verified here**
+- Search Console is not automated: the tool never clicks “Request indexing” and never reads index status. The owner opens the URL Inspection link and records “indexing requested” or “verified indexed”. Automating Search Console needs the owner's Google session, so it cannot be tested here.
+- WP-Cron on a low-traffic production site can publish late. The tool reports “still future” and adds a hint after 24 hours, but cannot make WordPress publish.
+- Live ChatGPT writing the workflow articles was not exercised (scripted answers only).

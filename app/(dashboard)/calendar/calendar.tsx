@@ -80,6 +80,8 @@ export function PublishingCalendar() {
     return [...map.entries()];
   }, [data, siteId, showFree]);
 
+  const draftOnly = useMemo(() => (data?.sites ?? []).filter((s) => !s.publishing && (!siteId || s.id === siteId)), [data, siteId]);
+
   const counts = useMemo(() => {
     const visible = (data?.entries ?? []).filter((e) => !siteId || e.websiteId === siteId);
     return { reserved: visible.filter((e) => e.status !== 'FREE').length, free: visible.filter((e) => e.status === 'FREE').length };
@@ -143,13 +145,9 @@ export function PublishingCalendar() {
         </Card>
       ) : null}
 
-      {data && data.sites.some((s) => !s.publishing) ? (
-        <Alert tone="info" title="Draft-only websites">
-          {data.sites
-            .filter((s) => !s.publishing)
-            .map((s) => s.name)
-            .join(', ')}{' '}
-          {data.sites.filter((s) => !s.publishing).length === 1 ? 'does' : 'do'} not allow publishing: their slots fill with verified drafts that you publish yourself. Nothing is published there automatically.
+      {draftOnly.length ? (
+        <Alert tone="info" title={draftOnly.length === 1 ? 'Draft-only website' : 'Draft-only websites'}>
+          {draftOnly.map((s) => s.name).join(', ')} {draftOnly.length === 1 ? 'does' : 'do'} not allow publishing: {draftOnly.length === 1 ? 'its' : 'their'} slots fill with verified drafts that you publish yourself. Nothing is published there automatically.
         </Alert>
       ) : null}
 

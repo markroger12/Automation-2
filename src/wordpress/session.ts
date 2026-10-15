@@ -118,6 +118,12 @@ export async function interactiveLogin(site: Website, heartbeat: () => Promise<b
     while (Date.now() < deadline) {
       for (const p of context.pages()) {
         if (!p.isClosed() && (await isLoggedIn(p, sel))) {
+          // Without "Remember Me" WordPress issues a session-only sign-in cookie, which the browser drops when this
+          // window closes: the next job would find the login page. Say so instead of reporting a session that won't last.
+          const auth = (await context.cookies(site.adminUrl).catch(() => [])).filter((c) => c.name.startsWith('wordpress_logged_in_'));
+          if (auth.length && auth.every((c) => c.expires === -1)) {
+            return { state: 'LOGIN_REQUIRED', detail: 'Signed in without “Remember Me”, so WordPress gave a sign-in that ends when the window closes. Log in again and leave “Remember Me” ticked.' } as SessionCheck;
+          }
           const lang = await p.evaluate(() => document.documentElement.getAttribute('lang')).catch(() => null);
           return { state: 'ACTIVE', detail: 'Signed in manually in the visible window.', url: p.url(), adminLanguage: lang } as SessionCheck;
         }

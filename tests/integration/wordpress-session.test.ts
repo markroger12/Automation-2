@@ -17,12 +17,16 @@ async function siteFor(wp: FakeWp, name: string, language: 'en' | 'de' = 'en'): 
   return client.website.findUniqueOrThrow({ where: { id: created.id } });
 }
 
+/** When true, the simulated owner unticks “Remember Me” before signing in. */
+let ownerUnticksRememberMe = false;
+
 /** Simulate the owner typing credentials into the VISIBLE login window (the app itself never does this). */
 function ownerLogsInWhenWindowOpens() {
   browser.onWordPressContext(async (context: BrowserContext) => {
     setTimeout(async () => {
       const page = context.pages()[0];
       if (!page || !/wp-login\.php/.test(page.url())) return;
+      if (ownerUnticksRememberMe) await page.uncheck('#rememberme').catch(() => {});
       await page.fill('#user_login', 'owner').catch(() => {});
       await page.fill('#user_pass', 'owner-typed-this').catch(() => {});
       await page.click('#wp-submit').catch(() => {});
@@ -132,6 +136,25 @@ describe('WordPress sessions (fake WordPress fixture)', () => {
     expect(fs.existsSync(dir)).toBe(true);
     await session.deleteProfile(site);
     expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it('a sign-in without “Remember Me” is not reported as an active session (it would end when the window closes)', async () => {
+    const wp = await startFakeWordPress();
+    servers.push(wp);
+    const site = await siteFor(wp, 'Forgetful Blog');
+    ownerUnticksRememberMe = true;
+    try {
+      const login = await session.interactiveLogin(site, async () => true, 60_000);
+      expect(login.state).toBe('LOGIN_REQUIRED');
+      expect(login.detail).toMatch(/Remember Me/);
+    } finally {
+      ownerUnticksRememberMe = false;
+    }
+    // Indeed, the next window is logged out.
+    expect((await session.testSession(site)).state).toBe('LOGIN_REQUIRED');
+    // Signing in again with “Remember Me” (ticked by the app) works.
+    expect((await session.interactiveLogin(site, async () => true, 60_000)).state).toBe('ACTIVE');
+    expect((await session.testSession(site)).state).toBe('ACTIVE');
   });
 
   it('rejects invalid website input with field errors and duplicate URLs', async () => {

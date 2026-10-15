@@ -71,6 +71,8 @@ describe.skipIf(!ADMIN)('WordPress drafts against a real disposable WordPress', 
       setTimeout(async () => {
         const page = context.pages()[0];
         if (!page || !/wp-login\.php/.test(page.url())) return;
+        // Like a person: type only once the page has finished loading (the app ticks “Remember Me” on load).
+        await page.waitForFunction('document.readyState === "complete" && !!document.getElementById("rememberme") && document.getElementById("rememberme").checked', null, { timeout: 30_000 }).catch(() => {});
         await page.fill('#user_login', USER).catch(() => {});
         await page.fill('#user_pass', PASS).catch(() => {});
         await page.click('#wp-submit').catch(() => {});

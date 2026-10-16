@@ -3,6 +3,7 @@ import { db } from '../db';
 import { log } from '../log';
 import { parseJson } from '../json';
 import { safeFetch, LinkFetchError } from '../links/net';
+import { stripTracking } from '../links/url';
 import { htmlSegments } from '../plagiarism/text';
 import { aboutSubject, extractClaims, identityContext, internalConflicts, judge, locateInArticle, statusFor, type ClaimStatus, type ExtractedClaim, type Verdict } from './claims';
 
@@ -83,7 +84,7 @@ export async function buildLedger(taskId: string, now = new Date(), opts: { refe
   const claims = extractClaims(notes, task.keyword);
   const conflicts = internalConflicts(claims);
   const context = contextWords(notes, parseJson<string[]>(task.secondaryKeywords, []), task.keyword);
-  const urls = [...new Set([...claims.flatMap((c) => c.citations), ...[...notes.matchAll(/https?:\/\/[^\s)\]>"'<]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ''))])].slice(0, MAX_SOURCES);
+  const urls = [...new Set([...claims.flatMap((c) => c.citations), ...[...notes.matchAll(/https?:\/\/[^\s)\]>"'<]+/g)].map((m) => stripTracking(m[0].replace(/[.,;:]+$/, '')))])].slice(0, MAX_SOURCES);
   const sources = [];
   for (const url of urls) sources.push(await getSource(url, now, { force: opts.refetch }));
   const usable: { id: string; url: string; host: string; title: string; text: string }[] = [];

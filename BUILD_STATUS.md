@@ -1493,3 +1493,33 @@ npx vitest run                      # 40 files, 274 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/{extension,workflow-publish,wordpress-drafts}.test.ts   # 26, 6, 10 pass
 npm run build                       # compiled
 ```
+
+## Owner report: external links are generated but never placed in the article
+
+The owner's screenshot shows the EXTERNAL_LINKS answer.
+- ChatGPT (with browsing) now returns every address as a link.
+- The extension turns links into markdown, so each line reads `LINK: NOS | [https://nos.nl/…](https://nos.nl/…?utm_source=chatgpt.com)`.
+- Sometimes the address is on the line after `LINK: Der Guardian |`.
+
+**Cause** (`parseLinkCandidates`, `src/lib/links/verify.ts`)
+- The parser accepted only `LINK: phrase | <plain URL>` at the end of the line, so every markdown line, and every line whose address was on the next line, was dropped.
+- With nothing accepted from news or other sites, the “Wikipedia ≤ half” rule then left no link at all.
+
+**Fix**
+- **Address forms:** the parser reads a markdown link's target (also with `(…)` inside, as in Wikipedia's `X_(Band)`), `<url>` and plain URLs.
+- **Next line:** it takes the address from the next line(s) when the `LINK:` line has none.
+- **Clean addresses:** tracking parameters (`utm_*`, e.g. `utm_source=chatgpt.com`) are removed (`stripTracking`, new pure module `src/lib/links/url.ts`), so the article links the clean address.
+- **Trailing `)`:** it is kept only when it closes a `(` in the URL.
+- **Research notes:** the same cleaning applies to cited URLs in research notes (claims, ledger, service). A markdown link there names the same source twice, and it is now one citation.
+
+**Tests**
+- `tests/unit/links.test.ts`: the owner's answer lines (Guardian on the next line, NOS, BBC Sport), a Wikipedia URL with `(Band)` and two utm parameters, a utm parameter after another parameter, and an unbalanced `)`. The old parser read 2 of 6 links, with the tracking left on one.
+- `tests/integration/links.test.ts`: the IMDb candidate now arrives as a markdown link with `utm_source=chatgpt.com`, on the next line. On the old parser, no external link was placed (accepted `[]`). Now it is placed with the clean address and no `utm_source` anywhere in the article.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 40 files, 275 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/{links,content-refresh,images}.test.ts   # 6, 5, 8 pass
+npm run build                       # compiled
+```

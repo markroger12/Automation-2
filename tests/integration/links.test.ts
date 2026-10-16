@@ -160,7 +160,8 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
         ? [
             `LINK: relationship | ${u('en.wikipedia.org', '/wiki/Interpersonal_relationship')}`,
             `LINK: Tokio Hotel | ${u('en.wikipedia.org', '/wiki/Tokio_Hotel')}`,
-            `LINK: Heidi Klum | ${u('www.imdb.com', '/name/nm0000456/')}`,
+            // As ChatGPT answers now (owner report): a markdown link with utm_source=chatgpt.com, on the next line.
+            `LINK: Heidi Klum |\n[${u('www.imdb.com', '/name/nm0000456/')}](${u('www.imdb.com', '/name/nm0000456/')}?utm_source=chatgpt.com)`,
             `LINK: Tom Kaulitz Heidi Klum | ${u('en.wikipedia.org', '/wiki/Heidi_Klum')}`,
             `LINK: outlets | https://www.instagram.com/heidiklum/`,
             `LINK: interviews | ${u('gone.example', '/article')}`,
@@ -183,6 +184,7 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
     expect(ext.accepted.map((a: { phrase: string }) => a.phrase).sort()).toEqual(['Heidi Klum', 'relationship']);
     expect(reasons['Tokio Hotel']).toMatch(/does not appear/); // only in the Quick Bio, not in the body text
     expect(t.assembledHtml).toContain(`href="${u('www.imdb.com', '/name/nm0000456/')}"`);
+    expect(t.assembledHtml).not.toContain('utm_source');
     // Bold links are on by default (Settings → Content → Bold links): the link text is wrapped in <strong>.
     expect(t.assembledHtml).toMatch(/<a href="[^"]*Interpersonal_relationship" data-bas-link="ext" rel="noopener"><strong>relationship<\/strong><\/a>/);
     expect((t.assembledHtml!.match(/data-bas-link="ext"/g) ?? []).length).toBe(2);

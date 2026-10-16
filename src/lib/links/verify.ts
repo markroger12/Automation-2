@@ -1,6 +1,9 @@
 import { load } from 'cheerio';
 import { LinkFetchError, safeFetch, type SafeFetchOptions } from './net';
 import { normalizeText } from '../content/text';
+import { stripTracking } from './url';
+
+export { stripTracking };
 
 /**
  * External link policy and verification. A candidate is accepted only when
@@ -161,15 +164,35 @@ export async function verifyLink(candidate: { phrase: string; url: string }, lan
 }
 
 /** Parse "LINK: phrase | URL" lines (tolerates bullets, bold, quotes and angle brackets). */
+/** The address in what follows `LINK: phrase |`: a markdown link's target, `<url>` or a plain URL. */
+function linkTarget(rest: string): string | null {
+  // [label](https://…) as the extension writes ChatGPT's links; the target may contain "(…)" (Wikipedia: X_(Band)).
+  const md = /\[[^\]]*\]\((https?:\/\/\S+?)\)(?=\s|$)/.exec(rest);
+  if (md) return stripTracking(md[1]);
+  const plain = /<?(https?:\/\/[^\s<>|\[\]]+)>?/.exec(rest);
+  if (!plain) return null;
+  let url = plain[1].replace(/[.,;]+$/, '');
+  // A trailing ")" belongs to the URL only when it closes a "(" inside it.
+  while (url.endsWith(')') && (url.match(/\(/g)?.length ?? 0) < (url.match(/\)/g)?.length ?? 0)) url = url.slice(0, -1).replace(/[.,;]+$/, '');
+  return stripTracking(url);
+}
+
 export function parseLinkCandidates(text: string): { phrase: string; url: string }[] {
   const out: { phrase: string; url: string }[] = [];
   const seen = new Set<string>();
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/^[\s>*\-•\d.)]+/, '').replace(/\*\*/g, '').trim();
-    const m = /^LINK\s*:\s*(.+?)\s*\|\s*<?(https?:\/\/[^\s<>|]+)>?\s*$/i.exec(line);
-    if (!m) continue;
-    const phrase = m[1].replace(/^["“„'‘]+|["”“'’]+$/g, '').replace(/^\[|\]$/g, '').trim();
-    const url = m[2].replace(/[).,;]+$/, '');
+  const lines = text.split('\n').map((raw) => raw.replace(/^[\s>*\-•\d.)]+/, '').replace(/\*\*/g, '').trim());
+  for (let i = 0; i < lines.length; i++) {
+    const head = /^LINK\s*:\s*(.+?)\s*\|\s*(.*)$/i.exec(lines[i]);
+    if (!head) continue;
+    let rest = head[2];
+    // ChatGPT sometimes puts the address on the next line (a soft line break in its answer).
+    for (let j = i + 1; !/https?:\/\//i.test(rest) && j < Math.min(lines.length, i + 3); j++) {
+      if (/^LINK\s*:/i.test(lines[j])) break;
+      if (lines[j]) rest = `${rest} ${lines[j]}`.trim();
+    }
+    const url = linkTarget(rest);
+    if (!url) continue;
+    const phrase = head[1].replace(/^["“„'‘]+|["”“'’]+$/g, '').replace(/^\[|\]$/g, '').trim();
     const key = `${phrase.toLowerCase()}|${url}`;
     if (!phrase || phrase.length > 120 || seen.has(key)) continue;
     seen.add(key);

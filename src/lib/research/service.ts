@@ -3,6 +3,7 @@ import { db } from '../db';
 import { audit } from '../audit';
 import { notFound } from '../errors';
 import { parseJson } from '../json';
+import { stripTracking } from '../links/url';
 import { enqueue } from '../queue';
 import { changesSinceLastResearch, type EvidenceEntry, type LedgerSummary } from './ledger';
 
@@ -33,7 +34,7 @@ export async function getLedger(taskId: string) {
   const stage = await db.articleStage.findUnique({ where: { taskId_key: { taskId, key: 'RESEARCH_EVIDENCE' } }, select: { outputJson: true, completedAt: true } });
   const ledger = parseJson<{ ledger?: LedgerSummary }>(stage?.outputJson, {}).ledger ?? null;
   const parsed = claims.map((c) => ({ ...c, values: parseJson(c.values, { dates: [], amounts: [], names: [] }), citations: parseJson<string[]>(c.citations, []), evidence: parseJson<EvidenceEntry[]>(c.evidence, []) }));
-  const cited = [...(task.researchNotes ?? '').matchAll(/https?:\/\/[^\s)\]>"'<]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ''));
+  const cited = [...(task.researchNotes ?? '').matchAll(/https?:\/\/[^\s)\]>"'<]+/g)].map((m) => stripTracking(m[0].replace(/[.,;:]+$/, '')));
   const urls = [...new Set([...cited, ...parsed.flatMap((c) => [...c.citations, ...c.evidence.map((e) => e.url)])])];
   const sources = await db.sourceRecord.findMany({ where: { url: { in: urls } }, select: { id: true, url: true, host: true, title: true, status: true, httpStatus: true, detail: true, fetchedAt: true } });
   const { researchNotes: _notes, ...taskInfo } = task;

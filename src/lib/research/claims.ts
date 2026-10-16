@@ -1,3 +1,5 @@
+import { stripTracking } from '../links/url';
+
 /**
  * Research & Fact Checker (upgrade 03), pure part: find the significant,
  * checkable statements in research notes (dates, family, education,
@@ -139,7 +141,8 @@ function statements(notes: string): { text: string; urls: string[] }[] {
   for (const rawLine of notes.split(/\n+/)) {
     const line = rawLine.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
     if (!line) continue;
-    const urls = [...line.matchAll(URL_RE)].map((m) => m[0].replace(/[.,;:]+$/, ''));
+    // A markdown link [url](url?utm_source=chatgpt.com) names the same source twice: one citation after cleaning.
+    const urls = [...new Set([...line.matchAll(URL_RE)].map((m) => stripTracking(m[0].replace(/[.,;:]+$/, ''))))];
     const textOnly = line.replace(URL_RE, '').replace(/\(\s*\)|\[\s*\]/g, '').trim();
     if (/^(sources?|quellen?|references?|citation)\s*:?\s*$/i.test(textOnly) || (!textOnly.replace(/^(sources?|quellen?)\s*:/i, '').trim() && urls.length)) {
       if (out.length) out[out.length - 1].urls.push(...urls);

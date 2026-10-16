@@ -48,6 +48,28 @@ describe('external link policy', () => {
     ]);
   });
 
+  it("parses ChatGPT's linked answers: markdown links with utm_source=chatgpt.com, the address on the next line (owner report)", () => {
+    // As in the owner's EXTERNAL_LINKS answer (the extension turns ChatGPT's links into markdown).
+    const text = [
+      'LINK: Der Guardian |',
+      '[https://www.theguardian.com/sport/2014/dec/15/michael-van-gerwen-phil-taylor-world-darts-championship](https://www.theguardian.com/sport/2014/dec/15/michael-van-gerwen-phil-taylor-world-darts-championship?utm_source=chatgpt.com)',
+      '',
+      'LINK: NOS | [https://nos.nl/artikel/2568515-van-gerwen-stopt-voorlopig-met-darten-vanwege-relatiebreuk](https://nos.nl/artikel/2568515-van-gerwen-stopt-voorlopig-met-darten-vanwege-relatiebreuk?utm_source=chatgpt.com)',
+      'LINK: BBC Sport | [https://www.bbc.co.uk/sport/darts/articles/cpq1zydx8r9o](https://www.bbc.co.uk/sport/darts/articles/cpq1zydx8r9o?utm_source=chatgpt.com)',
+      'LINK: Tokio Hotel | [Tokio Hotel – Wikipedia](https://de.wikipedia.org/wiki/Tokio_Hotel_(Band)?utm_source=chatgpt.com&utm_medium=x)',
+      'LINK: Grammy | https://www.grammy.com/artists/x?id=7&utm_source=chatgpt.com',
+      'LINK: Mercury | https://en.wikipedia.org/wiki/Mercury_(planet))',
+    ].join('\n');
+    expect(parseLinkCandidates(text)).toEqual([
+      { phrase: 'Der Guardian', url: 'https://www.theguardian.com/sport/2014/dec/15/michael-van-gerwen-phil-taylor-world-darts-championship' },
+      { phrase: 'NOS', url: 'https://nos.nl/artikel/2568515-van-gerwen-stopt-voorlopig-met-darten-vanwege-relatiebreuk' },
+      { phrase: 'BBC Sport', url: 'https://www.bbc.co.uk/sport/darts/articles/cpq1zydx8r9o' },
+      { phrase: 'Tokio Hotel', url: 'https://de.wikipedia.org/wiki/Tokio_Hotel_(Band)' },
+      { phrase: 'Grammy', url: 'https://www.grammy.com/artists/x?id=7' },
+      { phrase: 'Mercury', url: 'https://en.wikipedia.org/wiki/Mercury_(planet)' },
+    ]);
+  });
+
   it('detects disambiguation pages, soft 404s and pages about a different subject', () => {
     const disamb = pageFacts('<html><head><title>Mercury - Wikipedia</title></head><body><h1>Mercury</h1><p>Mercury may refer to:</p></body></html>');
     expect(disamb.disambiguation).toBe(true);

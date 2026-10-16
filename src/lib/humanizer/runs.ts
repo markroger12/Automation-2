@@ -94,16 +94,30 @@ export async function processHumanizerRun(runId: string): Promise<{ state: 'wait
   const template = run.promptOverride ?? (await loadPromptTemplate('shared', 'HUMANIZE', run.task?.website ?? null)).content;
   const country = run.task?.targetCountry ?? (run.language === 'de' ? 'Germany' : 'United States');
   const answers: (string | { error: string } | null)[] = [];
+  // A run on an article continues in the chat the article was written in, one batch at a time (a chat answers one
+  // prompt at a time). A conversation that was lost falls back to a new chat for the remaining batches.
+  const conversationUrl = run.task?.conversationUrl ?? null;
+  let sentOne = false;
   for (const b of plan.batches) {
     const vars = { keyword: run.keyword || 'the primary keyword (none given)', ...batchVariables(plan, b.index) };
     const prompt = `${renderTemplate(template, vars).text}\n\n${languageInstruction(run.language, country)}`;
-    const operationId = `hz:${run.id}:b${b.index + 1}`;
-    const response = await db.chatGPTResponse.findUnique({ where: { operationId } });
+    const baseOp = `hz:${run.id}:b${b.index + 1}`;
+    let response = await db.chatGPTResponse.findUnique({ where: { operationId: baseOp } });
+    if (response?.status === 'FAILED' && (response.error ?? '').startsWith('CONVERSATION_LOST')) response = await db.chatGPTResponse.findUnique({ where: { operationId: `${baseOp}:new` } });
+    const lost = Boolean(response === null && (await db.chatGPTResponse.count({ where: { operationId: baseOp } })));
     if (!response) {
-      await createRunChatGPTRequest({ runId: run.id, language: run.language, operationId, prompt, timeoutSec: settings.browser.generationTimeoutSec });
+      if (conversationUrl && !lost && sentOne) {
+        answers.push(null); // waits for the previous batch in the same chat
+        continue;
+      }
+      await createRunChatGPTRequest({ runId: run.id, language: run.language, operationId: lost ? `${baseOp}:new` : baseOp, prompt, timeoutSec: settings.browser.generationTimeoutSec, conversationUrl: lost ? null : conversationUrl });
+      sentOne = true;
       answers.push(null);
     } else if (response.status === 'COMPLETED' && response.resultText !== null) answers.push(response.resultText);
-    else if (response.status === 'PENDING') answers.push(null);
+    else if (response.status === 'PENDING') {
+      sentOne = true;
+      answers.push(null);
+    }
     else answers.push({ error: response.error ?? `prompt ${response.status.toLowerCase()}` });
   }
   const pending = answers.filter((a) => a === null).length;

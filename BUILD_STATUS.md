@@ -1388,3 +1388,46 @@ npx tsc --noEmit         # 0 errors
 npx vitest run           # 38 files, 263 tests pass
 npm run build            # compiled
 ```
+
+## Owner requests: humanizer in the article's chat; internal link to the previous article
+
+**1. The humanizer opened a new ChatGPT chat for every batch.** The owner wants it to use the chat the article was written in.
+- **HUMANIZE stage** (`src/worker/pipelines/humanize.ts`): the batches now go to the article's conversation, one after another. The next batch is sent only after the previous one is answered, because a chat answers one prompt at a time. Before, every batch opened its own new chat, all at once.
+- **Humanizer page, source “article”** (`src/lib/humanizer/runs.ts`, `createRunChatGPTRequest`): a run continues in that article's chat, one batch at a time. If that conversation is lost, the remaining batches fall back to new chats. Pasted text still opens new chats.
+- **Bug found on the way** (`src/lib/chatgpt/jobs.ts`, `src/worker/pipeline/context.ts`):
+  - Every answer saved its conversation as the article's conversation, including the image search's own new chat (IMAGES runs before HUMANIZE), the photo check and image generation. Later prompts and stage regenerations would therefore have gone to the picture chat.
+  - A stage's own new chat is now marked `sideChat`. It never replaces the article's conversation, and losing it does not clear the article's conversation either.
+  - A conversation switch after a lost chat still moves the article to the new chat.
+
+**2. The last-line internal link did not point to the previous article.**
+- The report (`article-report-sascha-hehn-kinder.json`) shows the line “Das könnte Ihnen gefallen:” linked the most related published post (“Sebastian Ströbel Kinder”).
+- The owner's earlier tool (`src/worker/pipelines/stages/internal-link.ts` in `markroger12/automation`) always linked the previous article it wrote for the same website.
+- **New setting** (Settings → SEO, links & images): **Internal link line target**, with two options:
+  - *Previous article of this website* (default, as in the earlier tool);
+  - *Most related published post* (the previous behaviour).
+- **Which article is “previous”:** the previous keyword of the same workflow, otherwise the latest earlier article of the same website (not failed or cancelled).
+- **Which address is linked:**
+  - its published post from the internal-link index, checked as reachable;
+  - else, if it is a draft, its planned `/<slug>/` address. This is predicted only when the site's indexed posts use plain `/<slug>/` addresses (promizeiten.de does). The Links tab says the link works once that article is published.
+  - If nothing fits, the line falls back to the most related post, with a note.
+- Contextual links are unchanged. In this report, the related posts had no natural phrase in the body, so none were placed.
+
+**Tests** (each fails on the old code and passes on the new)
+- `tests/unit/humanize-stage.test.ts`: the HUMANIZE batches go to the article's conversation, never two at once. A Humanizer page run on an article does the same.
+- `tests/integration/images.test.ts`, ChatGPT image search: the gallery prompt opens its own chat, and every later prompt, including HUMANIZE, stays in the article's chat. The task keeps the article's conversation.
+- `tests/integration/links.test.ts`, on fake WordPress: the second article's line links the first article (published) instead of the closely related post. With *Most related*, it links the related post.
+- `tests/unit/links.test.ts`: the previous article's post is found by its id or title; a draft gets its planned `/<slug>/` address only on `/<slug>/` sites.
+- Test helper: `makeDriver` can report a separate conversation per chat and observe each claimed prompt.
+
+**Not verified here:** live ChatGPT with the batches in the article's chat. The test checks one prompt at a time per chat, but not how the real page behaves with a long conversation.
+
+**Commands run**
+```
+npx tsc --noEmit                                                     # 0 errors
+npx vitest run                                                       # 38 files, 267 tests pass
+npx vitest run --config vitest.integration.config.ts <each file>     # all 10 files pass (content-refresh 5,
+                                                                     # extension 26, images 8, links 6, migration 1,
+                                                                     # wordpress-drafts 10, wordpress-session 6,
+                                                                     # worker-toolchain 1, workflow-publish 6)
+npm run build                                                        # compiled
+```

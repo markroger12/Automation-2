@@ -11,7 +11,9 @@ import { bind, waiting } from './common';
  * Always starts from the saved pre-humanizer body (never from an earlier
  * humanized version), so regeneration cannot compound edits. Each batch is
  * its own ChatGPT prompt (`part`), so an accepted batch is never re-sent or
- * overwritten when another batch is retried.
+ * overwritten when another batch is retried. The batches go to the chat the
+ * article was written in (owner request), one after another: a chat answers
+ * one prompt at a time.
  */
 
 /** The unedited source: external-link output, else the article body. */
@@ -42,16 +44,19 @@ export function humanizeStage(manifest: StageManifest): PipelineStage {
         const lastAttempt = ctx.stage.attempts > (await getSettings()).workflow.retryAttempts;
         const ask = async (index: number) => {
           try {
-            return await ctx.askChatGPT('HUMANIZE', batchVariables(plan, index), { part: `b${index + 1}`, newChat: true });
+            return await ctx.askChatGPT('HUMANIZE', batchVariables(plan, index), { part: `b${index + 1}` });
           } catch (error) {
             if (lastAttempt && error instanceof TransientError) return { status: 'failed' as const, error: error.message };
             throw error;
           }
         };
-        // Ask every batch first (separate chats, so tabs can work in parallel), then wait.
-        const answers = await Promise.all(plan.batches.map((b) => ask(b.index)));
-        const pending = answers.filter((a) => a.status === 'waiting').length;
-        if (pending) return waiting(`Waiting for ChatGPT: ${pending} of ${plan.batches.length} humanizer batch(es)`);
+        // One batch at a time in the article's chat: the next one is sent only after the previous one is answered.
+        const answers: Awaited<ReturnType<typeof ask>>[] = [];
+        for (const b of plan.batches) {
+          const answer = await ask(b.index);
+          if (answer.status === 'waiting') return waiting(`Waiting for ChatGPT: humanizer batch ${b.index + 1} of ${plan.batches.length}`);
+          answers.push(answer);
+        }
         answers.forEach((a, i) => results.push(...evaluateBatch(plan, i, a.status === 'completed' ? a.text : { error: a.status === 'failed' ? a.error : 'no answer' }, lock)));
       }
       results.push(...skippedResults(plan));

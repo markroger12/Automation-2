@@ -3,10 +3,10 @@ import { getSettings } from '@/lib/settings';
 import { parseJson, stringArray } from '@/lib/json';
 import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
-import { normalizeText, stripTags } from '@/lib/content/text';
+import { makeSlug, normalizeText, stripTags } from '@/lib/content/text';
 import { parseLinkCandidates, verifyLink, linkPolicy, type LinkKind } from '@/lib/links/verify';
 import { placeLinks } from '@/lib/links/place';
-import { chooseLineTarget, findAnchor, rankTargets, type TargetLike } from '@/lib/links/internal';
+import { chooseLineTarget, findAnchor, previousArticleTarget, rankTargets, type TargetLike } from '@/lib/links/internal';
 import { safeFetch } from '@/lib/links/net';
 import type { StageManifest } from '@/modules/types';
 import { refreshLinkIndex } from '@/wordpress/link-index';
@@ -135,6 +135,20 @@ export interface InternalLinkData {
 
 type Override = { mode: 'none' } | { mode: 'url'; url: string; title?: string } | undefined;
 
+/** The article this app wrote before for the same website: the previous keyword of its workflow, else by creation time. */
+async function previousArticle(ctx: PipelineContext) {
+  const usable = { status: { notIn: ['FAILED', 'CANCELLED'] }, legacy: false, websiteId: ctx.task.websiteId, id: { not: ctx.taskId } };
+  const slot = await db.workflowKeyword.findFirst({ where: { taskId: ctx.taskId } });
+  if (slot) {
+    const before = await db.workflowKeyword.findMany({ where: { workflowId: slot.workflowId, position: { lt: slot.position }, taskId: { not: null } }, orderBy: { position: 'desc' }, take: 5 });
+    for (const k of before) {
+      const task = await db.articleTask.findFirst({ where: { ...usable, id: k.taskId! } });
+      if (task) return task;
+    }
+  }
+  return db.articleTask.findFirst({ where: { ...usable, createdAt: { lt: ctx.task.createdAt } }, orderBy: { createdAt: 'desc' } });
+}
+
 export function internalLinks(manifest: StageManifest): PipelineStage {
   return bind(manifest, {
     shouldRun: (ctx) => ctx.config.internalLinks,
@@ -187,6 +201,23 @@ export function internalLinks(manifest: StageManifest): PipelineStage {
         const v = sameSite ? await check(override.url) : { ok: false, finalUrl: override.url, note: 'not a URL of this website' };
         if (v.ok) chosen = { url: v.finalUrl, title: override.title ?? ranked.find((r) => r.target.url === override.url)?.target.title ?? override.url, reason: 'chosen by the owner' };
         else warnings.push(`The chosen internal link ${override.url} was not used: ${v.note}.`);
+      }
+      if (!chosen && (ctx.config.internalLinkLineTarget ?? 'previous-article') === 'previous-article') {
+        // As in the owner's earlier tool: the line links the article this app wrote before for the same website.
+        const prev = await previousArticle(ctx);
+        if (prev) {
+          const title = prev.selectedTitle ?? prev.seoTitle ?? prev.keyword;
+          const found = previousArticleTarget({ title, wpPostId: prev.wpPostId, slug: prev.wpSlug ?? prev.slug ?? makeSlug(prev.keyword, prev.language) }, targets, site.publicUrl);
+          if (found) {
+            const v = await check(found.url);
+            if (v.ok) chosen = { url: v.finalUrl, title: found.target?.title ?? title, reason: `previous article of this website (“${title}”)`, id: found.target?.id };
+            // A planned address only for an article that has (or will still get) a WordPress post.
+            else if (found.planned && prev.wpPostStatus !== 'publish' && (prev.wpPostId || !['COMPLETED', 'NEEDS_REVIEW'].includes(prev.status))) {
+              chosen = { url: found.url, title, reason: `previous article of this website (“${title}”), not published yet: its planned address; the link works once that article is published` };
+              notes.push(`The internal-link line points to the previous article “${title}”, which is not published yet (${found.url}). It works once that article is published with this address.`);
+            } else notes.push(`The previous article “${title}” was not linked (${v.note}); the most related post was linked instead.`);
+          } else notes.push(`The previous article “${title}” is not published and its address cannot be predicted (this site's posts do not use /<slug>/ addresses); the most related post was linked instead.`);
+        }
       }
       if (!chosen) {
         const plan = chooseLineTarget(ranked);

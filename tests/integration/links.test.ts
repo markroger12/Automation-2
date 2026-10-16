@@ -226,6 +226,34 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
     expect(target.url).toBe(`${wp.url}/groesse-und-gewicht-heidi-klum/`);
   });
 
+  it("links the previous article of the website in the last line (as in the owner's earlier tool), or the most related post when set", async () => {
+    const wp = await startFakeWordPress();
+    servers.push(wp);
+    const related = wp.addPost({ title: 'Heidi Klum: Her Modeling Career', status: 'publish', slug: 'heidi-klum-career', content: '<p>Heidi Klum began modeling.</p>', categories: [7] });
+    const s = await site(wp, 'Previous Blog');
+    const driver = makeDriver(client);
+    const first = await driver.drive((await task(s, 'Bill Kaulitz Tokio Hotel', 'prev-1')).id);
+    // The owner published the first article: the index now has its real address.
+    const post = wp.addPost({ title: first.selectedTitle!, status: 'publish', slug: 'bill-kaulitz', content: '<p>Bill Kaulitz sings.</p>', categories: [7] });
+    await client.articleTask.update({ where: { id: first.id }, data: { wpPostId: post.id, wpPostStatus: 'publish' } });
+    await client.website.update({ where: { id: s.id }, data: { linkIndexSyncedAt: null } });
+    const second = await driver.drive((await task(s, 'Heidi Klum Modeling', 'prev-2')).id);
+    let int = await stageData(second.id, 'INTERNAL_LINKS');
+    expect(int.url).toBe(`${wp.url}/?p=${post.id}`); // not the closely related Heidi Klum post
+    expect(int.reason).toMatch(/previous article of this website/);
+    expect(second.assembledHtml).toContain(`<strong>Also read:</strong> <a href="${wp.url}/?p=${post.id}"`);
+    const { updateSettings } = await import('@/lib/settings');
+    await updateSettings({ seo: { internalLinkLineTarget: 'most-related' } });
+    try {
+      const third = await driver.drive((await task(s, 'Heidi Klum Career Facts', 'prev-3')).id);
+      int = await stageData(third.id, 'INTERNAL_LINKS');
+      expect(int.url).toBe(`${wp.url}/?p=${related.id}`);
+      expect(int.reason).toMatch(/most related/);
+    } finally {
+      await updateSettings({ seo: { internalLinkLineTarget: 'previous-article' } });
+    }
+  });
+
   it('never links an article to itself and drops posts that are no longer published', async () => {
     const wp = await startFakeWordPress();
     servers.push(wp);

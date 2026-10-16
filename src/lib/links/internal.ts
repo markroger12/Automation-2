@@ -78,6 +78,20 @@ export function chooseLineTarget<T extends TargetLike>(ranked: Ranked<T>[]): { c
   return order.length ? { ...order[0], order } : null;
 }
 
+/**
+ * The internal-link line's target for the previous article this app wrote (as in the owner's earlier tool): its
+ * published post from the index, else its planned `/<slug>/` address, predicted only when the site's indexed posts
+ * use such addresses. The stage checks the address: a draft's planned address works once the draft is published.
+ */
+export function previousArticleTarget<T extends TargetLike>(prev: { title: string; wpPostId: number | null; slug: string | null }, targets: T[], siteUrl: string): { url: string; target: T | null; planned: boolean } | null {
+  const indexed = targets.find((t) => (prev.wpPostId && t.wpPostId === prev.wpPostId) || normalizeText(t.title) === normalizeText(prev.title));
+  if (indexed) return { url: indexed.url, target: indexed, planned: false };
+  if (!prev.slug) return null;
+  const base = siteUrl.replace(/\/+$/, '');
+  const slugAddresses = targets.some((t) => t.slug && t.url.replace(/\/+$/, '') === `${base}/${t.slug}`);
+  return slugAddresses ? { url: `${base}/${encodeURIComponent(prev.slug)}/`, target: null, planned: true } : null;
+}
+
 /** Natural anchor for a target that already appears in the body text (keeps the body's own casing). */
 export function findAnchor(bodyText: string, target: TargetLike): string | null {
   const candidates = uniq(

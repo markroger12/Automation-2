@@ -179,6 +179,8 @@ export function createContext(deps: ContextDeps): PipelineContext {
         expectGallery: options.expectGallery,
         // Regenerations, conversation switches and retries after a rejected/superseded answer must never "recover" an
         // older identical answer from the page (it would be the rejected one again).
+        // A stage's own new chat (images) must not move the article off its conversation; a lost conversation does.
+        sideChat: Boolean(options.newChat) && !lost,
         fresh:
           Boolean(options.fresh) ||
           ops.length > 0 ||

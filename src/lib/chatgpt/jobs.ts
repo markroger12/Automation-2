@@ -30,6 +30,11 @@ export interface ChatGPTJobPayload {
   expectGallery?: boolean;
   /** Deliberate re-send of an identical prompt (regeneration): recover only with evidence. */
   fresh?: boolean;
+  /**
+   * A separate chat for one stage (image search, photo check, image generation): its conversation never becomes the
+   * article's conversation, so later prompts stay in the chat the article was written in.
+   */
+  sideChat?: boolean;
   timeoutSec: number;
   language: string;
 }
@@ -68,6 +73,7 @@ export async function createChatGPTRequest(
     expectImages?: boolean;
     expectGallery?: boolean;
     fresh?: boolean;
+    sideChat?: boolean;
     timeoutSec: number;
     conversationSwitch?: boolean;
   },
@@ -100,6 +106,7 @@ export async function createChatGPTRequest(
     expectImages: Boolean(input.expectImages),
     expectGallery: Boolean(input.expectGallery),
     fresh: Boolean(input.fresh),
+    sideChat: Boolean(input.sideChat),
     timeoutSec: input.timeoutSec,
     language: input.task.language,
   };
@@ -124,11 +131,11 @@ export async function createChatGPTRequest(
 }
 
 /**
- * A prompt that belongs to a standalone Humanizer run (no article task).
- * Always a new chat; idempotent by operationId like article prompts.
+ * A prompt that belongs to a standalone Humanizer run (no article task). A run on an article continues in the chat
+ * the article was written in (`conversationUrl`); pasted text opens a new chat. Idempotent by operationId.
  */
 export async function createRunChatGPTRequest(
-  input: { runId: string; language: string; operationId: string; prompt: string; timeoutSec: number },
+  input: { runId: string; language: string; operationId: string; prompt: string; timeoutSec: number; conversationUrl?: string | null },
   client: Tx = db,
 ): Promise<{ responseId: string; jobId: string; created: boolean }> {
   const existing = await client.chatGPTResponse.findUnique({ where: { operationId: input.operationId } });
@@ -141,8 +148,8 @@ export async function createRunChatGPTRequest(
     stageKey: 'HUMANIZE',
     prompt: input.prompt,
     promptHash,
-    conversationUrl: null,
-    newChat: true,
+    conversationUrl: isRealConversationUrl(input.conversationUrl) ? input.conversationUrl : null,
+    newChat: !isRealConversationUrl(input.conversationUrl),
     attachments: [],
     expectImages: false,
     timeoutSec: input.timeoutSec,
@@ -343,7 +350,7 @@ export async function completeChatGPTJob(
     });
   }
   if (job.taskId) {
-    if (conversationUrl) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl } });
+    if (conversationUrl && !payload.sideChat) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl } });
     await log({ category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `ChatGPT answer saved (${text.length} chars${input.recovered ? ', recovered after interruption' : ''}).` }, client);
   }
   await wakeOwner(job, payload, client);
@@ -434,7 +441,7 @@ export async function failChatGPTJob(
     case 'CONVERSATION_LOST': {
       await client.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: new Date(), leaseUntil: null, error: message, errorCode: input.code } });
       if (job.relatedId) await client.chatGPTResponse.update({ where: { id: job.relatedId }, data: { status: 'FAILED', error: `CONVERSATION_LOST: ${message}` } });
-      if (job.taskId) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl: null } });
+      if (job.taskId && !payload.sideChat) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl: null } });
       await wakeOwner(job, payload, client);
       outcome = 'conversation-lost';
       break;

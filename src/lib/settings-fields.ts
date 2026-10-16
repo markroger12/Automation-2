@@ -90,6 +90,16 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'maxExternalLinks', label: 'Max external links', type: 'number', min: 0, max: 10 },
       { key: 'internalLinks', label: 'Internal links', type: 'boolean' },
       { key: 'maxContextualInternalLinks', label: 'Max contextual internal links', type: 'number', min: 0, max: 5 },
+      {
+        key: 'internalLinkLineTarget',
+        label: 'Internal link line target',
+        type: 'select',
+        options: [
+          { value: 'previous-article', label: 'Previous article of this website' },
+          { value: 'most-related', label: 'Most related published post' },
+        ],
+        help: 'The “Also read” line at the end. Previous article (as in the earlier tool): the article this app wrote before for the same website, at its WordPress address. If that article is still a draft, its planned address is used; it works once the draft is published. Falls back to the most related post when there is no previous article.',
+      },
       { key: 'internalLinkIndexHours', label: 'Refresh internal link index every (hours)', type: 'number', min: 0.25, max: 168, step: 0.25 },
       { key: 'articleImages', label: 'Article images', type: 'boolean' },
       { key: 'imagesRequired', label: 'Missing images → Needs review', type: 'boolean', help: 'Off: finish a text-only draft with a review note.' },

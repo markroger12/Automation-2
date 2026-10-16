@@ -15,7 +15,17 @@ export type ScriptedAnswer = string | { text: string; images?: Buffer[]; imageLi
  * test opts in with `detectDuplicates`, the driver records the owner's
  * override for that reason — the same path an owner uses — before driving.
  */
-export function makeDriver(client: PrismaClient, answer: (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => ScriptedAnswer = cannedAnswer, opts: { detectDuplicates?: boolean } = {}) {
+export function makeDriver(
+  client: PrismaClient,
+  answer: (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => ScriptedAnswer = cannedAnswer,
+  opts: {
+    detectDuplicates?: boolean;
+    /** The conversation each answer reports (default: one fixed conversation). */
+    conversationFor?: (payload: import('@/lib/chatgpt/jobs').ChatGPTJobPayload) => string;
+    /** Called when a ChatGPT job is claimed, before it is answered. */
+    onClaim?: (payload: import('@/lib/chatgpt/jobs').ChatGPTJobPayload) => Promise<void> | void;
+  } = {},
+) {
   const respond = async () => {
     const jobs = await import('@/lib/chatgpt/jobs');
     let answered = 0;
@@ -23,6 +33,7 @@ export function makeDriver(client: PrismaClient, answer: (stageKey: string, prom
       const claim = await jobs.claimChatGPTJob({ installId: 'test', tabId: `t${answered}` });
       if (!('job' in claim)) break;
       const p = claim.payload;
+      await opts.onClaim?.(p);
       // Article prompts belong to a task; standalone Humanizer prompts belong to a run.
       const owner = p.taskId ? await client.articleTask.findUniqueOrThrow({ where: { id: p.taskId } }) : await client.humanizerRun.findUniqueOrThrow({ where: { id: p.runId! } });
       const a = answer(p.stageKey, p.prompt, owner.language === 'de' ? 'de' : 'en', owner.keyword);
@@ -49,7 +60,7 @@ export function makeDriver(client: PrismaClient, answer: (stageKey: string, prom
         images,
         // Image-search gallery pictures on other hosts, as the extension reports them.
         imageLinks: typeof a !== 'string' && 'imageLinks' in a ? a.imageLinks : undefined,
-        conversationUrl: 'https://chatgpt.com/c/11111111-2222-4333-8444-555555555555',
+        conversationUrl: opts.conversationFor?.(p) ?? 'https://chatgpt.com/c/11111111-2222-4333-8444-555555555555',
       });
       answered++;
     }

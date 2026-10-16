@@ -62,6 +62,55 @@ beforeAll(async () => {
   catId = (await client.category.create({ data: { websiteId: siteId, externalId: 3, name: 'Tech & Apps' } })).id;
 });
 
+/** A driver whose answers report the article's chat for follow-up prompts and a fresh chat for every new chat. */
+function conversationDriver(seen: { stageKey: string; newChat: boolean; conversationUrl: string | null; reported: string; pendingSameStage: number; taskId: string | null; runId: string | null }[]) {
+  let n = 0;
+  const reportedFor = new Map<string, string>();
+  return makeDriver(client, (stage, prompt, lang, kw) => (stage === 'HUMANIZE' ? editorAnswer(prompt) : cannedAnswer(stage, prompt, lang, kw)), {
+    conversationFor: (p) => reportedFor.get(p.operationId)!,
+    onClaim: async (p) => {
+      const reported = !p.newChat && p.conversationUrl ? p.conversationUrl : `https://chatgpt.com/c/${String(++n).padStart(8, '0')}-2222-4333-8444-555555555555`;
+      reportedFor.set(p.operationId, reported);
+      // Other prompts of the same stage still waiting for an answer while this one is being answered.
+      const pendingSameStage = await client.chatGPTResponse.count({ where: { stageKey: p.stageKey, status: 'PENDING', operationId: { not: p.operationId }, ...(p.taskId ? { taskId: p.taskId } : { runId: p.runId }) } });
+      seen.push({ stageKey: p.stageKey, newChat: p.newChat, conversationUrl: p.conversationUrl, reported, pendingSameStage, taskId: p.taskId, runId: p.runId ?? null });
+    },
+  });
+}
+
+describe('HUMANIZE in the chat the article was written in (owner request)', () => {
+  it('sends the humanizer batches to the article conversation, one after another', async () => {
+    const seen: Parameters<typeof conversationDriver>[0] = [];
+    const { task } = await tigram('hz:same-chat', 'How to Install WordPress Plugins');
+    const t = await conversationDriver(seen).drive(task.id);
+    const article = seen.find((x) => x.stageKey !== 'HUMANIZE')!.reported;
+    const batches = seen.filter((x) => x.stageKey === 'HUMANIZE');
+    expect(batches.length).toBeGreaterThanOrEqual(2);
+    expect(batches.every((b) => !b.newChat && b.conversationUrl === article)).toBe(true);
+    expect(batches.map((b) => b.pendingSameStage)).toEqual(batches.map(() => 0)); // never two prompts in the chat at once
+    expect(t.conversationUrl).toBe(article);
+  });
+
+  it('a Humanizer page run on an article also continues in that chat, one batch at a time', async () => {
+    const seen: Parameters<typeof conversationDriver>[0] = [];
+    const { task } = await tigram('hz:same-chat-run', 'How to Install WordPress Themes');
+    const driver = conversationDriver(seen);
+    const t = await driver.drive(task.id);
+    seen.length = 0;
+    const run = await runs.createHumanizerRun({ source: 'ARTICLE', taskId: t.id, scope: 'all' });
+    for (let i = 0; i < 12; i++) {
+      await worker.humanizerTick('test-worker', () => false);
+      if ((await client.humanizerRun.findUniqueOrThrow({ where: { id: run.id } })).status === 'COMPLETED') break;
+      await driver.respond();
+    }
+    expect((await client.humanizerRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe('COMPLETED');
+    const batches = seen.filter((x) => x.runId === run.id);
+    expect(batches.length).toBeGreaterThanOrEqual(2);
+    expect(batches.every((b) => !b.newChat && b.conversationUrl === t.conversationUrl)).toBe(true);
+    expect(batches.map((b) => b.pendingSameStage)).toEqual(batches.map(() => 0));
+  });
+});
+
 describe('HUMANIZE stage', () => {
   let taskId: string;
 

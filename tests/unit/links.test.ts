@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isBlockedAddress } from '@/lib/links/net';
 import { identifiesSubject, linkPolicy, pageFacts, parseLinkCandidates, siteKey } from '@/lib/links/verify';
 import { placeLinks } from '@/lib/links/place';
-import { chooseLineTarget, findAnchor, rankTargets, type TargetLike } from '@/lib/links/internal';
+import { chooseLineTarget, findAnchor, previousArticleTarget, rankTargets, type TargetLike } from '@/lib/links/internal';
 
 describe('SSRF address checks', () => {
   it('blocks private, loopback, link-local, CGNAT, multicast and reserved addresses (IPv4 and IPv6)', () => {
@@ -117,5 +117,23 @@ describe('internal link selection', () => {
     expect(ranked.find((r) => r.target.wpPostId === 9)!.related).toBe(false);
     expect(findAnchor('Viele fragen nach der Größe und Gewicht der Moderatorin.', t(8, 'Größe und Gewicht: Heidi Klum im Check'))).toBe('Größe und Gewicht');
     expect(findAnchor('Heidi Klums Töchtern geht es gut.', t(7, 'Heidi Klums Töchter und Söhne'))).toBeNull();
+  });
+});
+
+describe('internal-link line: the previous article (as in the earlier tool)', () => {
+  const t = (id: number, slug: string, title: string, url = `https://promizeiten.de/${slug}/`): TargetLike => ({ id: `t${id}`, wpPostId: id, url, title, slug, categoryIds: [], keyword: null, excerpt: null, publishedAt: new Date('2026-10-01') });
+  const site = 'https://promizeiten.de/';
+  const targets = [t(1, 'sebastian-stroebel-kinder', 'Sebastian Ströbel Kinder'), t(2, 'gloria-krass', 'Gloria Krass: Alles über die Schauspielerin')];
+
+  it('uses the published post of the previous article, found by its post id or its title', () => {
+    expect(previousArticleTarget({ title: 'anything', wpPostId: 2, slug: 'x' }, targets, site)).toMatchObject({ url: 'https://promizeiten.de/gloria-krass/', planned: false, target: { id: 't2' } });
+    expect(previousArticleTarget({ title: 'Gloria Krass: Alles über die Schauspielerin', wpPostId: null, slug: null }, targets, site)).toMatchObject({ planned: false, target: { id: 't2' } });
+  });
+
+  it('a previous draft gets its planned /<slug>/ address when the site uses such addresses, else none', () => {
+    expect(previousArticleTarget({ title: 'Sascha Hehn Kinder', wpPostId: 7480, slug: 'sascha-hehn-kinder' }, targets, site)).toEqual({ url: 'https://promizeiten.de/sascha-hehn-kinder/', target: null, planned: true });
+    const plain = [t(1, 'a', 'A', 'https://promizeiten.de/?p=1')];
+    expect(previousArticleTarget({ title: 'Sascha Hehn Kinder', wpPostId: 7480, slug: 'sascha-hehn-kinder' }, plain, site)).toBeNull();
+    expect(previousArticleTarget({ title: 'Sascha Hehn Kinder', wpPostId: null, slug: null }, targets, site)).toBeNull();
   });
 });

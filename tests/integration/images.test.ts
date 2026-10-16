@@ -257,7 +257,14 @@ describe('Image Studio (IMAGES stage)', () => {
       };
       const site = await offlineSite('Celeb Gallery');
       await addLogo(site.id);
-      const driver = makeDriver(client, answer);
+      // Each new chat reports its own conversation, like ChatGPT does; follow-up prompts report the chat they went to.
+      const ARTICLE_CHAT = 'https://chatgpt.com/c/aaaaaaaa-2222-4333-8444-555555555555';
+      const GALLERY_CHAT = 'https://chatgpt.com/c/bbbbbbbb-2222-4333-8444-555555555555';
+      const claimed: { stageKey: string; newChat: boolean; conversationUrl: string | null }[] = [];
+      const driver = makeDriver(client, answer, {
+        onClaim: (p) => void claimed.push({ stageKey: p.stageKey, newChat: p.newChat, conversationUrl: p.conversationUrl }),
+        conversationFor: (p) => (p.stageKey === 'IMAGES' ? GALLERY_CHAT : (p.conversationUrl ?? ARTICLE_CHAT)),
+      });
       const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
       const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Tom Kaulitz Heidi Klum', websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'img:celeb-gallery' }, { source: 'SINGLE' });
       const t = await driver.drive(task.id);
@@ -276,6 +283,13 @@ describe('Image Studio (IMAGES stage)', () => {
       expect(data.gallery.every((g: { source: string }) => g.source === 'ChatGPT image search')).toBe(true);
       // Commons was not asked (source: ChatGPT gallery only).
       expect(await client.mediaAsset.count({ where: { taskId: t.id, origin: 'WIKIMEDIA' } })).toBe(0);
+      // The image search's own chat never becomes the article's chat: every later prompt stays in the article chat.
+      const gallery = claimed.findIndex((c) => c.stageKey === 'IMAGES');
+      expect(claimed[gallery].newChat).toBe(true);
+      const after = claimed.slice(gallery + 1);
+      expect(after.length).toBeGreaterThan(0);
+      expect(after.every((c) => !c.newChat && c.conversationUrl === ARTICLE_CHAT)).toBe(true);
+      expect(t.conversationUrl).toBe(ARTICLE_CHAT);
     } finally {
       await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
     }

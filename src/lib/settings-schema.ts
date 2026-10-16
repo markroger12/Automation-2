@@ -73,6 +73,11 @@ export const seoSettingsSchema = z.object({
   maxContextualInternalLinks: z.number().int().min(0).max(5).default(2),
   /** Re-read published posts for internal linking at most this often (hours). */
   internalLinkIndexHours: z.number().min(0.25).max(168).default(6),
+  /**
+   * The article's last-line internal link ("Das könnte Ihnen gefallen: …"): the previous article this app wrote for
+   * the same website (as in the owner's earlier tool), or the site's most related published post.
+   */
+  internalLinkLineTarget: z.enum(['previous-article', 'most-related']).default('previous-article'),
   articleImages: z.boolean().default(true),
   imagesRequired: z.boolean().default(false),
   imageOutputSize: z.enum(['1200x675', '1920x1080']).default('1200x675'),
@@ -178,6 +183,7 @@ export interface EffectiveTaskConfig {
   imageMaxBytes: number;
   celebrityPhotoReview: boolean;
   celebrityPhotoSource: 'chatgpt' | 'commons' | 'chatgpt-then-commons';
+  internalLinkLineTarget: 'previous-article' | 'most-related';
   manualTitleApproval: boolean;
   manualArticleApproval: boolean;
   reviewThreshold: number;
@@ -219,6 +225,7 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     imageMaxBytes: global.seo.imageMaxBytes,
     celebrityPhotoReview: global.seo.celebrityPhotoReview,
     celebrityPhotoSource: global.seo.celebrityPhotoSource,
+    internalLinkLineTarget: global.seo.internalLinkLineTarget,
     manualTitleApproval: pick(options.manualTitleApproval, site.workflow.manualTitleApproval, global.workflow.manualTitleApproval),
     manualArticleApproval: pick(options.manualArticleApproval, site.workflow.manualArticleApproval, global.workflow.manualArticleApproval),
     reviewThreshold: pick(options.reviewThreshold, site.seo.reviewThreshold, global.seo.reviewThreshold),

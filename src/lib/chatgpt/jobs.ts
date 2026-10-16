@@ -426,7 +426,7 @@ export async function failChatGPTJob(
       if (job.taskId) {
         await client.articleTask.update({
           where: { id: job.taskId },
-          data: { status: 'PAUSED', pausedFor: 'usage-limit', message: `ChatGPT usage limit / rate limit — waiting until ${until.toLocaleTimeString()}.`, nextAction: 'No action needed; the task resumes when the limit window passes.' },
+          data: { status: 'PAUSED', pausedFor: 'usage-limit', message: `ChatGPT usage limit / rate limit — waiting until ${until.toLocaleTimeString()}.`, nextAction: `Resumes automatically after ${until.toLocaleTimeString()}, or press Resume to try ChatGPT now.` },
         });
       }
       outcome = 'backoff';

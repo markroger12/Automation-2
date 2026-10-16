@@ -1464,3 +1464,32 @@ npx vitest run                                                         # 39 file
 npx vitest run --config vitest.integration.config.ts tests/integration/worker-toolchain.test.ts tests/integration/extension.test.ts   # 27/27
 npm run build                                                          # compiled
 ```
+
+## Owner report: Resume did nothing on a task paused for a ChatGPT usage limit
+
+The owner's screenshot showed QUICK_BIO paused with “ChatGPT usage limit / rate limit — waiting until 6:15:39 AM”. Pressing Resume changed nothing.
+
+**Cause**
+- The extension reported ChatGPT's usage-limit notice (`USAGE_LIMIT`), so the app set the account-wide wait (`chatgpt.rate`, `backoffUntil`) and paused the task.
+- Resume woke the article and its prompt, but every claim of a ChatGPT job is refused while that wait lasts. Nothing could happen until 6:15.
+
+**Fix**
+- **Resume means “try now”:** Resume on a task paused for a usage limit ends the wait (`clearBackoff`), puts the task back in the queue (“Resumed by you: trying ChatGPT again now.”) and logs that the wait was skipped. The prompt is claimed at once.
+- **Next wait is longer:** the backoff step is kept. If ChatGPT is still limited, the extension reports it again and the next wait is longer, not shorter.
+- **The task's hint now says:** “Resumes automatically after HH:MM, or press Resume to try ChatGPT now.”
+- **Without Resume** the task still resumes by itself when the window passes, as before.
+
+**Test:** `tests/unit/resume-usage-limit.test.ts`.
+- After a `USAGE_LIMIT`, claims are refused.
+- After Resume, the wait is gone and the same prompt is claimed.
+- On the old code it fails: the wait was still set after Resume.
+
+**Not verified here:** what ChatGPT showed on the owner's page. The notice text is stored with the failed prompt, and the article report shows it.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 40 files, 274 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/{extension,workflow-publish,wordpress-drafts}.test.ts   # 26, 6, 10 pass
+npm run build                       # compiled
+```

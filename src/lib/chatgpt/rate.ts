@@ -76,6 +76,17 @@ export async function recordRateLimit(options: { retryAfterMs?: number | null; r
   return until;
 }
 
+/**
+ * The owner pressed Resume on a task paused for a usage limit: end the wait now (the next prompt is tried at once).
+ * The backoff step is kept, so if ChatGPT is still limited the next wait is longer, not shorter.
+ */
+export async function clearBackoff(client: Tx = db): Promise<boolean> {
+  const state = await getRateState(client);
+  if (!state.backoffUntil) return false;
+  await setValue(KEY, { ...state, backoffUntil: null, reason: `${state.reason ?? 'limit'} (wait skipped by the owner)` }, client);
+  return true;
+}
+
 /** Record a successful ChatGPT completion; slowly restore pressure when healthy. */
 export async function recordSuccess(client: Tx = db, now = new Date(), backlog = 0): Promise<void> {
   const settings = await getSettings(client);

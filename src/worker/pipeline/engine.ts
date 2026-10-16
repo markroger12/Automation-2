@@ -296,7 +296,7 @@ async function handleError(
   }
   if (error instanceof UsageLimitError) {
     await stageUpdate({ status: 'WAITING', message: error.message });
-    await db.articleTask.update({ where: { id: taskId }, data: { status: 'PAUSED', pausedFor: 'usage-limit', message: error.message, nextAction: `Resumes automatically after ${error.retryAt.toLocaleTimeString()}.` } });
+    await db.articleTask.update({ where: { id: taskId }, data: { status: 'PAUSED', pausedFor: 'usage-limit', message: error.message, nextAction: `Resumes automatically after ${error.retryAt.toLocaleTimeString()}, or press Resume to try ChatGPT now.` } });
     await releaseJob(job.id, owner, { runAt: error.retryAt, countAttempt: false });
     return 'waiting';
   }

@@ -4,6 +4,7 @@ import { log } from '../log';
 import { audit } from '../audit';
 import { AppError } from '../errors';
 import { TERMINAL_STATUSES, type TaskStatus, isActiveModuleKey } from '../domain';
+import { clearBackoff } from '../chatgpt/rate';
 
 /**
  * Task lifecycle operations shared by the dashboard API and the worker.
@@ -116,7 +117,13 @@ export async function resumeTask(taskId: string, reason: string, client: Tx = db
     throw new AppError(409, 'CONFLICT', `Task is ${task.status}; nothing to resume.`);
   }
   if (task.legacy || !isActiveModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
-  // Wake ChatGPT jobs that were sleeping because of login/human checks.
+  // Paused for a ChatGPT usage limit: Resume means “try now” (owner report: Resume did nothing until the window passed).
+  if (task.status === 'PAUSED' && task.pausedFor === 'usage-limit') {
+    const skipped = await clearBackoff(client);
+    await client.articleTask.update({ where: { id: taskId }, data: { status: 'QUEUED', pausedFor: null, message: 'Resumed by you: trying ChatGPT again now.', nextAction: null } });
+    await log({ category: 'chatgpt', taskId, message: skipped ? 'Resumed by the owner: the ChatGPT usage-limit wait was skipped; the prompt is sent again now. If ChatGPT is still limited, the task pauses again with a longer wait.' : 'Resumed by the owner after a ChatGPT usage limit (the wait had already passed).' }, client);
+  }
+  // Wake ChatGPT jobs that were sleeping because of login/human checks or a usage limit.
   await client.queueJob.updateMany({ where: { taskId, queue: 'chatgpt', status: 'WAITING' }, data: { runAt: new Date() } });
   const result = await ensureArticleRun(taskId, reason, client);
   return { result };

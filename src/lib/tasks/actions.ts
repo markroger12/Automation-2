@@ -60,6 +60,35 @@ export async function overrideQuality(taskId: string, raw: unknown) {
   return { ok: true };
 }
 
+/**
+ * “Approve selected” on the queue (owner request): gives each task the approval it is waiting for, as the article
+ * page would. Title approval takes the chosen or recommended title; review approval needs the owner's reason
+ * (audited); a same-site duplicate keyword is allowed. Anything else is not waiting for an approval.
+ */
+export async function approveWaiting(taskId: string, reason: string): Promise<'title' | 'article' | 'duplicate' | 'review'> {
+  const task = await loadTask(taskId);
+  if (task.legacy) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
+  if (task.status === 'AWAITING_TITLE_APPROVAL') {
+    const title = task.selectedTitle ?? task.recommendedTitle;
+    if (!title) throw new AppError(409, 'CONFLICT', 'No title to approve yet; open the article and choose one.');
+    await approveTitle(taskId, { title });
+    return 'title';
+  }
+  if (task.status === 'AWAITING_ARTICLE_APPROVAL') {
+    await approveArticle(taskId);
+    return 'article';
+  }
+  if (task.status === 'NEEDS_REVIEW') {
+    if (parseJson<string[]>(task.reviewReasons, []).some((r) => r.startsWith('Duplicate keyword'))) {
+      await allowDuplicate(taskId);
+      return 'duplicate';
+    }
+    await overrideQuality(taskId, { reason });
+    return 'review';
+  }
+  throw new AppError(409, 'CONFLICT', `not waiting for an approval (${task.status.toLowerCase().replace(/_/g, ' ')})`);
+}
+
 /** Owner confirms an intentional duplicate keyword on the same site. */
 export async function allowDuplicate(taskId: string) {
   const task = await loadTask(taskId);

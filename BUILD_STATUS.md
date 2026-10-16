@@ -1523,3 +1523,46 @@ npx vitest run                      # 40 files, 275 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/{links,content-refresh,images}.test.ts   # 6, 5, 8 pass
 npm run build                       # compiled
 ```
+
+## Owner requests: dropdowns and date fields in the theme; “Approve selected” on the queue
+
+**Dropdowns** (“All writers” etc.; the owner asked for every dropdown)
+- **Before:** the open list showed white text on a light-blue highlight in dark mode, which was hard to read.
+- **Fix:** `app/globals.css` styles every `<select>` in the app, with nothing changed per page.
+  - Options take the theme's colours; the chosen one is indigo with white text.
+  - **Chrome 135+** (the owner's browser) gets the customizable select (`appearance: base-select`): the whole list is drawn in the theme, with a hover row, a rotating arrow and one-line labels (a long label is cut, as natively).
+  - Other browsers keep the native list, with the option colours.
+
+**Date fields:** the browser's calendar ignores the dark theme and cannot be styled.
+- **New component** `src/components/date-picker.tsx`, the app's own calendar:
+  - month navigation, today marked, Clear and Today;
+  - keyboard: arrows, PageUp/PageDown, Enter, Escape;
+  - From/To limits; the same `YYYY-MM-DD` value in local days.
+- **Where it replaces `<input type="date">`:** History From/To, and Search Performance first/last day.
+
+**Approve selected** (queue/history bulk bar), `approveWaiting` in `src/lib/tasks/actions.ts`, bulk action `approve`.
+- Each selected task gets the approval it is waiting for, as on its article page:
+  - **Title approval:** the chosen or recommended title.
+  - **Article approval:** the article is approved.
+  - **Needs review:** approved despite its review reasons (`overrideQuality`, with the owner's reason; the dialog asks for it only when such a task is selected). A same-site duplicate keyword is allowed instead.
+- Other tasks are skipped, with the reason.
+- Every approval is audited.
+
+**Also:** “Worker offline” on the queue page failed colour contrast (rose-600). It now uses rose-700, or rose-400 in dark mode. The audit found it here because the worker was not running.
+
+**Checked**
+- **Chromium 141 against `next dev`** (scratch copy of the database), dark and light:
+  - the writer dropdown opens in the theme and choosing works;
+  - form dropdowns on Single Article and Settings stay one line high, and open above when there is no room below;
+  - the date picker: keyboard choice, Clear, Escape, no console errors;
+  - the Approve dialog.
+- `tests/unit/bulk-approve.test.ts`: title, article, review (refused without a reason), duplicate, and skipping a running task; 4 audit entries.
+- `npm run audit:a11y` (bundled Chromium): **58/58, no violations**. The first run found the rose-600 contrast, now fixed.
+
+**Commands run**
+```
+npx tsc --noEmit                                              # 0 errors
+npx vitest run                                                # 41 files, 276 tests pass
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3123   # 58 ok, no serious/critical
+npm run build                                                 # compiled
+```

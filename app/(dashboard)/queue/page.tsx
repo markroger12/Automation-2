@@ -25,7 +25,7 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
         title="Article Queue"
         description={
           <>
-            Live progress for every task. Worker {worker.state === 'online' ? 'online' : <strong className="text-rose-600">{worker.state}</strong>} · {slots} article slot(s) active
+            Live progress for every task. Worker {worker.state === 'online' ? 'online' : <strong className="text-rose-700 dark:text-rose-400">{worker.state}</strong>} · {slots} article slot(s) active
             {backoff ? <strong className="text-amber-700"> · ChatGPT backoff until {backoff.toLocaleTimeString()} ({rate.reason})</strong> : null}
           </>
         }

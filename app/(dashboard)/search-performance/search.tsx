@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Trash2, Upload } from 'lucide-react';
 import { api, upload } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
-import { Input, Select } from '@/components/form';
+import { Select } from '@/components/form';
+import { DatePicker } from '@/components/date-picker';
 import { Alert, Card, Chip, EmptyState, formatDateTime } from '@/components/ui';
 
 interface Stats {
@@ -135,11 +136,11 @@ function ImportForm({ websiteId, onDone }: { websiteId: string; onDone: () => Pr
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-muted text-xs">First day (only without Dates.csv)</span>
-          <Input type="date" aria-label="First day of the report" value={start} onChange={(e) => setStart(e.target.value)} />
+          <DatePicker ariaLabel="First day of the report" value={start} max={end || undefined} onChange={setStart} />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-muted text-xs">Last day</span>
-          <Input type="date" aria-label="Last day of the report" value={end} onChange={(e) => setEnd(e.target.value)} />
+          <DatePicker ariaLabel="Last day of the report" value={end} min={start || undefined} onChange={setEnd} />
         </label>
         <Button variant="primary" loading={busy} onClick={() => void send()}>
           <Upload className="h-4 w-4" /> Import

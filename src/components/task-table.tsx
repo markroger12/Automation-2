@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Ban, ExternalLink, Play, RotateCcw, Search } from 'lucide-react';
+import { Ban, CheckCircle2, ExternalLink, Play, RotateCcw, Search } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { moduleDisplayName } from '@/lib/domain';
 import type { TaskListRow } from '@/lib/tasks/query';
 import { Button, ConfirmDialog, usePersistentState, useToast, RelativeTime } from './client';
+import { DatePicker } from './date-picker';
 import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime } from './ui';
 
 type Group = 'all' | 'queued' | 'running' | 'review' | 'paused' | 'draft' | 'failed' | 'cancelled';
@@ -57,7 +58,8 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<{ action: 'cancel' | 'retry'; ids: string[] } | null>(null);
+  const [confirm, setConfirm] = useState<{ action: 'cancel' | 'retry' | 'approve'; ids: string[] } | null>(null);
+  const [approveReason, setApproveReason] = useState('');
   const [limit, setLimit] = useState(100);
   const lastLoad = useRef<Date | null>(null);
 
@@ -97,10 +99,14 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
     return () => clearInterval(id);
   }, [load, pollMs]);
 
-  async function act(action: 'cancel' | 'retry' | 'resume', ids: string[]) {
+  async function act(action: 'cancel' | 'retry' | 'resume' | 'approve', ids: string[]) {
     setBusy(action);
     try {
-      if (ids.length === 1 || action === 'resume') {
+      if (action === 'approve') {
+        const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action, reason: approveReason } });
+        const skipped = res.results.filter((r) => !r.ok);
+        toast(res.ok ? 'success' : 'error', `${res.ok} task(s) approved${skipped.length ? `, ${skipped.length} skipped (${skipped[0].message ?? 'not waiting for an approval'})` : ''}.`);
+      } else if (ids.length === 1 || action === 'resume') {
         for (const id of ids) await api(`/api/tasks/${id}/${action}`, { method: 'POST' });
         toast('success', `${action === 'cancel' ? 'Cancellation requested' : action === 'retry' ? 'Retry queued' : 'Resume queued'}${ids.length > 1 ? ` for ${ids.length} tasks` : ''}.`);
       } else {
@@ -118,6 +124,8 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
   }
 
   const rows = data?.rows ?? [];
+  // Approving a task that needs review asks for a reason (audited), as on its article page.
+  const reviewInApproval = confirm?.action === 'approve' && confirm.ids.some((id) => rows.find((r) => r.id === id)?.status === 'NEEDS_REVIEW');
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) => setFilters((f) => ({ ...f, [key]: value }));
 
@@ -167,14 +175,14 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
         </select>
         {mode === 'history' ? (
           <>
-            <label className="text-muted text-xs">
+            <span className="text-muted flex items-center gap-1 text-xs">
               From
-              <input type="date" value={filters.from} onChange={(e) => set('from', e.target.value)} className="surface ml-1 rounded-lg border px-2 py-1.5 text-sm" />
-            </label>
-            <label className="text-muted text-xs">
+              <DatePicker ariaLabel="From date" placeholder="Any date" value={filters.from} max={filters.to || undefined} onChange={(v) => set('from', v)} />
+            </span>
+            <span className="text-muted flex items-center gap-1 text-xs">
               To
-              <input type="date" value={filters.to} onChange={(e) => set('to', e.target.value)} className="surface ml-1 rounded-lg border px-2 py-1.5 text-sm" />
-            </label>
+              <DatePicker ariaLabel="To date" placeholder="Any date" value={filters.to} min={filters.from || undefined} onChange={(v) => set('to', v)} />
+            </span>
           </>
         ) : null}
         <select
@@ -202,6 +210,9 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
       {selected.size > 0 ? (
         <div className="border-app flex flex-wrap items-center gap-2 border-b bg-indigo-50/60 px-4 py-2 text-sm dark:bg-indigo-950/40">
           <strong>{selected.size} selected</strong>
+          <Button size="sm" variant="primary" onClick={() => setConfirm({ action: 'approve', ids: [...selected] })} loading={busy === 'approve'}>
+            <CheckCircle2 className="h-3.5 w-3.5" /> Approve selected
+          </Button>
           <Button size="sm" onClick={() => setConfirm({ action: 'retry', ids: [...selected] })} loading={busy === 'retry'}>
             <RotateCcw className="h-3.5 w-3.5" /> Retry selected
           </Button>
@@ -384,16 +395,38 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
       </div>
       <ConfirmDialog
         open={Boolean(confirm)}
-        title={confirm?.action === 'cancel' ? `Cancel ${confirm.ids.length} task(s)?` : `Retry ${confirm?.ids.length ?? 0} task(s)?`}
-        confirmLabel={confirm?.action === 'cancel' ? 'Cancel tasks' : 'Retry'}
+        title={confirm?.action === 'cancel' ? `Cancel ${confirm.ids.length} task(s)?` : confirm?.action === 'approve' ? `Approve ${confirm.ids.length} task(s)?` : `Retry ${confirm?.ids.length ?? 0} task(s)?`}
+        confirmLabel={confirm?.action === 'cancel' ? 'Cancel tasks' : confirm?.action === 'approve' ? 'Approve' : 'Retry'}
         tone={confirm?.action === 'cancel' ? 'danger' : 'primary'}
         busy={Boolean(busy)}
         onCancel={() => setConfirm(null)}
-        onConfirm={() => confirm && void act(confirm.action, confirm.ids)}
+        onConfirm={() => {
+          if (!confirm) return;
+          if (confirm.action === 'approve' && reviewInApproval && approveReason.trim().length < 3) return toast('error', 'Give a short reason for approving the tasks that need review (saved in the audit log).');
+          void act(confirm.action, confirm.ids);
+        }}
       >
-        {confirm?.action === 'cancel'
-          ? 'Work stops at the next safe point. Completed stage outputs, prompts and responses are kept; nothing is deleted.'
-          : 'Each task resumes from its first unfinished stage. Completed stages are not repeated.'}
+        {confirm?.action === 'cancel' ? (
+          'Work stops at the next safe point. Completed stage outputs, prompts and responses are kept; nothing is deleted.'
+        ) : confirm?.action === 'approve' ? (
+          <div className="space-y-2">
+            <p>Each task gets the approval it is waiting for, as on its article page:</p>
+            <ul className="list-disc pl-5">
+              <li>Title approval: the chosen (or recommended) title.</li>
+              <li>Article approval: the article goes on to the WordPress draft.</li>
+              <li>Needs review: approved despite its review reasons (a same-site duplicate keyword is allowed).</li>
+            </ul>
+            <p>Tasks that are not waiting for an approval are skipped.</p>
+            {reviewInApproval ? (
+              <label className="block">
+                <span className="text-xs font-medium">Reason for the tasks that need review (saved in the audit log)</span>
+                <input aria-label="Approval reason" value={approveReason} onChange={(e) => setApproveReason(e.target.value)} placeholder="e.g. checked the review reasons" className="surface mt-1 w-full rounded-lg border px-2 py-1.5 text-sm" />
+              </label>
+            ) : null}
+          </div>
+        ) : (
+          'Each task resumes from its first unfinished stage. Completed stages are not repeated.'
+        )}
       </ConfirmDialog>
     </div>
   );

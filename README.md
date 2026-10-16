@@ -45,6 +45,7 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 ## First run
 
 1. **Automation Chrome** (sidebar): follow the five checked steps — start the dedicated Chrome window, load the unpacked extension from the `extension\` folder, paste the one-time connection key, sign in to ChatGPT yourself. “Send test prompt” proves the round trip.
+   After setup you do not need to keep it open: when you queue an article, the worker opens Automation Chrome by itself, and closes it again (normally, never forced) 2 minutes after the queue is done. A Chrome window you opened yourself is never closed. Both switches are in **Settings → Browser**.
 2. **Websites → Add website**: public URL, language, country and time zone. Then **Log in** opens a visible window where *you* sign in to WordPress (leave “Remember Me” ticked, or the sign-in ends when the window closes). **Sync categories** and pick a default category.
 3. **Single Article**: enter a keyword and generate. The finished article is saved as a **WordPress draft** and read back to verify it.
 4. Optional: **Bulk Campaigns**, **Workflow / Calendar**, **Image Template**, **Settings**.

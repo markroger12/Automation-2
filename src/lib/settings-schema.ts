@@ -16,6 +16,10 @@ export const browserSettingsSchema = z.object({
   chatgptUrl: z.url().default('https://chatgpt.com/'),
   chatgptChromeMode: z.enum(['separate']).default('separate'),
   chatgptTabs: z.number().int().min(1).max(5).default(3),
+  /** Open Automation Chrome by itself when ChatGPT work is queued and the extension is not connected (owner request). */
+  autoLaunchChatGPTChrome: z.boolean().default(true),
+  /** Close the Automation Chrome the worker opened by itself once no article work is left (2 minutes idle). */
+  autoCloseChatGPTChrome: z.boolean().default(true),
 });
 
 export const workflowSettingsSchema = z.object({

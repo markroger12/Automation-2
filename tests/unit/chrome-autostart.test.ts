@@ -1,0 +1,143 @@
+import { spawn } from 'node:child_process';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
+import { setupTestDb } from '../helpers/test-db';
+
+/** Automation Chrome follows the queue (owner request): opened when an article is queued, closed when it is done. */
+let client: PrismaClient;
+let auto: typeof import('@/worker/chrome-autostart');
+type Deps = import('@/worker/chrome-autostart').AutostartDeps;
+type State = import('@/worker/chrome-autostart').AutoChromeState;
+
+beforeAll(async () => {
+  ({ client } = await setupTestDb());
+  auto = await import('@/worker/chrome-autostart');
+});
+beforeEach(() => auto.resetAutostart());
+
+const at = (min: number) => () => new Date(Date.parse('2026-10-16T10:00:00Z') + min * 60_000);
+
+function harness(over: Partial<Deps> = {}) {
+  const calls = { launched: 0, closed: [] as number[] };
+  let state: State | null = null;
+  let running = false;
+  const work = { needsChrome: true, busy: true, waitingPrompts: 1 };
+  const deps: Deps = {
+    now: at(0),
+    settings: async () => ({ open: true, close: true }),
+    work: async () => ({ ...work }),
+    extensionConnected: async () => false,
+    chromeRunning: () => running,
+    launch: () => {
+      calls.launched++;
+      running = true;
+      return { pid: 4242 };
+    },
+    close: async (pid) => {
+      calls.closed.push(pid);
+      running = false;
+      return { closed: true, detail: `Chrome PID ${pid} closed.` };
+    },
+    store: { read: () => state, write: (s) => void (state = s) },
+    ...over,
+  };
+  return { deps, calls, work, setRunning: (r: boolean) => void (running = r), state: () => state };
+}
+
+describe('Automation Chrome follows the queue', () => {
+  it('opens when an article is queued, stays open while work runs, and closes 2 minutes after the queue is done', async () => {
+    const h = harness();
+    expect(await auto.chromeAutostartTick(h.deps)).toBe('launched');
+    expect(h.state()).toMatchObject({ pid: 4242 });
+    // The extension connects and the article runs.
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(1), extensionConnected: async () => true })).toBe('connected');
+    // Article done: nothing queued, nothing running.
+    Object.assign(h.work, { needsChrome: false, busy: false, waitingPrompts: 0 });
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(10) })).toBe('waiting-to-close');
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(11) })).toBe('waiting-to-close');
+    expect(h.calls.closed).toEqual([]);
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(12) })).toBe('closed');
+    expect(h.calls.closed).toEqual([4242]);
+    expect(h.state()).toBeNull();
+    expect(await client.log.count({ where: { message: { startsWith: 'Automation Chrome closed automatically: the queue is done' } } })).toBe(1);
+  });
+
+  it('a new article during the 2 idle minutes keeps it open', async () => {
+    const h = harness();
+    await auto.chromeAutostartTick(h.deps);
+    Object.assign(h.work, { needsChrome: false, busy: false });
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(5) })).toBe('waiting-to-close');
+    Object.assign(h.work, { needsChrome: true, busy: true });
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(6), extensionConnected: async () => true })).toBe('connected');
+    Object.assign(h.work, { needsChrome: false, busy: false });
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(7) })).toBe('waiting-to-close'); // the idle clock starts again
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(8) })).toBe('waiting-to-close');
+    expect(h.calls.closed).toEqual([]);
+  });
+
+  it('never closes a Chrome the owner opened, and forgets one the owner closed', async () => {
+    const h = harness();
+    h.setRunning(true); // opened by the owner (button or by hand)
+    expect(await auto.chromeAutostartTick(h.deps)).toBe('running');
+    Object.assign(h.work, { needsChrome: false, busy: false });
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(10) })).toBe('idle');
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(20) })).toBe('idle');
+    expect(h.calls.closed).toEqual([]);
+    // Opened by the worker, then closed by the owner while work remains: forgotten, reopened after the cooldown.
+    const g = harness();
+    await auto.chromeAutostartTick(g.deps);
+    g.setRunning(false);
+    expect(await auto.chromeAutostartTick({ ...g.deps, now: at(1) })).toBe('cooldown');
+    expect(g.state()).toBeNull();
+    expect(await auto.chromeAutostartTick({ ...g.deps, now: at(4) })).toBe('launched');
+  });
+
+  it('does nothing when switched off, without work, or with a connected extension; a failing launch waits for the cooldown', async () => {
+    const off = harness({ settings: async () => ({ open: false, close: false }) });
+    expect(await auto.chromeAutostartTick(off.deps)).toBe('disabled');
+    const idle = harness();
+    Object.assign(idle.work, { needsChrome: false, busy: false });
+    expect(await auto.chromeAutostartTick(idle.deps)).toBe('idle');
+    const connected = harness({ extensionConnected: async () => true });
+    expect(await auto.chromeAutostartTick(connected.deps)).toBe('connected');
+    expect(off.calls.launched + idle.calls.launched + connected.calls.launched).toBe(0);
+    const broken = harness({ launch: () => { throw new Error('Google Chrome was not found.'); } });
+    expect(await auto.chromeAutostartTick(broken.deps)).toBe('failed');
+    expect(await auto.chromeAutostartTick(broken.deps)).toBe('cooldown');
+    expect(await client.log.count({ where: { message: { contains: 'could not be opened automatically: Google Chrome was not found' } } })).toBe(1);
+  });
+
+  it('reads the real queue: a queued article needs Chrome; both switches are on by default', async () => {
+    const { getSettings } = await import('@/lib/settings');
+    const b = (await getSettings()).browser;
+    expect([b.autoLaunchChatGPTChrome, b.autoCloseChatGPTChrome]).toEqual([true, true]);
+    expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: false, waitingPrompts: 0 });
+    await client.queueJob.create({ data: { queue: 'chatgpt', kind: 'chatgpt.prompt', idempotencyKey: 'autostart:1', payload: '{}', status: 'WAITING', runAt: new Date(Date.now() - 1000) } });
+    expect(await auto.currentWork()).toEqual({ needsChrome: true, busy: true, waitingPrompts: 1 });
+    await client.queueJob.updateMany({ where: { idempotencyKey: 'autostart:1' }, data: { status: 'ACTIVE' } });
+    expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: true, waitingPrompts: 0 }); // answering: keep it open
+  });
+});
+
+describe('closing the Automation Chrome', () => {
+  it('asks only that browser process to close (normal shutdown signal), never another program with a reused PID', async () => {
+    const { closeAutomationChrome, isAutomationChromePid } = await import('@/lib/automation-chrome');
+    const { dataPaths } = await import('@/lib/paths');
+    if (process.platform !== 'linux') return; // the Windows path (taskkill without /F) is not exercised here
+    const fakeChrome = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', `--user-data-dir=${dataPaths.chatgptChrome()}`]);
+    const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      expect(isAutomationChromePid(fakeChrome.pid!)).toBe(true);
+      expect(isAutomationChromePid(other.pid!)).toBe(false);
+      expect(await closeAutomationChrome(other.pid!, 2000)).toMatchObject({ detail: expect.stringMatching(/is not the Automation Chrome/) });
+      expect(other.exitCode).toBeNull(); // left alone
+      const done = new Promise((r) => fakeChrome.once('exit', (_code, signal) => r(signal)));
+      expect(await closeAutomationChrome(fakeChrome.pid!, 5000)).toMatchObject({ closed: true });
+      expect(await done).toBe('SIGTERM');
+    } finally {
+      other.kill('SIGKILL');
+      fakeChrome.kill('SIGKILL');
+    }
+  });
+});

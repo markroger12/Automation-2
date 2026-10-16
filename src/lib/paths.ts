@@ -18,6 +18,8 @@ export const dataPaths = {
   db: () => path.join(dataDir(), 'app.db'),
   profiles: () => path.join(dataDir(), 'profiles'),
   chatgptChrome: () => path.join(dataDir(), 'chatgpt-chrome'),
+  /** The Automation Chrome the worker opened by itself (PID), so it can close it again when the queue is done. */
+  chatgptChromeAuto: () => path.join(dataDir(), 'chatgpt-chrome-auto.json'),
   media: () => path.join(dataDir(), 'media'),
   screenshots: () => path.join(dataDir(), 'screenshots'),
   logs: () => path.join(dataDir(), 'logs'),

@@ -133,6 +133,8 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'screenshots', label: 'Failure screenshots', type: 'boolean' },
       { key: 'chatgptUrl', label: 'ChatGPT URL', type: 'text' },
       { key: 'chatgptTabs', label: 'ChatGPT tabs', type: 'number', min: 1, max: 5, warnAbove: { value: 3, message: 'More tabs can cause account-wide rate limiting.' } },
+      { key: 'autoLaunchChatGPTChrome', label: 'Open Automation Chrome automatically', type: 'boolean', help: 'When you queue an article (or ChatGPT work is waiting) and the extension is not connected, the worker opens the ChatGPT Chrome window by itself (at most once every 3 minutes).' },
+      { key: 'autoCloseChatGPTChrome', label: 'Close it when the queue is done', type: 'boolean', help: 'The Chrome window the worker opened by itself is closed normally (never forced) once no queued or running article and no ChatGPT prompt is left for 2 minutes. A Chrome you opened yourself is never closed.' },
     ],
   },
   {

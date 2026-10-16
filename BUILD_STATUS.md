@@ -1431,3 +1431,36 @@ npx vitest run --config vitest.integration.config.ts <each file>     # all 10 fi
                                                                      # worker-toolchain 1, workflow-publish 6)
 npm run build                                                        # compiled
 ```
+
+## Owner request: Automation Chrome opens when an article is queued and closes when the queue is done
+
+Before, the ChatGPT Chrome (Automation Chrome, profile `data/chatgpt-chrome`) opened only from the “Open Automation Chrome” button.
+
+**New worker loop** (`src/worker/chrome-autostart.ts`, every 10 s; two switches in Settings → Browser, both on by default)
+- **Open:** Chrome opens when an article is queued or a ChatGPT prompt waits, the extension is not connected, and Automation Chrome is not running.
+  - It uses the same launch as the button.
+  - It tries at most once every 3 minutes, so a Chrome that cannot start does not open window after window.
+  - A Chrome that is running, or locked by another host, is left alone.
+- **Close:** once nothing is left for 2 minutes, the Chrome the worker opened is closed. “Nothing left” means no queued or running article, no Humanizer run, and no waiting or active ChatGPT prompt. A new article during those 2 minutes keeps it open.
+  - **How it closes** (`closeAutomationChrome`): a normal close request, never a forced kill, because a forced kill can lose the ChatGPT sign-in that Chrome has not written to disk yet. On Windows this is `taskkill /PID <pid>` without `/F`; elsewhere it is SIGTERM.
+  - **Only that Chrome:** the PID is checked to still be that Chrome before closing (`tasklist` image name on Windows; on Linux and macOS, the command line contains the profile folder), so a reused PID is never touched.
+  - **Owner's Chrome is never closed:** a Chrome the owner opened (button or by hand) is not closed.
+  - **State:** the PID of the Chrome the worker opened is kept in `data/chatgpt-chrome-auto.json`, so a worker restart still closes it. If the owner closes it while work remains, the worker forgets it and reopens it after the cooldown.
+
+**Tests:** `tests/unit/chrome-autostart.test.ts`, 6 tests:
+- open, then close after 2 idle minutes;
+- a new article keeps it open;
+- the owner's Chrome is never closed, and one the owner closed is forgotten;
+- the switches, a connected extension and a failing launch;
+- the real queue counts.
+- On Linux, a real child process stands in for Chrome: only the process carrying the profile folder receives SIGTERM, and another process is left alone.
+
+**Not verified here:** the Windows path (`taskkill` without `/F` closing Chrome's windows normally) and a real Chrome on the owner's PC.
+
+**Commands run**
+```
+npx tsc --noEmit                                                       # 0 errors
+npx vitest run                                                         # 39 files, 273 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/worker-toolchain.test.ts tests/integration/extension.test.ts   # 27/27
+npm run build                                                          # compiled
+```

@@ -8,6 +8,7 @@ import { plagiarismTick } from './plagiarism';
 import { schedulerTick } from '@/lib/workflow/scheduler';
 import { scheduleDailyEvaluations } from '@/lib/refresh/service';
 import { pruneDiagnostics } from './maintenance';
+import { chromeAutostartTick } from './chrome-autostart';
 import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
 
@@ -29,6 +30,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'workflow-scheduler', intervalMs: 60_000, run: async () => void (await schedulerTick()) });
   // Content refresh: one read-only evaluation per website and day (enqueues only).
   registerLoop({ name: 'refresh-scheduler', intervalMs: 3600_000, run: async () => void (await scheduleDailyEvaluations()) });
+  // ChatGPT work waiting and no extension connected: open Automation Chrome (Settings → Browser; at most every 3 min).
+  registerLoop({ name: 'chatgpt-chrome-autostart', intervalMs: 10_000, run: async () => void (await chromeAutostartTick()) });
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });
   registerLoop({ name: 'orphan-healer', intervalMs: 60_000, run: async () => void (await healOrphanedTasks()) });
   registerLoop({ name: 'retention', intervalMs: 6 * 3600_000, run: async () => void (await pruneDiagnostics()) });

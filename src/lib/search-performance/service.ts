@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { db } from '@/lib/db';
+import { getValue } from '@/lib/settings';
 import { AppError, badRequest, notFound } from '@/lib/errors';
 import { audit } from '@/lib/audit';
 import { normalizeSearchConsoleProperty } from '@/lib/workflow/search-console';
@@ -131,7 +132,7 @@ export async function deleteSearchSnapshot(id: string) {
 async function siteArticles(websiteId: string) {
   const targets = await db.linkTarget.findMany({ where: { websiteId }, select: { wpPostId: true, url: true, title: true, status: true, publishedAt: true } });
   const tasks = await db.articleTask.findMany({ where: { websiteId, wpPostId: { not: null }, legacy: false }, select: { id: true, keyword: true, selectedTitle: true, wpPostId: true, status: true } });
-  const keywords = await db.workflowKeyword.findMany({ where: { workflow: { websiteId }, taskId: { not: null } }, select: { taskId: true, status: true, publishedUrl: true, publishedAt: true, indexingRequestedAt: true } });
+  const keywords = await db.workflowKeyword.findMany({ where: { workflow: { websiteId }, taskId: { not: null } }, select: { taskId: true, status: true, publishedUrl: true, publishedAt: true, indexingRequestedAt: true, indexingStatus: true } });
   const byPost = new Map(targets.map((t) => [t.wpPostId, t]));
   const byTask = new Map(keywords.map((k) => [k.taskId!, k]));
   return tasks.map((t) => {
@@ -147,7 +148,9 @@ async function siteArticles(websiteId: string) {
       published: target?.status === 'ACTIVE' || kw?.status === 'PUBLISHED' || kw?.status === 'INDEXING_REQUESTED' || kw?.status === 'INDEXED',
       publishedAt: target?.publishedAt ?? kw?.publishedAt ?? null,
       indexingRequested: Boolean(kw?.indexingRequestedAt) || kw?.status === 'INDEXING_REQUESTED',
-      indexedByOwner: kw?.status === 'INDEXED',
+      // INDEXED from Google's URL Inspection (live Search Console) or from the owner's own confirmation.
+      indexedByGoogle: kw?.status === 'INDEXED' && Boolean(kw.indexingStatus?.startsWith('Google:')),
+      indexedByOwner: kw?.status === 'INDEXED' && !kw.indexingStatus?.startsWith('Google:'),
     };
   });
 }
@@ -173,7 +176,8 @@ function days(start: string, end: string): number {
 export async function searchPerformance(websiteId: string) {
   const { site, property } = await propertyFor(websiteId);
   const snapshots = await db.searchPerformanceSnapshot.findMany({ where: { websiteId }, orderBy: [{ endDate: 'desc' }, { importedAt: 'desc' }] });
-  const base = { site, property, snapshots: snapshots.map((s) => ({ ...s, notes: JSON.parse(s.notes || '[]') as string[] })) };
+  const liveSync = await getValue<{ at: string; ok: boolean; error?: string | null; firstIncompleteDate?: string | null } | null>(`gsc.sync.${websiteId}`, null);
+  const base = { site, property, liveSync, snapshots: snapshots.map((s) => ({ ...s, notes: JSON.parse(s.notes || '[]') as string[] })) };
   if (!property) return { ...base, state: 'NOT_CONNECTED' as const };
   if (!snapshots.length) return { ...base, state: 'NO_DATA' as const };
 
@@ -225,7 +229,8 @@ export async function searchPerformance(websiteId: string) {
   const zero: { taskId: string; title: string; url: string; publishedAt: Date | null; detail: string }[] = [];
   if (latestPages) {
     const shown = new Map(pageRows.map((r) => [pageKey(r.key), r]));
-    const capped = latestPages.pageRows >= EXPORT_ROW_CAP;
+    // An export lists at most 1,000 rows; the live API data lists every page (up to 50,000).
+    const capped = latestPages.source === 'GSC_API' ? latestPages.pageRows >= 50_000 : latestPages.pageRows >= EXPORT_ROW_CAP;
     const cutoff = addDays(latestPages.endDate, -ZERO_IMPRESSION_MIN_AGE_DAYS);
     for (const a of articles) {
       if (!a.published || !a.key || !a.url) continue;
@@ -246,6 +251,7 @@ export async function searchPerformance(websiteId: string) {
     published: published.length,
     requested: published.filter((a) => a.indexingRequested).length,
     confirmedByOwner: published.filter((a) => a.indexedByOwner).length,
+    indexedByGoogle: published.filter((a) => a.indexedByGoogle).length,
     seenInSearch: published.filter((a) => a.key && seen.has(a.key)).length,
   };
 
@@ -254,14 +260,23 @@ export async function searchPerformance(websiteId: string) {
     state: 'DATA' as const,
     timezoneNote: 'Search Console days are calendar days in Pacific Time; periods are shown exactly as exported.',
     trend,
-    pagesReport: latestPages ? { id: latestPages.id, start: latestPages.startDate, end: latestPages.endDate, compare: latestPages.compare, capped: latestPages.pageRows >= EXPORT_ROW_CAP } : null,
+    pagesReport: latestPages ? { id: latestPages.id, start: latestPages.startDate, end: latestPages.endDate, compare: latestPages.compare, capped: latestPages.source === 'GSC_API' ? latestPages.pageRows >= 50_000 : latestPages.pageRows >= EXPORT_ROW_CAP, live: latestPages.source === 'GSC_API' } : null,
     queriesReport: latestQueries ? { id: latestQueries.id, start: latestQueries.startDate, end: latestQueries.endDate } : null,
     pages: pages.slice(0, 200),
     queries: queryRows,
     declining,
     zero,
     indexing,
+    hourly: await hourlyRows(websiteId),
   };
+}
+
+/** The last hours from the live API sync (Search Console's own hourly data; the latest hours are incomplete). */
+async function hourlyRows(websiteId: string) {
+  const live = await db.searchPerformanceSnapshot.findFirst({ where: { websiteId, source: 'GSC_API' }, orderBy: { importedAt: 'desc' }, select: { id: true } });
+  if (!live) return [];
+  const rows = await db.searchPerformanceRow.findMany({ where: { snapshotId: live.id, dimension: 'HOUR' }, orderBy: { key: 'desc' }, take: 48, select: { key: true, clicks: true, impressions: true, position: true } });
+  return rows;
 }
 
 const csvCell = (v: unknown) => {

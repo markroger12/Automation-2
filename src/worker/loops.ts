@@ -9,6 +9,7 @@ import { schedulerTick } from '@/lib/workflow/scheduler';
 import { scheduleDailyEvaluations } from '@/lib/refresh/service';
 import { pruneDiagnostics } from './maintenance';
 import { chromeAutostartTick } from './chrome-autostart';
+import { indexingTick, syncDue, syncWebsite } from '@/lib/gsc/sync';
 import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
 
@@ -30,6 +31,16 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'workflow-scheduler', intervalMs: 60_000, run: async () => void (await schedulerTick()) });
   // Content refresh: one read-only evaluation per website and day (enqueues only).
   registerLoop({ name: 'refresh-scheduler', intervalMs: 3600_000, run: async () => void (await scheduleDailyEvaluations()) });
+  // Search Console (when connected): live data every 2 h, one website per tick; sitemap resubmit and index proof.
+  registerLoop({
+    name: 'search-console',
+    intervalMs: 30_000,
+    run: async () => {
+      await indexingTick();
+      const [next] = await syncDue();
+      if (next) await syncWebsite(next).catch(() => undefined); // the failure is stored and logged by syncWebsite
+    },
+  });
   // ChatGPT work waiting and no extension connected: open Automation Chrome (Settings → Browser; at most every 3 min).
   registerLoop({ name: 'chatgpt-chrome-autostart', intervalMs: 10_000, run: async () => void (await chromeAutostartTick()) });
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });

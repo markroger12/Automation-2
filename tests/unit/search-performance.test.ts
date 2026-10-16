@@ -93,7 +93,7 @@ describe('Search Performance', () => {
     expect(s.queries.map((q) => q.key)).toEqual(['tom kaulitz', 'tom kaulitz, heidi klum']);
     // Zero impressions: Heidi Klum (0 impressions); the post published 3 days before the report ended is too young.
     expect(s.zero.map((z) => [z.taskId, z.detail])).toEqual([[tasks['Heidi Klum'], '0 impressions in 2026-09-30 – 2026-10-13']]);
-    expect(s.indexing).toEqual({ published: 4, requested: 1, confirmedByOwner: 1, seenInSearch: 2 });
+    expect(s.indexing).toEqual({ published: 4, requested: 1, confirmedByOwner: 1, indexedByGoogle: 0, seenInSearch: 2 }); // the owner's confirmation is not Google's answer
     expect(s.declining).toEqual([]); // no comparison period yet
   });
 

@@ -666,6 +666,9 @@ model WorkflowKeyword {
   publishedAt         DateTime?
   indexingRequestedAt DateTime?
   indexingStatus      String?
+  /// Next Search Console URL-inspection check (proof of indexing); null = not scheduled.
+  indexCheckAt        DateTime?
+  indexChecks         Int       @default(0)
   retries             Int       @default(0)
   lastError           String?
   createdAt           DateTime  @default(now())

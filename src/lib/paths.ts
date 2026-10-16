@@ -20,6 +20,8 @@ export const dataPaths = {
   chatgptChrome: () => path.join(dataDir(), 'chatgpt-chrome'),
   /** The Automation Chrome the worker opened by itself (PID), so it can close it again when the queue is done. */
   chatgptChromeAuto: () => path.join(dataDir(), 'chatgpt-chrome-auto.json'),
+  /** Google Search Console service-account key (a credential, like the browser profiles). */
+  gscKey: () => path.join(dataDir(), 'credentials', 'gsc-service-account.json'),
   media: () => path.join(dataDir(), 'media'),
   screenshots: () => path.join(dataDir(), 'screenshots'),
   logs: () => path.join(dataDir(), 'logs'),

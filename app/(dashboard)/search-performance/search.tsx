@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Trash2, Upload } from 'lucide-react';
+import { Download, KeyRound, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { api, upload } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
 import { Select } from '@/components/form';
@@ -55,13 +55,125 @@ interface Data {
   snapshots: Snapshot[];
   timezoneNote?: string;
   trend?: { latest: string | null; trends: Trend[] };
-  pagesReport?: { start: string; end: string; compare: boolean; capped: boolean } | null;
+  pagesReport?: { start: string; end: string; compare: boolean; capped: boolean; live?: boolean } | null;
   queriesReport?: { start: string; end: string } | null;
   pages?: PageRow[];
   queries?: PageRow[];
   declining?: { url: string; clicks: number; prevClicks: number; changePct: number; basis: string; taskId: string | null; title: string | null }[];
   zero?: { taskId: string; title: string; url: string; detail: string }[];
-  indexing?: { published: number; requested: number; confirmedByOwner: number; seenInSearch: number };
+  indexing?: { published: number; requested: number; confirmedByOwner: number; indexedByGoogle?: number; seenInSearch: number };
+  hourly?: { key: string; clicks: number; impressions: number; position: number | null }[];
+  liveSync?: { at: string; ok: boolean; error?: string | null; firstIncompleteDate?: string | null } | null;
+}
+
+interface Connection {
+  connected: boolean;
+  email?: string;
+  project?: string | null;
+  properties?: { siteUrl: string; permissionLevel: string }[];
+}
+
+/** Live Search Console data through the owner's service account (Google's official API; read data, resubmit sitemaps). */
+function LiveConnection({ websiteId, property, liveSync, onSynced }: { websiteId: string; property: string; liveSync: Data['liveSync']; onSynced: () => Promise<void> }) {
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [conn, setConn] = useState<Connection | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const loadConn = useCallback(async () => setConn(await api<Connection>('/api/search-console')), []);
+  useEffect(() => {
+    void loadConn().catch(() => setConn({ connected: false }));
+  }, [loadConn]);
+  const run = async (what: string, fn: () => Promise<void>) => {
+    setBusy(what);
+    try {
+      await fn();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const uploadKey = () =>
+    run('key', async () => {
+      const file = fileRef.current?.files?.[0];
+      if (!file) throw new Error('Choose the service-account JSON key file first.');
+      const form = new FormData();
+      form.append('file', file);
+      await upload('/api/search-console/key', form);
+      if (fileRef.current) fileRef.current.value = '';
+      await loadConn();
+      toast('success', 'Key saved. Use “Test connection”, then “Sync now”.');
+    });
+  const test = () =>
+    run('test', async () => {
+      const r = await api<Connection>('/api/search-console?test=1');
+      setConn(r);
+      const match = r.properties?.find((p) => p.siteUrl === property);
+      toast(match ? 'success' : 'error', match ? `Connected: ${property} (${match.permissionLevel.replace('SITE_', '').toLowerCase().replace('_', ' ')}).` : `${r.email} cannot see ${property}. Add it in Search Console → Settings → Users and permissions (Full).`);
+    });
+  const sync = () =>
+    run('sync', async () => {
+      const r = await api<{ days: number; pages: number; queries: number; hours: number }>(`/api/search-performance/${websiteId}/sync`, { method: 'POST' });
+      toast('success', `Synced from Search Console: ${r.days} days, ${r.pages} pages, ${r.queries} queries, ${r.hours} hours.`);
+      await onSynced();
+    });
+  const remove = () =>
+    run('remove', async () => {
+      if (!window.confirm('Remove the Search Console key from this PC? Live sync and index checks stop; imported data stays.')) return;
+      await api('/api/search-console/key', { method: 'DELETE' });
+      await loadConn();
+    });
+  if (!conn) return null;
+  const match = conn.properties?.find((p) => p.siteUrl === property);
+  return (
+    <Card
+      title="Live data (Search Console API)"
+      description={
+        conn.connected
+          ? 'Synced every 2 hours (and on “Sync now”). Fresh days and the last hours are what Google shows now; Google may still change them.'
+          : 'Connect once with your Google Cloud service account: Google Cloud → IAM → Service accounts → Keys → Add key → JSON. In Search Console → Settings → Users and permissions, add the service account’s email with “Full” permission.'
+      }
+    >
+      {conn.connected ? (
+        <div className="space-y-3 text-sm">
+          <p>
+            Service account <strong className="break-all">{conn.email}</strong>
+            {conn.project ? <span className="text-muted"> · project {conn.project}</span> : null}
+            {match ? <Chip tone="success">{match.permissionLevel.replace('SITE_', '').toLowerCase().replace('_', ' ')} access to {property}</Chip> : null}
+          </p>
+          {liveSync ? (
+            <p className={liveSync.ok ? 'text-muted' : 'text-rose-700 dark:text-rose-300'}>
+              Last sync {formatDateTime(liveSync.at)}: {liveSync.ok ? `OK${liveSync.firstIncompleteDate ? ` · days from ${liveSync.firstIncompleteDate} are not final yet` : ''}` : liveSync.error}
+            </p>
+          ) : (
+            <p className="text-muted">Not synced yet.</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="primary" loading={busy === 'sync'} onClick={() => void sync()}>
+              <RefreshCw className="h-3.5 w-3.5" /> Sync now
+            </Button>
+            <Button size="sm" loading={busy === 'test'} onClick={() => void test()}>
+              Test connection
+            </Button>
+            <Button size="sm" variant="ghost" loading={busy === 'remove'} onClick={() => void remove()}>
+              <Trash2 className="h-3.5 w-3.5" /> Remove key
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-end gap-3 text-sm">
+          <label className="flex flex-col gap-1">
+            <span className="text-muted text-xs">Service-account key (.json)</span>
+            <input ref={fileRef} type="file" accept=".json,application/json" aria-label="Service-account JSON key" className="text-sm" />
+          </label>
+          <Button variant="primary" loading={busy === 'key'} onClick={() => void uploadKey()}>
+            <KeyRound className="h-4 w-4" /> Connect
+          </Button>
+          <p className="text-muted w-full text-xs">The key stays on this PC (data/credentials) and is never shown, logged or put in a report.</p>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 const n = (v: number | null | undefined, digits = 0) => (v == null ? '—' : v.toLocaleString('en-US', { maximumFractionDigits: digits }));
@@ -202,6 +314,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
         </Alert>
       ) : null}
       {!data && !error ? <p className="text-muted text-sm">Loading…</p> : null}
+      {data?.property ? <LiveConnection websiteId={siteId} property={data.property} liveSync={data.liveSync ?? null} onSynced={load} /> : null}
 
       {data?.state === 'NOT_CONNECTED' ? (
         <Alert tone="warning" title="NOT CONNECTED">
@@ -216,7 +329,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
       {data?.state === 'NO_DATA' ? (
         <>
           <Alert tone="info" title="NO VERIFIED DATA">
-            Nothing has been imported for {data.property} yet. No clicks, impressions or positions are shown until you import a report from Search Console.
+            Nothing has been synced or imported for {data.property} yet. No clicks, impressions or positions are shown until live data is synced (above) or a report from Search Console is imported.
           </Alert>
           <ImportForm websiteId={siteId} onDone={load} />
         </>
@@ -225,7 +338,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
       {data?.state === 'DATA' ? (
         <>
           <p className="text-muted text-xs">
-            {data.timezoneNote} Data comes only from the reports imported below.
+            {data.timezoneNote} {data.pagesReport?.live ? 'Pages and queries are live from the Search Console API (last 28 days vs the 28 before).' : 'Data comes only from the reports imported below.'}
           </p>
           {data.trend?.trends.length ? (
             <div className="grid gap-4 lg:grid-cols-3">
@@ -237,9 +350,36 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
             <Alert tone="info">No daily totals imported yet (Dates.csv), so there are no 7/28/90-day trends. Page and query tables come from the reports below.</Alert>
           )}
 
+          {data.hourly?.length ? (
+            <Card title="Last hours (live)" description="Search Console's own hourly data, newest first. The latest hours are incomplete and may still change.">
+              <div className="overflow-x-auto">
+                <table className="table-app text-sm">
+                  <thead>
+                    <tr>
+                      <th>Hour</th>
+                      <th className="text-right">Clicks</th>
+                      <th className="text-right">Impressions</th>
+                      <th className="text-right">Position</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.hourly.slice(0, 24).map((h) => (
+                      <tr key={h.key}>
+                        <td className="tabular-nums">{h.key.replace('T', ' ').slice(0, 16)}</td>
+                        <td className="text-right tabular-nums">{n(h.clicks)}</td>
+                        <td className="text-right tabular-nums">{n(h.impressions)}</td>
+                        <td className="text-right tabular-nums">{n(h.position, 1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          ) : null}
+
           {data.indexing ? (
             <Card title="Indexing" description="A request is not indexing. “Seen in search” means the page had impressions in an imported report; “confirmed by you” is what you recorded after checking in Search Console.">
-              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
                 <div>
                   <dt className="text-muted text-xs">Published app articles</dt>
                   <dd className="text-lg font-semibold tabular-nums">{data.indexing.published}</dd>
@@ -247,6 +387,10 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
                 <div>
                   <dt className="text-muted text-xs">Indexing requested</dt>
                   <dd className="text-lg font-semibold tabular-nums">{data.indexing.requested}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted text-xs">Indexed (Google says, URL Inspection)</dt>
+                  <dd className="text-lg font-semibold tabular-nums">{data.indexing.indexedByGoogle ?? 0}</dd>
                 </div>
                 <div>
                   <dt className="text-muted text-xs">Indexed (confirmed by you)</dt>

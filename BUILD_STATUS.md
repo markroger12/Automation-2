@@ -1612,3 +1612,61 @@ npx vitest run --config vitest.integration.config.ts <each file>     # all 10 pa
                                                                      # before workflow-publish; it was run again on its own)
 npm run build                                                        # compiled
 ```
+
+## Owner request: live Search Console data, and indexing requested and proven after a workflow publish
+
+The owner created a Google Cloud service account (no billing needed). Previously the app showed only exports the owner imported, so this changes the earlier rule “nothing is fetched from Google” at the owner's request. Only Google's official API is used, with the owner's own service account, and nothing is estimated.
+
+**Connection** (`src/lib/gsc/client.ts`, Search Performance page → “Live data”)
+- **Key file:** the owner uploads the service-account JSON key. It is stored in `data/credentials/gsc-service-account.json` (mode 600), and its private key is never returned, logged or reported. The redaction now also removes PEM private keys and `private_key` fields.
+- **Login:** a service-account JWT is signed with Node's crypto (RS256, no new dependency) and exchanged for an access token (scope `webmasters`). One token request at a time: the sync's parallel queries share it; this was found in the test, where 6 tokens were requested at first.
+- **Test connection** lists the properties the account can see and shows its permission for the website's property.
+- **Errors say what to do:** 401/403 → “add <email> in Search Console → Users and permissions with Full”; 429 → quota, tried later; a key Google refuses → upload a new key.
+
+**Live sync** (`src/lib/gsc/sync.ts`; worker loop every 30 s, one website per tick; a sync is due every 2 h, or 30 min after a failure; also “Sync now”)
+- **One snapshot per sync** (source `GSC_API`). It replaces the previous live snapshot; imported exports are kept.
+  - **DATE:** 16 months (`dataState: all`, fresh days included and marked by Google's `firstIncompleteDate`).
+  - **PAGE:** the last 28 days with the 28 days before as the comparison, paged by 25,000 rows, up to 50,000.
+  - **QUERY:** the same periods, top 5,000.
+  - **HOUR:** the last 3 days (`HOURLY_ALL`); Google says the latest hours are incomplete.
+- **The existing analysis works on it:** trends, declining pages, published articles without impressions, and Content Refresh evidence. The 1,000-row export cap no longer applies to live data.
+- **Page:** a live badge in the text, the last sync (or its error), and a “Last hours (live)” table.
+
+**Indexing after a workflow publish** (`indexingTick`)
+- **Sitemap resubmit:** 35 s after a verified publish, if the workflow has “Request indexing after publishing” on, the sitemaps Search Console knows for the property are resubmitted (`sitemaps.submit`). If there are none, `<site>/sitemap_index.xml` is submitted.
+  - The keyword becomes INDEXING_REQUESTED, with the note “a request is not proof of indexing”.
+  - Google's “Request indexing” button has no API.
+  - The Indexing API is not used: Google allows it only for job-posting and livestream pages.
+- **Proof:** Google's URL Inspection API is asked 1 h, 6 h and 24 h after publishing, then daily for 14 days. This happens for every published workflow post, also without the switch.
+  - INDEXED only when Google's verdict is PASS (“URL is on Google”), with its coverage state and last crawl time.
+  - After 14 days the checks stop with “Not indexed 14 days after publishing (Google: …)”.
+  - A quota or permission error retries in an hour without advancing the schedule.
+- **Search Performance indexing counts:** “Indexed (Google says)” is now kept apart from “Indexed (confirmed by you)”.
+- **Migration** `workflow_keyword_index_checks`: `ALTER TABLE WorkflowKeyword ADD COLUMN indexCheckAt / indexChecks`. Prisma proposed a table rebuild; it was replaced by two ADD COLUMN statements, and `prisma migrate diff` shows no drift.
+
+**Tests:** `tests/unit/search-console-live.test.ts` runs against a fake Google (`tests/fixtures/fake-google.ts`): its token endpoint verifies the JWT signature with the test key's public half, and it serves the Search Console API.
+- **Key:** wrong files are refused, and the private key is never returned; a key Google refuses gives a clear message.
+- **Sync:**
+  - 481 days, 30,000 pages over two API pages (`startRow` 0 and 25,000), queries with previous values, and 3 hours;
+  - one token for the whole sync;
+  - the analysis reads it (declining page 40 → 3 clicks, hourly rows, trends);
+  - a new sync replaces the old live data and keeps the export;
+  - a 403 is stored with the “add … with Full” message.
+- **Indexing:**
+  - nothing at 20 s; a sitemap resubmit at 36 s;
+  - 1 h not indexed, so the next check is at 6 h; at 6 h INDEXED with Google's evidence;
+  - without the switch, no request but still checked; after all 16 checks the checks stop;
+  - nothing happens without a key.
+- **Updated test:** the existing Search Performance unit test now has `indexedByGoogle: 0`. The owner's own confirmation is not Google's answer.
+- **Chromium against `next dev`:** the “Live data” card before and after uploading a key; the key is stored on disk; no console errors.
+
+**Not verified here:** the real Google API with the owner's property; a real sitemap resubmit; URL Inspection answers for promizeiten.de.
+
+**Commands run**
+```
+bash scripts/dev-create-migration.sh workflow_keyword_index_checks   # then replaced by ADD COLUMN; migrate diff: empty
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 42 files, 287 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts tests/integration/content-refresh.test.ts   # 11 pass
+npm run build                       # compiled
+```

@@ -5,6 +5,8 @@
  */
 const PATTERNS: [RegExp, string][] = [
   [/\bbas_[A-Za-z0-9_-]{16,}\b/g, 'bas_[REDACTED]'],
+  // A service-account private key (Search Console) must never leave data/credentials.
+  [/-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA )?PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]'],
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1[REDACTED]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
   [/((?:cookie|set-cookie)\s*[:=]\s*)[^\n]+/gi, '$1[REDACTED]'],
@@ -14,7 +16,7 @@ const PATTERNS: [RegExp, string][] = [
   [/([?&](?:_wpnonce|nonce|token|key|access_token)=)[^&\s#]+/gi, '$1[REDACTED]'],
 ];
 
-const SENSITIVE_KEYS = /^(password|passwd|pwd|secret|token|apikey|api_key|authorization|cookie|cookies|set-cookie|sessionsecret|session_secret|key|connectionkey|nonce|_wpnonce|passwordhash)$/i;
+const SENSITIVE_KEYS = /^(password|passwd|pwd|secret|token|apikey|api_key|authorization|cookie|cookies|set-cookie|sessionsecret|session_secret|key|connectionkey|nonce|_wpnonce|passwordhash|private_key|privatekey)$/i;
 
 export function redactString(input: string): string {
   let out = input;

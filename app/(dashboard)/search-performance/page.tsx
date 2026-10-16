@@ -12,7 +12,7 @@ export default async function SearchPerformancePage({ searchParams }: { searchPa
     <>
       <PageHeader
         title="Search Performance"
-        description="Clicks, impressions, CTR and position from Search Console reports you export and import here — nothing is estimated or fetched behind your back. Indexing requests are kept apart from evidence of indexing."
+        description="Clicks, impressions, CTR and position from Search Console: live through your service account (Google’s official API), or from reports you export and import. Nothing is estimated. Indexing requests are kept apart from Google’s own evidence of indexing."
       />
       <SearchPerformance websites={websites} initialSite={site && websites.some((w) => w.id === site) ? site : null} />
     </>

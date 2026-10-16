@@ -221,7 +221,12 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                 <option value="off">Off</option>
               </Select>
             </Field>
-            <Checkbox label="Remind me to request indexing" help="After publishing, a Search Console link appears; you request indexing yourself. A request is not proof of indexing." checked={form.requestIndexing} onChange={(e) => setForm({ ...form, requestIndexing: e.target.checked })} />
+            <Checkbox
+              label="Request indexing after publishing"
+              help="With Search Console connected (Search Performance page): about 35 seconds after a verified publish, the site's sitemap is resubmitted to Google, then Google's URL Inspection is asked for proof (1 h, 6 h, 24 h, then daily for 14 days). “Indexed” appears only when Google says the URL is on Google. Without the connection, a Search Console link appears and you request indexing yourself."
+              checked={form.requestIndexing}
+              onChange={(e) => setForm({ ...form, requestIndexing: e.target.checked })}
+            />
             {form.requestIndexing ? (
               <Field label="Search Console property" htmlFor="wf-gsc" help="“https://example.com/” (URL prefix) or “sc-domain:example.com” (domain). Empty = the website URL.">
                 <Input id="wf-gsc" placeholder={view.website.publicUrl} value={form.searchConsoleProperty} onChange={(e) => setForm({ ...form, searchConsoleProperty: e.target.value })} />
@@ -324,7 +329,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                           </a>
                         ) : null}
                       </td>
-                      <td className="max-w-72 text-xs text-amber-700 dark:text-amber-300">{k.lastError ?? k.indexingStatus ?? ''}</td>
+                      <td className={cx('max-w-72 text-xs', k.lastError ? 'text-amber-700 dark:text-amber-300' : k.status === 'INDEXED' ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted')}>{k.lastError ?? k.indexingStatus ?? ''}</td>
                     </tr>
                   ))}
                 </tbody>

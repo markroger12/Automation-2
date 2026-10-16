@@ -137,7 +137,9 @@ export function parseSiteImageSettings(raw: string | null | undefined): SiteImag
 // ------------------------------------------------------------ SVG sanitizing
 
 const SVG_ALLOWED = new Set(['svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'defs', 'lineargradient', 'radialgradient', 'stop', 'clippath', 'title']);
-const ATTR_ALLOWED = /^(viewbox|width|height|x|y|x1|x2|y1|y2|cx|cy|r|rx|ry|d|points|fill|fill-opacity|fill-rule|stroke|stroke-width|stroke-opacity|stroke-linecap|stroke-linejoin|opacity|transform|offset|stop-color|stop-opacity|id|clip-path|gradientunits|gradienttransform|xmlns)$/i;
+const ATTR_ALLOWED = /^(viewbox|preserveaspectratio|width|height|x|y|x1|x2|y1|y2|cx|cy|r|rx|ry|d|points|fill|fill-opacity|fill-rule|stroke|stroke-width|stroke-opacity|stroke-linecap|stroke-linejoin|opacity|transform|offset|stop-color|stop-opacity|id|clip-path|gradientunits|gradienttransform|xmlns)$/i;
+// SVG is case-sensitive XML: lower-cased `viewbox` or `lineargradient` are silently ignored by browsers and librsvg.
+const SVG_CASE: Record<string, string> = { lineargradient: 'linearGradient', radialgradient: 'radialGradient', clippath: 'clipPath', viewbox: 'viewBox', preserveaspectratio: 'preserveAspectRatio', gradientunits: 'gradientUnits', gradienttransform: 'gradientTransform' };
 
 /** Keep only plain shapes: no scripts, no event handlers, no external references, no foreignObject/image/use. */
 export function sanitizeSvg(svg: string): string | null {
@@ -161,7 +163,7 @@ export function sanitizeSvg(svg: string): string | null {
     }
     if (depthDenied) continue;
     if (closing) {
-      out.push(`</${tag}>`);
+      out.push(`</${SVG_CASE[tag] ?? tag}>`);
       continue;
     }
     const attrs: string[] = [];
@@ -170,9 +172,11 @@ export function sanitizeSvg(svg: string): string | null {
       const value = a[3] ?? a[4] ?? '';
       if (!ATTR_ALLOWED.test(name)) continue;
       if (/url\s*\(\s*['"]?\s*(?!#)/i.test(value) || /javascript:|data:|expression\(/i.test(value)) continue;
-      attrs.push(`${name}="${value.replace(/"/g, '&quot;')}"`);
+      attrs.push(`${SVG_CASE[name] ?? name}="${value.replace(/"/g, '&quot;')}"`);
     }
-    out.push(`<${tag}${attrs.length ? ' ' + attrs.join(' ') : ''}${selfClosing ? '/' : ''}>`);
+    // An SVG shown through <img> renders only with its namespace.
+    if (tag === 'svg' && !out.length && !attrs.some((a) => a.startsWith('xmlns='))) attrs.push('xmlns="http://www.w3.org/2000/svg"');
+    out.push(`<${SVG_CASE[tag] ?? tag}${attrs.length ? ' ' + attrs.join(' ') : ''}${selfClosing ? '/' : ''}>`);
   }
   const result = out.join('');
   return /^<svg[\s>]/.test(result) ? result : null;
@@ -182,85 +186,254 @@ export function sanitizeSvg(svg: string): string | null {
 
 interface ForeignElement {
   type?: string;
+  subType?: string;
   x?: number;
   y?: number;
   width?: number;
   height?: number;
   rotation?: number;
   opacity?: number;
+  visible?: boolean;
   text?: string;
   fontSize?: number;
   fontWeight?: string | number;
   fill?: string;
+  color?: string;
   align?: string;
   src?: string;
+  svg?: string;
   name?: string;
   cornerRadius?: number;
   stroke?: string;
   strokeWidth?: number;
+  cropX?: number;
+  cropY?: number;
+  cropWidth?: number;
+  cropHeight?: number;
+  colorsReplace?: Record<string, string>;
+  children?: ForeignElement[];
   [k: string]: unknown;
 }
 
-const safeColor = (c: unknown, fallback: string) => (typeof c === 'string' && color.safeParse(c.trim()).success ? c.trim() : fallback);
+/** A picture embedded in the imported file (data: URL). The designer stores it in the site's template library. */
+export interface EmbeddedPicture {
+  /** Placeholder assetId on the imported fixed-photo layer, replaced once the picture is stored. */
+  ref: string;
+  name: string;
+  dataUrl: string;
+  /** Polotno crop, as fractions of the picture (absent = the whole picture). */
+  crop?: { x: number; y: number; width: number; height: number };
+}
+
+const NAMED_COLORS: Record<string, string> = { white: '#ffffff', black: '#000000', red: '#ff0000', green: '#008000', blue: '#0000ff', yellow: '#ffff00', orange: '#ffa500', purple: '#800080', pink: '#ffc0cb', gray: '#808080', grey: '#808080', silver: '#c0c0c0', navy: '#000080', teal: '#008080', gold: '#ffd700', brown: '#a52a2a' };
+const safeColor = (c: unknown, fallback: string) => {
+  if (typeof c !== 'string') return fallback;
+  const v = NAMED_COLORS[c.trim().toLowerCase()] ?? c.trim();
+  return color.safeParse(v).success ? v : fallback;
+};
+
+const EMBEDDED_IMAGE = /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i;
+/** An image named like this in Polotno becomes a photo slot even when it carries an embedded picture. */
+const PHOTO_NAME = /photo|foto|bild|slot|placeholder|celebrity|person/i;
+
+/** Polotno's simple figures as paths in a w×h box (stretched with the layer). Other figures are drawn as rectangles. */
+function figurePath(subType: string, w: number, h: number): string | null {
+  const poly = (n: number, inner?: number) => {
+    const pts: string[] = [];
+    const steps = inner ? n * 2 : n;
+    for (let i = 0; i < steps; i++) {
+      const r = inner && i % 2 ? inner : 1;
+      const a = (i * 2 * Math.PI) / steps;
+      pts.push(`${(w / 2 + (r * w * Math.sin(a)) / 2).toFixed(2)} ${(h / 2 - (r * h * Math.cos(a)) / 2).toFixed(2)}`);
+    }
+    return `M ${pts.join(' L ')} Z`;
+  };
+  switch (subType) {
+    case 'triangle':
+      return `M ${w / 2} 0 L ${w} ${h} L 0 ${h} Z`;
+    case 'rightTriangle':
+      return `M 0 0 L ${w} 0 L 0 ${h} Z`;
+    case 'diamond':
+      return `M ${w / 2} 0 L ${w} ${h / 2} L ${w / 2} ${h} L 0 ${h / 2} Z`;
+    case 'pentagon':
+      return poly(5);
+    case 'hexagon':
+      return poly(6);
+    case 'star':
+      return poly(5, 0.5);
+    case 'cross': {
+      const [a, b, c, d] = [w * 0.35, w * 0.65, h * 0.35, h * 0.65];
+      return `M ${a} 0 H ${b} V ${c} H ${w} V ${d} H ${b} V ${h} H ${a} V ${d} H 0 V ${c} H ${a} Z`;
+    }
+    default:
+      return null;
+  }
+}
+
+/** The SVG text inside a data: URL (base64 or URL-encoded), or null. Nothing is fetched. */
+function svgFromDataUrl(src: unknown): string | null {
+  if (typeof src !== 'string') return null;
+  const m = /^data:image\/svg\+xml(;charset=[\w-]+)?(;base64)?,(.*)$/is.exec(src.trim());
+  if (!m) return null;
+  try {
+    if (!m[2]) return decodeURIComponent(m[3]);
+    const bin = atob(m[3].replace(/\s+/g, ''));
+    return new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)));
+  } catch {
+    return null;
+  }
+}
+
+const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 /**
  * Import a Polotno-like design ({ width, height, pages: [{ children: [...] }] }).
- * Pages are scaled proportionally into 1920×1080, supported transforms kept,
- * image URLs are NEVER fetched (images become photo slots), SVG is sanitized,
- * unsupported elements are reported, nothing is executed.
+ * - Pages are scaled proportionally into 1920×1080. Polotno rotates around an element's top-left corner;
+ *   the layer is moved so it lands where Polotno shows it (layers here rotate around their centre).
+ * - Groups are flattened; rectangles, circles and simple figures (triangle, right triangle, diamond, pentagon,
+ *   hexagon, star, cross) keep their shape.
+ * - Pictures embedded in the file (data: URLs) stay part of the design: they are returned in `embedded` for the
+ *   designer to store as fixed photos. Image URLs are NEVER fetched: such images (and images named “photo…”)
+ *   become photo slots. A design without a photo place gets photo slots behind it: two beside a centre divider,
+ *   otherwise one over the whole canvas.
+ * - SVG (inline or data: URL) is sanitized; unsupported elements are reported; nothing is executed.
  */
-export function importForeignTemplate(raw: unknown): { template: ImageTemplate; notes: string[] } {
+export function importForeignTemplate(raw: unknown): { template: ImageTemplate; notes: string[]; embedded: EmbeddedPicture[] } {
   const notes: string[] = [];
-  const doc = (raw ?? {}) as { width?: number; height?: number; pages?: { background?: string; children?: ForeignElement[] }[] };
-  const w = Number(doc.width) > 0 ? Number(doc.width) : CANVAS.width;
-  const h = Number(doc.height) > 0 ? Number(doc.height) : CANVAS.height;
+  const embedded: EmbeddedPicture[] = [];
+  const doc = (raw ?? {}) as { width?: number; height?: number; pages?: { background?: string; width?: unknown; height?: unknown; children?: ForeignElement[] }[] };
+  const page = doc.pages?.[0];
+  if (!page) return { template: presetSingle(), notes: ['No page found; the default preset was used.'], embedded };
+  const w = Number(page.width) > 0 ? Number(page.width) : Number(doc.width) > 0 ? Number(doc.width) : CANVAS.width;
+  const h = Number(page.height) > 0 ? Number(page.height) : Number(doc.height) > 0 ? Number(doc.height) : CANVAS.height;
   const scale = Math.min(CANVAS.width / w, CANVAS.height / h);
   const offX = (CANVAS.width - w * scale) / 2;
   const offY = (CANVAS.height - h * scale) / 2;
   if (Math.abs(w / h - 16 / 9) > 0.01) notes.push(`Page ${w}×${h} is not 16:9; it was scaled proportionally and centered.`);
-  const page = doc.pages?.[0];
-  if (!page) return { template: presetSingle(), notes: ['No page found; the default preset was used.'] };
   if ((doc.pages?.length ?? 0) > 1) notes.push('Only the first page was imported.');
+
+  const flat: ForeignElement[] = [];
+  const walk = (els: ForeignElement[] | undefined) => {
+    for (const el of els ?? []) {
+      if (!el || el.visible === false) continue;
+      if (el.type === 'group') walk(el.children);
+      else flat.push(el);
+    }
+  };
+  walk(page.children);
+  if (flat.length > 40) notes.push(`Only the first 40 of ${flat.length} elements were imported.`);
+
   const layers: LayerInput[] = [];
   let photoSlot = 0;
-  for (const [i, el] of (page.children ?? []).slice(0, 40).entries()) {
+  const photoLayer = (geom: object, name: string) => {
+    if (photoSlot <= 1) layers.push({ ...geom, type: 'photo', slot: photoSlot++ } as LayerInput);
+    else notes.push(`Image “${name}” skipped (only two photo slots).`);
+  };
+  const background = typeof page.background === 'string' ? page.background.trim() : '';
+  if (EMBEDDED_IMAGE.test(background)) {
+    embedded.push({ ref: 'embedded-bg', name: 'background', dataUrl: background });
+    layers.push({ id: 'impbg', name: 'background', type: 'fixed-photo', assetId: 'embedded-bg', x: 0, y: 0, width: CANVAS.width, height: CANVAS.height });
+  } else if (/^(https?:|data:)/i.test(background)) notes.push('The page background picture is a link; it was not fetched.');
+
+  for (const [i, el] of flat.slice(0, 40).entries()) {
+    const ew = Math.max(1, (Number(el.width) || 100) * scale);
+    const eh = Math.max(1, (Number(el.height) || 100) * scale);
+    const rotation = Number(el.rotation) || 0;
+    const rad = (rotation * Math.PI) / 180;
+    // Polotno's pivot is the top-left corner: find where the centre ends up, then place the box around it.
+    const cx = offX + (Number(el.x) || 0) * scale + (Math.cos(rad) * ew) / 2 - (Math.sin(rad) * eh) / 2;
+    const cy = offY + (Number(el.y) || 0) * scale + (Math.sin(rad) * ew) / 2 + (Math.cos(rad) * eh) / 2;
+    const name = String(el.name ?? el.type ?? 'layer').slice(0, 60);
     const geom = {
       id: `imp${i}`,
-      name: String(el.name ?? el.type ?? 'layer').slice(0, 60),
-      x: offX + (Number(el.x) || 0) * scale,
-      y: offY + (Number(el.y) || 0) * scale,
-      width: Math.max(1, (Number(el.width) || 100) * scale),
-      height: Math.max(1, (Number(el.height) || 100) * scale),
-      rotation: Number(el.rotation) || 0,
-      opacity: el.opacity === undefined ? 1 : Math.min(1, Math.max(0, Number(el.opacity))),
+      name,
+      x: clamp(cx - ew / 2, -1920, 3840),
+      y: clamp(cy - eh / 2, -1080, 2160),
+      width: Math.min(3840, ew),
+      height: Math.min(2160, eh),
+      rotation: ((rotation % 360) + 360) % 360 > 180 ? (((rotation % 360) + 360) % 360) - 360 : ((rotation % 360) + 360) % 360,
+      opacity: el.opacity === undefined ? 1 : clamp(Number(el.opacity) || 0, 0, 1),
     };
+    const stroke = el.stroke && Number(el.strokeWidth) > 0 ? { stroke: safeColor(el.stroke, '#000000'), strokeWidth: Math.min(100, Number(el.strokeWidth) * scale) } : { stroke: null, strokeWidth: 0 };
     switch (el.type) {
       case 'text':
         layers.push({ ...geom, type: 'text', text: String(el.text ?? '').slice(0, 400), fontSize: Math.min(400, Math.max(8, (Number(el.fontSize) || 40) * scale)), fontWeight: Number(el.fontWeight) >= 700 || el.fontWeight === 'bold' ? 700 : 400, color: safeColor(el.fill, '#ffffff'), align: el.align === 'center' || el.align === 'right' ? el.align : 'left' });
         break;
-      case 'image':
-        if (photoSlot <= 1) layers.push({ ...geom, type: 'photo', slot: photoSlot++ });
-        else notes.push(`Image “${geom.name}” skipped (only two photo slots).`);
-        if (el.src) notes.push(`Image “${geom.name}” became a photo slot; its URL was not fetched.`);
+      case 'image': {
+        const src = typeof el.src === 'string' ? el.src.trim() : '';
+        if (EMBEDDED_IMAGE.test(src) && !PHOTO_NAME.test(name)) {
+          const ref = `embedded-${i}`;
+          const crop = { x: Number(el.cropX) || 0, y: Number(el.cropY) || 0, width: Number(el.cropWidth) || 1, height: Number(el.cropHeight) || 1 };
+          const whole = crop.x < 0.001 && crop.y < 0.001 && crop.width > 0.999 && crop.height > 0.999;
+          embedded.push({ ref, name, dataUrl: src, ...(whole ? {} : { crop }) });
+          layers.push({ ...geom, type: 'fixed-photo', assetId: ref, radius: Math.min(540, (Number(el.cornerRadius) || 0) * scale) });
+          notes.push(`Picture “${name}” is kept as part of the design (name it “photo” in Polotno to make it a photo slot instead).`);
+        } else {
+          photoLayer(geom, name);
+          if (/^https?:/i.test(src)) notes.push(`Image “${name}” became a photo slot; its URL was not fetched.`);
+        }
         break;
+      }
       case 'figure':
       case 'rect':
-        layers.push({ ...geom, type: 'rect', fill: safeColor(el.fill, 'accent'), radius: Number(el.cornerRadius) || 0, stroke: el.stroke ? safeColor(el.stroke, '#000000') : null, strokeWidth: Number(el.strokeWidth) || 0 });
-        break;
       case 'circle':
-        layers.push({ ...geom, type: 'circle', fill: safeColor(el.fill, 'accent') });
+      case 'line': {
+        const sub = el.type === 'circle' ? 'circle' : el.type === 'line' ? 'rect' : String(el.subType ?? 'rect');
+        const fill = safeColor(el.type === 'line' ? (el.color ?? el.stroke ?? el.fill) : el.fill, 'accent');
+        if (sub === 'circle' || sub === 'ellipse') {
+          layers.push({ ...geom, type: 'circle', fill, ...stroke });
+          break;
+        }
+        const path = sub === 'rect' ? null : figurePath(sub, geom.width, geom.height);
+        if (path) {
+          const sw = stroke.stroke ? ` stroke="${stroke.stroke}" stroke-width="${stroke.strokeWidth.toFixed(2)}"` : '';
+          const fillAttr = fill === 'accent' ? '#4f46e5' : fill;
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(geom.width)}" height="${Math.round(geom.height)}" viewBox="0 0 ${geom.width.toFixed(2)} ${geom.height.toFixed(2)}" preserveAspectRatio="none"><path d="${path}" fill="${fillAttr}"${sw}/></svg>`;
+          layers.push({ ...geom, type: 'svg', svg: sanitizeSvg(svg) ?? svg });
+          break;
+        }
+        if (sub !== 'rect') notes.push(`Figure “${name}” (${sub}) is drawn as a rectangle.`);
+        layers.push({ ...geom, type: 'rect', fill, radius: Math.min(540, (Number(el.cornerRadius) || 0) * scale), ...stroke });
         break;
+      }
       case 'svg': {
-        const svg = typeof el.svg === 'string' ? sanitizeSvg(el.svg) : null;
+        let text = typeof el.svg === 'string' ? el.svg : svgFromDataUrl(el.src);
+        if (text && el.colorsReplace && typeof el.colorsReplace === 'object') {
+          for (const [from, to] of Object.entries(el.colorsReplace)) {
+            const safeTo = safeColor(to, '');
+            if (safeTo && from) text = text.split(from).join(safeTo);
+          }
+        }
+        const svg = text ? sanitizeSvg(text) : null;
         if (svg) layers.push({ ...geom, type: 'svg', svg });
-        else notes.push(`SVG “${geom.name}” was not imported (unsafe or not inline).`);
+        else notes.push(`SVG “${name}” was not imported (${typeof el.src === 'string' && /^https?:/i.test(el.src) ? 'a link, not fetched' : 'unsafe, too large or not inline'}).`);
         break;
       }
       default:
         notes.push(`Element type “${String(el.type)}” is not supported and was skipped.`);
     }
   }
-  const parsed = templateSchema.safeParse({ name: 'Imported', background: safeColor(page.background, '#111827'), layers });
-  if (!parsed.success) return { template: presetSingle(), notes: [...notes, 'The import was not valid; the default preset was used.'] };
-  return { template: parsed.data, notes };
+
+  if (!layers.some((l) => l.type === 'photo')) {
+    // A full-height, narrow bar near the middle reads as a divider between two photos.
+    const bars = layers.filter((l) => (l.type === 'rect' || l.type === 'svg') && !(l.rotation ?? 0) && (l.height ?? 0) >= CANVAS.height * 0.9 && (l.width ?? 0) <= CANVAS.width * 0.1 && Math.abs((l.x ?? 0) + (l.width ?? 0) / 2 - CANVAS.width / 2) <= CANVAS.width * 0.15);
+    const slots: LayerInput[] = [];
+    if (bars.length) {
+      const left = Math.min(...bars.map((b) => b.x ?? 0));
+      const right = Math.max(...bars.map((b) => (b.x ?? 0) + (b.width ?? 0)));
+      slots.push({ id: 'impphoto0', name: 'Photo 1', type: 'photo', slot: 0, x: 0, y: 0, width: Math.max(1, left), height: CANVAS.height });
+      slots.push({ id: 'impphoto1', name: 'Photo 2', type: 'photo', slot: 1, x: right, y: 0, width: Math.max(1, CANVAS.width - right), height: CANVAS.height });
+      notes.push('The design has no photo place: two photo slots were added behind it, left and right of the centre divider.');
+    } else {
+      slots.push({ id: 'impphoto0', name: 'Photo 1', type: 'photo', slot: 0, x: 0, y: 0, width: CANVAS.width, height: CANVAS.height });
+      notes.push('The design has no photo place: a photo slot was added behind it, over the whole canvas.');
+    }
+    const at = layers[0]?.id === 'impbg' ? 1 : 0;
+    layers.splice(at, 0, ...slots);
+    if (layers.length > 40) layers.length = 40;
+  }
+
+  const parsed = templateSchema.safeParse({ name: 'Imported', background: safeColor(background, '#ffffff'), layers });
+  if (!parsed.success) return { template: presetSingle(), notes: [...notes, `The import was not valid (${parsed.error.issues[0]?.path.join('.')}: ${parsed.error.issues[0]?.message}); the default preset was used.`], embedded: [] };
+  return { template: parsed.data, notes, embedded: embedded.filter((e) => parsed.data.layers.some((l) => l.type === 'fixed-photo' && l.assetId === e.ref)) };
 }

@@ -154,7 +154,9 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
     case 'svg': {
       const safe = sanitizeSvg(layer.svg);
       if (!safe) return null;
-      return sharp(Buffer.from(safe)).resize(w, h, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+      // preserveAspectRatio="none" (imported figures) stretches with the layer; any other SVG keeps its shape.
+      const fit = /^<svg[^>]*preserveAspectRatio="none"/.test(safe) ? 'fill' : 'contain';
+      return sharp(Buffer.from(safe)).resize(w, h, { fit, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
     }
   }
 }

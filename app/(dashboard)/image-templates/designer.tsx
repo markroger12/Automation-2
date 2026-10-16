@@ -43,6 +43,7 @@ import {
   presetSplit,
   sanitizeSvg,
   templateSchema,
+  type EmbeddedPicture,
   type ImageTemplate,
   type Layer,
   type SiteImageSettings,
@@ -108,6 +109,27 @@ function handlePos(h: Handle): CSSProperties {
 }
 
 /** Make layer ids unique and drop references the site does not have (imports). */
+/** The embedded picture as a file, cut to Polotno's crop when it has one. */
+async function embeddedFile(e: EmbeddedPicture): Promise<File> {
+  // Decoded here rather than fetched: the app's content security policy does not allow fetching data: URLs.
+  const [head, b64] = e.dataUrl.split(',', 2);
+  const bin = atob(b64.replace(/\s+/g, ''));
+  const blob = new Blob([Uint8Array.from(bin, (c) => c.charCodeAt(0))], { type: /^data:([^;]+)/.exec(head)?.[1] ?? 'image/png' });
+  const name = `${e.name.replace(/[^\w-]+/g, '-').slice(0, 40) || 'picture'}.${blob.type.split('/')[1] ?? 'png'}`;
+  if (!e.crop) return new File([blob], name, { type: blob.type });
+  const bitmap = await createImageBitmap(blob);
+  const sx = Math.round(e.crop.x * bitmap.width);
+  const sy = Math.round(e.crop.y * bitmap.height);
+  const sw = Math.max(1, Math.min(bitmap.width - sx, Math.round(e.crop.width * bitmap.width)));
+  const sh = Math.max(1, Math.min(bitmap.height - sy, Math.round(e.crop.height * bitmap.height)));
+  const canvas = document.createElement('canvas');
+  canvas.width = sw;
+  canvas.height = sh;
+  canvas.getContext('2d')!.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+  const png = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('crop failed'))), 'image/png'));
+  return new File([png], name.replace(/\.\w+$/, '.png'), { type: 'image/png' });
+}
+
 function normalizeImported(t: ImageTemplate, assetIds: Set<string>, notes: string[]): ImageTemplate {
   const seen = new Set<string>();
   const layers: Layer[] = [];
@@ -432,6 +454,26 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
     } catch (e) {
       toast('error', (e as Error).message);
     }
+  }
+
+  /** Pictures embedded in an imported design go to this site's template library; the layers then point at them. */
+  async function storeEmbeddedPictures(t: ImageTemplate, embedded: EmbeddedPicture[], notes: string[]): Promise<{ template: ImageTemplate; ids: string[] }> {
+    if (!embedded.length) return { template: t, ids: [] };
+    const stored = new Map<string, string>();
+    for (const e of embedded) {
+      try {
+        const form = new FormData();
+        form.set('role', 'TEMPLATE_PHOTO');
+        form.set('file', await embeddedFile(e));
+        const res = await upload<{ asset: { id: string } }>(`/api/websites/${siteId}/image-assets`, form);
+        stored.set(e.ref, res.asset.id);
+      } catch (err) {
+        notes.push(`Picture “${e.name}” could not be stored (${(err as Error).message}); it was left out.`);
+      }
+    }
+    if (stored.size) await refreshAssets();
+    const layers = t.layers.flatMap((l) => (l.type === 'fixed-photo' && l.assetId.startsWith('embedded-') ? (stored.has(l.assetId) ? [{ ...l, assetId: stored.get(l.assetId)! }] : []) : [l]));
+    return { template: { ...t, layers }, ids: [...stored.values()] };
   }
 
   async function retireAsset(a: Asset) {
@@ -773,11 +815,12 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
       <ImportDialog
         open={importOpen}
         onCancel={() => setImportOpen(false)}
-        onImport={(t, notes) => {
-          const fixed = normalizeImported(t, assetIds, notes);
+        onImport={async (t, notes, embedded) => {
+          setImportOpen(false);
+          const { template: stored, ids } = await storeEmbeddedPictures(t, embedded, notes);
+          const fixed = normalizeImported(stored, new Set([...assetIds, ...ids]), notes);
           changeTemplate(() => ({ ...fixed, accent: template?.accent ?? fixed.accent }));
           setSelected(null);
-          setImportOpen(false);
           toast(notes.length ? 'info' : 'success', notes.length ? `Imported with notes: ${notes.join(' ')}` : 'Template imported (save to keep it).');
         }}
       />
@@ -896,7 +939,7 @@ function LayerVisual({ layer: l, template, scale, vars, photoUrl, logoUrl }: { l
       return <div className="h-full w-full rounded-[50%]" style={{ background: resolve(l.fill, accent), border: l.stroke && l.strokeWidth ? `${l.strokeWidth * scale}px solid ${resolve(l.stroke, accent)}` : undefined, boxSizing: 'border-box' }} />;
     case 'svg': {
       const safe = sanitizeSvg(l.svg);
-      return safe ? <img src={svgUrl(safe)} alt="" draggable={false} className="h-full w-full object-contain" /> : <div className="h-full w-full border border-dashed border-rose-400" />;
+      return safe ? <img src={svgUrl(safe)} alt="" draggable={false} className={cx('h-full w-full', /^<svg[^>]*preserveAspectRatio="none"/.test(safe) ? 'object-fill' : 'object-contain')} /> : <div className="h-full w-full border border-dashed border-rose-400" />;
     }
   }
 }
@@ -1102,7 +1145,7 @@ function LayerProperties({ layer: l, accent, fixedPhotos, onPatch }: { layer: La
   );
 }
 
-function ImportDialog({ open, onCancel, onImport }: { open: boolean; onCancel: () => void; onImport: (t: ImageTemplate, notes: string[]) => void }) {
+function ImportDialog({ open, onCancel, onImport }: { open: boolean; onCancel: () => void; onImport: (t: ImageTemplate, notes: string[], embedded: EmbeddedPicture[]) => void }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -1122,14 +1165,14 @@ function ImportDialog({ open, onCancel, onImport }: { open: boolean; onCancel: (
     if (own && own.version === 1 && Array.isArray(own.layers)) {
       const parsed = templateSchema.safeParse(raw);
       if (!parsed.success) return setError(`Not a valid template: ${parsed.error.issues[0]?.path.join('.')} ${parsed.error.issues[0]?.message}`);
-      return onImport(parsed.data, []);
+      return onImport(parsed.data, [], []);
     }
     const r = importForeignTemplate(raw);
-    onImport(r.template, r.notes);
+    onImport(r.template, r.notes, r.embedded);
   }
   return (
     <ConfirmDialog open={open} title="Import a template" confirmLabel="Import" onCancel={onCancel} onConfirm={run}>
-      <p className="mb-2">Paste a template exported here, or a Polotno-style design (pages are scaled proportionally into 1920×1080). Image URLs are never fetched — images become photo slots. SVG is sanitized; nothing in the file is executed.</p>
+      <p className="mb-2">Paste a template exported here, or a Polotno design (pages are scaled proportionally into 1920×1080). Pictures inside the file (such as a logo) are kept and saved to this site's template library; image links are never fetched and become photo slots, as do images named “photo”. A design without a photo place gets photo slots behind it. SVG is sanitized; nothing in the file is executed.</p>
       <input
         type="file"
         accept="application/json,.json"

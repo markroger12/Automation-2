@@ -1305,3 +1305,64 @@ npx tsc --noEmit                                             # 0 errors
 npx vitest run                                               # 38 files, 261 tests pass
 npm run build                                                # compiled
 ```
+
+## Owner report: a Polotno design imported wrongly
+
+The owner imported their Polotno Studio design: a white page, a black and blue divider bar in the middle, blue right triangles in the top-left and bottom-right corners, and their “Teche Flux” logo embedded as a picture. The designer showed it wrongly:
+- a dark page instead of the white one;
+- squares instead of triangles;
+- the bottom-right triangles missing;
+- the logo turned into “Photo 1”.
+
+**Causes** (`src/lib/image-template.ts`)
+- **Background:** named colours such as `white` were refused, so the page fell back to the dark default.
+- **Rotation:** Polotno rotates an element around its top-left corner (confirmed in Polotno's own HTML/SVG export: `transform-origin: top left`). Layers here rotate around their centre, so rotated elements landed elsewhere. The triangle rotated 180° about (1920, 1080) ended up off the canvas.
+- **Figures:** every `figure` became a rectangle, whatever its `subType`, including circles.
+- **Pictures:** every image became a photo slot, including a picture embedded in the file (the logo).
+- **Polotno SVG elements:** they carry their SVG as a `data:` URL in `src`. The importer only read an inline `svg` string, so these were never imported.
+- **SVG sanitizer:** it wrote names in lower case (`viewbox`, `lineargradient`, `clippath`). SVG is case-sensitive, so browsers and librsvg ignored them: viewBox scaling and gradients were lost on every SVG layer.
+
+**Fix**
+- **Colours:** common named colours are mapped to hex, and a page without a colour is white.
+- **Rotation:** each element is moved so that, rotating around its centre, it lands exactly where Polotno shows it.
+- **Groups:** groups are flattened.
+- **Figures:**
+  - rect and circle keep their type;
+  - triangle, right triangle, diamond, pentagon, hexagon, star and cross become an SVG path, using Polotno's own geometry for the right triangle (`M 0 0 L w 0 L 0 h Z`), which stretches with the layer;
+  - other figures are drawn as rectangles, with a note.
+- **Embedded pictures:** pictures embedded as `data:` URLs (png, jpeg, webp, gif), including a `data:` page background, stay part of the design.
+  - The designer decodes them (not fetched, because the CSP refuses `data:` fetches), applies Polotno's crop if any, and stores them in the site's template library through the existing upload route, which checks them with sharp.
+  - They become fixed photos.
+  - An image named like “photo” stays a photo slot. Image links are still never fetched and become photo slots.
+- **Photo slots:** a design with no photo place gets photo slots behind it.
+  - A full-height narrow bar near the centre is read as a divider, giving two slots, one on each side of it.
+  - Otherwise one slot covers the canvas.
+  - A note says so, and the slots can be moved or deleted.
+- **SVG elements:** Polotno SVG `data:` URLs are decoded, `colorsReplace` is applied, and the result is sanitized.
+- **SVG sanitizer:**
+  - writes canonical names (`viewBox`, `linearGradient`, `clipPath`, …);
+  - allows `preserveAspectRatio`;
+  - adds the SVG namespace (an `<img>` needs it).
+- **SVG drawing:** an SVG with `preserveAspectRatio="none"` stretches with its layer in the renderer and the designer.
+
+**Tests**
+- `tests/unit/images.test.ts`:
+  - a new test imports the owner's design, with the same coordinates and a 1×1 logo;
+  - a new test covers a Polotno SVG `data:` URL and the sanitizer's casing;
+  - the existing import test's expectation for a rotated image now uses the top-left pivot.
+- On the old importer, all three fail; on the new one, they pass.
+- **The owner's real file** (338 KB) went through the importer and the production renderer, giving: a white page, the divider with black edges, both corner triangle pairs, the logo bottom-left, and photos left and right.
+- **In Chromium** against `next dev`, on a migrated scratch copy of the database, the designer imported the real file:
+  - 9 layers; the logo was stored and shown from `/api/media/…`;
+  - the notes were shown;
+  - no console errors.
+
+**Not verified:** Polotno's other figures (speech bubble, arrows, cloud, blobs) are drawn as rectangles. Polotno text styling beyond size, weight, colour and alignment is not imported. This file has no text.
+
+**Commands run**
+```
+npx tsc --noEmit                                                        # 0 errors
+npx vitest run                                                          # 38 files, 263 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts   # 8/8
+npm run build                                                           # compiled
+```

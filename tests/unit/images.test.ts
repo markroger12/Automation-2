@@ -70,7 +70,11 @@ describe('Polotno-like import', () => {
     const scale = CANVAS.height / 1080;
     const off = (CANVAS.width - 1080 * scale) / 2;
     const [img, text, svg, rect] = template.layers;
-    expect(img).toMatchObject({ type: 'photo', slot: 0, x: off, y: 0, width: 1080 * scale, rotation: 5 });
+    // Polotno rotates around the top-left corner; the layer (rotating around its centre) is moved to the same place.
+    const [hw, hh, rad] = [(1080 * scale) / 2, (540 * scale) / 2, (5 * Math.PI) / 180];
+    expect(img).toMatchObject({ type: 'photo', slot: 0, width: 1080 * scale, rotation: 5 });
+    expect(img.x).toBeCloseTo(off + hw * Math.cos(rad) - hh * Math.sin(rad) - hw, 6);
+    expect(img.y).toBeCloseTo(hw * Math.sin(rad) + hh * Math.cos(rad) - hh, 6);
     expect(text).toMatchObject({ type: 'text', text: 'Hello', fontWeight: 700, color: '#00ff00', align: 'center', fontSize: 60 * scale });
     expect(svg.type === 'svg' && svg.svg).not.toContain('script');
     expect(rect).toMatchObject({ type: 'rect', fill: 'accent' }); // unsafe color replaced
@@ -79,6 +83,66 @@ describe('Polotno-like import', () => {
     expect(notes.join(' ')).toMatch(/URL was not fetched/);
     expect(notes.join(' ')).toMatch(/“video” is not supported/);
     expect(notes.join(' ')).toMatch(/Only the first page/);
+  });
+
+  it("imports the owner's Polotno design as Polotno shows it (white page, right triangles, rotation about the corner, embedded logo, photo slots beside the divider)", () => {
+    const logo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const tri = { type: 'figure', subType: 'rightTriangle', fill: 'rgba(2,123,252,1)', width: 237.583793, height: 237.583793 };
+    const { template, notes, embedded } = importForeignTemplate({
+      width: 1920,
+      height: 1080,
+      pages: [
+        {
+          background: 'white',
+          width: 'auto',
+          height: 'auto',
+          children: [
+            { type: 'figure', subType: 'rect', name: 'figure-2', x: 928.247314, y: 0, width: 63.505372, height: 1080, fill: 'rgba(0,0,0,1)' },
+            { type: 'figure', subType: 'rect', name: 'figure-1', x: 935.496454, y: 0, width: 49.007093, height: 1080, fill: 'rgba(2,123,252,1)' },
+            { type: 'image', name: 'image-1', x: 0, y: 961.208103, width: 482.403639, height: 118.791897, src: logo, cropX: 0, cropY: 0, cropWidth: 0.999999996, cropHeight: 1 },
+            { ...tri, name: 'figure-3', x: 0, y: 0, rotation: 0 },
+            { ...tri, name: 'figure-3', x: 1920, y: 1080, rotation: 180 },
+            { type: 'group', children: [{ type: 'figure', subType: 'circle', name: 'dot', x: 10, y: 10, width: 20, height: 20, fill: 'black' }] },
+          ],
+        },
+      ],
+    });
+    expect(template.background).toBe('#ffffff'); // was the dark fallback: named colours were refused
+    const byName = (n: string) => template.layers.filter((l) => l.name === n);
+    // Two photo slots, behind everything, left and right of the divider.
+    expect(template.layers.slice(0, 2)).toMatchObject([
+      { type: 'photo', slot: 0, x: 0, width: 928.247314 },
+      { type: 'photo', slot: 1, x: 928.247314 + 63.505372 },
+    ]);
+    // The embedded logo stays a picture (it was turned into “Photo 1”).
+    expect(byName('image-1')[0]).toMatchObject({ type: 'fixed-photo', assetId: 'embedded-2' });
+    expect(embedded).toEqual([{ ref: 'embedded-2', name: 'image-1', dataUrl: logo }]);
+    // Right triangles keep their shape (they were rectangles); the one rotated about (1920,1080) lands in the corner.
+    const [corner, opposite] = byName('figure-3');
+    expect(corner).toMatchObject({ type: 'svg', x: 0, y: 0, rotation: 0 });
+    expect(corner.type === 'svg' && corner.svg).toContain('d="M 0 0 L 237.583793 0 L 0 237.583793 Z"');
+    expect(corner.type === 'svg' && corner.svg).toContain('preserveAspectRatio="none"');
+    expect(opposite.x).toBeCloseTo(1920 - 237.583793, 6);
+    expect(opposite.y).toBeCloseTo(1080 - 237.583793, 6);
+    expect(opposite.rotation).toBe(180);
+    expect(byName('dot')[0]).toMatchObject({ type: 'circle', fill: '#000000' }); // group flattened, circle kept
+    expect(notes.join(' ')).toMatch(/two photo slots were added/);
+    // An image named “photo…” is a photo slot even when the picture is embedded.
+    const named = importForeignTemplate({ pages: [{ children: [{ type: 'image', name: 'Photo left', x: 0, y: 0, width: 960, height: 1080, src: logo }] }] });
+    expect(named.template.layers).toMatchObject([{ type: 'photo', slot: 0 }]);
+    expect(named.embedded).toEqual([]);
+  });
+
+  it('decodes Polotno SVG elements (data: URL) and keeps SVG names in their case', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><linearGradient id="g"><stop offset="0" stop-color="#000"/></linearGradient><path d="M0 0H10V10Z" fill="#000000"/></svg>';
+    const { template } = importForeignTemplate({ pages: [{ children: [{ type: 'svg', name: 'icon', x: 0, y: 0, width: 100, height: 100, src: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`, colorsReplace: { '#000000': '#ff0000' } }] }] });
+    const layer = template.layers.find((l) => l.name === 'icon');
+    expect(layer?.type).toBe('svg');
+    const out = layer?.type === 'svg' ? layer.svg : '';
+    expect(out).toContain('viewBox="0 0 10 10"');
+    expect(out).toContain('<linearGradient id="g">');
+    expect(out).toContain('fill="#ff0000"');
+    expect(sanitizeSvg('<svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg>')).toBe('<svg viewBox="0 0 1 1" xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>');
   });
 
   it('falls back to the default preset for an empty document', () => {

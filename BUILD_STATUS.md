@@ -1366,3 +1366,25 @@ npx vitest run                                                          # 38 fil
 npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts   # 8/8
 npm run build                                                           # compiled
 ```
+
+## Owner report: scrollbars on the article tabs
+
+The tab bar on an article page (Overview … Conversation, 14 tabs) showed a vertical and a horizontal scrollbar.
+
+**Cause** (`src/components/client.tsx`, the shared `Tabs`)
+- The bar was a horizontal scroll box (`overflow-x: auto`), which also makes `overflow-y` auto.
+- The active tab's underline sits 1 px below the bar (`-mb-px`), so the bar always overflowed by 1 px vertically and showed a vertical scrollbar.
+- On narrower windows the 14 tabs did not fit either, so a horizontal scrollbar appeared too.
+
+**Fix:** the tabs wrap onto a second row instead of scrolling. Nothing in the bar scrolls any more.
+
+**Reproduced first** (Playwright Chromium against `next dev`, a migrated scratch copy of the database with one test article)
+- Before the fix, at 1600, 1366, 1024 and 390 px wide, the bar was a scroll box with `scrollHeight 38 > clientHeight 37`, and below 1600 px the last tabs were cut off: 4 failures.
+- After the fix there is no scroll box at any of these widths and every tab is visible (two rows at 1366 and 1024 px, four at 390 px).
+
+**Commands run**
+```
+npx tsc --noEmit         # 0 errors
+npx vitest run           # 38 files, 263 tests pass
+npm run build            # compiled
+```

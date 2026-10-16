@@ -153,7 +153,9 @@ export function ConfirmDialog({
 
 export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: ReactNode; badge?: ReactNode }[]; value: string; onChange: (id: string) => void }) {
   return (
-    <div role="tablist" className="border-app flex gap-1 overflow-x-auto border-b">
+    // Tabs wrap to a second row instead of scrolling: a scroll box here showed scrollbars (the active tab's
+    // underline sits 1 px below the bar, so even tabs that fit made it scroll vertically).
+    <div role="tablist" className="border-app flex flex-wrap gap-x-1 border-b">
       {tabs.map((tab) => (
         <button
           key={tab.id}

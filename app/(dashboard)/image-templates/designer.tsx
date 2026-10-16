@@ -92,6 +92,8 @@ const FONTS: Record<string, string> = {
 };
 const COLOR_RE = /^(#[0-9a-fA-F]{3,8}|accent|transparent|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+)\s*)?\))$/;
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+/** Space around the canvas inside its frame: the 12 px selection handles stick out 6 px past a layer's edge. */
+const FRAME_PAD = 8;
 const CURSORS: Record<Handle, string> = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
 const SAMPLE_TITLE = 'How to choose a reliable web host for a growing blog';
 
@@ -203,17 +205,26 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   // ---- canvas sizing
   const stageRef = useRef<HTMLDivElement>(null);
   // The canvas wrapper mounts and unmounts (e.g. body template off/on): observe whichever one is current.
-  const observer = useRef<ResizeObserver | null>(null);
+  const stopObserving = useRef<(() => void) | null>(null);
   const wrapRef = useCallback((el: HTMLDivElement | null) => {
-    observer.current?.disconnect();
-    observer.current = null;
+    stopObserving.current?.();
+    stopObserving.current = null;
     if (!el) return;
+    // "Fit" shows the whole canvas, width and height, inside the frame (75vh, padded so edge handles stay inside): no scrollbar.
     const update = () => {
-      if (el.clientWidth > 0) setFitScale(Math.min(1, Math.max(0.1, (el.clientWidth - 2) / CANVAS.width)));
+      if (el.clientWidth <= 0) return;
+      const width = el.clientWidth - FRAME_PAD * 2;
+      const height = window.innerHeight * 0.75 - FRAME_PAD * 2 - 2;
+      setFitScale(Math.min(1, Math.max(0.1, Math.min(width / CANVAS.width, height / CANVAS.height))));
     };
     update();
-    observer.current = new ResizeObserver(update);
-    observer.current.observe(el);
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    window.addEventListener('resize', update);
+    stopObserving.current = () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+    };
   }, []);
   const scale = zoom === 'fit' ? fitScale : zoom;
 
@@ -580,12 +591,12 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
             </Card>
 
             {/* Canvas */}
-            <div ref={wrapRef} className="border-app surface-2 max-h-[75vh] overflow-auto rounded-xl border">
+            <div ref={wrapRef} className={cx('border-app surface-2 max-h-[75vh] rounded-xl border', zoom === 'fit' ? 'overflow-hidden' : 'overflow-auto')} style={{ padding: FRAME_PAD }}>
               <div
                 ref={stageRef}
                 role="application"
                 aria-label={`${which === 'featured' ? 'Featured' : 'Body'} image canvas, 1920 by 1080`}
-                className="relative select-none"
+                className="relative mx-auto select-none"
                 style={{ width: CANVAS.width * scale, height: CANVAS.height * scale, background: resolve(template.background, template.accent), touchAction: 'none' }}
                 onPointerDown={(e) => {
                   if (e.target === e.currentTarget || (e.target as HTMLElement).dataset.canvasBg) setSelected(null);

@@ -1272,3 +1272,36 @@ npx vitest run                                             # 38 files, 261 tests
 npx vitest run --config vitest.integration.config.ts <each file>   # all 10 files pass (extension 26/26, images 8/8)
 npm run build                                              # compiled
 ```
+
+## Owner report: a scrollbar on the Image Template Designer canvas
+
+The owner's screenshot showed a vertical scrollbar beside the canvas while a full-height layer was selected.
+
+**Cause**
+- The selection handles are 12 px squares centred on the layer's edge, so they stick out 6 px.
+- When the selected layer touches the bottom or right edge of the canvas, the handles overflowed the frame (`overflow: auto`) and Chrome showed a scrollbar.
+- Separately, “Fit” sized the canvas by width only, so on a wide but short window the canvas could be taller than the frame (75vh).
+
+**Fix** (`app/(dashboard)/image-templates/designer.tsx`)
+- The frame has 8 px of padding around the canvas, so edge handles stay inside it.
+- “Fit” now fits both width and height, also on a window resize, and centres the canvas.
+- In “Fit” the frame never scrolls. Zoomed in, it scrolls as before.
+
+**Reproduced first, in a real browser (Playwright Chromium against `next dev`)**
+- The check ran against a migrated scratch copy of the local database; `data/` was not touched.
+- At 1280×900, 1366×768, 1600×700 and 1920×1080 it selects each layer of the default template and measures the frame.
+- Before the fix, selecting the photo or the bottom band (both touch an edge) gave `scrollHeight 332 > clientHeight 326` and a scrollbar: 8 failures.
+- After the fix, the same check plus a 1920×650 window passes:
+  - no overflow for any selection, and the whole canvas is inside the frame;
+  - dragging a layer 50 px moves it 51 px, so pointer mapping is unchanged;
+  - zoomed in, the frame still scrolls.
+- The check was a script in the session scratchpad. No designer UI test exists in the repository, so none was added.
+
+**Commands run**
+```
+DATABASE_URL=file:<scratch copy> npx prisma migrate deploy   # scratch copy only
+DATABASE_URL=file:<scratch copy> npx next dev -p 3123         # + Playwright check: FAIL 8 before, PASS after
+npx tsc --noEmit                                             # 0 errors
+npx vitest run                                               # 38 files, 261 tests pass
+npm run build                                                # compiled
+```

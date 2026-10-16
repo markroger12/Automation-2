@@ -114,7 +114,7 @@ The test types these credentials itself (simulating you in the login window); th
 
   Pictures under 250 px and exact or near-duplicates are skipped.
 - General articles ask ChatGPT for an image plan and three images through the extension. Missing images never block the text: the draft continues without them, or waits for review if the site requires images. No image-rights or licensing checks are performed (owner decision); the source URL is stored for reference only.
-- After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture; 3.1.1–3.1.5 make prompts and answers readable on the new ChatGPT “Chat / Work” layout and recover an already-sent prompt after a page reload; 3.2.0 saves the image-search gallery for celebrity photos and asks for two more image hosts).
+- After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture; 3.1.1–3.1.5 make prompts and answers readable on the new ChatGPT “Chat / Work” layout and recover an already-sent prompt after a page reload; 3.2.0 saves the image-search gallery for celebrity photos and asks for two more image hosts; 3.2.1 says exactly where the composer's text differed when a prompt cannot be placed).
 - **Alt text** is checked for every rendered image:
   - “Image of …” is dropped and long text is shortened to 125 characters;
   - file names, web addresses, one-word labels, keyword stuffing and the same text on two images are replaced with a neutral text (the article title for the featured image, “*Subject*: article image 2/3” for body images);

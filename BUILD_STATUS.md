@@ -1566,3 +1566,49 @@ npx vitest run                                                # 41 files, 276 te
 BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3123   # 58 ok, no serious/critical
 npm run build                                                 # compiled
 ```
+
+## Owner report: RANKMATH stops with “Could not place the complete prompt in the composer as text”, and Retry does not reopen Chrome
+
+**1. The SEO-correction prompt was not placed in ChatGPT's composer** (RANKMATH, 5 times; once “composer did not become ready”).
+- **What differs from prompts that work:** during RANKMATH the app sends SEO_CORRECTION with the whole article as markdown. EXTERNAL_LINKS sends the same article and works, but the RANKMATH copy is the finished article, with `[**anchor**](https://…)` links (bold links) and `**bold**`. The issue list was also written as `- ` lines.
+- **Suspected cause (not verified on the real page):** a rich-text composer that turns typed markdown links into links. In the fake ChatGPT page (new option `markdownLinks`), such a composer reproduces exactly the owner's error. The humanizer's `{L1}…{/L1}` / `{b}…{/b}` marks are typed exactly in the real composer (HUMANIZE ran in the owner's live run).
+- **Fix** (`src/lib/seo/correction.ts`, `src/worker/pipelines/wordpress.ts`):
+  - The SEO-correction prompt carries links and bold/italic as those marks (`markRichText`), with a note to keep them, and numbered issues (`1.`) as the humanizer uses.
+  - Each link keeps its original tag (URL, attributes, inner bold) and gets it back after the answer (`restoreRichText`).
+  - A link ChatGPT drops stays dropped, so the existing correction guard rejects the correction and keeps the article.
+  - Braces in the text become look-alikes and cannot forge a mark.
+- **Extension 3.2.1:** when a prompt cannot be placed, the stop now says how many characters the composer showed, and where and what the first difference was (or that ChatGPT turned the prompt into a “Pasted text” attachment). The next real occurrence shows the actual cause.
+
+**2. Retry did not bring Chrome back**
+- On Retry the task is queued, and the auto-open does not open Chrome while the extension still counts as connected or while Automation Chrome is running.
+  - **Connected:** this held for up to 2 minutes after the window closed. It is now 75 s; the extension polls every 30 s.
+  - **Running:** Chrome may keep running after its window closes, and then no window comes back.
+- **New:** a due ChatGPT prompt that nobody claims for 90 s (no other prompt running, no usage-limit wait) is “stuck”. The worker then opens the Automation Chrome profile again, which opens a ChatGPT window in the running Chrome. This happens once per stuck prompt, at most every 3 minutes.
+- **Logs:** when Chrome is not opened for waiting work, Logs say why once: switched off, already running, or locked by another computer.
+
+**Tests**
+- `tests/unit/wordpress.test.ts`:
+  - the marked prompt has no markdown link, URL or `**`, and the links, bold, italic and braces come back exactly;
+  - an answer that drops a link is rejected by the guard.
+- `tests/integration/extension.test.ts`:
+  - with the fake rich-text composer, the old markdown-link prompt stops with the exact owner message plus the new detail (`… first difference at character N: expected "…[**NOS…"`) and is never sent;
+  - the same text with marks is typed exactly and answered.
+- `tests/integration/wordpress-drafts.test.ts`: SEO-correction prompts have no markdown links, URLs or `**`, use numbered issues, and carry the marks note. The fake WordPress article has no links, so this run passes on the old code too; the round trip itself is covered by the unit test.
+- `tests/unit/chrome-autostart.test.ts`:
+  - a stuck prompt with Chrome running opens a window once per prompt;
+  - a usage-limit wait or a running prompt is not “stuck”;
+  - the reason is logged once.
+
+**Not verified here:** the real ChatGPT composer's behaviour with markdown links, and Windows Chrome opening a window when the profile is already running.
+
+**Commands run**
+```
+npx tsc --noEmit                                                     # 0 errors
+npx vitest run                                                       # 41 files, 280 tests pass
+npx vitest run --config vitest.integration.config.ts <each file>     # all 10 pass: content-refresh 5, extension 27,
+                                                                     # images 8, links 6, migration 1, wordpress-drafts 10,
+                                                                     # wordpress-session 6, worker-toolchain 1, workflow-publish 6
+                                                                     # (the first combined run hit the 10-minute command limit
+                                                                     # before workflow-publish; it was run again on its own)
+npm run build                                                        # compiled
+```

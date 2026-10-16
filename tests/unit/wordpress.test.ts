@@ -5,7 +5,7 @@ import type { PrismaClient } from '@prisma/client';
 import { setupTestDb } from '../helpers/test-db';
 import { htmlForClassic, htmlToBlocks } from '@/wordpress/blocks';
 import { fieldsMatch, focusKeywordMatches, parseRankMathScore } from '@/wordpress/rank-math';
-import { evaluateCorrection } from '@/lib/seo/correction';
+import { evaluateCorrection, markRichText, restoreRichText } from '@/lib/seo/correction';
 import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
 import { markdownToHtml } from '@/lib/content/markdown';
 
@@ -194,6 +194,40 @@ describe('SEO correction guard', () => {
     expect(evaluateCorrection(before, before.replace('<h2>Early Life</h2>', ''), opts).reasons.join()).toMatch(/heading/);
     expect(evaluateCorrection(before, before.replace(/<a [^>]+>source<\/a>/, 'source'), opts).reasons.join()).toMatch(/link/);
     expect(evaluateCorrection(before, before.replace(/He grew up/g, 'Tom Kaulitz grew up').replace(/The band/g, 'Tom Kaulitz'), opts).reasons.join()).toMatch(/density/);
+  });
+});
+
+describe('SEO-correction prompt: links and bold travel as marks (owner report: prompt not placed in the composer)', () => {
+  const body =
+    '<h2>Karriere</h2><p>Daphne Govers spielte für <a href="https://nos.nl/artikel/1?x=1" rel="noopener"><strong>NOS</strong></a> und <strong>Ajax</strong>, <em>damals</em> {kurz}.</p><p>Mehr bei <a href="https://promizeiten.de/x/" data-bas-internal-link="1"><strong>Gloria Krass</strong></a>.</p>';
+
+  it('has no markdown link, URL or ** in the prompt text, and restores the original links after the answer', () => {
+    const marked = markRichText(body);
+    const prompt = htmlToMarkdown(marked.html);
+    expect(prompt).toContain('## Karriere');
+    expect(prompt).toContain('{L1}NOS{/L1}');
+    expect(prompt).toContain('{b}Ajax{/b}');
+    expect(prompt).toContain('{i}damals{/i}');
+    expect(prompt).toContain('｛kurz｝'); // braces in the text cannot forge a mark
+    expect(prompt).not.toMatch(/https?:|\]\(|\*\*/);
+    expect(marked.links.map((l) => l.text)).toEqual(['NOS', 'Gloria Krass']);
+    // ChatGPT's answer: the article revised around the marks.
+    const answer = '## Karriere\n\nDie Spielerin Daphne Govers spielte für {L1}NOS{/L1} und {b}Ajax{/b}, {i}damals{/i} ｛kurz｝.\n\nMehr bei {L2}Gloria Krass{/L2}.';
+    const after = restoreRichText(markdownToHtml(answer), marked.links);
+    expect(after).toContain('<a href="https://nos.nl/artikel/1?x=1" rel="noopener"><strong>NOS</strong></a>');
+    expect(after).toContain('<a href="https://promizeiten.de/x/" data-bas-internal-link="1"><strong>Gloria Krass</strong></a>');
+    expect(after).toContain('<strong>Ajax</strong>');
+    expect(after).toContain('<em>damals</em>');
+    expect(after).toContain('{kurz}');
+    expect(evaluateCorrection(body, after, { keyword: 'Daphne Govers', language: 'de', densityCeilingPct: 3 }).reasons.join(' ')).not.toMatch(/link/i);
+  });
+
+  it('a link ChatGPT drops stays dropped, so the correction guard still rejects it', () => {
+    const marked = markRichText(body);
+    const after = restoreRichText(markdownToHtml('## Karriere\n\nDaphne Govers spielte für NOS und {b}Ajax{/b}.\n\nMehr bei {L2}Gloria Krass{/L2}. {L9}fake{/L9}'), marked.links);
+    expect(after).not.toContain('nos.nl');
+    expect(after).not.toMatch(/\{\/?L\d+\}/);
+    expect(evaluateCorrection(body, after, { keyword: 'Daphne Govers', language: 'de', densityCeilingPct: 3 }).accepted).toBe(false);
   });
 });
 

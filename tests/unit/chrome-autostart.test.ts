@@ -92,6 +92,30 @@ describe('Automation Chrome follows the queue', () => {
     expect(await auto.chromeAutostartTick({ ...g.deps, now: at(4) })).toBe('launched');
   });
 
+  it('a prompt stuck although Chrome runs (closed window, Chrome in the background): opens a ChatGPT window in it, once per prompt', async () => {
+    const opened: (boolean | undefined)[] = [];
+    const h = harness({ launch: (o) => (opened.push(o?.allowRunning), { pid: null }), extensionConnected: async () => true });
+    h.setRunning(true);
+    Object.assign(h.work, { stalledPromptId: 'job-1' });
+    expect(await auto.chromeAutostartTick(h.deps)).toBe('launched');
+    expect(opened).toEqual([true]);
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(5) })).toBe('connected'); // not again for the same prompt
+    Object.assign(h.work, { stalledPromptId: 'job-2' });
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(6) })).toBe('launched');
+    expect(opened).toEqual([true, true]);
+    expect(await client.log.count({ where: { message: { contains: 'a ChatGPT window was opened in it' } } })).toBe(2);
+  });
+
+  it('says once in Logs why Chrome was not opened for waiting work', async () => {
+    const count = () => client.log.count({ where: { message: { startsWith: 'Automation Chrome not opened automatically: it is already running' } } });
+    const before = await count();
+    const h = harness();
+    h.setRunning(true);
+    expect(await auto.chromeAutostartTick(h.deps)).toBe('running');
+    expect(await auto.chromeAutostartTick({ ...h.deps, now: at(1) })).toBe('running');
+    expect((await count()) - before).toBe(1);
+  });
+
   it('does nothing when switched off, without work, or with a connected extension; a failing launch waits for the cooldown', async () => {
     const off = harness({ settings: async () => ({ open: false, close: false }) });
     expect(await auto.chromeAutostartTick(off.deps)).toBe('disabled');
@@ -111,11 +135,18 @@ describe('Automation Chrome follows the queue', () => {
     const { getSettings } = await import('@/lib/settings');
     const b = (await getSettings()).browser;
     expect([b.autoLaunchChatGPTChrome, b.autoCloseChatGPTChrome]).toEqual([true, true]);
-    expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: false, waitingPrompts: 0 });
-    await client.queueJob.create({ data: { queue: 'chatgpt', kind: 'chatgpt.prompt', idempotencyKey: 'autostart:1', payload: '{}', status: 'WAITING', runAt: new Date(Date.now() - 1000) } });
-    expect(await auto.currentWork()).toEqual({ needsChrome: true, busy: true, waitingPrompts: 1 });
+    expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: false, waitingPrompts: 0, stalledPromptId: null });
+    const job = await client.queueJob.create({ data: { queue: 'chatgpt', kind: 'chatgpt.prompt', idempotencyKey: 'autostart:1', payload: '{}', status: 'WAITING', runAt: new Date(Date.now() - 1000) } });
+    expect(await auto.currentWork()).toEqual({ needsChrome: true, busy: true, waitingPrompts: 1, stalledPromptId: null });
+    // Nobody picked it up for 2 minutes, nothing else runs, no usage-limit wait: stuck.
+    await client.queueJob.update({ where: { id: job.id }, data: { runAt: new Date(Date.now() - 120_000) } });
+    expect((await auto.currentWork()).stalledPromptId).toBe(job.id);
+    const { recordRateLimit, clearBackoff } = await import('@/lib/chatgpt/rate');
+    await recordRateLimit({ reason: 'test limit' });
+    expect((await auto.currentWork()).stalledPromptId).toBeNull(); // a usage-limit wait is not “stuck”
+    await clearBackoff();
     await client.queueJob.updateMany({ where: { idempotencyKey: 'autostart:1' }, data: { status: 'ACTIVE' } });
-    expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: true, waitingPrompts: 0 }); // answering: keep it open
+    expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: true, waitingPrompts: 0, stalledPromptId: null }); // answering: keep it open
   });
 });
 

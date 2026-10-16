@@ -7,7 +7,7 @@ import { LoginRequiredError, NeedsReviewError } from '@/lib/pipeline-errors';
 import { cleanModelMarkdown, markdownToHtml } from '@/lib/content/markdown';
 import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
 import { makeSlug, normalizeText, wordCount, stripTags } from '@/lib/content/text';
-import { evaluateCorrection } from '@/lib/seo/correction';
+import { evaluateCorrection, markRichText, MARKS_NOTE, restoreRichText, type MarkedLink } from '@/lib/seo/correction';
 import { evaluateQuality } from '@/lib/quality/gate';
 import type { StageManifest } from '@/modules/types';
 import { firstPage, withSiteContext, withWordPressSlot } from '@/wordpress/browser';
@@ -207,7 +207,7 @@ export interface RankMathReport {
 
 interface RankMathState extends Record<string, unknown> {
   rounds?: RankMathRound[];
-  correction?: { round: number; scoreBefore: number | null; vars: Record<string, string>; bodyHash: string } | null;
+  correction?: { round: number; scoreBefore: number | null; vars: Record<string, string>; bodyHash: string; links?: MarkedLink[] } | null;
   contentStopped?: string | null;
 }
 
@@ -291,7 +291,8 @@ async function runRankMath(ctx: PipelineContext): Promise<StageResult> {
     const res = await ctx.askChatGPT('SEO_CORRECTION', c.vars, { part: `r${c.round}` });
     if (res.status === 'waiting') return waiting(`Waiting for ChatGPT: SEO correction round ${c.round}`);
     const before = bodyForAssembly(ctx);
-    const after = markdownToHtml(cleanModelMarkdown(res.text));
+    // Prompts since this change carry links as marks (c.links); restore them. Older prompts carried markdown links.
+    const after = c.links ? restoreRichText(markdownToHtml(cleanModelMarkdown(res.text)), c.links) : markdownToHtml(cleanModelMarkdown(res.text));
     const check = evaluateCorrection(before, after, { keyword: ctx.task.focusKeyword ?? ctx.task.keyword, language: ctx.task.language, densityCeilingPct: ctx.config.keywordDensityCeilingPct });
     const round: RankMathRound = { round: c.round, kind: 'content', scoreBefore: c.scoreBefore, changes: [], accepted: false, reasons: check.reasons, before: before.slice(0, 20_000), after: after.slice(0, 20_000) };
     if (contentHash(before) !== c.bodyHash) {
@@ -394,11 +395,14 @@ async function runRankMath(ctx: PipelineContext): Promise<StageResult> {
     const issues = contentIssues(ctx, rm?.recommendations ?? []);
     if (issues.length) {
       const body = bodyForAssembly(ctx);
+      const marked = markRichText(body);
       const correction = {
         round: rounds.length + 1,
         scoreBefore: score,
         bodyHash: contentHash(body),
-        vars: { rankmath_issues: issues.map((i) => `- ${i}`).join('\n'), final_article: htmlToMarkdown(body), max_words: String(Math.round(wordCount(stripTags(body)) * 1.15)) },
+        links: marked.links,
+        // Numbered issues and marked links: text ChatGPT's composer keeps exactly as typed (see markRichText).
+        vars: { rankmath_issues: `${issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n\n${MARKS_NOTE}`, final_article: htmlToMarkdown(marked.html), max_words: String(Math.round(wordCount(stripTags(body)) * 1.15)) },
       };
       await ctx.setPrivateState({ rounds, correction });
       const res = await ctx.askChatGPT('SEO_CORRECTION', correction.vars, { part: `r${correction.round}` });

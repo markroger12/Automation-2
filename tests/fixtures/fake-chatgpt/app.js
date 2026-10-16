@@ -227,6 +227,21 @@
       render();
     });
     const ed = document.querySelector('#prompt-textarea');
+    if (ed && C.markdownLinks) {
+      ed.addEventListener('input', () => {
+        const html = ed.innerHTML;
+        const next = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
+        if (next === html) return;
+        ed.innerHTML = next;
+        // Keep typing at the end, like the editor's caret after an input rule.
+        const range = document.createRange();
+        range.selectNodeContents(ed);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
+    }
     if (ed) ed.addEventListener('paste', (e) => {
       const text = e.clipboardData && e.clipboardData.getData('text/plain');
       if (text && text.length > 4000) {

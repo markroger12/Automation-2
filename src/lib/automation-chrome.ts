@@ -60,11 +60,15 @@ export function isAutomationChromeRunning(): { running: boolean | null; detail: 
   }
 }
 
-export function launchAutomationChrome(url = 'https://chatgpt.com/'): { pid: number | null; command: string } {
+/**
+ * Start Automation Chrome. With `allowRunning`, a running Automation Chrome gets a new ChatGPT window instead (Chrome
+ * hands the address to the running profile); the worker does this when prompts wait and no ChatGPT window is open.
+ */
+export function launchAutomationChrome(url = 'https://chatgpt.com/', opts: { allowRunning?: boolean } = {}): { pid: number | null; command: string } {
   const exe = chromeExecutable();
   if (!exe) throw new Error('Google Chrome was not found. Install Chrome or set BROWSER_EXECUTABLE_PATH in .env.');
   const state = isAutomationChromeRunning();
-  if (state.running) throw new Error('Automation Chrome is already running — switch to its window.');
+  if (state.running && !opts.allowRunning) throw new Error('Automation Chrome is already running — switch to its window.');
   const dir = dataPaths.chatgptChrome();
   fs.mkdirSync(dir, { recursive: true });
   const args = [`--user-data-dir=${dir}`, ...AUTOMATION_CHROME_FLAGS, url];

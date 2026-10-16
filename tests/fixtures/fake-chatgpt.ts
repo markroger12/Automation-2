@@ -19,6 +19,11 @@ export interface FakeChatGptConfig {
   virtualize?: number;
   /** Render a paragraph's single newlines as newlines kept by CSS (white-space: pre-wrap) instead of joining the lines. */
   softBreaks?: boolean;
+  /**
+   * A rich-text composer that turns a typed markdown link `[label](https://…)` into a link showing only its label
+   * (suspected for the owner's “Could not place the complete prompt in the composer” on SEO corrections).
+   */
+  markdownLinks?: boolean;
   /** 'short': user messages longer than 300 characters are shown shortened, with a "Show more" button. */
   userDisplay?: 'full' | 'short';
   chunkMs?: number;

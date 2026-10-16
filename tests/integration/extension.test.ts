@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.0');
+    expect(ext?.version).toBe('3.2.1');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -164,6 +164,21 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const stats = await fakeStats();
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt!.replace(/\s+/g, ' ').trim()).toBe(prompt.replace(/\s+/g, ' ').trim());
+  });
+
+  it('a composer that rewrites markdown links: the stop says where the text differed; the same prompt with link marks is sent', async () => {
+    fake = { variant: 'standard', mode: 'normal', markdownLinks: true };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    // As the old SEO-correction prompt carried the article: markdown links (owner report).
+    const withLinks = 'Revise the article below.\n\nArticle:\n\nDaphne Govers spielte für [**NOS**](https://nos.nl/artikel/1) und Ajax.';
+    const bad = await request(withLinks);
+    const job = await waitJob(bad.responseId, (j) => Boolean(j.error && /Could not place the complete prompt/.test(j.error)), 90_000, 'composer mismatch');
+    expect(job.error).toMatch(/the composer showed \d+ of \d+ characters; first difference at character \d+: expected ".*\[\*\*NOS/);
+    expect((await fakeStats()).sends).toBe(0); // never sent half a prompt
+    // The new form (links as marks) is typed exactly and sent.
+    const good = await request('Revise the article below.\n\nArticle:\n\nDaphne Govers spielte für {L1}NOS{/L1} und {b}Ajax{/b}.');
+    expect((await responseDone(good.responseId, 90_000)).status).toBe('COMPLETED');
+    expect((await fakeStats()).lastPrompt).toContain('{L1}NOS{/L1}');
   });
 
   it('runs two jobs at once in two tabs', async () => {

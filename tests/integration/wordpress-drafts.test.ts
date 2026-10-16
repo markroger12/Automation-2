@@ -105,6 +105,12 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     expect(t.rankMathScore).toBe(report.score);
     expect(report.rounds.length).toBeLessThanOrEqual(3);
     expect(report.rounds.some((r: { kind: string; accepted: boolean }) => r.kind === 'local' && r.accepted)).toBe(true);
+    // Links and bold travel as marks, never as markdown links (owner report: the composer did not keep those).
+    for (const p of seoCorrections) {
+      expect(p).not.toMatch(/\]\(https?:|\*\*/);
+      expect(p).toMatch(/^1\. /m);
+      expect(p).toContain('Links are written as {L1}');
+    }
     // The score shown is exactly what the panel displayed — never computed by the app.
     expect(report.scoreText).toBe(`${report.score} / 100`);
     expect(t.verifiedCompleteAt).not.toBeNull();
@@ -155,6 +161,8 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     const report = await stageData(task.id, 'RANKMATH');
     expect(report.rounds.length).toBeLessThanOrEqual(3);
     expect(seoCorrections.length - before).toBeLessThanOrEqual(3);
+    expect(seoCorrections.length - before).toBeGreaterThan(0);
+    for (const p of seoCorrections.slice(before)) expect(p).not.toMatch(/\]\(https?:|\*\*/);
     // A guarded content correction was accepted: same headings (one gained the keyword), links kept.
     const content = report.rounds.find((r: { kind: string }) => r.kind === 'content');
     if (content) expect(content.accepted, JSON.stringify(content.reasons)).toBe(true);

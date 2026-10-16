@@ -626,6 +626,16 @@
     return normalizeForHash(composerText(composer)) === normalizeForHash(text);
   }
 
+  /** Where the composer's text differs from the prompt, for the error message (owner report: “could not place”). */
+  function composerMismatch(composer, text) {
+    const want = normalizeForHash(text);
+    const have = composer ? normalizeForHash(composerText(composer)) : '';
+    let i = 0;
+    while (i < want.length && i < have.length && want[i] === have[i]) i++;
+    const cut = (s) => JSON.stringify(s.slice(Math.max(0, i - 20), i + 40));
+    return `the composer showed ${have.length} of ${want.length} characters; first difference at character ${i}: expected ${cut(want)} but found ${cut(have)}`;
+  }
+
   function isGenerating() {
     return Boolean(findStopButton()) || Boolean(document.querySelector('.result-streaming, [data-testid*="streaming"]'));
   }
@@ -696,6 +706,7 @@
     generatedImagesAfter,
     toMarkdown,
     composerText,
+    composerMismatch,
     clearComposer,
     insertPrompt,
     composerMatches,

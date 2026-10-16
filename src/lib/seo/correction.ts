@@ -57,3 +57,57 @@ export function evaluateCorrection(beforeHtml: string, afterHtml: string, opts: 
     after: { words: a.words, headings: a.headings.length, links: a.links.length, images: a.images.length, densityPct: a.densityPct },
   };
 }
+
+// ---------------------------------------------------------------- rich-text marks for the SEO-correction prompt
+
+/**
+ * The SEO-correction prompt carries the whole article. Markdown links (`[**anchor**](https://…)`) and `**bold**`
+ * were not placed in ChatGPT's composer as typed text (owner report: “Could not place the complete prompt in the
+ * composer as text”), while the humanizer's marks were. So links and bold/italic spans travel as the humanizer's
+ * marks: {L1}anchor{/L1}, {b}…{/b}, {i}…{/i}. Each link keeps its original tag (URL, attributes, inner bold) and gets
+ * it back after the answer; a link ChatGPT drops stays dropped, so the correction checks still reject it.
+ */
+export interface MarkedLink {
+  n: number;
+  outer: string;
+  text: string;
+}
+
+const lookAlike = (s: string) => s.replace(/\{/g, '｛').replace(/\}/g, '｝');
+
+export const MARKS_NOTE = 'Links are written as {L1}…{/L1}, bold as {b}…{/b} and italic as {i}…{/i}. Keep every mark exactly as it is, with the same text inside, at the place where it belongs.';
+
+export function markRichText(html: string): { html: string; links: MarkedLink[] } {
+  const $ = load(`<body>${html}</body>`);
+  const body = $('body');
+  // Braces in the article text become look-alikes, so text can never forge a mark.
+  body.find('*').addBack().contents().each((_, node) => {
+    if (node.type === 'text') (node as unknown as { data: string }).data = lookAlike((node as unknown as { data: string }).data);
+  });
+  const links: MarkedLink[] = [];
+  body.find('a').each((_, el) => {
+    if ($(el).parents('a').length) return;
+    const n = links.length + 1;
+    const text = $(el).text();
+    links.push({ n, outer: $.html(el).replace(/｛/g, '{').replace(/｝/g, '}'), text });
+    $(el).replaceWith(`{L${n}}${$('<div>').text(text).html()}{/L${n}}`);
+  });
+  for (const [selector, mark] of [['strong, b', 'b'], ['em, i', 'i']] as const) {
+    body.find(selector).each((_, el) => {
+      $(el).replaceWith(`{${mark}}${$('<div>').text($(el).text()).html()}{/${mark}}`);
+    });
+  }
+  return { html: body.html() ?? '', links };
+}
+
+/** HTML of the answer with the marks turned back into the original links, bold and italic. */
+export function restoreRichText(html: string, links: MarkedLink[]): string {
+  const byN = new Map(links.map((l) => [l.n, l]));
+  return html
+    .replace(/\{L(\d+)\}([\s\S]*?)\{\/L\1\}/g, (_, n: string, inner: string) => byN.get(Number(n))?.outer ?? inner)
+    .replace(/\{b\}([\s\S]*?)\{\/b\}/g, '<strong>$1</strong>')
+    .replace(/\{i\}([\s\S]*?)\{\/i\}/g, '<em>$1</em>')
+    .replace(/\{\/?(?:b|i|L\d+)\}/g, '')
+    .replace(/｛/g, '{')
+    .replace(/｝/g, '}');
+}

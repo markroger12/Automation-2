@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.2.0';
+  const EXTENSION_VERSION = '3.2.1';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -110,6 +110,7 @@
   }
 
   async function typeAndVerify(prompt) {
+    let lastProblem = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const composer = A.findComposer();
       if (!composer) throw new JobError('ERROR', 'Chat composer not found.');
@@ -123,14 +124,16 @@
       await sleep(400 + Math.min(2000, prompt.length / 50));
       const fresh = A.findComposer();
       if (A.pastedTextChips().length > 0) {
+        lastProblem = `ChatGPT turned the ${prompt.length}-character prompt into a "Pasted text" attachment`;
         progress(`prompt became a "Pasted text" attachment (attempt ${attempt}); retrying as typed text`);
         continue;
       }
       if (fresh && A.composerMatches(fresh, prompt)) return;
-      progress(`composer content mismatch after entry (attempt ${attempt}); retrying`);
+      lastProblem = A.composerMismatch(fresh, prompt);
+      progress(`composer content mismatch after entry (attempt ${attempt}): ${lastProblem}; retrying`);
       await sleep(500);
     }
-    throw new JobError('ERROR', 'Could not place the complete prompt in the composer as text (verified 3 times).');
+    throw new JobError('ERROR', `Could not place the complete prompt in the composer as text (verified 3 times): ${lastProblem}.`);
   }
 
   async function attachFiles(job, config) {

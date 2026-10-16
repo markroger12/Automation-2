@@ -622,8 +622,15 @@
     });
   }
 
+  /**
+   * The composer holds the prompt. Whitespace-only differences count as a match: ChatGPT's composer puts a space
+   * between “](” and a pasted address (owner report: “]( https://…”), which markdown reads the same way.
+   */
   function composerMatches(composer, text) {
-    return normalizeForHash(composerText(composer)) === normalizeForHash(text);
+    const have = composerText(composer);
+    if (normalizeForHash(have) === normalizeForHash(text)) return true;
+    const strip = (s) => String(s).replace(/\s+/g, '');
+    return strip(have) === strip(text);
   }
 
   /** Where the composer's text differs from the prompt, for the error message (owner report: “could not place”). */

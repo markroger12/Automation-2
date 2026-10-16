@@ -147,26 +147,40 @@ const TYPE_LABEL: Record<string, string> = { BIRTH: 'birth date', DEATH: 'death 
  * leaked into the article (raw URLs, “Sources:” lists, “research notes”).
  */
 export async function evaluateArticleEvidence(taskId: string, html: string): Promise<{ warnings: string[]; hardStops: string[]; summary: { claims: number; verified: number; contradicted: number; unsupportedInArticle: number } }> {
-  const paragraphs = htmlSegments(html).map((s) => s.text);
+  const segments = htmlSegments(html);
+  const paragraphs = segments.map((s) => s.text);
+  // Headings name a topic (“Mary Joan Schutz and Gene Wilder's Marriage”); a claim is located only where text states it.
+  const statable = segments.map((s) => (s.heading ? '' : s.text));
   const hardStops: string[] = [];
   const leak = paragraphs.findIndex((p) => /https?:\/\/\S+/.test(p) || /^(sources?|quellen?|references?|einzelnachweise)\s*:/i.test(p) || /\b(research notes|recherche-?notizen)\b/i.test(p));
   if (leak >= 0) hardStops.push(`Research notes or a raw source list appear in the article (paragraph ${leak + 1}: “${paragraphs[leak].slice(0, 80)}”).`);
   const claims = await db.claimEvidence.findMany({ where: { taskId } });
   const warnings: string[] = [];
   let unsupportedInArticle = 0;
+  // One review reason per kind of contradiction and per article paragraph (owner report: the same paragraph three times).
+  const contradicted = new Map<string, string[]>();
+  const unsupported = new Map<number, { types: Set<string>; notes: string[] }>();
   for (const c of claims) {
     const claim: ExtractedClaim = { type: c.claimType as ExtractedClaim['type'], text: c.claimText, values: parseJson(c.values, { dates: [], amounts: [], names: [] }), nature: c.nature as ExtractedClaim['nature'], highImpact: c.highImpact, citations: [] };
-    const at = locateInArticle(claim, paragraphs);
+    const at = locateInArticle(claim, statable);
     if (at !== c.articleParagraph) await db.claimEvidence.update({ where: { id: c.id }, data: { articleParagraph: at } });
     if (c.ownerDecision) continue;
-    if (c.highImpact && c.status === 'CONTRADICTED') warnings.push(`Sources disagree on the ${TYPE_LABEL[c.claimType]}: “${c.claimText.slice(0, 120)}”. Check it in Research Evidence.`);
+    if (c.highImpact && c.status === 'CONTRADICTED') contradicted.set(c.claimType, [...(contradicted.get(c.claimType) ?? []), c.claimText]);
     else if (c.highImpact && at !== null && (c.status === 'UNVERIFIED' || c.status === 'DISPUTED')) {
       unsupportedInArticle++;
-      // Quote what the ARTICLE says there, then the research note it was matched to.
-      warnings.push(
-        `The article states an unsupported ${TYPE_LABEL[c.claimType]} claim in paragraph ${at + 1}: “${paragraphs[at].slice(0, 160)}” (research note: “${c.claimText.slice(0, 100)}”). Verify it, word it neutrally or leave it out.`,
-      );
+      const entry = unsupported.get(at) ?? { types: new Set<string>(), notes: [] };
+      entry.types.add(TYPE_LABEL[c.claimType]);
+      entry.notes.push(c.claimText);
+      unsupported.set(at, entry);
     }
+  }
+  for (const [type, texts] of contradicted) warnings.push(`Sources disagree on the ${TYPE_LABEL[type]}: “${texts[0].slice(0, 120)}”${texts.length > 1 ? ` (and ${texts.length - 1} more note(s))` : ''}. Check it in Research Evidence.`);
+  for (const [at, u] of [...unsupported].sort((a, b) => a[0] - b[0])) {
+    // Quote what the ARTICLE says there, then the research note(s) it was matched to.
+    const notes = u.notes.slice(0, 2).map((n) => `“${n.slice(0, 100)}”`).join('; ');
+    warnings.push(
+      `The article states ${u.notes.length > 1 ? `${u.notes.length} unsupported ${[...u.types].join('/')} claims` : `an unsupported ${[...u.types][0]} claim`} in paragraph ${at + 1}: “${paragraphs[at].slice(0, 160)}” (research note${u.notes.length > 1 ? 's' : ''}: ${notes}${u.notes.length > 2 ? '; …' : ''}). Verify it, word it neutrally or leave it out.`,
+    );
   }
   return { warnings, hardStops, summary: { claims: claims.length, verified: claims.filter((c) => c.status === 'VERIFIED').length, contradicted: claims.filter((c) => c.status === 'CONTRADICTED').length, unsupportedInArticle } };
 }

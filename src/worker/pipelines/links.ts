@@ -3,6 +3,7 @@ import { getSettings } from '@/lib/settings';
 import { parseJson, stringArray } from '@/lib/json';
 import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
+import { stripTrackingHrefs } from '@/lib/content/markdown';
 import { makeSlug, normalizeText, stripTags } from '@/lib/content/text';
 import { parseLinkCandidates, verifyLink, linkPolicy, type LinkKind } from '@/lib/links/verify';
 import { placeLinks } from '@/lib/links/place';
@@ -29,6 +30,11 @@ async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>)
 
 // ------------------------------------------------------------- EXTERNAL_LINKS
 
+/** Markdown links replaced by their text: `[label](https://…)` → `label`. */
+export function unlinkMarkdown(md: string): string {
+  return md.replace(/\[([^\]\n]+)\]\(\s*<?https?:\/\/(?:[^()\s]|\([^()\s]*\))+>?(?:\s+"[^"]*")?\)/g, '$1');
+}
+
 interface ExternalDecision {
   phrase: string;
   url: string;
@@ -44,7 +50,9 @@ export function externalLinks(manifest: StageManifest): PipelineStage {
     run: async (ctx) => {
       const body = ctx.task.bodyHtml ?? '';
       if (!body.trim()) throw new NeedsReviewError('There is no article body to add links to.', ['Article body missing'], 'Regenerate the article stage, then Retry.');
-      const res = await ctx.askChatGPT('EXTERNAL_LINKS', { final_article: htmlToMarkdown(body) });
+      // The article's own links go as their text only: ChatGPT needs the wording, and the composer changes typed
+      // markdown links (owner report: “]( https://…”, the prompt could not be placed).
+      const res = await ctx.askChatGPT('EXTERNAL_LINKS', { final_article: unlinkMarkdown(htmlToMarkdown(body)) });
       if (res.status === 'waiting') return waiting('Waiting for ChatGPT: link suggestions');
       const settings = await getSettings();
       const keyword = normalizeText(ctx.task.focusKeyword ?? ctx.task.keyword);
@@ -69,7 +77,7 @@ export function externalLinks(manifest: StageManifest): PipelineStage {
       // Highest priority first; Wikipedia may make up at most half of the added links.
       const ordered = passed.map((p, i) => ({ ...p, i })).sort((a, b) => b.priority - a.priority || a.i - b.i);
       const max = ctx.config.maxExternalLinks;
-      let html = body;
+      let html = stripTrackingHrefs(body);
       let nonWiki = 0;
       let wiki = 0;
       const place = (p: (typeof ordered)[number]) => {

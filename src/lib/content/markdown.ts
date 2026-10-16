@@ -1,5 +1,6 @@
 import { Marked } from 'marked';
 import { sanitizeArticleHtml } from '../html/sanitize';
+import { stripTracking } from '../links/url';
 
 const marked = new Marked({ gfm: true, breaks: false, async: false });
 
@@ -26,7 +27,12 @@ export function cleanModelMarkdown(md: string, options: { title?: string | null 
 
 export function markdownToHtml(md: string): string {
   const html = marked.parse(md) as string;
-  return sanitizeArticleHtml(html);
+  return stripTrackingHrefs(sanitizeArticleHtml(html));
+}
+
+/** ChatGPT adds utm_source=chatgpt.com to the links it cites; the article keeps the clean address. */
+export function stripTrackingHrefs(html: string): string {
+  return html.replace(/href="([^"]*[?&](?:amp;)?utm_[^"]*)"/gi, (_m, url: string) => `href="${stripTracking(url.replace(/&amp;/g, '&')).replace(/&/g, '&amp;')}"`);
 }
 
 /** Remove exact duplicate paragraphs/headings (normalized), keeping the first occurrence. */

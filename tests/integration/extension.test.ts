@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.1');
+    expect(ext?.version).toBe('3.2.2');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -179,6 +179,18 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const good = await request('Revise the article below.\n\nArticle:\n\nDaphne Govers spielte für {L1}NOS{/L1} und {b}Ajax{/b}.');
     expect((await responseDone(good.responseId, 90_000)).status).toBe('COMPLETED');
     expect((await fakeStats()).lastPrompt).toContain('{L1}NOS{/L1}');
+  });
+
+  it('a composer that puts a space after “](”: the prompt still counts as placed and is sent once (owner report)', async () => {
+    fake = { variant: 'standard', mode: 'normal', linkParenSpace: true };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const prompt = 'Review the article below.\n\nArticle:\n\nSee [About the Crew](https://beaconsoft.net/about-the-crew/) and [the official website](https://dit-inc.us/freegate.html).';
+    const req = await request(prompt);
+    const done = await responseDone(req.responseId, 90_000);
+    expect(done.status).toBe('COMPLETED');
+    const stats = await fakeStats();
+    expect(stats.sends).toBe(1);
+    expect(stats.lastPrompt).toContain('[About the Crew]( https://beaconsoft.net/about-the-crew/)');
   });
 
   it('runs two jobs at once in two tabs', async () => {

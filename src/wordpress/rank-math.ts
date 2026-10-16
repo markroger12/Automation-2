@@ -48,7 +48,17 @@ export function parseRankMathScore(text: string | null | undefined): number | nu
   return Number.isInteger(n) && n >= 0 && n <= 100 ? n : null;
 }
 
-const norm = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+/** Compared text: one form of quotes, dashes and ellipses (owner report: Rank Math showed “D'Souza” for “D’Souza”). */
+const norm = (s: string) =>
+  s
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 
 /**
  * Does the keyword shown by Rank Math equal the expected focus keyword? Rank

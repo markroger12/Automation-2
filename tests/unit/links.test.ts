@@ -159,3 +159,19 @@ describe('internal-link line: the previous article (as in the earlier tool)', ()
     expect(previousArticleTarget({ title: 'Sascha Hehn Kinder', wpPostId: null, slug: null }, targets, site)).toBeNull();
   });
 });
+
+describe('owner report: the article links in the EXTERNAL_LINKS prompt and ChatGPT tracking parameters', () => {
+  it('sends the article links as their text only', async () => {
+    const { unlinkMarkdown } = await import('@/worker/pipelines/links');
+    const md = 'See [About the Crew](https://beaconsoft.net/about-the-crew/?utm_source=chatgpt.com) and [**the site**](https://dit-inc.us/freegate.html "t"). Keep (https://x.org) and [x] (y).';
+    expect(unlinkMarkdown(md)).toBe('See About the Crew and **the site**. Keep (https://x.org) and [x] (y).');
+  });
+
+  it('removes utm_ parameters from the links an article was written with', async () => {
+    const { markdownToHtml } = await import('@/lib/content/markdown');
+    const html = markdownToHtml('A [site](https://beaconsoft.net/about-the-crew/?utm_source=chatgpt.com) and [b](https://x.org/a?id=2&utm_source=chatgpt.com&k=1).');
+    expect(html).toContain('href="https://beaconsoft.net/about-the-crew/"');
+    expect(html).toContain('href="https://x.org/a?id=2&amp;k=1"');
+    expect(html).not.toContain('utm_');
+  });
+});

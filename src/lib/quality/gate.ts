@@ -81,7 +81,10 @@ export function evaluateQuality(input: QualityInput): QualityResult {
     const failed = input.seo.checks.filter((c) => !c.passed && c.severity === 'error').map((c) => c.label);
     warnings.push({ code: 'SEO_BELOW_THRESHOLD', message: `SEO readiness ${input.seo.score} is below ${input.reviewThreshold}. Failed: ${failed.join('; ') || 'see SEO tab'}.`, source: 'SEO_CHECK' });
   }
-  const notConfirmed = (text.match(/not publicly confirmed|nicht öffentlich bestätigt/gi) ?? []).length;
+  // Counted outside tables: in the Quick Bio table it is the intended fallback for an unknown row (owner report).
+  const prose = load(`<body>${input.html}</body>`);
+  prose('table').remove();
+  const notConfirmed = (prose('body').text().match(/not publicly confirmed|nicht öffentlich bestätigt/gi) ?? []).length;
   if (notConfirmed > 4) warnings.push({ code: 'REPEATED_UNCERTAINTY', message: `“Not publicly confirmed” appears ${notConfirmed} times — use it only as a fallback.`, source: 'FINAL_ARTICLE' });
   if (input.imagesRequired && input.imagesPresent === 0) warnings.push({ code: 'IMAGES_MISSING', message: 'Images are required for this site but none could be added.', source: 'IMAGES' });
   for (const w of input.assemblyWarnings) warnings.push({ code: 'ASSEMBLY', message: w, source: 'ASSEMBLY' });

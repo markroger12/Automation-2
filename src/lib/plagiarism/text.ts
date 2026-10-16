@@ -12,6 +12,8 @@ export interface Segment {
   text: string;
   /** The whole block is a quotation (blockquote / q). */
   quote: boolean;
+  /** The block is a heading (h1–h6). */
+  heading?: boolean;
 }
 
 export interface Token {
@@ -64,7 +66,7 @@ export function htmlSegments(html: string, opts: { page?: boolean } = {}): Segme
     if (node.parents('blockquote').length) return;
     const quote = node.is('blockquote') || node.closest('blockquote').length > 0;
     const text = squash(node.text());
-    if (text) out.push({ text, quote });
+    if (text) out.push({ text, quote, heading: node.is('h1, h2, h3, h4, h5, h6') });
   });
   if (!out.length) {
     const text = squash(root.text());

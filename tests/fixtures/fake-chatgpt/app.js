@@ -242,6 +242,27 @@
         sel.addRange(range);
       });
     }
+    if (ed && C.linkParenSpace) {
+      // Like the real composer (owner report): a space appears between “](” and an address typed after it.
+      ed.addEventListener('input', () => {
+        const walker = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+        let node;
+        let changed = false;
+        while ((node = walker.nextNode())) {
+          if (/\]\(https?:/.test(node.textContent)) {
+            node.textContent = node.textContent.replace(/\]\((https?:)/g, ']( $1');
+            changed = true;
+          }
+        }
+        if (!changed) return;
+        const range = document.createRange();
+        range.selectNodeContents(ed);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
+    }
     if (ed) ed.addEventListener('paste', (e) => {
       const text = e.clipboardData && e.clipboardData.getData('text/plain');
       if (text && text.length > 4000) {

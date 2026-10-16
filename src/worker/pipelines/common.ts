@@ -174,7 +174,21 @@ export function metaFromIntro(html: string, keyword: string, language: string): 
   let meta = withKw ?? sents[0] ?? intro;
   if (meta.length < 110 && sents.length > 1) meta = sents.slice(0, 2).join(' ');
   const max = language === 'de' ? 158 : 156;
-  return truncateAtWord(meta, max);
+  return endAtBoundary(meta, max, language === 'de' ? 110 : 120);
+}
+
+/**
+ * Shortened to `max` at a sentence end, else at a clause (“, ” → “.”), else at a word with “…” — never a half
+ * phrase like “… spent more” (owner report).
+ */
+export function endAtBoundary(text: string, max: number, min: number): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max + 1);
+  const ends = [...head.matchAll(/[.!?](?=\s)/g)].map((m) => m.index! + 1).filter((i) => i >= min && i <= max);
+  if (ends.length) return text.slice(0, ends[ends.length - 1]).trim();
+  const clauses = [...head.matchAll(/[,;:–—](?=\s)/g)].map((m) => m.index!).filter((i) => i >= min && i < max);
+  if (clauses.length) return `${text.slice(0, clauses[clauses.length - 1]).trim()}.`;
+  return `${truncateAtWord(text, max - 1)}…`;
 }
 
 export function articleHtml(ctx: PipelineContext): string {

@@ -24,6 +24,8 @@ export interface FakeChatGptConfig {
    * (suspected for the owner's “Could not place the complete prompt in the composer” on SEO corrections).
    */
   markdownLinks?: boolean;
+  /** The composer puts a space between “](” and a typed address, as the real one did (owner report: “]( https://…”). */
+  linkParenSpace?: boolean;
   /** 'short': user messages longer than 300 characters are shown shortened, with a "Show more" button. */
   userDisplay?: 'full' | 'short';
   chunkMs?: number;

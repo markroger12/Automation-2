@@ -124,6 +124,30 @@ describe('research evidence ledger', () => {
     expect((await ledger.evaluateArticleEvidence(t, '<p>Tom Kaulitz plays guitar.</p>')).warnings.join(' ')).not.toMatch(/unsupported/);
   });
 
+  it('owner report: headings, outline lines and case citations are not claims; one review reason per article paragraph', async () => {
+    const notes = [
+      'Meet Dinesh D’Souza’s Ex-Wife',
+      'Their Marriage and Family Life',
+      'Mary Joan Schutz and Gene Wilder’s Marriage — Cover the wedding, timeline, and Wilder’s emerging career.',
+      'In re Marriage of D’Souza, California Court of Appeal, Fourth Appellate District, Division One, Case D072564, August 26, 2020.',
+      'Recommended wording: "Their marriage broke down after roughly two decades, and D’Souza filed for divorce in October 2012.',
+      '- Brubaker and D’Souza have one publicly documented daughter, Danielle D’Souza Gill.',
+      '| Daughter | Danielle D’Souza Gill | Verified |',
+      '- She is married to Brandon Gill, who was elected to the U.S. House in 2024.',
+    ].join('\n');
+    const t = await taskWithNotes('Dixie Brubaker', notes);
+    await ledger.buildLedger(t);
+    const claims = (await client.claimEvidence.findMany({ where: { taskId: t } })).map((c) => c.claimText);
+    expect(claims.some((c) => /^Meet |^Their Marriage and Family Life|— Cover|^In re |^Recommended wording/.test(c))).toBe(false);
+    expect(claims).toContain('Brubaker and D’Souza have one publicly documented daughter, Danielle D’Souza Gill.');
+    const article = '<h2>Their Marriage and Family Life with Danielle D’Souza Gill</h2><p>Dixie Brubaker and Dinesh D’Souza have a daughter, Danielle D’Souza Gill, who married Brandon Gill.</p>';
+    const ev = await ledger.evaluateArticleEvidence(t, article);
+    const unsupported = ev.warnings.filter((w) => /unsupported/.test(w));
+    // Three notes match paragraph 2: one reason that names them; the heading (paragraph 1) is never a claim.
+    expect(unsupported).toHaveLength(1);
+    expect(unsupported[0]).toMatch(/states 3 unsupported family\/relationship claims in paragraph 2: “Dixie Brubaker and Dinesh/);
+  });
+
   it('never merges a namesake: presenter and disambiguation pages are not used as evidence for the actor', async () => {
     const t = await taskWithNotes('Chris Evans', `Chris Evans is an American actor known for playing Captain America.\n- Chris Evans was born on June 13, 1981 in Boston. ${u('presenter.example/chris-evans')} ${u('names.example/chris-evans')}`);
     const s = await ledger.buildLedger(t);

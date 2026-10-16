@@ -35,7 +35,8 @@ const TYPE_PATTERNS: [ClaimType, RegExp][] = [
   ['CAREER', /\b(starred|stars|role|film|movie|series|album|single|debut|band|founded|joined|signed|released|spielte|rolle|serie|veröffentlichte|gründete)\b/i],
 ];
 const ESTIMATE = /\b(estimate[sd]?|approximately|approx\.|about|around|reportedly|roughly|geschätzt|schätzungsweise|angeblich|rund|etwa|circa|ca\.)\b/i;
-const UNCERTAIN = /\b(unconfirmed|not (publicly )?confirmed|disputed|rumou?r(ed|s)?|unclear|conflicting|unverified|speculat\w*|allegedly|nicht (öffentlich )?bestätigt|umstritten|unklar|gerücht\w*|spekul\w*|mutmaßlich)\b/i;
+const UNCERTAIN =
+  /\b(unconfirmed|not (publicly |independently )?(confirmed|verified)|disputed|rumou?r(ed|s)?|unclear|conflicting|unverified|speculat\w*|allegedly|less authoritative|unreliable|pending (documentary )?verification|some (smaller |less reliable )?(celebrity |biography |online )*(websites|sites|sources|biographies) (identify|list|claim|state|say|give)|nicht (öffentlich )?bestätigt|umstritten|unklar|gerücht\w*|spekul\w*|mutmaßlich)\b/i;
 const URL_RE = /https?:\/\/[^\s)\]>"'<]+/g;
 
 const MONTHS: Record<string, number> = {
@@ -149,6 +150,10 @@ function statements(notes: string): { text: string; urls: string[] }[] {
       continue;
     }
     if (/^#+\s/.test(line) || textOnly.length < 15) continue;
+    // A heading or outline title (“Their Marriage and Family Life”), a bracketed source title or a court case
+    // citation (“In re Marriage of …”) names a topic, it states nothing (owner report).
+    if (!/[.!?:;|]/.test(textOnly) && !/\d/.test(textOnly) && textOnly.split(/\s+/).length <= 12) continue;
+    if (/^\[[^\]]+\]$/.test(textOnly) || /^in re\b/i.test(textOnly)) continue;
     const parts = textOnly.split(/(?<=[.!?])\s+(?=\p{Lu})/u);
     parts.forEach((p, i) => out.push({ text: p.trim(), urls: i === parts.length - 1 ? urls : [] }));
   }
@@ -161,7 +166,7 @@ function statements(notes: string): { text: string; urls: string[] }[] {
  * eindeutig gedeckt” became a family claim).
  */
 const EDITORIAL =
-  /(geplante[nrs]?\s+titel|planned\s+title|für\s+den\s+(späteren\s+|eigentlichen\s+)?artikel|for\s+the\s+(later\s+|final\s+)?article|recherchefazit|research\s+(summary|conclusion)|diese\s+quellen|these\s+sources|durch\s+die\s+recherche|the\s+research\s+(supports|covers|shows)|redaktionelle\s+empfehlung|editorial\s+recommendation)/i;
+  /(\s[—–-]\s*(cover|present|explain|conclude|describe|discuss|include|mention|summari[sz]e|outline|introduce|highlight|focus on|address)\b|^(recommended wording|suggested wording|principal references|main references|key sources)\b|for\s+a\s+reader-focused|the\s+most\s+valuable\s+material|geplante[nrs]?\s+titel|planned\s+title|für\s+den\s+(späteren\s+|eigentlichen\s+)?artikel|for\s+the\s+(later\s+|final\s+)?article|recherchefazit|research\s+(summary|conclusion)|diese\s+quellen|these\s+sources|durch\s+die\s+recherche|the\s+research\s+(supports|covers|shows)|redaktionelle\s+empfehlung|editorial\s+recommendation)/i;
 
 export function extractClaims(notes: string, keyword: string): ExtractedClaim[] {
   const subject = subjectTokens(keyword);

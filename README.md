@@ -42,6 +42,8 @@ npm run start:all      # production build: dashboard + worker
 
 Open **http://localhost:3000**. Only one worker can own the `data\` folder; a second one refuses to start.
 
+`npm run start:all` and `npm run dev:all` first run the safe steps of `npm run setup` by themselves (data folders, `.env` when missing, migrations with a backup, missing settings). `start:all` also builds the dashboard when there is no build yet or the code changed since the last one. So on a new computer `npm install` then `npm run start:all` is enough; a database is never reset.
+
 ## First run
 
 1. **Automation Chrome** (sidebar): follow the five checked steps — start the dedicated Chrome window, load the unpacked extension from the `extension\` folder, paste the one-time connection key, sign in to ChatGPT yourself. “Send test prompt” proves the round trip.
@@ -56,9 +58,10 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 # stop npm run dev:all / start:all first
 git pull
 npm install
-npm run setup          # backs up and migrates the database; never deletes your data
-npm run build          # only if you use start:all
+npm run start:all      # migrates (with backup), seeds and rebuilds by itself when needed
 ```
+
+`npm run setup` and `npm run build` still work on their own, for example to see each step.
 
 Then reload the extension in Automation Chrome (`chrome://extensions` → reload) if the release notes mention a new extension version; the Automation Chrome page shows when the version does not match.
 
@@ -112,9 +115,10 @@ The test types these credentials itself (simulating you in the login window); th
   - **ChatGPT image search gallery (default):** ChatGPT is asked to search the web and show photos of the person. The extension opens the gallery, steps through it and saves the pictures; pictures on other sites are downloaded by the app (12 MB cap, private hosts blocked).
   - **Wikimedia Commons**, or **the gallery first with Commons as a fallback**.
 
-  Pictures under 250 px and exact or near-duplicates are skipped.
+  Pictures under 250 px and exact or near-duplicates are skipped. When ChatGPT answers with text only, it is asked once more in a new chat. Your featured template gets its photos first (a two-photo design gets two photos); the body images get the rest, and no photo is used twice.
+- **Image tools from the earlier tool (optional):** The **face detector** (MediaPipe BlazeFace) is downloaded into `data\tools\mediapipe` by `npm run start:all` / `dev:all` the first time (or by `npm run tools:install`). Photos with a face then come first and crops centre on the faces (locations only, never who it is). **Upscayl** enlarges small photos before cropping (**Settings → SEO → Enlarge small celebrity photos**, on by default): download `upscayl-ncnn` from https://github.com/upscayl/upscayl-ncnn/releases, put `upscayl-bin.exe` in `data\tools\upscayl` and the `remacri-4x.param` / `remacri-4x.bin` model files (from the Upscayl app's `resources\models`) in `data\tools\upscayl\models`. A missing tool never stops an article; the Images tab says it was not used.
 - General articles ask ChatGPT for an image plan and three images through the extension. Missing images never block the text: the draft continues without them, or waits for review if the site requires images. No image-rights or licensing checks are performed (owner decision); the source URL is stored for reference only.
-- After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture; 3.1.1–3.1.5 make prompts and answers readable on the new ChatGPT “Chat / Work” layout and recover an already-sent prompt after a page reload; 3.2.0 saves the image-search gallery for celebrity photos and asks for two more image hosts; 3.2.1 says exactly where the composer's text differed when a prompt cannot be placed).
+- After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture; 3.1.1–3.1.5 make prompts and answers readable on the new ChatGPT “Chat / Work” layout and recover an already-sent prompt after a page reload; 3.2.0 saves the image-search gallery for celebrity photos and asks for two more image hosts; 3.2.1 says exactly where the composer's text differed when a prompt cannot be placed; 3.2.2 accepts the space ChatGPT's composer puts after “](” in a link).
 - **Alt text** is checked for every rendered image:
   - “Image of …” is dropped and long text is shortened to 125 characters;
   - file names, web addresses, one-word labels, keyword stuffing and the same text on two images are replaced with a neutral text (the article title for the featured image, “*Subject*: article image 2/3” for body images);

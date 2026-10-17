@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { pathToFileURL } from 'node:url';
 
 import { mediapipeDir } from '../src/images/faces';
 import { upscaylDir } from '../src/images/upscale';
@@ -48,7 +49,7 @@ async function download(url: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function installMediapipe() {
+export async function installMediapipe() {
   fs.mkdirSync(path.join(MP_DIR, 'wasm'), { recursive: true });
   const tgz = await download(`https://registry.npmjs.org/@mediapipe/tasks-vision/-/tasks-vision-${MP_VERSION}.tgz`);
   const tar = zlib.gunzipSync(tgz);
@@ -90,4 +91,4 @@ async function main() {
   }
 }
 
-main();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) void main();

@@ -21,7 +21,7 @@ describe('settings schema', () => {
     expect(s.seo.rankMathTargetScore).toBe(75);
     expect(s.seo.maxRankMathAttempts).toBe(3);
     expect(s.seo.maxExternalLinks).toBe(5);
-    expect(s.seo.enhanceCelebrityImages).toBe(false);
+    expect(s.seo.enhanceCelebrityImages).toBe(true); // Upscayl when installed (owner's earlier tool)
     expect(s.advanced.backoffScheduleSec).toEqual([4, 30, 60, 120, 240, 300]);
   });
 

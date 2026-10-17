@@ -1670,3 +1670,56 @@ npx vitest run                      # 42 files, 287 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts tests/integration/content-refresh.test.ts   # 11 pass
 npm run build                       # compiled
 ```
+
+## Owner reports: EXTERNAL_LINKS stopped, review reasons that were not problems, images, and a fresh laptop
+
+Reports: Antivirus FreeDoor2.4.6.8 and latest tech info beaconsoft (Tigram, FAILED at EXTERNAL_LINKS), Mary Joan Schutz and Dixie Brubaker (celebrity, NEEDS_REVIEW with 9 and 14 reasons), the image template screenshot, and a second laptop where `npm run start:all` failed.
+
+**EXTERNAL_LINKS: “Could not place the complete prompt … found "]( https://…"”**
+- **Cause:** ChatGPT's composer puts a space between `](` and an address typed after it. The extension compared the text exactly and stopped after 3 tries. The article's links came from the writer's own ChatGPT citations, with `?utm_source=chatgpt.com`.
+- **Reproduced:** the fake ChatGPT got a `linkParenSpace` mode that does the same. The new extension test timed out on the old adapter and passes now (2/2, together with the earlier markdown-links test).
+- **Extension 3.2.2:** a difference made only of whitespace counts as placed. Markdown reads `]( https://…` the same way.
+- **Server side:**
+  - the EXTERNAL_LINKS prompt carries the article's links as their text only;
+  - `utm_` parameters are removed from the links an article is written with, and from bodies saved earlier when EXTERNAL_LINKS runs again.
+  - This works without reloading the extension too.
+- **Tigram images:** both Tigram tasks stopped at EXTERNAL_LINKS, before IMAGES, so no image was ever made. With the stop fixed they reach IMAGES. No report of a Tigram IMAGES failure itself was available; the generated-image flow is covered by the existing images integration test only (fake ChatGPT).
+
+**Review reasons that were not real problems** (`tests/unit/owner-review-reasons.test.ts`, research-ledger test; all 4 new tests fail on the old code)
+- **Research Evidence:**
+  - headings and outline titles in the research notes (“Meet Dinesh D’Souza’s Ex-Wife”, “… — Cover the wedding …”), bracketed source titles, court case citations (“In re Marriage of …”) and “Recommended wording:” lines are no longer claims;
+  - an article heading is never matched as stating a claim;
+  - one review reason per article paragraph (Dixie's paragraph 1 had three), and one per kind of contradiction (two birth-date reasons became one);
+  - “some smaller … websites identify”, “less authoritative”, “pending verification” mark a note as uncertain.
+  - Unsupported claims that the article does state are still review reasons; nothing is marked verified without a source.
+- **Rank Math field check:** Rank Math showed `D'Souza` for `D’Souza`. Quotes, dashes and ellipses are now compared in one form.
+- **Meta description from the intro** ended mid-phrase (“… spent more”). It now ends at a sentence end, else at a clause (with a full stop), else at a word with “…”.
+- **“Not publicly confirmed” appears N times** now counts prose only. In Quick Bio rows it is the intended fallback.
+
+**Images** (`tests/integration/images.test.ts` 9/9, new `tests/integration/image-tools.test.ts` 3/3)
+- **Your template first:** the featured template takes its photos first, as in markroger12/automation. With two photos the owner's two-photo design was replaced by the single-photo preset; now it gets both, and the body gets what is left. No photo is used twice.
+- **Image search:**
+  - prompt v2 asks for up to 10 photos and allows archival photos. v1 asked for “at least 10 recent” and ChatGPT answered with text only (Dixie) or said only two existed (Mary Joan). The old default is upgraded by setup unless edited;
+  - a text-only answer is asked once more in a new chat, as in the earlier tool.
+  - The new test fails on the old code (one search only).
+- **Face locations (from the earlier tool):** MediaPipe BlazeFace runs in a headless browser from local files (`src/images/faces.ts`). Photos with a face come first and crops centre on the faces. Locations only, never identities.
+  - The files are installed by `npm run tools:install`, and by `start:all` / `dev:all` the first time (MediaPipe tasks-vision 0.10.21 from npm, released 2025-02-06, plus the BlazeFace model). No npm dependency was added.
+  - Tested for real here: 1 face in the public-domain portrait fixture (Lincoln, 1864), 0 in a plain picture, in about 1.3 s. In a celebrity run that portrait was ordered first and became the featured photo.
+- **Upscayl (from the earlier tool):** `src/images/upscale.ts` runs `upscayl-bin -s 4 -n remacri-4x` from `data/tools/upscayl`. Photos stretched more than 1.5× are enlarged before cropping.
+  - Setting “Enlarge small celebrity photos”, now on by default. A missing tool is named on the Images tab.
+  - Tested with a FAKE `upscayl-bin` script (same arguments). The real Upscayl needs a GPU and was not run here.
+
+**Fresh install: “The table main.WorkerStatus does not exist”**
+- **Cause:** on the second laptop `npm run start:all` ran straight after `npm install`: no `npm run setup` (tables) and no `npm run build`.
+- **Fix:** `prestart:all` and `predev:all` run `scripts/preflight.ts` by themselves:
+  - the safe setup steps: data folders, `.env` only when missing, migrations with a backup and never a reset, missing settings and prompts, the face detector;
+  - for `start:all` also a build, when there is none or the git commit changed since the last build (`postbuild` records it).
+- **Worker message:** a database without tables now says to run setup.
+- **Verified:** preflight on an empty data folder created every table (WorkerStatus readable) and installed the face detector.
+
+**Not verified here**
+- The real ChatGPT composer with extension 3.2.2.
+- Real Tigram image generation after EXTERNAL_LINKS.
+- The real Upscayl binary on Windows.
+- MediaPipe in the owner's Chrome (headless).
+- Whether ChatGPT shows a gallery for Dixie Brubaker on the second try.

@@ -1,0 +1,70 @@
+/**
+ * Runs by itself before `npm run start:all` and `npm run dev:all` (npm pre-scripts), so the app starts on a fresh
+ * install or after `git pull` without remembering `npm run setup` and `npm run build` (owner report: a new laptop
+ * ran start:all straight after npm install → “The table main.WorkerStatus does not exist”).
+ *
+ * The same safe steps as `npm run setup`: data folders, .env from .env.example only when missing, migrations with a
+ * backup first (never a reset), missing settings and prompts (owner edits kept). With --build (start:all): a
+ * production build when there is none or the code changed since the last one. --mark-build (postbuild) records which
+ * code the build is of.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { ensureDataDirs, projectRoot } from '../src/lib/paths';
+import { loadEnv } from '../src/lib/env';
+import { runMigrations } from './migrate';
+import { runSeed } from './seed';
+
+const root = projectRoot();
+const marker = path.join(root, '.next', 'bas-build-source.txt');
+
+/** The code version: the git commit plus a fingerprint of uncommitted changes (empty when git is unavailable). */
+function sourceVersion(): string {
+  const git = (args: string[]) => {
+    const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
+    return r.status === 0 ? r.stdout.trim() : '';
+  };
+  const head = git(['rev-parse', 'HEAD']);
+  if (!head) return '';
+  const dirty = git(['status', '--porcelain', '--untracked-files=no', '--', 'app', 'src', 'next.config.ts', 'package.json']);
+  return dirty ? `${head}+${dirty.length}` : head;
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes('--mark-build')) {
+    const v = sourceVersion();
+    if (v) fs.writeFileSync(marker, v);
+    return;
+  }
+  console.log('▸ Preparing (the safe steps of npm run setup: data folders, .env, migrations with backup, settings)…');
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major < 26) console.warn(`  ⚠ Node.js 26+ is required (found ${process.versions.node}). Install the latest Node.js from https://nodejs.org.`);
+  ensureDataDirs();
+  const envFile = path.join(root, '.env');
+  if (!fs.existsSync(envFile)) {
+    fs.writeFileSync(envFile, fs.readFileSync(path.join(root, '.env.example'), 'utf8'), { flag: 'wx' });
+    console.log('  Created .env from .env.example ✓');
+  }
+  loadEnv();
+  await runMigrations();
+  await runSeed();
+  if (!args.includes('--build')) return;
+  const built = fs.existsSync(path.join(root, '.next', 'BUILD_ID'));
+  const now = sourceVersion();
+  const was = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+  if (built && (!now || now === was)) {
+    console.log('  Production build is up to date ✓');
+    return;
+  }
+  console.log(built ? '▸ The code changed since the last build — building the dashboard (a few minutes)…' : '▸ No production build yet — building the dashboard (a few minutes, only once)…');
+  const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  if (r.status !== 0) throw new Error('npm run build failed (see the output above).');
+}
+
+main().catch((error) => {
+  console.error(`\n✖ Could not prepare the app: ${error instanceof Error ? error.message : String(error)}`);
+  console.error('  Your data was not reset. Run `npm run setup` to see each step, then `npm run start:all` again.');
+  process.exit(1);
+});

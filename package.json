@@ -12,9 +12,12 @@
     "dev": "next dev -H 127.0.0.1 -p 3000",
     "worker": "tsx src/worker/index.ts",
     "worker:dev": "tsx watch --clear-screen=false src/worker/index.ts",
+    "predev:all": "tsx scripts/preflight.ts",
     "dev:all": "concurrently -k -n web,worker -c blue,magenta \"npm:dev\" \"npm:worker:dev\"",
     "build": "prisma generate && next build",
+    "postbuild": "tsx scripts/preflight.ts --mark-build",
     "start": "next start -H 127.0.0.1 -p 3000",
+    "prestart:all": "tsx scripts/preflight.ts --build",
     "start:all": "concurrently -k -n web,worker -c blue,magenta \"npm:start\" \"npm:worker\"",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:create": "prisma migrate dev --create-only",
@@ -30,7 +33,8 @@
     "postinstall": "prisma generate",
     "test:e2e:wordpress": "vitest run --config vitest.e2e.config.ts",
     "audit:a11y": "tsx scripts/a11y-audit.ts",
-    "benchmark:report": "tsx scripts/benchmark-report.ts"
+    "benchmark:report": "tsx scripts/benchmark-report.ts",
+    "tools:install": "tsx scripts/install-tools.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

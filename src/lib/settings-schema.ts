@@ -86,7 +86,7 @@ export const seoSettingsSchema = z.object({
   imagesRequired: z.boolean().default(false),
   imageOutputSize: z.enum(['1200x675', '1920x1080']).default('1200x675'),
   imageMaxBytes: z.number().int().min(50_000).max(5_000_000).default(350_000),
-  enhanceCelebrityImages: z.boolean().default(false),
+  enhanceCelebrityImages: z.boolean().default(true),
   celebrityPhotoReview: z.boolean().default(false),
   /**
    * Where celebrity photos come from (after the owner's own uploads): ChatGPT's image-search gallery through the

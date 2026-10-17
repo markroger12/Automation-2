@@ -1,0 +1,1 @@
+portrait-public-domain.jpg — Abraham Lincoln, photograph by Anthony Berger, 1864 (public domain; Wikimedia Commons “Abraham Lincoln O-77 matte collodion print.jpg”), resized to 360 px. Used only to test face locations.

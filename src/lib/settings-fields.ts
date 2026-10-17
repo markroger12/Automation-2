@@ -105,7 +105,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'imagesRequired', label: 'Missing images → Needs review', type: 'boolean', help: 'Off: finish a text-only draft with a review note.' },
       { key: 'imageOutputSize', label: 'Image output size', type: 'select', options: [{ value: '1200x675', label: '1200 × 675' }, { value: '1920x1080', label: '1920 × 1080' }] },
       { key: 'imageMaxBytes', label: 'Image file-size budget (bytes)', type: 'number', min: 50000, max: 5000000 },
-      { key: 'enhanceCelebrityImages', label: 'Celebrity image enhancement', type: 'boolean', help: 'Requires a locally installed enhancement tool.' },
+      { key: 'enhanceCelebrityImages', label: 'Enlarge small celebrity photos (Upscayl)', type: 'boolean', help: 'Small photos are enlarged with Upscayl before cropping, as in your earlier tool. Needs Upscayl in data/tools/upscayl (see npm run tools:install); without it the photo is used as it is and the Images tab says so.' },
       {
         key: 'celebrityPhotoSource',
         label: 'Celebrity photo source',

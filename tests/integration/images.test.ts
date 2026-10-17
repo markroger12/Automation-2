@@ -295,6 +295,51 @@ describe('Image Studio (IMAGES stage)', () => {
     }
   });
 
+  it('owner report: a text-only image search is asked once more in a new chat; with two photos the two-photo featured template uses both', async () => {
+    const { updateSettings } = await import('@/lib/settings');
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' } });
+    try {
+      const pictures = [await solid(200, 60, 60), await solid(60, 200, 60)];
+      const searches: { prompt: string; newChat: boolean }[] = [];
+      let newChat = false;
+      const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string): ScriptedAnswer => {
+        if (/show them as an image gallery/.test(prompt)) {
+          searches.push({ prompt, newChat });
+          // As for Dixie Brubaker: the first answer is text only.
+          if (searches.length === 1) return { text: 'I couldn’t find 10 authentic, recent, high-quality photos reliably identified as this person.' };
+          return { text: 'Two archival photos.', images: pictures };
+        }
+        return cannedAnswer(stageKey, prompt, language, keyword);
+      };
+      const site = await offlineSite('Celeb Two Photos');
+      await addLogo(site.id);
+      // The owner's featured design takes two photos.
+      const settings = { ...defaultSiteImageSettings('#0b5fff'), featured: { ...presetSplit('#0b5fff'), name: 'Imported' } };
+      await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify(settings) } });
+      const driver = makeDriver(client, answer, { onClaim: (p) => void (newChat = p.newChat) });
+      const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
+      const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Mary Joan Schutz', websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'img:celeb-two' }, { source: 'SINGLE' });
+      const t = await driver.drive(task.id);
+      expect(searches).toHaveLength(2);
+      expect(searches.every((s) => s.newChat)).toBe(true);
+      expect(searches[0].prompt).toMatch(/archival photos/);
+      expect(searches[0].prompt).not.toMatch(/at least 10/);
+      const data = await stageData(t.id, 'IMAGES');
+      const notes = data.notes.join(' | ');
+      expect(notes).toMatch(/asked once more in a new chat/);
+      expect(notes).toMatch(/second try, new chat\): 2 usable photo/);
+      expect(notes).not.toMatch(/single-photo preset/);
+      const featured = data.slots.find((s: { slot: string }) => s.slot === 'FEATURED');
+      expect(featured.sourceAssetIds).toHaveLength(2);
+      expect(notes).toMatch(/featured design took 2, 0 left for the body/);
+      // Tools that are not installed are named, never silently skipped.
+      expect(notes).toMatch(/Face detector not installed/);
+    } finally {
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
+    }
+  });
+
   it('degrades safely: no photos → text-only with a note, or review when images are required', async () => {
     commonsPages = [];
     const site = await offlineSite('No Photos');

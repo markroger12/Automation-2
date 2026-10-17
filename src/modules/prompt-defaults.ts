@@ -172,13 +172,14 @@ Output only one line per image:
     stageKey: 'IMAGE_SEARCH',
     name: 'Celebrity — Image search',
     description: 'Asks ChatGPT to search the web and show a picture gallery of the person; the extension saves the pictures (owner\'s earlier tool).',
-    version: 1,
+    version: 2,
     kind: 'image',
-    previousHashes: [],
+    // v1 asked for “at least 10 recent” photos: ChatGPT answered with text only for people with few or old photos (owner report).
+    previousHashes: ['0caa5c7a1b90ab21ace8afbd041703ccefd6e2dd647cc51feac2c6157525bbb0'],
     variables: [v('person_name', 'The person: the Quick Bio full name, otherwise the keyword', true, 'stage')],
     content: `Search the web for real photos of {{person_name}} and show them as an image gallery.
 
-Show at least 10 different, recent, high-quality photos in which the face of {{person_name}} is clearly visible, for example portraits, red carpet and event photos.
+Show as many different, high-quality photos as you can find (up to 10) in which {{person_name}} is clearly visible, for example portraits, red carpet, event or archival photos. Older photos are fine when there are no recent ones, and so are photos of {{person_name}} together with a well-known partner or family member.
 No drawings, no AI-made pictures, no memes, no collages and no screenshots of articles.
 Do not write an article; one short caption line is enough.`,
   },

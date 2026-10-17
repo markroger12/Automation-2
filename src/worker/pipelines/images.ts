@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import sharp from 'sharp';
 import type { MediaAsset } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getSettings } from '@/lib/settings';
@@ -12,6 +13,8 @@ import { hammingDistance, storeRendered } from '@/images/store';
 import { collectCommonsGallery } from '@/images/sources/wikimedia';
 import { collectChatGPTGallery } from '@/images/sources/chatgpt-gallery';
 import { loadTemplateAssets } from '@/images/site-templates';
+import { detectFaces, faceFocus, faceToolAvailable } from '@/images/faces';
+import { upscale, upscalerAvailable } from '@/images/upscale';
 import type { StageManifest } from '@/modules/types';
 import type { PipelineContext, PipelineStage, StageResult } from '../pipeline/types';
 import { bind, waiting } from './common';
@@ -66,10 +69,13 @@ function templatePhotoSlots(t: ImageTemplate): number {
   return Math.max(0, ...t.layers.filter((l) => l.type === 'photo' && l.visible).map((l) => (l.type === 'photo' ? l.slot + 1 : 0)));
 }
 
+type Focus = { x: number; y: number } | null;
+
 interface RenderPlan {
-  featuredPhotos: { asset: MediaAsset; focus?: { x: number; y: number } | null }[];
-  body1?: { asset: MediaAsset; alt: string };
-  body2?: { asset: MediaAsset; alt: string };
+  /** `buffer`: a prepared (e.g. upscaled) copy of the asset; `focus`: where the crop centres (faces). */
+  featuredPhotos: { asset: MediaAsset; focus?: Focus; buffer?: Buffer }[];
+  body1?: { asset: MediaAsset; alt: string; focus?: Focus; buffer?: Buffer };
+  body2?: { asset: MediaAsset; alt: string; focus?: Focus; buffer?: Buffer };
   featuredAlt: string;
 }
 
@@ -100,7 +106,7 @@ async function renderAll(ctx: PipelineContext, plan: RenderPlan, notes: string[]
       template = presetSingle(template.accent);
       notes.push('Only one photo was available for the two-photo featured design; the single-photo preset was used.');
     }
-    const photos = await Promise.all(plan.featuredPhotos.map((p) => readAsset(p.asset)));
+    const photos = await Promise.all(plan.featuredPhotos.map((p) => p.buffer ?? readAsset(p.asset)));
     const r = await renderTemplate({ template, photos, focus: plan.featuredPhotos.map((p) => p.focus ?? null), logo, fixedPhotos, vars: { title, site: site.name, keyword: ctx.task.keyword } }, opts);
     const alt = altFor('FEATURED', plan.featuredAlt);
     const a = await storeRendered({ buffer: r.buffer, mime: r.mime, taskId: ctx.taskId, websiteId: site.id, role: 'FEATURED', altText: alt, slug: ctx.task.slug, sourceUrl: plan.featuredPhotos[0]?.asset.sourceUrl ?? null });
@@ -108,8 +114,8 @@ async function renderAll(ctx: PipelineContext, plan: RenderPlan, notes: string[]
   }
   for (const [slotName, b] of [['BODY1', plan.body1], ['BODY2', plan.body2]] as const) {
     if (!b) continue;
-    const src = await readAsset(b.asset);
-    const r = settings.body ? await renderTemplate({ template: settings.body, photos: [src], logo, fixedPhotos, vars: { title, site: site.name, keyword: ctx.task.keyword } }, opts) : await renderCleanImage(src, opts);
+    const src = b.buffer ?? (await readAsset(b.asset));
+    const r = settings.body ? await renderTemplate({ template: settings.body, photos: [src], focus: [b.focus ?? null], logo, fixedPhotos, vars: { title, site: site.name, keyword: ctx.task.keyword } }, opts) : await renderCleanImage(src, opts, b.focus ?? null);
     const alt = altFor(slotName, b.alt);
     const a = await storeRendered({ buffer: r.buffer, mime: r.mime, taskId: ctx.taskId, websiteId: site.id, role: slotName, altText: alt, slug: ctx.task.slug, sourceUrl: b.asset.sourceUrl });
     slots.push({ slot: slotName, mediaAssetId: a.id, alt, sourceAssetIds: [b.asset.id], html: figure(slotName, { id: a.id, width: r.width, height: r.height }, alt), width: r.width, height: r.height, bytes: r.buffer.length });
@@ -199,6 +205,55 @@ export function parsePhotoCheck(text: string, count: number): Map<number, { wate
 interface CelebState extends Record<string, unknown> {
   galleryIds?: string[];
   galleryNotes?: string[];
+  /** Image searches that brought back no photo (the second one runs in a new chat, as in the owner's earlier tool). */
+  emptySearches?: number;
+  /** Face locations per photo (asset id): count, largest face height (px) and the crop focus. */
+  faces?: Record<string, { n: number; h: number; focus: Focus }>;
+}
+
+/** Face locations of the photos not looked at yet (MediaPipe, local); null when the detector is not installed. */
+async function locateFaces(ctx: PipelineContext, photos: MediaAsset[], notes: string[]): Promise<Record<string, { n: number; h: number; focus: Focus }> | null> {
+  if (!faceToolAvailable()) {
+    notes.push('Face detector not installed (npm run tools:install); photos were cropped without face positions.');
+    return null;
+  }
+  const known = { ...(ctx.privateState<CelebState>().faces ?? {}) };
+  const todo = photos.filter((p) => !known[p.id]);
+  if (todo.length) {
+    await ctx.progress(`Finding faces in ${todo.length} photo(s)…`);
+    try {
+      const bufs = await Promise.all(todo.map((p) => readAsset(p)));
+      const boxes = await detectFaces(bufs);
+      if (!boxes) return null;
+      for (const [i, p] of todo.entries()) {
+        const meta = await sharp(bufs[i]).rotate().metadata();
+        const faces = boxes[i] ?? [];
+        known[p.id] = { n: faces.length, h: faces.length ? Math.max(...faces.map((f) => f.h)) : 0, focus: faceFocus(faces, meta.width ?? 0, meta.height ?? 0) };
+      }
+      await ctx.setPrivateState({ faces: known });
+    } catch (error) {
+      notes.push(`Face detection failed; photos were cropped without it (${(error as Error).message.slice(0, 120)}).`);
+      return null;
+    }
+  }
+  return known;
+}
+
+/** Small photos enlarged with Upscayl before cropping (owner's earlier tool), when enabled and installed. */
+async function preparePhoto(ctx: PipelineContext, asset: MediaAsset, enhance: boolean, notes: string[]): Promise<Buffer | undefined> {
+  if (!enhance) return undefined;
+  const out = outputSize(ctx.config.imageOutputSize);
+  const stretch = Math.max(out.width / (asset.width || out.width), out.height / (asset.height || out.height));
+  if (stretch <= 1.5) return undefined;
+  if (!upscalerAvailable()) {
+    if (!notes.some((n) => n.startsWith('Upscayl is not installed'))) notes.push('Upscayl is not installed (data/tools/upscayl, see npm run tools:install); small photos were used as they are.');
+    return undefined;
+  }
+  await ctx.progress(`Enlarging a small photo (${asset.width}×${asset.height})…`);
+  const up = await upscale(await readAsset(asset));
+  if (up) notes.push(`A small photo (${asset.width}×${asset.height}) was enlarged with Upscayl.`);
+  else notes.push(`Upscayl could not enlarge a ${asset.width}×${asset.height} photo; it was used as it is.`);
+  return up ?? undefined;
 }
 
 async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
@@ -215,16 +270,24 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   if (!galleryIds) {
     const uploads = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'UPLOAD', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' } });
     const ids = uploads.map((u) => u.id);
-    const galleryNotes: string[] = [];
+    const galleryNotes: string[] = state.emptySearches ? [...((state.searchNotes as string[] | undefined) ?? [])] : [];
     const source = ctx.config.celebrityPhotoSource ?? 'chatgpt';
     const timeoutMs = settings.advanced.linkCheckTimeoutSec * 1000 * 2;
     if (ids.length < 4 && source !== 'commons') {
-      const res = await ctx.askChatGPT('IMAGE_SEARCH', { person_name: name }, { part: 'gallery', newChat: true, expectGallery: true });
-      if (res.status === 'waiting') return waiting(`Waiting for ChatGPT: photo gallery of ${name}`);
-      await ctx.progress(`Saving gallery photos of ${name}…`);
-      const g = await collectChatGPTGallery({ uploadedIds: res.images.map((i) => i.mediaAssetId), links: res.imageLinks, taskId: ctx.taskId, websiteId: ctx.task.websiteId, responseId: res.responseId, max: 6 - ids.length, timeoutMs });
-      ids.push(...g.assets.map((a) => a.id));
-      galleryNotes.push(`ChatGPT image search: ${g.assets.length} usable photo(s).`, ...g.notes.slice(0, 6));
+      // No photo from the first search (ChatGPT answered with text only): once more in a new chat.
+      for (let attempt = state.emptySearches ?? 0; attempt < 2; attempt++) {
+        const res = await ctx.askChatGPT('IMAGE_SEARCH', { person_name: name }, { part: attempt ? 'gallery-2' : 'gallery', newChat: true, expectGallery: true });
+        if (res.status === 'waiting') return waiting(`Waiting for ChatGPT: photo gallery of ${name}${attempt ? ' (second try)' : ''}`);
+        await ctx.progress(`Saving gallery photos of ${name}…`);
+        const g = await collectChatGPTGallery({ uploadedIds: res.images.map((i) => i.mediaAssetId), links: res.imageLinks, taskId: ctx.taskId, websiteId: ctx.task.websiteId, responseId: res.responseId, max: 6 - ids.length, timeoutMs });
+        ids.push(...g.assets.map((a) => a.id));
+        galleryNotes.push(`ChatGPT image search${attempt ? ' (second try, new chat)' : ''}: ${g.assets.length} usable photo(s).`, ...g.notes.slice(0, 6));
+        if (g.assets.length) break;
+        if (attempt === 0) {
+          galleryNotes.push(`ChatGPT showed no usable photo${res.text ? ` (“${res.text.replace(/\s+/g, ' ').slice(0, 120)}”)` : ''}; asked once more in a new chat.`);
+          await ctx.setPrivateState({ emptySearches: 1, searchNotes: galleryNotes });
+        }
+      }
     }
     if (ids.length < 4 && (source === 'commons' || (source === 'chatgpt-then-commons' && ids.length < 2))) {
       try {
@@ -270,27 +333,38 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     if (!verdicts.size) notes.push('The photo check answer could not be read; all photos were kept.');
     if (!verdicts.size) usable = sample;
   }
-  if (settings.seo.enhanceCelebrityImages) notes.push('Image enhancement is enabled but no local enhancement tool is installed; originals were used.');
-
   // 3. Distinct photos per design slot (never the same photo twice).
   if (!usable.length) {
     notes.push(`No usable photo of ${name} was found.`);
     return finish(ctx, { slots: [], gallery: gallery.map((g) => ({ id: g.id, source: sourceLabel(g.origin), sourceUrl: g.sourceUrl, title: g.notes ?? '', used: false })), notes, warnings: [] });
   }
+  // Faces (owner's earlier tool): photos with a large face first (your uploads stay first); crops centre on the faces.
+  const faces = await locateFaces(ctx, usable, notes);
+  if (faces) {
+    const withFace = usable.filter((a) => faces[a.id]?.n).length;
+    notes.push(`Face detector: ${withFace} of ${usable.length} photo(s) show a face; crops centre on the faces.`);
+    const rank = (a: MediaAsset) => (a.origin === 'UPLOADED' ? 0 : faces[a.id]?.n ? 1 : 2);
+    usable = usable.map((a, i) => ({ a, i })).sort((x, y) => rank(x.a) - rank(y.a) || (rank(x.a) === 1 ? (faces[y.a.id]?.h ?? 0) - (faces[x.a.id]?.h ?? 0) : 0) || x.i - y.i).map((x) => x.a);
+  }
+  const focusOf = (a: MediaAsset): Focus => faces?.[a.id]?.focus ?? null;
   const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
   const featuredNeeds = Math.max(1, templatePhotoSlots(parseSiteImageSettings(site.imageSettings).featured));
-  // A two-photo featured design only takes two photos when at least one is left for the body.
-  const featuredPhotos = usable.slice(0, usable.length > 2 ? featuredNeeds : 1);
+  // Your featured template takes its photos first (as in the owner's earlier tool); body images get the rest.
+  // A photo is never used twice.
+  const featuredPhotos = usable.slice(0, featuredNeeds);
   const rest = usable.slice(featuredPhotos.length);
+  if (rest.length < 2) notes.push(`${usable.length} usable photo(s): the featured design took ${featuredPhotos.length}, ${rest.length} left for the body image(s).`);
   const alt = (a: MediaAsset, fallback: string) => alts.get(a.id) ?? fallback;
   const lang = ctx.task.language;
+  const enhance = settings.seo.enhanceCelebrityImages;
+  const prep = async (a: MediaAsset) => ({ asset: a, focus: focusOf(a), buffer: await preparePhoto(ctx, a, enhance, notes) });
   const slots = await renderAll(
     ctx,
     {
-      featuredPhotos: featuredPhotos.map((asset) => ({ asset })),
+      featuredPhotos: await Promise.all(featuredPhotos.map(prep)),
       featuredAlt: ctx.task.selectedTitle ?? ctx.task.keyword,
-      body1: rest[0] ? { asset: rest[0], alt: alt(rest[0], lang === 'de' ? `Foto von ${name}` : `Photo of ${name}`) } : undefined,
-      body2: rest[1] ? { asset: rest[1], alt: alt(rest[1], lang === 'de' ? `Weiteres Foto von ${name}` : `Another photo of ${name}`) } : undefined,
+      body1: rest[0] ? { ...(await prep(rest[0])), alt: alt(rest[0], lang === 'de' ? `Foto von ${name}` : `Photo of ${name}`) } : undefined,
+      body2: rest[1] ? { ...(await prep(rest[1])), alt: alt(rest[1], lang === 'de' ? `Weiteres Foto von ${name}` : `Another photo of ${name}`) } : undefined,
     },
     notes,
   );

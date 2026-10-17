@@ -1723,3 +1723,14 @@ Reports: Antivirus FreeDoor2.4.6.8 and latest tech info beaconsoft (Tigram, FAIL
 - The real Upscayl binary on Windows.
 - MediaPipe in the owner's Chrome (headless).
 - Whether ChatGPT shows a gallery for Dixie Brubaker on the second try.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 43 files, 293 tests pass (after updating 4 expectations: Upscayl on by default, second photo search)
+integration: extension 28/28, images 9/9, image-tools 3/3 (real MediaPipe with BAS_TEST_MEDIAPIPE_DIR; skipped without),
+             links 6/6, content-refresh 5/5, migration-upgrade 1/1, worker-toolchain 1/1, wordpress-drafts 10/10
+             (one wordpress-drafts test timed out once while running in parallel with the extension file; it passed alone and in the file rerun)
+npm run build                       # compiled; postbuild recorded the commit; preflight --build then said "up to date"
+npx tsx scripts/preflight.ts        # on an empty data folder: all tables, settings, prompts, face detector
+```

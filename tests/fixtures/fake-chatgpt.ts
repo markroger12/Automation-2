@@ -32,6 +32,10 @@ export interface FakeChatGptConfig {
   chunkSize?: number;
   challengeClearsAfterMs?: number;
   answers?: string[];
+  /** 'unknown': generated pictures carry an address and alt text that match none of the known markers. */
+  imageMarkup?: 'default' | 'unknown';
+  /** A page-wide “streaming” marker stays after the picture is finished (owner report: 600 s “generating”). */
+  staleStreaming?: boolean;
   /** Image-search answers (prompt mentions an “image gallery”): show this many gallery thumbnails with a viewer. */
   galleryCount?: number;
   /** Extra gallery pictures on other hosts (the extension reports these as links). */
@@ -58,6 +62,7 @@ export async function installFakeChatGPT(context: BrowserContext, getConfig: () 
   await context.route('https://chatgpt.com/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
+    if (url.pathname === '/backend-api/files/download') return route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor(url.searchParams.get('f') ?? '') });
     if (url.pathname === '/backend-api/estuary/content') return route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor(url.searchParams.get('id') ?? '', url.searchParams.get('thumb') === '1') });
     if (req.resourceType() !== 'document') return route.fulfill({ status: 404, body: '' });
     const config = JSON.stringify(getConfig()).replace(/</g, '\\u003c');

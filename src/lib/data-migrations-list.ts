@@ -2,6 +2,7 @@ import { registerDataMigration } from './data-migrations';
 import { RETIREMENT_MIGRATION_ID, retireCelebrityWriter2 } from './retirement';
 import { SITE_OVERRIDES_MIGRATION_ID, unpinDefaultSiteOverrides } from './site-overrides-migration';
 import { REVIEW_NOTES_MIGRATION_ID, reviewReasonsBecomeNotes } from './review-notes-migration';
+import { HUMANIZER_DEFAULT_MIGRATION_ID, humanizerOffByDefault } from './humanizer-default-migration';
 
 /** Built-in data migrations are registered here as milestones add them. */
 export function loadBuiltInDataMigrations(): void {
@@ -19,5 +20,10 @@ export function loadBuiltInDataMigrations(): void {
     id: REVIEW_NOTES_MIGRATION_ID,
     description: 'Review system off by default: articles held only for review reasons with a verified WordPress draft become COMPLETED; the reasons stay as notes (backup written first).',
     run: reviewReasonsBecomeNotes,
+  });
+  registerDataMigration({
+    id: HUMANIZER_DEFAULT_MIGRATION_ID,
+    description: 'Humanizer off by default: the global switch is turned off once; websites set to On keep it.',
+    run: humanizerOffByDefault,
   });
 }

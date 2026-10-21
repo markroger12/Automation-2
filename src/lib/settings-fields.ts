@@ -62,7 +62,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'keywordDensityCeilingPct', label: 'Keyword density warning ceiling (%)', type: 'number', min: 0.5, max: 10, step: 0.1 },
       { key: 'defaultLanguage', label: 'Default language', type: 'select', options: [{ value: 'en', label: 'English' }, { value: 'de', label: 'German' }] },
       { key: 'targetCountry', label: 'Default target country', type: 'text' },
-      { key: 'humanizerEnabled', label: 'Editorial humanizer stage', type: 'boolean' },
+      { key: 'humanizerEnabled', label: 'Editorial humanizer stage', type: 'boolean', help: 'Off by default. Each website can switch it on or off in its own settings (Websites → edit → Humanizer).' },
       { key: 'humanizerBatchWords', label: 'Humanizer batch size (words)', type: 'number', min: 300, max: 3000 },
       { key: 'humanizerLengthTolerancePct', label: 'Humanizer paragraph length tolerance (±%)', type: 'number', min: 5, max: 50 },
       { key: 'humanizerScope', label: 'Humanizer paragraphs', type: 'select', options: [{ value: 'all', label: 'All eligible paragraphs' }, { value: 'flagged', label: 'Only paragraphs the local editor flagged' }] },

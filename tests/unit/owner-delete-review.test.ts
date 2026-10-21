@@ -150,4 +150,19 @@ describe('owner requests: delete, duplicate approval, no review hold', () => {
     expect(await client.campaignRow.count({ where: { campaignId: b.id } })).toBe(0);
     expect(await client.articleTask.count({ where: { id: { in: tasksB.map((t) => t.id) }, campaignId: null } })).toBe(2);
   });
+
+  it('humanizer off by default: the global switch saved as on is turned off once; a website can switch it on', async () => {
+    const { updateSettings, getSettings } = await import('@/lib/settings');
+    await updateSettings({ content: { humanizerEnabled: true } });
+    const { humanizerOffByDefault } = await import('@/lib/humanizer-default-migration');
+    expect(await humanizerOffByDefault(client)).toMatchObject({ changed: true, before: true });
+    expect((await getSettings()).content.humanizerEnabled).toBe(false);
+    expect(await humanizerOffByDefault(client)).toMatchObject({ changed: false });
+    const { effectiveTaskConfig, siteOverridesSchema, taskOptionsSchema } = await import('@/lib/settings-schema');
+    const global = await getSettings();
+    const on = effectiveTaskConfig(global, siteOverridesSchema.parse({ content: { humanizerEnabled: true } }), taskOptionsSchema.parse({}));
+    const inherit = effectiveTaskConfig(global, siteOverridesSchema.parse({}), taskOptionsSchema.parse({}));
+    expect(on.humanizerEnabled).toBe(true);
+    expect(inherit.humanizerEnabled).toBe(false);
+  });
 });

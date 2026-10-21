@@ -438,9 +438,25 @@
     return parts.join('; ');
   }
 
-  /** Assistant turn(s) that come after the given user turn in document order. */
+  /** The next user turn after this one (where this prompt's answer ends), or null. */
+  function nextUserAfter(userEl) {
+    return userMessages().find((u) => u !== userEl && !u.contains(userEl) && !userEl.contains(u) && userEl.compareDocumentPosition(u) & Node.DOCUMENT_POSITION_FOLLOWING) || null;
+  }
+
+  /**
+   * Is the element part of this prompt's answer: after the user turn and before the next one? Owner report: a
+   * recovered image job took a later prompt's answer (another article's humanizer text) as its own, because
+   * “the last answer after the prompt” was used.
+   */
+  function inAnswerOf(userEl, el) {
+    if (!(userEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) || userEl.contains(el)) return false;
+    const next = nextUserAfter(userEl);
+    return !next || (Boolean(el.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING) && !el.contains(next));
+  }
+
+  /** Assistant turn(s) that answer the given user turn (after it, before the next user turn). */
   function assistantAfter(userEl) {
-    return assistantMessages().filter((a) => userEl.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return assistantMessages().filter((a) => inAnswerOf(userEl, a));
   }
 
   /** The final user-facing answer element of an assistant turn (skips reasoning/tool blocks). */
@@ -451,29 +467,39 @@
     return null;
   }
 
-  /** Generic fallback: the page's own visible conversation representation (last turn after the user turn). */
-  /** Generated images in the answer(s) after a user turn, de-duplicated by URL. */
+  /**
+   * Pictures ChatGPT created in the answer to this user turn, one per address. As in the owner's earlier tool: any
+   * picture in that answer counts when it has loaded at 700×350 or more (icons, avatars and previews are smaller),
+   * besides the known generated-image addresses — the page's image markup changes.
+   */
   function generatedImagesAfter(userEl) {
-    const scopes = assistantAfter(userEl);
-    if (!scopes.length) {
-      const generic = genericAnswerAfter(userEl);
-      if (generic) scopes.push(generic);
+    const scope = document.querySelector('main') || document.body;
+    const known = new Set(qsAll(SELECTORS.generatedImage, scope));
+    const users = userMessages();
+    const found = new Map();
+    for (const img of scope.querySelectorAll('img')) {
+      if (!inAnswerOf(userEl, img) || img.closest('form') || users.some((u) => u.contains(img))) continue;
+      const src = img.currentSrc || img.src;
+      if (!src || src.startsWith('data:image/svg')) continue;
+      const big = img.complete && img.naturalWidth >= 700 && img.naturalHeight >= 350;
+      if (!known.has(img) && !big) continue;
+      const prev = found.get(src);
+      if (!prev || img.naturalWidth > prev.naturalWidth) found.set(src, img);
     }
-    const seen = new Set();
-    const out = [];
-    for (const scope of scopes) {
-      for (const img of qsAll(SELECTORS.generatedImage, scope)) {
-        const src = img.currentSrc || img.src;
-        if (!src || seen.has(src)) continue;
-        seen.add(src);
-        out.push(img);
-      }
-    }
-    return out;
+    return [...found.values()];
+  }
+
+  /** ChatGPT is still drawing a picture for this prompt: a composer Stop button, or “Creating image” in its answer. */
+  function imageInProgress(userEl) {
+    if (document.querySelector('button[data-testid="stop-button"]')) return true;
+    const form = (findComposer() && findComposer().closest('form')) || null;
+    if (form && Array.from(form.querySelectorAll('button')).some((b) => isVisible(b) && /\bstop/i.test(`${b.getAttribute('data-testid') || ''} ${b.getAttribute('aria-label') || ''}`))) return true;
+    const turns = qsAll(SELECTORS.turn).filter((t) => inAnswerOf(userEl, t));
+    return turns.some((t) => /creating image|generating image|bild wird erstellt|image is being (created|generated)/i.test(t.innerText || ''));
   }
 
   function genericAnswerAfter(userEl) {
-    const turns = qsAll(SELECTORS.turn).filter((t) => userEl.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING && !t.contains(userEl));
+    const turns = qsAll(SELECTORS.turn).filter((t) => inAnswerOf(userEl, t));
     const last = turns[turns.length - 1];
     return last || null;
   }
@@ -711,6 +737,7 @@
     finalAnswerElement,
     genericAnswerAfter,
     generatedImagesAfter,
+    imageInProgress,
     toMarkdown,
     composerText,
     composerMismatch,

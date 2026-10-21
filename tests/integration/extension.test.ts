@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.2');
+    expect(ext?.version).toBe('3.2.3');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -503,5 +503,39 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(assets[0].origin).toBe('CHATGPT');
     expect(assets[0].width).toBe(1024);
     expect(assets[0].sourceUrl).toContain('/backend-api/estuary/content?id=file_');
+  });
+
+  it("owner report: a picture with unknown markup, and a streaming marker that stays, still completes (earlier tool's rule)", async () => {
+    fake = { variant: 'standard', mode: 'normal', answers: ['IMAGE: '], imageMarkup: 'unknown', staleStreaming: true, chunkMs: 60 };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Create this image now, landscape (wide) format:\n\nA header with the title "Pulsamento"\n\nOnly create the image — no text answer is needed.', { expectImages: true });
+    const done = await responseDone(req.responseId, 150_000);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe('COMPLETED');
+    const assets = await client.mediaAsset.findMany({ where: { responseId: req.responseId } });
+    expect(assets).toHaveLength(1);
+    expect(assets[0].sourceUrl).toContain('/backend-api/files/download');
+  });
+
+  it("owner report: a recovered job takes the answer to its own prompt, not a later prompt's answer in the same chat", async () => {
+    fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 4 };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const prompt = 'Featured image prompt that was interrupted';
+    const req = await request(prompt);
+    await waitJob(req.responseId, (j) => Boolean(j.progress && JSON.parse(j.progress).conversationUrl), 60_000, 'conversation recorded');
+    const page = chatPage()!;
+    // While the job was interrupted, another article's prompt was answered in the same chat (as in the report).
+    await page.evaluate((p) => {
+      const id = location.pathname.split('/').pop()!;
+      const convs = JSON.parse(localStorage.getItem('fake:convs') || '{}');
+      convs[id] = { turns: [{ role: 'user', text: p }, { role: 'assistant', text: 'The answer to the featured prompt.' }, { role: 'user', text: 'Humanize these paragraphs of another article.' }, { role: 'assistant', text: 'Cy Kass is the eldest son of journalist Alex Wagner.' }] };
+      localStorage.setItem('fake:convs', JSON.stringify(convs));
+    }, prompt);
+    await page.reload();
+    const done = await responseDone(req.responseId, 120_000);
+    expect(done.status).toBe('COMPLETED');
+    expect(done.recovered).toBe(true);
+    expect(done.resultText).toContain('The answer to the featured prompt.');
+    expect(done.resultText).not.toContain('Cy Kass');
   });
 });

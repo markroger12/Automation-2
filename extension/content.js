@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.2.2';
+  const EXTENSION_VERSION = '3.2.3';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -198,6 +198,7 @@
     let stable = 0;
     let continues = 0;
     let lastProgress = 0;
+    let lastFront = 0;
     while (true) {
       checkCancelled();
       const elapsed = Date.now() - started - current.pausedMs;
@@ -244,21 +245,29 @@
           continue;
         }
       }
-      // Image answers: wait until every generated image has fully loaded and stopped changing.
+      // Image answers (owner's earlier tool): done when ChatGPT is no longer drawing (composer Stop button, “Creating
+      // image”) and the pictures have stayed the same for 6 seconds. A page-wide “streaming” marker is not used here:
+      // it stayed on after the picture was finished (owner report: 600 s “generating (0 chars)” with the image shown).
       const images = expectImages && userEl ? A.generatedImagesAfter(userEl) : [];
       const imagesReady = images.length > 0 && images.every((img) => img.complete && img.naturalWidth >= 256);
       const imageSig = images.map((img) => `${img.currentSrc || img.src}:${img.naturalWidth}`).join('|');
+      const drawing = expectImages ? Boolean(userEl && A.imageInProgress(userEl)) : generating;
       const settled = expectImages ? (imagesReady && imageSig === lastImages) || (!images.length && text && text === lastText && Date.now() - started > 45000) : text && text === lastText;
-      if (!generating && settled) stable++;
+      if (!drawing && settled) stable++;
       else stable = 0;
+      // ChatGPT draws a picture only while its tab is visible: bring the tab to the front (as the earlier tool did).
+      if (expectImages && document.hidden && Date.now() - lastFront > 20000) {
+        lastFront = Date.now();
+        chrome.runtime.sendMessage({ type: 'come-to-front' }).catch(() => {});
+      }
       lastText = text;
       lastImages = imageSig;
       if (Date.now() - lastProgress > 5000) {
         lastProgress = Date.now();
-        progress(generating ? `generating (${text.length} chars so far)` : text ? 'checking that the answer is complete' : 'waiting for the answer to start');
+        progress(expectImages ? (drawing ? 'ChatGPT is creating the image' : images.length ? `checking that the image is finished (${images.length} found)` : 'waiting for the image') : generating ? `generating (${text.length} chars so far)` : text ? 'checking that the answer is complete' : 'waiting for the answer to start');
       }
-      const composerReady = Boolean(A.findComposer()) && !A.findStopButton();
-      if (stable >= 3 && composerReady) return { text, html: answerEl ? answerEl.innerHTML : null, images: imagesReady ? images : [] };
+      const composerReady = Boolean(A.findComposer()) && (expectImages ? !drawing : !A.findStopButton());
+      if (stable >= (expectImages && imagesReady ? 6 : 3) && composerReady) return { text, html: answerEl ? answerEl.innerHTML : null, images: imagesReady ? images : [] };
       await sleep(1000);
     }
   }

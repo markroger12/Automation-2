@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.2.2';
+const EXTENSION_VERSION = '3.2.3';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox'];
 
@@ -469,6 +469,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'url-changed':
         if (tabId !== null) tabState(tabId).url = msg.url;
         return sendResponse({ ok: true });
+      case 'come-to-front': {
+        // ChatGPT draws a picture only in a visible tab (owner's earlier tool did the same).
+        if (tabId === null) return sendResponse({ ok: false });
+        await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+        return sendResponse({ ok: true });
+      }
       case 'checkpoint':
         await checkpoint(msg.jobId, { step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore });
         return sendResponse({ ok: true });

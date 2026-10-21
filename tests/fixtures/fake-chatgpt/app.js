@@ -131,7 +131,9 @@
         if (t.error) return `<div data-testid="conversation-turn-${i}"><div role="alert" class="text-token-text-error">${esc(t.error)}</div></div>`;
         const tool = t.tool ? `<div data-testid="tool-call-block">Searching the web for sources…</div><details><summary>Thought for 3s</summary><div class="markdown">Planning: I will search first.</div></details>` : '';
         const isLast = i === turns.length - 1;
-        const img = t.image ? (isLast && window.__generating ? '<div class="image-placeholder">Creating image…</div>' : `<img alt="Generated image" src="${t.image}" width="1024" height="576">`) : '';
+        // imageMarkup 'unknown': the picture's address and alt text match none of the known generated-image markers.
+        const imgTag = C.imageMarkup === 'unknown' ? `<img alt="" src="${t.image ? t.image.replace('/backend-api/estuary/content?id=', '/backend-api/files/download?f=') : ''}">` : `<img alt="Generated image" src="${t.image}" width="1024" height="576">`;
+        const img = t.image ? (isLast && window.__generating ? '<div class="image-placeholder">Creating image…</div>' : imgTag) : '';
         const doneStreaming = !(isLast && window.__generating);
         const gallery =
           t.gallery && doneStreaming
@@ -171,7 +173,9 @@
       dlg && dlg.count
         ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
         : '';
-    root.innerHTML = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form></main>${dialog}`;
+    // staleStreaming: a page-wide “streaming” marker that stays after the picture is finished (owner report).
+    const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
+    root.innerHTML = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
     const ed = document.querySelector('#prompt-textarea, textarea');
     if (ed && draft && !generating) {
       if (ed.tagName === 'TEXTAREA') ed.value = draft;

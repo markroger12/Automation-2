@@ -1818,3 +1818,52 @@ npx next build                      # compiled
   - campaign page: a NEEDS_CATEGORY row became READY with its category, and “1 row(s) updated.” was shown;
   - no console errors on either page.
 - **Commands:** `npx tsc --noEmit` (0 errors); `npx vitest run` (44 files, 304 tests pass).
+
+## Owner report: Tigram pictures not made (pulsamento); Humanizer per website
+
+The report showed three separate problems.
+
+**1. The featured picture was drawn but never collected.**
+- ChatGPT showed the picture, yet the job reported “generating (0 chars so far)” for 600 s and then “No complete answer”.
+- Two things in extension 3.2.2 could cause this:
+  - the page-wide check `[data-testid*="streaming"]` / `aria-label*="Stop"` stayed true;
+  - pictures were only searched by the known address or alt patterns.
+- The real page markup was not available. Both were reproduced on the fake page (`imageMarkup: 'unknown'`, `staleStreaming: true`), where the old code timed out.
+
+**2. A recovered job took another article's answer.**
+- After the timeout, a recovery attached a later prompt's answer from the same chat (another article's humanizer text, “Cy Kass …”) as the featured picture's answer.
+- **Cause:** “the last answer after the prompt” was used.
+- Reproduced on the fake page: the old code returned the “Cy Kass” text.
+
+**3. Three pictures were sent at once into three new chats.**
+- These ran in background tabs. Two prompts became uncertain (“not visible in this conversation”).
+
+**Fixes**
+- **Extension 3.2.3 — answer boundaries:** an answer and its pictures are taken only between the prompt and the next user turn (`inAnswerOf`).
+- **Extension 3.2.3 — finding pictures,** as in `automation-old`:
+  - any picture in that answer counts when it has loaded at 700×350 or more, as well as the known addresses;
+  - drawing is detected by the composer's Stop button or “Creating image”, not by page-wide markers;
+  - pictures must stay unchanged for 6 s;
+  - a hidden ChatGPT tab is brought to the front while a picture is drawn (new `come-to-front` message).
+- **App:** the Tigram pictures are made one after another in the article's chat, as the earlier tool did. Only a second try goes to a new chat.
+
+**Humanizer per website** (owner request)
+- **Website form:** a new “Humanizer” option (Inherit / On / Off). The override key already existed but was not in the form.
+- **Default off:** the global default is now off.
+- **Data migration** `2026-10-21-humanizer-off-by-default`: turns a saved global “on” off once. Websites set to On keep it.
+
+**Tests**
+- Extension: 2 new owner-report tests. Both fail on the old adapter/content (with the version string matching) and pass now; the existing image-answer test still passes.
+- `owner-delete-review`: +1 test (humanizer default, migration, a website switching it on).
+- Humanizer and e2e tests now switch the humanizer on in their setup.
+
+**Not verified here:** the real ChatGPT image page with 3.2.3.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+integration: extension 30/30, images 10/10, image-tools 5/5, wordpress-drafts 10/10, links 6/6,
+             workflow-publish 6/6, content-refresh 5/5, migration-upgrade 1/1
+npx next build                      # compiled
+```

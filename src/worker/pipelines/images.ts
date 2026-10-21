@@ -223,10 +223,16 @@ async function generalImages(ctx: PipelineContext): Promise<StageResult> {
   const uploads = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'UPLOAD', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' }, take: 3 });
   const owned = new Map<ImageSlotName, MediaAsset>((['FEATURED', 'BODY1', 'BODY2'] as const).slice(0, uploads.length).map((slot, i) => [slot, uploads[i]]));
   if (owned.size) notes.push(`${owned.size} of your uploaded image(s) used for ${[...owned.keys()].join(', ')}.`);
-  // Ask for every image first (tabs can work in parallel), then wait.
-  const ask = (p: (typeof plan)[number], again = false) => ctx.askChatGPT('IMAGE_GENERATION', { image_brief: p.direction }, { part: again ? `${p.slot}-again` : p.slot, newChat: true, expectImages: true });
-  const results = await Promise.all(plan.filter((p) => !owned.has(p.slot)).map(async (p) => ({ p, res: await ask(p) })));
-  if (results.some((r) => r.res.status === 'waiting')) return waiting(`Waiting for ChatGPT: ${results.filter((r) => r.res.status === 'waiting').length} image(s)`);
+  // One picture at a time in the article's chat, as in the owner's earlier tool (owner report: three pictures at once
+  // in three new chats ran in background tabs, where ChatGPT does not draw; two prompts became uncertain). Only a
+  // second try goes to a new chat.
+  const ask = (p: (typeof plan)[number], again = false) => ctx.askChatGPT('IMAGE_GENERATION', { image_brief: p.direction }, { part: again ? `${p.slot}-again` : p.slot, newChat: again, expectImages: true });
+  const results: { p: (typeof plan)[number]; res: Awaited<ReturnType<typeof ask>> }[] = [];
+  for (const p of plan.filter((x) => !owned.has(x.slot))) {
+    const res = await ask(p);
+    if (res.status === 'waiting') return waiting(`Waiting for ChatGPT: ${p.slot === 'FEATURED' ? 'the featured picture' : `body picture ${p.slot.slice(-1)}`}`);
+    results.push({ p, res });
+  }
   const byslot = new Map<ImageSlotName, { asset: MediaAsset; alt: string }>();
   for (const [slot, asset] of owned) byslot.set(slot, { asset, alt: plan.find((p) => p.slot === slot)?.alt ?? asset.altText ?? imageTitle });
   const seen = new Map<string, ImageSlotName>();

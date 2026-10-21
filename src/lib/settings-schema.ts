@@ -59,7 +59,8 @@ export const contentSettingsSchema = z.object({
   targetCountry: z.string().min(2).max(56).default('United States'),
   tigramWordRange: z.string().regex(/^\d{3,4}\s*[-–]\s*\d{3,4}$/).default('1500-2200'),
   tigramFaqCount: z.number().int().min(3).max(12).default(7),
-  humanizerEnabled: z.boolean().default(true),
+  /** Off by default (owner decision, 2026-10-21); a website can switch it on (website settings → Humanizer). */
+  humanizerEnabled: z.boolean().default(false),
   humanizerBatchWords: z.number().int().min(300).max(3000).default(1200),
   humanizerLengthTolerancePct: z.number().int().min(5).max(50).default(20),
   /** all = every eligible paragraph (spec default); flagged = only paragraphs the local editor flagged (fewer ChatGPT prompts). */

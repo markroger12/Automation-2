@@ -279,7 +279,8 @@ describe('Image Studio (IMAGES stage)', () => {
 
   it('celebrity article, ChatGPT image search (owner’s earlier tool): gallery pictures and downloaded links, thumbnails skipped, distinct photos per slot', async () => {
     const { updateSettings } = await import('@/lib/settings');
-    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' } });
+    // The humanizer (off by default) gives a prompt after the gallery, to show it stays in the article chat.
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' }, content: { humanizerEnabled: true } });
     try {
       files.set('news-photo.jpg', await solid(30, 140, 200));
       const pictures = [await solid(200, 60, 60), await solid(60, 200, 60), await solid(10, 10, 10, 240, 135)];
@@ -327,7 +328,7 @@ describe('Image Studio (IMAGES stage)', () => {
       expect(after.every((c) => !c.newChat && c.conversationUrl === ARTICLE_CHAT)).toBe(true);
       expect(t.conversationUrl).toBe(ARTICLE_CHAT);
     } finally {
-      await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons' }, content: { humanizerEnabled: false } });
     }
   });
 

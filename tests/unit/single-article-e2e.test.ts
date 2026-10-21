@@ -59,6 +59,8 @@ beforeAll(async () => {
   ({ client } = await setupTestDb());
   const { seedAll } = await import('@/lib/seed');
   await seedAll(client);
+  // The humanizer is off by default (owner decision); the end-to-end prompt lists include it.
+  await (await import('@/lib/settings')).updateSettings({ content: { humanizerEnabled: true } });
   create = await import('@/lib/tasks/create');
   queue = await import('@/lib/queue');
   engine = await import('@/worker/pipeline/engine');

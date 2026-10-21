@@ -445,9 +445,15 @@ export async function getCampaign(id: string) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const sites = new Map((await db.website.findMany({ select: { id: true, name: true } })).map((s) => [s.id, s.name]));
   const progress = (await campaignProgress([id])).get(id) ?? emptyProgress();
+  // Categories of the rows' websites, for setting the category of several rows at once (owner request).
+  const siteIds = [...new Set(rows.map((r) => r.websiteId).filter((x): x is string => Boolean(x)))];
+  const cats = siteIds.length ? await db.category.findMany({ where: { websiteId: { in: siteIds } }, select: { id: true, name: true, websiteId: true }, orderBy: { name: 'asc' } }) : [];
+  const categories: Record<string, { id: string; name: string }[]> = {};
+  for (const cat of cats) (categories[cat.websiteId] ??= []).push({ id: cat.id, name: cat.name });
   return {
     ...(await settleStatus(c, progress)),
     progress,
+    categories,
     rows: rows.map((r) => ({
       ...r,
       secondaryKeywords: parseJson<string[]>(r.secondaryKeywords, []),

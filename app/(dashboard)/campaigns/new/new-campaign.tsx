@@ -171,6 +171,9 @@ export function NewCampaign() {
   const s = preview?.summary;
   const siteById = new Map(sites.map((x) => [x.id, x]));
   const sel = [...selected];
+  // Bulk category (owner request): the categories of the website the selected rows are on (one website at a time).
+  const selSiteIds = [...new Set((preview?.rows ?? []).filter((r) => selected.has(r.line)).map((r) => r.websiteId).filter((x): x is string => Boolean(x)))];
+  const selSite = selSiteIds.length === 1 ? siteById.get(selSiteIds[0]) : undefined;
 
   return (
     <div className="space-y-6">
@@ -302,6 +305,18 @@ export function NewCampaign() {
                 <span className="text-muted">{sel.length} selected:</span>
                 <Button size="sm" onClick={() => override(sel, { writer: 'celebrity-writer' })}>Celebrity</Button>
                 <Button size="sm" onClick={() => override(sel, { writer: 'tigram-writer' })}>Tigram</Button>
+                {selSite?.categories.length ? (
+                  <span className="inline-block w-44"><Select aria-label="Category for the selected rows" className="px-2 py-1 text-xs" value="" onChange={(e) => { if (e.target.value) override(sel, { categoryId: e.target.value }); }}>
+                    <option value="">Category…</option>
+                    {selSite.categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select></span>
+                ) : selSiteIds.length > 1 ? (
+                  <span className="text-muted" title="The selected rows are on several websites; select rows of one website to set their category together.">Category: one website at a time</span>
+                ) : null}
                 <Button size="sm" onClick={() => override(sel, { confirmVariant: true })}>Keep as separate articles</Button>
                 <Button size="sm" onClick={() => override(sel, { include: false })}>Exclude</Button>
                 <Button size="sm" onClick={() => override(sel, { include: true })}>Include</Button>

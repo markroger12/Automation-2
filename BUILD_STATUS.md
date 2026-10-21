@@ -1809,3 +1809,12 @@ integration: images 10/10, image-tools 5/5 (real MediaPipe with BAS_TEST_MEDIAPI
              migration-upgrade 1/1
 npx next build                      # compiled
 ```
+
+## Owner request: bulk category in Bulk Campaigns
+- **New campaign → Preview:** when rows are selected, the bar has a **Category…** dropdown. It lists the categories of the website the selected rows are on, and sets that category on every selected row (the same preview correction as the per-row dropdown). If the rows are on several websites, the bar says to select one website at a time.
+- **Campaign page:** the same dropdown for rows that are not queued yet. It uses the existing `category` row action, and `getCampaign` now returns the categories of the rows' websites.
+- **Verified in Chromium against `next dev` (scratch database):**
+  - preview: three celebrity rows were all set to “Biography”;
+  - campaign page: a NEEDS_CATEGORY row became READY with its category, and “1 row(s) updated.” was shown;
+  - no console errors on either page.
+- **Commands:** `npx tsc --noEmit` (0 errors); `npx vitest run` (44 files, 304 tests pass).

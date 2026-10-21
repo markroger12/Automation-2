@@ -6,7 +6,7 @@ import { Ban, Download, Pause, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
-import { Input } from '@/components/form';
+import { Input, Select } from '@/components/form';
 import { Alert, Card, Chip, ProgressBar, StatusChip, buttonClasses, cx } from '@/components/ui';
 import { CampaignStatusChip, RowStatusChip, WRITER_LABEL } from '../shared';
 
@@ -17,6 +17,7 @@ interface Row {
   secondaryKeywords: string[];
   exampleTitle: string | null;
   websiteName: string | null;
+  websiteId: string | null;
   writer: string | null;
   writerSource: string | null;
   routerConfidence: number | null;
@@ -36,6 +37,7 @@ interface Campaign {
   website: { id: string; name: string };
   progress: { queued: number; running: number; review: number; drafts: number; failed: number; cancelled: number; waiting: number };
   rows: Row[];
+  categories: Record<string, { id: string; name: string }[]>;
 }
 
 const PAGE = 100;
@@ -179,6 +181,21 @@ export function CampaignDetail({ id }: { id: string }) {
               <Button size="sm" onClick={() => void rowAction('priority', { priority: Number(priority) || 0 })}>Set priority</Button>
               <Button size="sm" onClick={() => void rowAction('writer', { writer: 'celebrity-writer' })}>Celebrity</Button>
               <Button size="sm" onClick={() => void rowAction('writer', { writer: 'tigram-writer' })}>Tigram</Button>
+              {(() => {
+                // Bulk category (owner request): for rows of one website that are not queued yet.
+                const ids = [...new Set(c.rows.filter((r) => selected.has(r.id)).map((r) => r.websiteId).filter((x): x is string => Boolean(x)))];
+                const cats = ids.length === 1 ? (c.categories[ids[0]] ?? []) : [];
+                return cats.length ? (
+                  <span className="inline-block w-44"><Select aria-label="Category for the selected rows" className="px-2 py-1 text-xs" value="" onChange={(e) => { if (e.target.value) void rowAction('category', { categoryId: e.target.value }); }}>
+                    <option value="">Category…</option>
+                    {cats.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </Select></span>
+                ) : null;
+              })()}
               <Button size="sm" onClick={() => void rowAction('confirm-variant')}>Keep as separate</Button>
             </span>
           ) : null}

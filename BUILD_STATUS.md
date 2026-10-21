@@ -1944,4 +1944,5 @@ npx vitest run --config vitest.integration.config.ts
 stuck-page tests on 3.2.4           # 2 failed: three retries on the stuck page with the owner's messages
 stuck-page retry test, background reload switched off   # failed (timed out), as expected
 stuck-page, missing-DOM and handshake tests on the final 3.2.5 files   # 5 passed
+next build                          # compiled
 ```

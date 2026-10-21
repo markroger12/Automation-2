@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Ban, Download, Pause, Play, RotateCcw } from 'lucide-react';
+import { Ban, Download, Pause, Play, RotateCcw, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Input } from '@/components/form';
@@ -57,6 +58,24 @@ export function CampaignDetail({ id }: { id: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [priority, setPriority] = useState('0');
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteArticles, setDeleteArticles] = useState(true);
+  const router = useRouter();
+
+  async function removeCampaign() {
+    setBusy(true);
+    try {
+      const res = await api<{ articles: number; deleted: number; deleting: number }>(`/api/campaigns/${id}`, { method: 'DELETE', body: { articles: deleteArticles } });
+      toast('success', `Campaign deleted${deleteArticles ? ` with ${res.deleted} article(s)${res.deleting ? ` (${res.deleting} still running, deleted when they stop)` : ''}` : '; its articles were kept'}. WordPress was not changed.`);
+      router.push('/campaigns');
+      router.refresh();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
+    }
+  }
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => setC((await api<{ campaign: Campaign }>(`/api/campaigns/${id}`)).campaign), [id]);
@@ -119,6 +138,9 @@ export function CampaignDetail({ id }: { id: string }) {
             <a className={buttonClasses('secondary', 'sm')} href={`/api/campaigns/${id}/export`}>
               <Download className="h-4 w-4" /> Export CSV
             </a>
+            <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
           </div>
         }
       >
@@ -240,6 +262,15 @@ export function CampaignDetail({ id }: { id: string }) {
         ) : null}
       </Card>
 
+      <ConfirmDialog open={confirmDelete} title="Delete this campaign?" confirmLabel="Delete campaign" tone="danger" busy={busy} onCancel={() => setConfirmDelete(false)} onConfirm={() => void removeCampaign()}>
+        <div className="space-y-2">
+          <p>The campaign and its rows are removed from this app. Drafts and posts in WordPress stay as they are.</p>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={deleteArticles} onChange={(e) => setDeleteArticles(e.target.checked)} />
+            <span>Also delete its articles from the app (a report of each is saved in data\backups\deleted-articles first)</span>
+          </label>
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog open={confirmCancel} title="Cancel this campaign?" confirmLabel="Cancel campaign" tone="danger" busy={busy} onCancel={() => setConfirmCancel(false)} onConfirm={() => { setConfirmCancel(false); void act('cancel', undefined, 'Campaign cancelled. Articles stop at a safe point; nothing is deleted.'); }}>
         Rows that have not started are cancelled and running articles stop at a safe point. Drafts already saved stay in WordPress, and nothing is deleted.
       </ConfirmDialog>

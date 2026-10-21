@@ -52,7 +52,10 @@ export async function overrideQuality(taskId: string, raw: unknown) {
   const { reason } = overrideSchema.parse(raw);
   const task = await loadTask(taskId);
   await assertIdle(taskId);
-  const options = { ...parseJson<Record<string, unknown>>(task.options, {}), qualityOverride: true, qualityOverrideReason: reason };
+  // “Approve despite review reasons” on a task held by the duplicate pre-check allows the duplicate as well.
+  const duplicate = await heldForDuplicate(taskId, task.reviewReasons);
+  const options = { ...parseJson<Record<string, unknown>>(task.options, {}), qualityOverride: true, qualityOverrideReason: reason, ...(duplicate ? { allowDuplicate: true } : {}) };
+  if (duplicate) await db.articleStage.updateMany({ where: { taskId, key: 'DUPLICATE_PRECHECK' }, data: { status: 'PENDING', error: null } });
   await db.articleTask.update({ where: { id: taskId }, data: { options: JSON.stringify(options), status: 'QUEUED', message: 'Owner approved despite review reasons.', nextAction: null } });
   await db.articleStage.updateMany({ where: { taskId, key: { in: ['QUALITY_GATE', 'VERIFIED_COMPLETE'] }, status: { in: ['FAILED', 'WAITING', 'COMPLETED'] } }, data: { status: 'PENDING', error: null } });
   await audit('task.quality-override', 'ArticleTask', taskId, { reason });
@@ -79,7 +82,7 @@ export async function approveWaiting(taskId: string, reason: string): Promise<'t
     return 'article';
   }
   if (task.status === 'NEEDS_REVIEW') {
-    if (parseJson<string[]>(task.reviewReasons, []).some((r) => r.startsWith('Duplicate keyword'))) {
+    if (await heldForDuplicate(taskId, task.reviewReasons)) {
       await allowDuplicate(taskId);
       return 'duplicate';
     }
@@ -87,6 +90,17 @@ export async function approveWaiting(taskId: string, reason: string): Promise<'t
     return 'review';
   }
   throw new AppError(409, 'CONFLICT', `not waiting for an approval (${task.status.toLowerCase().replace(/_/g, ' ')})`);
+}
+
+/**
+ * Is the task held by the same-site duplicate pre-check? Its reasons read “Possible duplicate on this website: …”
+ * (owner report: approving such a task did not continue, because only “Duplicate keyword …” was recognised and the
+ * plain review approval left the pre-check holding it again).
+ */
+export async function heldForDuplicate(taskId: string, reviewReasons: string | null): Promise<boolean> {
+  if (parseJson<string[]>(reviewReasons, []).some((r) => /^(Possible duplicate|Duplicate keyword)/.test(r))) return true;
+  const stage = await db.articleStage.findUnique({ where: { taskId_key: { taskId, key: 'DUPLICATE_PRECHECK' } }, select: { status: true } });
+  return stage?.status === 'FAILED';
 }
 
 /** Owner confirms an intentional duplicate keyword on the same site. */

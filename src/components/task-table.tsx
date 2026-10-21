@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Ban, CheckCircle2, ExternalLink, Play, RotateCcw, Search } from 'lucide-react';
+import { Ban, CheckCircle2, ExternalLink, Play, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { moduleDisplayName } from '@/lib/domain';
 import type { TaskListRow } from '@/lib/tasks/query';
@@ -58,7 +58,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<{ action: 'cancel' | 'retry' | 'approve'; ids: string[] } | null>(null);
+  const [confirm, setConfirm] = useState<{ action: 'cancel' | 'retry' | 'approve' | 'delete'; ids: string[] } | null>(null);
   const [approveReason, setApproveReason] = useState('');
   const [limit, setLimit] = useState(100);
   const lastLoad = useRef<Date | null>(null);
@@ -99,10 +99,13 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
     return () => clearInterval(id);
   }, [load, pollMs]);
 
-  async function act(action: 'cancel' | 'retry' | 'resume' | 'approve', ids: string[]) {
+  async function act(action: 'cancel' | 'retry' | 'resume' | 'approve' | 'delete', ids: string[]) {
     setBusy(action);
     try {
-      if (action === 'approve') {
+      if (action === 'delete') {
+        const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action } });
+        toast(res.failed ? 'error' : 'success', `${res.ok} article(s) deleted${res.failed ? `, ${res.failed} not deleted: ${res.results.find((r) => !r.ok)?.message ?? ''}` : ''}. A running one is deleted as soon as it stops.`);
+      } else if (action === 'approve') {
         const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action, reason: approveReason } });
         const skipped = res.results.filter((r) => !r.ok);
         toast(res.ok ? 'success' : 'error', `${res.ok} task(s) approved${skipped.length ? `, ${skipped.length} skipped (${skipped[0].message ?? 'not waiting for an approval'})` : ''}.`);
@@ -218,6 +221,9 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
           </Button>
           <Button size="sm" variant="danger" onClick={() => setConfirm({ action: 'cancel', ids: [...selected] })} loading={busy === 'cancel'}>
             <Ban className="h-3.5 w-3.5" /> Cancel selected
+          </Button>
+          <Button size="sm" variant="danger" onClick={() => setConfirm({ action: 'delete', ids: [...selected] })} loading={busy === 'delete'}>
+            <Trash2 className="h-3.5 w-3.5" /> Delete selected
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
             Clear
@@ -373,6 +379,9 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                         <Ban className="h-3.5 w-3.5" /> Cancel
                       </Button>
                     ) : null}
+                    <Button size="sm" variant="ghost" onClick={() => setConfirm({ action: 'delete', ids: [r.id] })} title="Delete this article from the app (WordPress is not changed)" aria-label={`Delete ${r.keyword}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -395,9 +404,9 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
       </div>
       <ConfirmDialog
         open={Boolean(confirm)}
-        title={confirm?.action === 'cancel' ? `Cancel ${confirm.ids.length} task(s)?` : confirm?.action === 'approve' ? `Approve ${confirm.ids.length} task(s)?` : `Retry ${confirm?.ids.length ?? 0} task(s)?`}
-        confirmLabel={confirm?.action === 'cancel' ? 'Cancel tasks' : confirm?.action === 'approve' ? 'Approve' : 'Retry'}
-        tone={confirm?.action === 'cancel' ? 'danger' : 'primary'}
+        title={confirm?.action === 'cancel' ? `Cancel ${confirm.ids.length} task(s)?` : confirm?.action === 'delete' ? `Delete ${confirm.ids.length} article(s)?` : confirm?.action === 'approve' ? `Approve ${confirm.ids.length} task(s)?` : `Retry ${confirm?.ids.length ?? 0} task(s)?`}
+        confirmLabel={confirm?.action === 'cancel' ? 'Cancel tasks' : confirm?.action === 'delete' ? 'Delete' : confirm?.action === 'approve' ? 'Approve' : 'Retry'}
+        tone={confirm?.action === 'cancel' || confirm?.action === 'delete' ? 'danger' : 'primary'}
         busy={Boolean(busy)}
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
@@ -408,6 +417,8 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
       >
         {confirm?.action === 'cancel' ? (
           'Work stops at the next safe point. Completed stage outputs, prompts and responses are kept; nothing is deleted.'
+        ) : confirm?.action === 'delete' ? (
+          'The articles are removed from this app, with their stages, prompts and answers. Drafts and posts in WordPress stay as they are. A report of each article is saved in data\\backups\\deleted-articles first. A running article stops and is deleted when it stops.'
         ) : confirm?.action === 'approve' ? (
           <div className="space-y-2">
             <p>Each task gets the approval it is waiting for, as on its article page:</p>

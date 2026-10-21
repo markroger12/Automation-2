@@ -34,6 +34,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'targetArticlesPerHour', label: 'Target verified drafts per hour', type: 'number', min: 1, max: 60, help: 'Measured objective, not a guarantee.' },
       { key: 'manualTitleApproval', label: 'Manual title approval', type: 'boolean', help: 'Pause after TITLES so you can pick or edit the title.' },
       { key: 'manualArticleApproval', label: 'Manual article approval', type: 'boolean', help: 'Pause before the WordPress draft is created.' },
+      { key: 'holdForReview', label: 'Hold articles for review', type: 'boolean', help: 'Off (default): review reasons never stop an article. They are shown as notes, the draft is saved and the article completes. A draft with a serious problem is saved but never published automatically by a workflow. On: the old behaviour (Needs review).' },
       { key: 'autoSendToWordPress', label: 'Create WordPress drafts automatically', type: 'boolean', help: 'Always as drafts. Publishing requires the per-site switch and the scheduler.' },
       { key: 'createMissingCategory', label: 'Allow creating missing categories', type: 'boolean' },
       { key: 'createMissingTags', label: 'Create missing WordPress tags', type: 'boolean', help: 'Off: tags that do not exist yet are skipped with a note.' },

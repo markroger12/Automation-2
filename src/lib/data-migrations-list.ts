@@ -1,6 +1,7 @@
 import { registerDataMigration } from './data-migrations';
 import { RETIREMENT_MIGRATION_ID, retireCelebrityWriter2 } from './retirement';
 import { SITE_OVERRIDES_MIGRATION_ID, unpinDefaultSiteOverrides } from './site-overrides-migration';
+import { REVIEW_NOTES_MIGRATION_ID, reviewReasonsBecomeNotes } from './review-notes-migration';
 
 /** Built-in data migrations are registered here as milestones add them. */
 export function loadBuiltInDataMigrations(): void {
@@ -13,5 +14,10 @@ export function loadBuiltInDataMigrations(): void {
     id: SITE_OVERRIDES_MIGRATION_ID,
     description: 'Clear website setting overrides that were saved as the full set of shipped defaults (so global settings apply again); groups with any owner value are kept. Backup written first.',
     run: unpinDefaultSiteOverrides,
+  });
+  registerDataMigration({
+    id: REVIEW_NOTES_MIGRATION_ID,
+    description: 'Review system off by default: articles held only for review reasons with a verified WordPress draft become COMPLETED; the reasons stay as notes (backup written first).',
+    run: reviewReasonsBecomeNotes,
   });
 }

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Ban, Download, ExternalLink, Play, RotateCcw } from 'lucide-react';
+import { Ban, Download, ExternalLink, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, CopyButton, RelativeTime, Tabs, useToast } from '@/components/client';
@@ -29,6 +29,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
   const [tab, setTab] = useState<TabId>((BASE_TABS as readonly string[]).includes(initialTab ?? '') ? (initialTab as TabId) : 'overview');
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const live = !['COMPLETED', 'CANCELLED', 'FAILED'].includes(task.status);
 
   const reload = useCallback(async () => {
@@ -47,6 +48,21 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     }, 4000);
     return () => clearInterval(id);
   }, [live, reload]);
+
+  async function remove() {
+    setBusy('delete');
+    try {
+      const res = await api<{ status: 'deleted' | 'deleting' }>(`/api/tasks/${task.id}`, { method: 'DELETE' });
+      toast('success', res.status === 'deleted' ? 'Article deleted from the app. WordPress was not changed.' : 'The running step stops first; the article is deleted then.');
+      router.push('/queue');
+      router.refresh();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(null);
+      setConfirmDelete(false);
+    }
+  }
 
   async function action(name: 'cancel' | 'retry' | 'resume') {
     setBusy(name);
@@ -135,6 +151,9 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
                   <Ban className="h-4 w-4" /> Cancel
                 </Button>
               ) : null}
+              <Button variant="danger" onClick={() => setConfirmDelete(true)} loading={busy === 'delete'}>
+                <Trash2 className="h-4 w-4" /> Delete
+              </Button>
               {task.wpEditUrl ? (
                 <a className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700" href={task.wpEditUrl} target="_blank" rel="noreferrer">
                   WordPress draft #{task.wpPostId} <ExternalLink className="h-4 w-4" />
@@ -166,6 +185,17 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
           </Alert>
         </div>
       ) : null}
+      {task.reviewReasonList.length > 0 && task.group !== 'review' ? (
+        <div className="mb-4">
+          <Alert tone="info" title={`Notes (${task.reviewReasonList.length})`}>
+            <ul className="list-disc pl-5">
+              {task.reviewReasonList.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          </Alert>
+        </div>
+      ) : null}
       {task.reviewReasonList.length > 0 && task.group === 'review' ? (
         <div className="mb-4">
           <Alert tone="warning" title="Review reasons">
@@ -176,7 +206,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
             </ul>
             {!task.legacy ? (
               <div className="mt-3 flex flex-wrap gap-2">
-                {task.reviewReasonList.some((r) => r.startsWith('Duplicate keyword')) ? (
+                {task.reviewReasonList.some((r) => /^(Possible duplicate|Duplicate keyword)/.test(r)) ? (
                   <Button size="sm" onClick={() => void reviewAction('allow-duplicate')}>
                     Allow duplicate and continue
                   </Button>
@@ -204,6 +234,9 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
         {(EXTRA_TABS as readonly string[]).includes(tab) ? <ArticleExtraTabs tab={tab as (typeof EXTRA_TABS)[number]} task={task} onChanged={reload} /> : null}
       </div>
 
+      <ConfirmDialog open={confirmDelete} title="Delete this article?" confirmLabel="Delete" tone="danger" busy={busy === 'delete'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()}>
+        The article is removed from this app with its stages, prompts and answers. The WordPress draft or post stays as it is. A report of the article is saved in data\backups\deleted-articles first.
+      </ConfirmDialog>
       <ConfirmDialog open={confirmCancel} title="Cancel this article?" confirmLabel="Cancel article" tone="danger" busy={busy === 'cancel'} onCancel={() => setConfirmCancel(false)} onConfirm={() => void action('cancel')}>
         Work stops at the next safe point. Completed outputs, prompts and responses are kept.
       </ConfirmDialog>

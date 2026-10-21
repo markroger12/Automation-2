@@ -25,6 +25,11 @@ export const browserSettingsSchema = z.object({
 export const workflowSettingsSchema = z.object({
   manualTitleApproval: z.boolean().default(false),
   manualArticleApproval: z.boolean().default(false),
+  /**
+   * Off (owner decision): review reasons never hold an article. They are kept as notes, the draft is saved and the
+   * article completes. A draft with a hard stop is still saved but never published automatically by a workflow.
+   */
+  holdForReview: z.boolean().default(false),
   autoSendToWordPress: z.boolean().default(true),
   createMissingCategory: z.boolean().default(false),
   createMissingTags: z.boolean().default(true),
@@ -144,7 +149,7 @@ function overridable<S extends z.ZodRawShape, K extends keyof S & string>(shape:
 export const SITE_OVERRIDE_KEYS = {
   content: ['maxArticleWordCount', 'faqCount', 'quickBioRows', 'tigramWordRange', 'humanizerEnabled'],
   seo: ['reviewThreshold', 'rankMathTargetScore', 'rankMathMode', 'externalLinks', 'maxExternalLinks', 'internalLinks', 'articleImages', 'imagesRequired', 'imageOutputSize'],
-  workflow: ['manualTitleApproval', 'manualArticleApproval', 'autoSendToWordPress', 'createMissingCategory'],
+  workflow: ['manualTitleApproval', 'manualArticleApproval', 'holdForReview', 'autoSendToWordPress', 'createMissingCategory'],
 } as const;
 
 /** Per-site overrides: only content/seo/workflow keys that make sense per site. Unset = use the global setting. */
@@ -163,6 +168,7 @@ export const taskOptionsSchema = z.object({
   images: z.enum(['site', 'on', 'off']).default('site'),
   manualTitleApproval: z.boolean().optional(),
   manualArticleApproval: z.boolean().optional(),
+  holdForReview: z.boolean().optional(),
   reviewThreshold: z.number().int().min(0).max(100).optional(),
   rankMathTargetScore: z.number().int().min(0).max(100).optional(),
   externalLinks: z.boolean().optional(),
@@ -190,6 +196,7 @@ export interface EffectiveTaskConfig {
   internalLinkLineTarget: 'previous-article' | 'most-related';
   manualTitleApproval: boolean;
   manualArticleApproval: boolean;
+  holdForReview: boolean;
   reviewThreshold: number;
   rankMathTargetScore: number;
   maxRankMathAttempts: number;
@@ -232,6 +239,7 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     internalLinkLineTarget: global.seo.internalLinkLineTarget,
     manualTitleApproval: pick(options.manualTitleApproval, site.workflow.manualTitleApproval, global.workflow.manualTitleApproval),
     manualArticleApproval: pick(options.manualArticleApproval, site.workflow.manualArticleApproval, global.workflow.manualArticleApproval),
+    holdForReview: pick(options.holdForReview, site.workflow.holdForReview, global.workflow.holdForReview),
     reviewThreshold: pick(options.reviewThreshold, site.seo.reviewThreshold, global.seo.reviewThreshold),
     rankMathTargetScore: pick(options.rankMathTargetScore, site.seo.rankMathTargetScore, global.seo.rankMathTargetScore),
     maxRankMathAttempts: global.seo.maxRankMathAttempts,

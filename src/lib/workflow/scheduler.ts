@@ -105,7 +105,13 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
   for (const kw of writing) {
     const task = tasks.find((t) => t.id === kw.taskId);
     if (!task) continue;
-    if (task.status === 'COMPLETED' && task.wpPostId) {
+    const blocked = parseJson<{ publishBlocked?: string[] }>(task.options, {}).publishBlocked;
+    if (task.status === 'COMPLETED' && task.wpPostId && publishing && blocked?.length) {
+      // Saved without holding for review, but with a serious problem: never published automatically.
+      await release(kw.id);
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'FAILED', lastError: `Draft #${task.wpPostId} saved but not published: ${blocked.join(' ').slice(0, 300)} Fix the draft, then publish it yourself or retry here.` } });
+      report.failed++;
+    } else if (task.status === 'COMPLETED' && task.wpPostId) {
       await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'READY', lastError: publishing ? null : 'Draft verified. Publishing is off for this website, so it stays a draft.' } });
       kw.status = 'READY';
       report.ready++;

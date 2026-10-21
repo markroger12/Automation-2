@@ -306,6 +306,27 @@ export async function cancelCampaign(id: string) {
   return { ok: true, tasks: tasks.length };
 }
 
+/**
+ * Deletes the campaign and its rows (owner request). With `withArticles`, its articles are deleted from the app too
+ * (each report is backed up first, see deleteTask); otherwise they stay and only lose the campaign link. WordPress is
+ * never changed.
+ */
+export async function deleteCampaign(id: string, withArticles: boolean) {
+  const campaign = await loadCampaign(id);
+  const tasks = await db.articleTask.findMany({ where: { campaignId: id }, select: { id: true } });
+  const { deleteTask } = await import('../tasks/delete');
+  let deleted = 0;
+  let deleting = 0;
+  if (withArticles) {
+    for (const t of tasks) (await deleteTask(t.id)).status === 'deleted' ? deleted++ : deleting++;
+  } else {
+    await db.articleTask.updateMany({ where: { campaignId: id }, data: { campaignId: null } });
+  }
+  await db.campaign.delete({ where: { id } });
+  await audit('campaign.delete', 'Campaign', id, { name: campaign.name, withArticles, articles: tasks.length, deleted, deleting });
+  return { ok: true, articles: tasks.length, deleted, deleting };
+}
+
 export const rowActionSchema = z.object({
   rowIds: z.array(z.string().max(40)).min(1).max(1000),
   action: z.enum(['retry', 'priority', 'writer', 'category', 'include', 'exclude', 'confirm-variant']),

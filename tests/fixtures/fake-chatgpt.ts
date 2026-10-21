@@ -42,6 +42,11 @@ export interface FakeChatGptConfig {
   galleryCount?: number;
   /** Extra gallery pictures on other hosts (the extension reports these as links). */
   galleryLinks?: string[];
+  /**
+   * Image-search answers show these pictures as a grid of captioned cards that the page cannot load (broken-picture
+   * icon with its alt text), while the address itself works (owner report: “Open image in new tab” shows the photo).
+   */
+  galleryBroken?: string[];
 }
 
 const APP = fs.readFileSync(path.join(__dirname, 'fake-chatgpt', 'app.js'), 'utf8');
@@ -61,6 +66,8 @@ export async function installFakeChatGPT(context: BrowserContext, getConfig: () 
   };
   // A news site's picture shown in the gallery: it loads in the page, but the extension may not read it (other host).
   await context.route('https://news.example/**', async (route) => route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor('news_9') }));
+  // A picture host that refuses pictures embedded in another site's page (the card shows a broken-picture icon).
+  await context.route('https://broken.example/**', async (route) => route.fulfill({ status: 403, contentType: 'text/html', body: 'Forbidden' }));
   await context.route('https://chatgpt.com/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());

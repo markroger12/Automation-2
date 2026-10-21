@@ -145,10 +145,15 @@
           t.gallery && doneStreaming
             ? `<div class="image-gallery">${Array.from({ length: t.gallery }, (_, k) => `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`).join('')}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
             : '';
-        const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>${gallery}`;
+        // galleryBroken: captioned cards whose pictures the page cannot load (a broken-picture icon with its alt text).
+        const cards =
+          t.galleryBroken && t.galleryBroken.length && doneStreaming
+            ? `<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">${t.galleryBroken.map((u, k) => `<div><div style="width:470px;height:280px;display:flex;align-items:center;justify-content:center;background:#eee;border-radius:12px"><img src="${esc(u)}" alt="Photo ${k + 1} of the person"></div><div>${k + 1}. Photo ${k + 1}</div></div>`).join('')}</div>`
+            : '';
+        const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>${gallery}${cards}`;
         if (C.turnMarkup === 'article') return `<article data-testid="conversation-turn-${i}" data-turn="assistant"><h6 class="sr-only">ChatGPT said:</h6><div data-message-author-role="assistant">${content}</div></article>`;
         if (C.turnMarkup === 'units') {
-          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${md(t.text || '')}</div>${gallery}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
+          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${md(t.text || '')}</div>${gallery}${cards}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
         }
         return std
           ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="assistant">${content}</div></div>`
@@ -328,9 +333,9 @@
       image = `/backend-api/estuary/content?id=file_${S.sends}&sig=test`;
       full = full.slice(6).trim();
     }
-    const galleryAnswer = C.galleryCount && /image gallery/i.test(text);
+    const galleryAnswer = (C.galleryCount || C.galleryBroken) && /image gallery/i.test(text);
     if (galleryAnswer) full = 'Here are recent photos.';
-    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0, image, gallery: galleryAnswer ? C.galleryCount : 0, galleryLinks: galleryAnswer ? C.galleryLinks || [] : [] });
+    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0, image, gallery: galleryAnswer ? C.galleryCount || 0 : 0, galleryLinks: galleryAnswer ? C.galleryLinks || [] : [], galleryBroken: galleryAnswer ? C.galleryBroken || [] : [] });
     save(id, turns);
     window.__generating = true;
     render();

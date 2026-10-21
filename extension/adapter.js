@@ -406,8 +406,15 @@
       if (img.closest('form, nav, aside, [data-testid*="composer"]')) return false;
       if (/avatar|favicon|logo|icon/i.test(`${img.alt || ''} ${src} ${img.className || ''}`)) return false;
       const r = img.getBoundingClientRect();
-      return r.width >= 60 && r.height >= 60;
+      if (r.width >= 60 && r.height >= 60) return true;
+      // Owner report: a picture the page could not load shows as a small broken-picture icon with its alt text, while
+      // its address works (“Open image in new tab”). It is still a gallery picture: the app downloads it from there.
+      return brokenPicture(img) && (img.alt || '').trim().length >= 3 && r.width > 0;
     });
+  }
+
+  function brokenPicture(img) {
+    return img.complete && img.naturalWidth === 0 && /^https?:/i.test(img.currentSrc || img.src || '');
   }
 
   function galleryDialog() {
@@ -775,6 +782,7 @@
     turnKey,
     isPictureHost,
     galleryThumbs,
+    brokenPicture,
     galleryDialog,
     galleryNextButton,
     closeGalleryDialog,

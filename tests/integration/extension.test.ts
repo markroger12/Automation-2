@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.5');
+    expect(ext?.version).toBe('3.2.6');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -360,6 +360,17 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(await chatPage()!.evaluate(() => (window as unknown as { __galleryOpened?: number }).__galleryOpened)).toBe(1);
     expect((await fakeStats()).sends).toBe(1);
   });
+
+  it('owner report: gallery pictures the page cannot show (broken-picture icons) are reported as links for the app to download', async () => {
+    const broken = [1, 2, 3, 4].map((n) => `https://broken.example/andre-rock-${n}.jpg`);
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryBroken: broken };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Search the web for real photos of Andre Rock and show them as an image gallery.', { expectGallery: true });
+    const done = await responseDone(req.responseId, 150_000);
+    expect(done.status).toBe('COMPLETED');
+    expect(JSON.parse(done.imageLinks ?? '[]').map((l: { url: string }) => l.url)).toEqual(broken);
+    expect((await fakeStats()).sends).toBe(1);
+  }, 200_000);
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {
     fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 10 };

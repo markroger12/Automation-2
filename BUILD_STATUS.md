@@ -1946,3 +1946,34 @@ stuck-page retry test, background reload switched off   # failed (timed out), as
 stuck-page, missing-DOM and handshake tests on the final 3.2.5 files   # 5 passed
 next build                          # compiled
 ```
+
+## Owner report: celebrity gallery pictures shown as broken-picture icons (extension 3.2.6)
+
+**Reported by the owner** (screenshots):
+- A celebrity image search sometimes answered with a grid of captioned cards (“1. Andre Rock portrait”, “2. Andre with Chris Rock” …). Each card showed only a broken-picture icon.
+- Right-click → “Open image in new tab” showed the photo. So the address works, but the ChatGPT page could not show it.
+- This happens only for celebrity photos.
+
+**Cause**
+- The extension takes gallery pictures from images of at least 60×60 px on the page.
+- A picture the page cannot load is drawn as a small icon with its alt text, about 20 px high. So it never counted.
+- After waiting 90 s the job reported “ChatGPT showed no picture gallery”, and the article got none of those photos.
+- **Reproduced on the fake page** with a new `galleryBroken` option: captioned cards whose pictures the page cannot load, from a host that refuses them (HTTP 403 inside the page). The 3.2.5 extension reported no picture at all.
+
+**Fix — extension 3.2.6**
+- **Broken pictures count.** A picture the page failed to load still counts as a gallery picture when it has an address and a caption (alt text). This applies after the prompt only, never to avatars, icons, logos or the composer.
+- **Sent as a link.** Such a picture cannot be read in the page, so the extension reports its address as a link. The app downloads it with its own safe fetcher, which works like “Open image in new tab”. That path already existed for pictures on other hosts and is covered by the `images` integration test (“downloaded links”).
+- **Viewer.** The picture viewer is opened only from a picture the page shows. A broken card may be a link that opens another tab.
+
+**Tests:** new extension test “gallery pictures the page cannot show (broken-picture icons) are reported as links”. It failed on 3.2.5 (no links, after the 90 s wait) and passes now. The existing image-search test still passes.
+
+**Not verified here:** the real ChatGPT page with this answer. Which host refused the pictures, and why, is not known; the fake uses HTTP 403.
+
+**Commands run**
+```
+new broken-picture test on 3.2.5    # failed: expected 4 links, received []
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 35/35
+```
+The app's code did not change in this step, only the expected extension version. The `images` integration test (10/10, including the downloaded gallery links) passed in the run before it.

@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.2.5';
+  const EXTENSION_VERSION = '3.2.6';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -348,7 +348,10 @@
       picked.push({ src, width: img.naturalWidth || 0, height: img.naturalHeight || 0 });
     };
     try {
-      thumbs[0].click();
+      // Open the viewer from a picture the page shows (a broken one may be a link that opens another tab).
+      const opener = thumbs.find((img) => !A.brokenPicture(img));
+      if (!opener) throw new Error('no picture to open');
+      opener.click();
       await sleep(1200);
       for (let step = 0; step < 12 && picked.length < 10; step++) {
         const dialog = A.galleryDialog();

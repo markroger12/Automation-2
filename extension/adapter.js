@@ -18,6 +18,7 @@
       '#prompt-textarea[contenteditable="true"]',
       'div[contenteditable="true"]#prompt-textarea',
       'div.ProseMirror[contenteditable="true"]',
+      '[contenteditable="true"][role="textbox"]',
       'textarea#prompt-textarea',
       'form textarea[placeholder]',
       'main textarea',
@@ -139,11 +140,56 @@
     });
   }
 
+  const PROMPT_PLACEHOLDER = /ask chatgpt|ask anything|message chatgpt|nachricht an chatgpt|frag chatgpt|frage chatgpt/i;
+
+  /** The form around a textbox when it is the chat's composer form (it holds the send, submit or voice button). */
+  function composerFormOf(el) {
+    const form = el.closest('form');
+    if (!form) return null;
+    const button = form.querySelector([...SELECTORS.sendButton, ...SELECTORS.stopButton, 'button[type="submit"]', 'button[aria-label*="voice" i]', 'button[aria-label*="dictat" i]', 'button[data-testid*="composer"]'].join(','));
+    return button ? form : null;
+  }
+
+  function placeholderOf(el) {
+    const inner = el.querySelector && el.querySelector('[data-placeholder]');
+    return `${el.getAttribute('aria-label') || ''} ${el.getAttribute('placeholder') || ''} ${el.getAttribute('data-placeholder') || ''} ${inner ? inner.getAttribute('data-placeholder') : ''}`;
+  }
+
+  /**
+   * The chat composer. Owner report (FINAL_ARTICLE, “Chat composer not found” for hours): in ChatGPT's “Work”
+   * layout the whole page can sit in a canvas-styled container, and the canvas exclusion (meant for document editors)
+   * then refused the real composer. A textbox in the composer form (with the send/voice button) is always the
+   * composer; a writing block never is.
+   */
   function findComposer() {
-    for (const el of qsAll(SELECTORS.composer)) {
-      if (isVisible(el) && !insideExcluded(el)) return el;
+    const candidates = qsAll(SELECTORS.composer).filter((el) => isVisible(el));
+    const inForm = candidates.find((el) => composerFormOf(el) && !el.closest('[data-writing-block], .writing-block'));
+    if (inForm) return inForm;
+    for (const el of candidates) if (!insideExcluded(el)) return el;
+    // Last resort: a visible textbox whose placeholder says it is the chat prompt (“Ask ChatGPT”).
+    for (const el of document.querySelectorAll('[contenteditable="true"], textarea')) {
+      if (isVisible(el) && PROMPT_PLACEHOLDER.test(placeholderOf(el)) && !el.closest('[data-writing-block], .writing-block')) return el;
     }
     return null;
+  }
+
+  /** What the page offers as text boxes, for the “composer not found” message (no text content). */
+  function composerDiagnostics() {
+    const boxes = Array.from(document.querySelectorAll('[contenteditable="true"], textarea')).slice(0, 5);
+    if (!boxes.length) return 'no editable text box on the page';
+    return boxes
+      .map((el) => {
+        const excluded = SELECTORS.composerExclusions.find((sel) => {
+          try {
+            return Boolean(el.closest(sel));
+          } catch (e) {
+            return false;
+          }
+        });
+        const ph = placeholderOf(el).replace(/\s+/g, ' ').trim().slice(0, 30);
+        return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : ''}${isVisible(el) ? '' : ' hidden'}${el.closest('form') ? ' in form' : ''}${composerFormOf(el) ? ' (composer form)' : ''}${excluded ? ` excluded by ${excluded}` : ''}${ph ? ` “${ph}”` : ''}`;
+      })
+      .join('; ');
   }
 
   function findButtonByText(patterns) {
@@ -737,6 +783,7 @@
     finalAnswerElement,
     genericAnswerAfter,
     generatedImagesAfter,
+    composerDiagnostics,
     imageInProgress,
     toMarkdown,
     composerText,

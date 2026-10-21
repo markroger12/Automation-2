@@ -32,6 +32,8 @@ export interface FakeChatGptConfig {
   chunkSize?: number;
   challengeClearsAfterMs?: number;
   answers?: string[];
+  /** The page sits in a canvas-classed container (ChatGPT's “Work” layout). */
+  workLayout?: boolean;
   /** 'unknown': generated pictures carry an address and alt text that match none of the known markers. */
   imageMarkup?: 'default' | 'unknown';
   /** A page-wide “streaming” marker stays after the picture is finished (owner report: 600 s “generating”). */

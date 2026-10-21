@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.3');
+    expect(ext?.version).toBe('3.2.4');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -537,5 +537,15 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(done.recovered).toBe(true);
     expect(done.resultText).toContain('The answer to the featured prompt.');
     expect(done.resultText).not.toContain('Cy Kass');
+  });
+
+  it("owner report: the chat composer inside a canvas-classed “Work” layout is still found (prompt sent once)", async () => {
+    fake = { variant: 'standard', mode: 'normal', workLayout: true };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Final article prompt in the Work layout');
+    const done = await responseDone(req.responseId, 120_000);
+    expect(done.error).toBeNull();
+    expect(done.status).toBe('COMPLETED');
+    expect((await fakeStats()).sends).toBe(1);
   });
 });

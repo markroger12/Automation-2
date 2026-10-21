@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.2.3';
+  const EXTENSION_VERSION = '3.2.4';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -106,14 +106,14 @@
       else if (s.state === 'lost') throw new JobError('CONVERSATION_LOST', 'The saved ChatGPT conversation could not be loaded.');
       await sleep(500);
     }
-    throw new JobError('ERROR', `ChatGPT composer did not become ready within ${readySec} seconds (the page layout may have changed; see the debug snapshot).`);
+    throw new JobError('ERROR', `ChatGPT composer did not become ready within ${readySec} seconds (the page layout may have changed; text boxes on the page: ${A.composerDiagnostics()}).`);
   }
 
   async function typeAndVerify(prompt) {
     let lastProblem = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const composer = A.findComposer();
-      if (!composer) throw new JobError('ERROR', 'Chat composer not found.');
+      if (!composer) throw new JobError('ERROR', `Chat composer not found (text boxes on the page: ${A.composerDiagnostics()}).`);
       A.clearComposer(composer);
       for (const chip of A.pastedTextChips()) {
         const remove = chip.querySelector('button');

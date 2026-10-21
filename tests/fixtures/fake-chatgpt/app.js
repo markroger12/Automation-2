@@ -175,7 +175,10 @@
         : '';
     // staleStreaming: a page-wide “streaming” marker that stays after the picture is finished (owner report).
     const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
-    root.innerHTML = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
+    // workLayout: the conversation shown in a “Work”/canvas layout — the whole page sits in a canvas-classed container
+    // (suspected for the owner's “Chat composer not found” after the long article).
+    const page = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
+    root.innerHTML = C.workLayout ? `<div class="work-canvas-layout bg-token-canvas">${page}</div>` : page;
     const ed = document.querySelector('#prompt-textarea, textarea');
     if (ed && draft && !generating) {
       if (ed.tagName === 'TEXTAREA') ed.value = draft;

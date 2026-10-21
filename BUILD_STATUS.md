@@ -1867,3 +1867,37 @@ integration: extension 30/30, images 10/10, image-tools 5/5, wordpress-drafts 10
              workflow-publish 6/6, content-refresh 5/5, migration-upgrade 1/1
 npx next build                      # compiled
 ```
+
+## Owner report: FINAL_ARTICLE stops with “Chat composer not found”, and Retry stops the same way (malaak compton rock; extension 3.2.4)
+
+**What the report showed**
+- FINAL_ARTICLE failed with “Chat composer not found” and later “the composer did not become ready within 60 seconds”.
+- Every Retry did run, but stopped at the same step within a minute, so it looked as if Retry did nothing.
+- The screenshots show ChatGPT open in the “Work” layout with the usual “Ask ChatGPT” box.
+
+**Likely cause (inferred; the real page markup was not available)**
+- The extension refuses text boxes inside canvas or document editors (`[class*="canvas"]` and similar), so it never types into a writing block.
+- If the Work layout wraps the whole page in a canvas-styled container, that rule also refuses the real composer, and no composer is found.
+- Reproduced on the fake page with a new `workLayout` option (the page inside `<div class="work-canvas-layout bg-token-canvas">`). The committed 3.2.3 adapter timed out there; the prompt was never sent.
+
+**Fix — extension 3.2.4**
+- A text box inside the chat's composer form (the form holding the send, stop or voice button) is taken as the composer, even inside a canvas-styled container. A writing block is still never used.
+- If none is found, the earlier rule applies, then a visible text box whose placeholder is the chat prompt (“Ask ChatGPT”).
+- `[contenteditable="true"][role="textbox"]` was added to the composer selectors.
+- When no composer is found, the error now lists the page's text boxes (tag, role, visible or hidden, in the composer form or not, which exclusion refused it, and the first 30 characters of the placeholder). It never includes the text typed in them.
+- The app expects extension 3.2.4 (`src/lib/agent/version.ts`).
+
+**Tests**
+- New extension test: “the chat composer inside a canvas-classed Work layout is still found (prompt sent once)”. It fails (timeout) on the 3.2.3 adapter and passes now.
+- The alternate-DOM, markdown-link, `](` space and missing-DOM-marker tests still pass.
+
+**Not verified here:** the real ChatGPT Work layout. The fix rests on the report and the screenshots. If the error comes back, its new “text boxes on the page” part shows what the page offers.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                    # 10 files, 80 pass, 1 skipped (real MediaPipe: MP_SRC not set)
+                                    # extension 31/31
+```

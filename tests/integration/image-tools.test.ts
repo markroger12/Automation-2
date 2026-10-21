@@ -39,10 +39,14 @@ async function site(name: string): Promise<Website> {
 
 const stageData = async (taskId: string, key: string) => JSON.parse((await client.articleStage.findFirstOrThrow({ where: { taskId, key } })).outputJson ?? 'null');
 
-async function runCeleb(keyword: string, pictures: Buffer[], photoCheck?: string) {
+async function runCeleb(keyword: string, pictures: Buffer[], photoCheck?: string, twoPhotoFeatured = false) {
   const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer =>
-    /show them as an image gallery/.test(prompt) ? { text: 'Photos.', images: pictures } : photoCheck && /candidate editorial images/.test(prompt) ? photoCheck : cannedAnswer(stageKey, prompt, language, kw);
+    /show them as an image gallery/.test(prompt) ? { text: 'Photos.', images: pictures } : photoCheck && /photos from an image search, numbered 1 to/.test(prompt) ? photoCheck : cannedAnswer(stageKey, prompt, language, kw);
   const s = await site(`Tools ${keyword}`);
+  if (twoPhotoFeatured) {
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: s.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings('#0b5fff'), featured: presetSplit('#0b5fff') }) } });
+  }
   const cat = await client.category.findFirstOrThrow({ where: { websiteId: s.id } });
   const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword, websiteId: s.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: `tools:${keyword}` }, { source: 'SINGLE' });
   const t = await makeDriver(client, answer).drive(task.id);
@@ -116,22 +120,40 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
     expect(last.channels[2].mean).toBeGreaterThan(last.channels[0].mean);
   });
 
-  it('photo check: watermarked photos go last, a collage never becomes a body image, alt text is “Name – what it shows”', async () => {
-    const { updateSettings } = await import('@/lib/settings');
-    await updateSettings({ seo: { celebrityPhotoReview: true } });
-    try {
-      const pics = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000)];
-      const check = '1: watermark=yes | collage=no | alt=standing at a press wall\n2: watermark=no | collage=yes | alt=two photos side by side\n3: watermark=no | collage=no | alt=smiling on a red carpet';
-      const { data } = await runCeleb('jane checker', pics, check);
-      const notes = data.notes.join(' | ');
-      expect(notes).toMatch(/Photo check: 3 of 3 described, 1 with a watermark or site name \(used last\), 1 collage\(s\) of other sites \(never a body image\)/);
-      expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1']);
-      // The name is the Quick Bio's full name (the scripted answers describe Tom Kaulitz), then what the photo shows.
-      expect(data.slots[0].alt).toBe('Tom Kaulitz – smiling on a red carpet');
-      expect(data.slots[1].alt).toBe('Tom Kaulitz – standing at a press wall');
-    } finally {
-      await updateSettings({ seo: { celebrityPhotoReview: false } });
-    }
+  it('photo check (on by default): watermarked photos go last, a collage is left out, alt text is “Name – what it shows”', async () => {
+    const pics = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000)];
+    const check = '1: watermark=yes | collage=no | alt=standing at a press wall\n2: watermark=no | collage=yes | alt=two photos side by side\n3: watermark=no | collage=no | alt=smiling on a red carpet';
+    const { data } = await runCeleb('jane checker', pics, check);
+    const notes = data.notes.join(' | ');
+    expect(notes).toMatch(/Photo check: 3 of 3 described, 1 with a watermark or site name \(used last\), 1 collage\(s\) of other sites \(left out\)/);
+    expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1']);
+    // The name is the Quick Bio's full name (the scripted answers describe Tom Kaulitz), then what the photo shows.
+    expect(data.slots[0].alt).toBe('Tom Kaulitz – smiling on a red carpet');
+    expect(data.slots[1].alt).toBe('Tom Kaulitz – standing at a press wall');
+  });
+
+  it('owner report: a designed thumbnail of another site never becomes half of the two-photo featured image', async () => {
+    // Gallery order: a clean photo, another site's designed thumbnail (a circle drawn around one person), a clean photo.
+    const pics = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000)];
+    const sourceOf = async (data: { slots: { slot: string; sourceAssetIds: string[] }[] }, slot: string) => {
+      const ids = data.slots.find((x) => x.slot === slot)?.sourceAssetIds ?? [];
+      return Promise.all(ids.map(async (id) => (await sharp(fs.readFileSync(path.join(dataDir, (await client.mediaAsset.findUniqueOrThrow({ where: { id } })).filePath))).stats()).channels.map((c) => Math.round(c.mean))));
+    };
+    const green = (m: number[]) => m[1] > m[0] && m[1] > m[2];
+    // The answer as ChatGPT may write it: bold numbers, “Photo 2”, the collage named only in the description.
+    const check = '**1:** watermark=no | collage=no | alt=smiling at a dinner party\nPhoto 2: watermark=no | alt=promotional thumbnail, two men side by side with a circle\n3: watermark=no | collage=no | alt=standing in front of a brick wall';
+    const { data } = await runCeleb('collage person', pics, check, true);
+    const featured = await sourceOf(data, 'FEATURED');
+    expect(featured).toHaveLength(2);
+    expect(featured.some(green)).toBe(false);
+    expect(data.notes.join(' | ')).toMatch(/1 collage\(s\) of other sites \(left out\)/);
+    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED']);
+
+    // Only collages found: the featured image takes one (single-photo design) and says so; nothing else uses them.
+    const only = await runCeleb('only collages', [pics[1], await plain(120, 200, 90, 1600, 1000)], '1: watermark=no | collage=yes | alt=two photos side by side\n2: watermark=no | collage=yes | alt=a photo grid', true);
+    expect(only.data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED']);
+    expect(await sourceOf(only.data, 'FEATURED')).toHaveLength(1);
+    expect(only.data.notes.join(' | ')).toMatch(/Every photo found is a collage of another site; the featured image uses one of them/);
   });
 
   it.skipIf(!MP_SRC)('real MediaPipe: finds the face in a portrait; photos with a face come first and the crop centres on it', async () => {

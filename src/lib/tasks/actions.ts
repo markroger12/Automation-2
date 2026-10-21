@@ -170,6 +170,10 @@ export async function regenerateStage(taskId: string, stageKey: string) {
   }
   await db.chatGPTResponse.updateMany({ where: { taskId, stageKey: { in: plan }, status: { in: ['COMPLETED', 'PENDING'] } }, data: { status: 'SUPERSEDED' } });
   await db.queueJob.updateMany({ where: { taskId, queue: 'chatgpt', status: 'WAITING' }, data: { status: 'CANCELLED', errorCode: 'SUPERSEDED' } });
+  // New images follow today's photo check switch (owner report: an article made while it was off kept using collages).
+  if (plan.includes('IMAGES') && task.configSnapshot !== '{}') {
+    resets.configSnapshot = JSON.stringify({ ...parseJson<Record<string, unknown>>(task.configSnapshot, {}), celebrityPhotoReview: (await getSettings()).seo.celebrityPhotoReview });
+  }
   await db.articleTask.update({
     where: { id: taskId },
     data: { ...resets, status: 'QUEUED', message: `Regenerating ${stage.label} and ${plan.length - 1} dependent stage(s).`, nextAction: null, reviewReasons: '[]', verifiedCompleteAt: null, version: { increment: 1 } },

@@ -165,4 +165,37 @@ describe('owner requests: delete, duplicate approval, no review hold', () => {
     expect(on.humanizerEnabled).toBe(true);
     expect(inherit.humanizerEnabled).toBe(false);
   });
+
+  it('celebrity photo check on by default (earlier tool): saved “off” and unfinished articles are switched on once', async () => {
+    const { updateSettings, getSettings } = await import('@/lib/settings');
+    await updateSettings({ seo: { celebrityPhotoReview: false } });
+    const categoryId = (await client.category.findFirstOrThrow({ where: { websiteId: site } })).id;
+    const t = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Photo Check Person', websiteId: site, categoryId, idempotencyKey: 'photo-check:open' }, { source: 'SINGLE' });
+    const done = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Photo Check Done', websiteId: site, categoryId, idempotencyKey: 'photo-check:done' }, { source: 'SINGLE' });
+    await client.articleTask.update({ where: { id: t.task.id }, data: { status: 'FAILED', configSnapshot: JSON.stringify({ celebrityPhotoReview: false, images: true }) } });
+    await client.articleTask.update({ where: { id: done.task.id }, data: { status: 'COMPLETED', configSnapshot: JSON.stringify({ celebrityPhotoReview: false }) } });
+    const { celebrityPhotoCheckOn } = await import('@/lib/photo-check-migration');
+    expect(await celebrityPhotoCheckOn(client)).toMatchObject({ globalChanged: true, unfinishedArticlesChanged: [t.task.id] });
+    expect((await getSettings()).seo.celebrityPhotoReview).toBe(true);
+    expect(JSON.parse((await client.articleTask.findUniqueOrThrow({ where: { id: t.task.id } })).configSnapshot)).toEqual({ celebrityPhotoReview: true, images: true });
+    // A finished article keeps the settings it ran with.
+    expect(JSON.parse((await client.articleTask.findUniqueOrThrow({ where: { id: done.task.id } })).configSnapshot)).toEqual({ celebrityPhotoReview: false });
+    expect(await celebrityPhotoCheckOn(client)).toMatchObject({ globalChanged: false, unfinishedArticlesChanged: [] });
+    // Regenerating its Images uses today's switch.
+    const actions = await import('@/lib/tasks/actions');
+    await actions.regenerateStage(done.task.id, 'IMAGES');
+    expect(JSON.parse((await client.articleTask.findUniqueOrThrow({ where: { id: done.task.id } })).configSnapshot)).toEqual({ celebrityPhotoReview: true });
+    const { settingsSchema } = await import('@/lib/settings-schema');
+    expect(settingsSchema.parse({}).seo.celebrityPhotoReview).toBe(true);
+  });
+
+  it('photo check answers are read as the earlier tool read them (bold, “Photo 2”, ja/nein, collage named in the description)', async () => {
+    const { parsePhotoCheck } = await import('@/worker/pipelines/images');
+    const v = parsePhotoCheck('**1:** watermark=no | collage=no | alt=smiling at a dinner party\nPhoto 2: watermark=ja | alt=promotional thumbnail, two men side by side with a circle\n3 - collage=yes | watermark=no | alt=photo grid of a family\n4: watermark=no | collage=no | alt="standing on a red carpet."\nNote: nothing else', 4);
+    expect(v.get(1)).toEqual({ watermark: false, collage: false, alt: 'smiling at a dinner party' });
+    expect(v.get(2)).toMatchObject({ watermark: true, collage: true });
+    expect(v.get(3)).toMatchObject({ watermark: false, collage: true });
+    expect(v.get(4)).toEqual({ watermark: false, collage: false, alt: 'standing on a red carpet' });
+    expect(v.size).toBe(4);
+  });
 });

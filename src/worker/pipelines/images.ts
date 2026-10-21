@@ -6,7 +6,7 @@ import { db } from '@/lib/db';
 import { getSettings } from '@/lib/settings';
 import { parseJson } from '@/lib/json';
 import { fromDataRelative } from '@/lib/paths';
-import { NeedsReviewError } from '@/lib/pipeline-errors';
+import { NeedsReviewError, TransientError, UncertainSideEffectError } from '@/lib/pipeline-errors';
 import { CANVAS, parseSiteImageSettings, presetBodyCornerLogo, presetSingle, type ImageTemplate } from '@/lib/image-template';
 import { outputSize, renderCleanImage, renderTemplate, type PhotoFocus } from '@/images/render';
 import { normalizeAltText, type AltSlot } from '@/images/alt-text';
@@ -272,17 +272,29 @@ async function generalImages(ctx: PipelineContext): Promise<StageResult> {
 
 // ------------------------------------------------------------------ celebrity
 
+/**
+ * Reads the photo check (earlier tool's parser): lines like “2: watermark=yes | collage=no | alt=…”. Markdown, “Photo 2”,
+ * any field order and German ja/nein are accepted; a description that calls the picture a collage counts as one.
+ */
 export function parsePhotoCheck(text: string, count: number): Map<number, { watermark: boolean; collage: boolean; alt: string }> {
   const out = new Map<number, { watermark: boolean; collage: boolean; alt: string }>();
-  for (const raw of text.split('\n')) {
-    const m = /^\s*(\d{1,2})\s*[:.)]\s*watermark\s*=\s*(yes|no)\s*\|\s*collage\s*=\s*(yes|no)\s*\|\s*alt\s*=\s*(.+)$/i.exec(raw.replace(/\*\*/g, ''));
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/[*_`]/g, '').trim();
+    const m = /^(?:photo|foto|bild)?\s*#?(\d{1,2})\s*[:.)\-–]\s*(.+)$/i.exec(line);
     if (!m) continue;
     const n = Number(m[1]);
-    if (n < 1 || n > count) continue;
-    out.set(n, { watermark: m[2].toLowerCase() === 'yes', collage: m[3].toLowerCase() === 'yes', alt: m[4].trim().split(/\s+/).slice(0, 12).join(' ') });
+    if (n < 1 || n > count || out.has(n)) continue;
+    const alt = (/\balt\s*[=:]\s*(.+)$/i.exec(m[2])?.[1] ?? '').replace(/^["'“”„]+|["'“”]+$/g, '').replace(/[.。]+$/, '').trim().split(/\s+/).slice(0, 12).join(' ');
+    const watermark = /(?:watermark|wasserzeichen)\s*[=:]\s*(yes|ja|true)\b/i.test(m[2]);
+    const collage = /(?:collage|kollage)\s*[=:]\s*(yes|ja|true)\b/i.test(m[2]) || COLLAGE_WORDS.test(alt);
+    if (!alt && !/(watermark|wasserzeichen|collage|kollage)\s*[=:]/i.test(m[2])) continue;
+    out.set(n, { watermark, collage, alt });
   }
   return out;
 }
+
+/** A description that says the picture is several photos put together (earlier tool). */
+const COLLAGE_WORDS = /\b(collage|kollage|side[-\s]by[-\s]side|split[-\s]screen|montage|photo grid)\b/i;
 
 type Area = { left: number; right: number; top: number; bottom: number };
 /** What was measured about a gallery photo (kept in the stage state, so a retry measures nothing again). */
@@ -433,34 +445,45 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const softCount = usable.filter(soft).length;
   notes.push(`Photos ordered: ${usable.length} different${withFace ? `, ${withFace} with a face` : ''}${softCount ? `, ${softCount} soft (used last)` : ''}.`);
 
-  // 3. Optional photo check through ChatGPT (as in the earlier tool): photos with a watermark or site name, then other
-  //    sites' collages, go last; a collage never becomes a body image. Each photo gets its alt text. Never identifies anyone.
+  // 3. Photo check through ChatGPT (as in the earlier tool, on by default): photos with a watermark or site name, then
+  //    other sites' collages, go last; a collage never becomes a body image. Each photo gets its alt text. Never
+  //    identifies anyone. Like the earlier tool, a check that cannot be done never stops the images.
   const alts = new Map<string, string>();
   const collages = new Set<string>();
   if (ctx.config.celebrityPhotoReview && usable.length) {
     const sample = usable.slice(0, 8);
-    const res = await ctx.askChatGPT('PHOTO_CHECK', { photo_count: String(sample.length) }, { part: 'check', newChat: true, attachments: sample.map((a, i) => ({ mediaAssetId: a.id, name: `photo-${i + 1}.webp`, mime: a.mime ?? 'image/webp' })) });
-    if (res.status === 'waiting') return waiting('Waiting for ChatGPT: photo check');
-    const verdicts = parsePhotoCheck(res.text, sample.length);
+    let res: Awaited<ReturnType<PipelineContext['askChatGPT']>> | null = null;
+    try {
+      res = await ctx.askChatGPT('PHOTO_CHECK', { photo_count: String(sample.length) }, { part: 'check', newChat: true, attachments: sample.map((a, i) => ({ mediaAssetId: a.id, name: `photo-${i + 1}.webp`, mime: a.mime ?? 'image/webp' })) });
+    } catch (error) {
+      if (!(error instanceof TransientError || error instanceof UncertainSideEffectError)) throw error;
+      notes.push(`Photo check skipped (${(error as Error).message.slice(0, 160)}); collages could not be recognised, the photos were used in their order.`);
+    }
+    if (res?.status === 'waiting') return waiting('Waiting for ChatGPT: photo check');
+    const verdicts = res?.status === 'completed' ? parsePhotoCheck(res.text, sample.length) : new Map<number, { watermark: boolean; collage: boolean; alt: string }>();
     const flag = new Map<string, number>();
     sample.forEach((a, i) => {
       const v = verdicts.get(i + 1);
       if (v?.alt) alts.set(a.id, v.alt);
-      if (v?.collage || /\b(collage|side[-\s]by[-\s]side|split[-\s]screen|montage|photo grid)\b/i.test(v?.alt ?? '')) collages.add(a.id);
+      if (v?.collage) collages.add(a.id);
       flag.set(a.id, collages.has(a.id) ? 2 : v?.watermark ? 1 : 0);
     });
     usable = usable.map((a, i) => ({ a, i })).sort((x, y) => (flag.get(x.a.id) ?? 0) - (flag.get(y.a.id) ?? 0) || x.i - y.i).map((x) => x.a);
     const marked = [...flag.values()].filter((v) => v === 1).length;
-    notes.push(verdicts.size ? `Photo check: ${verdicts.size} of ${sample.length} described${marked ? `, ${marked} with a watermark or site name (used last)` : ''}${collages.size ? `, ${collages.size} collage(s) of other sites (never a body image)` : ''}.` : 'The photo check answer could not be read; the photos were used in their order.');
+    if (res) notes.push(verdicts.size ? `Photo check: ${verdicts.size} of ${sample.length} described${marked ? `, ${marked} with a watermark or site name (used last)` : ''}${collages.size ? `, ${collages.size} collage(s) of other sites (left out)` : ''}.` : 'The photo check answer could not be read; the photos were used in their order.');
   }
 
-  // 4. Your featured template takes its photos first (as in the earlier tool); the body images get the rest, never a
-  //    collage. A photo is never used twice: a small gallery leaves body images out instead of repeating one.
+  // 4. Your featured template takes its photos first (as in the earlier tool); the body images get the rest. Another
+  //    site's collage is never used while there is a single photo (owner report: a designed thumbnail with a circle
+  //    became half of the featured image); with only collages the featured image takes one. A photo is never used
+  //    twice: a small gallery leaves body images out instead of repeating one.
   const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
   const siteSettings = parseSiteImageSettings(site.imageSettings);
   const featuredNeeds = Math.max(1, templatePhotoSlots(siteSettings.featured));
-  const featuredPhotos = usable.slice(0, featuredNeeds);
-  const rest = usable.slice(featuredPhotos.length).filter((a) => !collages.has(a.id));
+  const single = usable.filter((a) => !collages.has(a.id));
+  const featuredPhotos = single.length ? single.slice(0, featuredNeeds) : usable.slice(0, 1);
+  if (!single.length && featuredPhotos.length) notes.push('Every photo found is a collage of another site; the featured image uses one of them. Upload photos on the Images tab to replace it.');
+  const rest = single.slice(featuredPhotos.length);
   if (rest.length < 2) notes.push(`${usable.length} usable photo(s): the featured design took ${featuredPhotos.length}, ${rest.length} left for the body image(s); none is used twice.`);
   // The earlier tool's alt text: the name, then what the photo shows.
   const properName = name === name.toLowerCase() ? name.replace(/(^|[\s-])(\p{L})/gu, (_m, gap: string, letter: string) => gap + letter.toUpperCase()) : name;

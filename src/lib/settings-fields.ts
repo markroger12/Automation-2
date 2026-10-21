@@ -118,7 +118,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
         ],
         help: 'Your own uploads on the Images tab are always used first. The ChatGPT gallery: ChatGPT searches the web and shows photos of the person; the extension saves them.',
       },
-      { key: 'celebrityPhotoReview', label: 'Celebrity photo check (watermark/collage)', type: 'boolean' },
+      {
+        key: 'celebrityPhotoReview',
+        label: 'Celebrity photo check (watermark/collage)',
+        type: 'boolean',
+        help: 'On by default, as in your earlier tool: the gallery photos are shown to ChatGPT, which says which ones are another site’s collage (photos side by side, a circle or frame drawn over people) or carry a watermark. Collages are left out; watermarked photos are used last. It never identifies anyone.',
+      },
       { key: 'duplicateSimilarityReview', label: 'Duplicate similarity review threshold', type: 'number', min: 0.2, max: 1, step: 0.05 },
       { key: 'seoBriefInPrompts', label: 'Add the SEO brief to writing prompts', type: 'boolean', help: 'The article’s search intent, sections to cover and keyword guideline (SEO tab) are added to the LONG_ARTICLE / ARTICLE prompt, unless the prompt places {{seo_brief}} itself.' },
     ],

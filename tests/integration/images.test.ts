@@ -321,11 +321,14 @@ describe('Image Studio (IMAGES stage)', () => {
       // Commons was not asked (source: ChatGPT gallery only).
       expect(await client.mediaAsset.count({ where: { taskId: t.id, origin: 'WIKIMEDIA' } })).toBe(0);
       // The image search's own chat never becomes the article's chat: every later prompt stays in the article chat.
+      // (The photo check, on by default, is the images stage's own new chat too.)
       const gallery = claimed.findIndex((c) => c.stageKey === 'IMAGES');
       expect(claimed[gallery].newChat).toBe(true);
       const after = claimed.slice(gallery + 1);
-      expect(after.length).toBeGreaterThan(0);
-      expect(after.every((c) => !c.newChat && c.conversationUrl === ARTICLE_CHAT)).toBe(true);
+      expect(after.filter((c) => c.stageKey === 'IMAGES').every((c) => c.newChat)).toBe(true);
+      const later = after.filter((c) => c.stageKey !== 'IMAGES');
+      expect(later.length).toBeGreaterThan(0);
+      expect(later.every((c) => !c.newChat && c.conversationUrl === ARTICLE_CHAT)).toBe(true);
       expect(t.conversationUrl).toBe(ARTICLE_CHAT);
     } finally {
       await updateSettings({ seo: { celebrityPhotoSource: 'commons' }, content: { humanizerEnabled: false } });

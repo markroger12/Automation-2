@@ -1977,3 +1977,48 @@ npx vitest run                      # 44 files, 305 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 35/35
 ```
 The app's code did not change in this step, only the expected extension version. The `images` integration test (10/10, including the downloaded gallery links) passed in the run before it.
+
+## Owner report: another site's designed thumbnail became half of a featured image (photo check on by default)
+
+**Reported by the owner** (screenshot, Techeflux):
+- The two-photo featured image showed, on its right, another site's designed thumbnail: a photo with a green circle drawn around one man, and a second man cut in.
+- “The earlier tool asked ChatGPT which picture is a collage and which is not.”
+
+**Cause**
+- The photo check (ChatGPT looks at the gallery photos and says watermark / collage / what is shown) had been ported, but it was **off by default**. The earlier tool had it on (`celebrityPhotoReview: z.boolean().default(true)` in `automation-old`). So it never ran.
+- Its prompt only said “a collage made from multiple images”. The earlier tool also names “a designed thumbnail with shapes, borders or boxes around photos”.
+- Even with the check on, the featured image could take a collage when the photos without one did not fill all its places.
+- **Reproduced:** with the previous code, the new integration test puts the “collage” photo into the two-photo featured image.
+
+**Fix**
+- **On by default.**
+  - The photo check is on by default.
+  - Data migration `2026-10-21-celebrity-photo-check-on` turns a saved “off” on once. It does the same for unfinished celebrity articles, whose settings were fixed when they started. Finished articles keep the settings they ran with.
+  - **Regenerate Images** uses today's switch.
+- **Prompt v2.** It is the earlier tool's wording, plus “a photo inside another photo, or circles, arrows, shapes, borders or boxes drawn around or over people”. A prompt saved unchanged as v1 is upgraded; a customised prompt is kept.
+- **Answer parser.** It reads answers as the earlier tool did: bold numbers, “Photo 2”, any field order, ja/nein. A description that calls the picture a collage (“side by side”, “photo grid”, “montage” …) counts as one.
+- **Collages are never used while there is a single photo.**
+  - With one usable photo, the two-photo design falls back to the single-photo design.
+  - With only collages, the featured image takes one, and the notes say so (“Upload photos on the Images tab to replace it”).
+  - Body images never use a collage.
+- **A failed check never stops the images.** As in the earlier tool, the notes say “Photo check skipped (…)”.
+
+**Tests**
+- New integration test: a gallery with a designed thumbnail. The two-photo featured image uses the two plain photos and never the thumbnail. With only collages, the featured image takes one, with the note. The first part fails on the previous code, which used the thumbnail.
+- Unit test: the migration (global and unfinished articles on; finished ones kept), and Regenerate Images refreshing the switch.
+- Unit test: the earlier tool's answer formats. It fails on the previous strict parser.
+- The existing photo-check test now runs with the default. The ChatGPT-gallery test allows the photo check's own new chat; the article chat stays the same.
+
+**Not verified here:** ChatGPT's real answers to the v2 photo check.
+
+**Commands run**
+```
+new collage test on the previous pipeline   # failed: the “collage” photo was in the featured image
+new parser test on the previous parser      # failed: “Photo 2: watermark=ja | alt=… side by side …” not read
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 307 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                    # 10 files, 85 pass, 1 skipped (real MediaPipe: MP_SRC not set)
+images integration test after the Regenerate Images change   # 10/10
+next build                          # compiled
+```

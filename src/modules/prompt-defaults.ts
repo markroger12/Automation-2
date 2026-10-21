@@ -156,16 +156,23 @@ Use valid HTML only: <table>, <thead>, <tbody>, <tr>, <th> and <td>. First row h
     moduleKey: 'celebrity-writer',
     stageKey: 'PHOTO_CHECK',
     name: 'Celebrity — Photo check',
-    description: 'Optional visible-content check for watermarks/collages and alt text. Never identifies people.',
-    version: 1,
+    description: 'Asks ChatGPT which photos carry a watermark or are another site\'s collage, and for alt text (owner\'s earlier tool). Never identifies people.',
+    version: 2,
     kind: 'vision',
-    previousHashes: [],
+    // v1 only said “a collage made from multiple images”: a designed thumbnail (a photo with a circle around one person,
+    // owner report) was not called a collage. v2 is the earlier tool's wording plus shapes drawn over people.
+    previousHashes: ['ba797c3cb90409610c6ee7f4f7ae205f4bfda14d1f2092049e5f6b9742252044'],
     variables: [v('photo_count', 'Number of attached candidate images', true, 'stage'), KEYWORD],
-    content: `I attached {{photo_count}} candidate editorial images for a biography about "{{keyword}}", numbered in attachment order. Inspect visible content only. For every photo, report whether there is an overlay watermark/agency logo/website name or a collage made from multiple images. A real-life sign or shirt print is not a watermark. Make a concise alt-text description of visible clothing, action, surroundings or scene, without guessing the person's identity, event, location.
+    content: `I am writing an article about "{{keyword}}". I attached {{photo_count}} photos from an image search, numbered 1 to {{photo_count}} in the order they are attached.
 
-Output only one line per image:
+For every photo, write one line in exactly this format:
+<number>: watermark=<yes or no> | collage=<yes or no> | alt=<alt text>
 
-<number>: watermark=yes|no | collage=yes|no | alt=<description of 12 words or fewer>`,
+watermark=yes when the photo has a watermark, a website name or web address, a channel or photo agency logo, or large text written over the picture. Text that belongs to the scene itself (a sign, the backdrop at an event, a shirt print) does not count.
+collage=yes when the picture is not one plain photo but several photos put together or a designed thumbnail: side by side, split by a line, in frames or a grid, a photo inside another photo, or circles, arrows, shapes, borders or boxes drawn around or over people.
+alt: at most 12 words describing what is visible: the place, the occasion, what the people wear or do. Do not name anyone and do not guess who the people are; the name is added separately.
+
+Write nothing else.`,
   },
   {
     moduleKey: 'celebrity-writer',

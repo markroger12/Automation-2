@@ -11,12 +11,15 @@ export interface RenderInput {
   template: ImageTemplate;
   /** Photo slots 0 and 1 (missing slots fall back to slot 0, then to a flat accent panel). */
   photos: Buffer[];
-  /** Optional focus points per slot, in source-image fractions (e.g. from face boxes). */
-  focus?: ({ x: number; y: number } | null)[];
+  /** Optional focus per slot, in source-image fractions: a point, or the area around the main faces. */
+  focus?: PhotoFocus[];
   logo?: Buffer | null;
   fixedPhotos?: Record<string, Buffer>;
   vars?: Record<string, string>;
 }
+
+/** Where a crop should centre: a point, and/or the area around the main faces (fractions of the picture). */
+export type PhotoFocus = { x: number; y: number; area?: { left: number; right: number; top: number; bottom: number } } | null;
 
 export interface RenderOptions {
   width: number;
@@ -74,22 +77,40 @@ async function rounded(buf: Buffer, w: number, h: number, radius: number): Promi
   return sharp(buf).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
 }
 
-async function photoTile(src: Buffer, w: number, h: number, focus: { x: number; y: number } | null, mode: 'auto' | 'center' | 'top'): Promise<Buffer> {
-  const img = sharp(src, { failOn: 'none' }).rotate();
+async function photoTile(src: Buffer, w: number, h: number, focus: PhotoFocus, mode: 'auto' | 'center' | 'top'): Promise<Buffer> {
+  const upright = await sharp(src, { failOn: 'none' }).rotate().toBuffer();
+  const meta = await sharp(upright).metadata();
+  const sw = meta.width ?? w;
+  const sh = meta.height ?? h;
+  // As in the owner's earlier tool: a picture much taller than its place would lose the face when cropped, so it is
+  // shown whole on a blurred copy of itself.
+  if (mode === 'auto' && sw / sh < (w / h) * 0.8) {
+    const backdrop = await sharp(upright).resize(w, h, { fit: 'cover' }).blur(Math.max(8, Math.round(Math.min(w, h) / 30))).modulate({ brightness: 0.8 }).png().toBuffer();
+    const whole = await sharp(upright).resize(w, h, { fit: 'inside' }).png().toBuffer();
+    return sharp(backdrop).composite([{ input: whole, gravity: 'centre' }]).png().toBuffer();
+  }
   if (focus) {
-    // Crop around a known focus point (e.g. a detected face box) — face LOCATION only.
-    const meta = await img.metadata();
-    const sw = meta.width ?? w;
-    const sh = meta.height ?? h;
+    // Crop around the faces — face LOCATION only.
     const scale = Math.max(w / sw, h / sh);
     const rw = Math.ceil(sw * scale);
     const rh = Math.ceil(sh * scale);
-    const left = Math.min(Math.max(0, Math.round(focus.x * rw - w / 2)), rw - w);
-    const top = Math.min(Math.max(0, Math.round(focus.y * rh - h / 2)), rh - h);
-    return sharp(src).rotate().resize(rw, rh).extract({ left, top, width: w, height: h }).png().toBuffer();
+    let left: number;
+    let top: number;
+    if (focus.area) {
+      // The earlier tool's rule: centred across, a little above the middle with room over the heads.
+      const a = focus.area;
+      left = ((a.left + a.right) / 2) * rw - w / 2;
+      top = Math.min(((a.top + a.bottom) / 2) * rh - h * 0.4, a.top * rh - h * 0.08);
+    } else {
+      left = focus.x * rw - w / 2;
+      top = focus.y * rh - h / 2;
+    }
+    left = Math.min(Math.max(0, Math.round(left)), rw - w);
+    top = Math.min(Math.max(0, Math.round(top)), rh - h);
+    return sharp(upright).resize(rw, rh).extract({ left, top, width: w, height: h }).png().toBuffer();
   }
   const position = mode === 'top' ? 'north' : mode === 'center' ? 'centre' : sharp.strategy.attention;
-  return img.resize(w, h, { fit: 'cover', position }).png().toBuffer();
+  return sharp(upright).resize(w, h, { fit: 'cover', position }).png().toBuffer();
 }
 
 async function layerImage(layer: Layer, input: RenderInput, template: ImageTemplate): Promise<Buffer | null> {
@@ -229,7 +250,7 @@ export async function renderTemplate(input: RenderInput, opts: RenderOptions) {
 }
 
 /** A clean 16:9 body image (no text, no logo): smart crop of one photo or illustration. */
-export async function renderCleanImage(photo: Buffer, opts: RenderOptions, focus?: { x: number; y: number } | null) {
+export async function renderCleanImage(photo: Buffer, opts: RenderOptions, focus?: PhotoFocus) {
   const tile = await photoTile(photo, CANVAS.width, CANVAS.height, focus ?? null, 'auto');
   return encodeWithinBudget(tile, opts);
 }

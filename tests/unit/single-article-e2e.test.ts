@@ -211,8 +211,12 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(task.categoryId).toBeNull();
     const final = await drive(task.id, 'en');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
-    // IMAGES = the image plan prompt (the scripted answer has no plan lines, so no image is generated).
-    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS', 'IMAGES', 'HUMANIZE']);
+    // IMAGES = the image plan prompt, then three images: the scripted answer has no plan lines, so the earlier tool's
+    // default descriptions are used (the featured one carries the short title). The scripted answers carry no
+    // picture, so each image is asked once more in a new chat.
+    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS', ...Array(7).fill('IMAGES'), 'HUMANIZE']);
+    // The image prompts go out in parallel: the featured one (any position) carries the short title.
+    expect(responses.filter((r) => r.stageKey === 'IMAGES' && r.renderedPrompt.startsWith('Create this image now') && r.renderedPrompt.includes('spelled exactly: "How to Install WordPress"')).length).toBeGreaterThan(0);
     expect(responses[0].renderedPrompt).toContain('Secondary keywords (use only where natural): hosting, plugins');
     expect(responses[0].renderedPrompt).not.toContain('Not used by default template');
     expect(responses[1].renderedPrompt).toContain('Tech & Apps');
@@ -230,7 +234,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'Best Free VPN Apps', websiteId: siteEn, categoryId: catEn, idempotencyKey: 'single:e2e-tigram-cat' }, { source: 'SINGLE' });
     await drive(task.id, 'en');
     const keys = (await client.chatGPTResponse.findMany({ where: { taskId: task.id } })).map((r) => r.stageKey);
-    expect([...keys].sort()).toEqual(['ARTICLE', 'EXTERNAL_LINKS', 'HUMANIZE', 'IMAGES']);
+    expect([...keys].sort()).toEqual(['ARTICLE', 'EXTERNAL_LINKS', 'HUMANIZE', ...Array(7).fill('IMAGES')]);
     const stage = await client.articleStage.findFirstOrThrow({ where: { taskId: task.id, key: 'CATEGORY' } });
     expect(stage.status).toBe('SKIPPED');
   });

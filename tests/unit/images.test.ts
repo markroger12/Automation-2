@@ -287,3 +287,35 @@ describe('template editor logic', () => {
     expect(big.past.length).toBe(HISTORY_LIMIT);
   });
 });
+
+describe('earlier tool (automation-old): Tigram plan lines, featured title, tall photos', () => {
+  it('reads “IMAGE n PROMPT / ALT” lines and the edited “FEATURED: … | ALT: …” form', async () => {
+    const { parseImagePlan } = await import('@/worker/pipelines/images');
+    const old = parseImagePlan('**IMAGE 1 PROMPT:** A header with the text "Install WordPress"\nIMAGE 1 ALT: Install WordPress header\n- IMAGE 2 PROMPT: A flat laptop\nIMAGE 2 ALT: Laptop illustration\nIMAGE 3 PROMPT: A flat checklist');
+    expect(old).toEqual([
+      { slot: 'FEATURED', direction: 'A header with the text "Install WordPress"', alt: 'Install WordPress header' },
+      { slot: 'BODY1', direction: 'A flat laptop', alt: 'Laptop illustration' },
+      { slot: 'BODY2', direction: 'A flat checklist', alt: '' },
+    ]);
+    expect(parseImagePlan('FEATURED: Desk | ALT: A tidy desk')[0]).toEqual({ slot: 'FEATURED', direction: 'Desk', alt: 'A tidy desk' });
+  });
+
+  it('short featured title: the head before “:”, at most ~45 characters, never ending on a small word', async () => {
+    const { featuredImageTitle } = await import('@/worker/pipelines/images');
+    expect(featuredImageTitle('How to Install WordPress: The Complete Guide')).toBe('How to Install WordPress');
+    expect(featuredImageTitle('The Ultimate Comparison of Project Management Software Cost in 2026')).toBe('The Ultimate Comparison of Project Management');
+  });
+
+  it('a photo much taller than its place is shown whole on a blurred copy of itself (not cropped to its middle)', async () => {
+    const { renderCleanImage } = await import('@/images/render');
+    // Top half red, bottom half blue: cropping to 16:9 would keep only the middle (both colours, no ends).
+    const tall = await sharp({ create: { width: 400, height: 1000, channels: 3, background: '#ff0000' } }).composite([{ input: await sharp({ create: { width: 400, height: 500, channels: 3, background: '#0000ff' } }).png().toBuffer(), top: 500, left: 0 }]).png().toBuffer();
+    const r = await renderCleanImage(tall, { width: 1200, height: 675, maxBytes: 500_000 });
+    const { data, info } = await sharp(r.buffer).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const at = (x: number, y: number) => { const i = (y * info.width + x) * 3; return [data[i], data[i + 1], data[i + 2]]; };
+    const top = at(600, 15);
+    const bottom = at(600, 660);
+    expect(top[0]).toBeGreaterThan(200); // the very top of the photo is still there (red)
+    expect(bottom[2]).toBeGreaterThan(200); // and its bottom (blue)
+  });
+});

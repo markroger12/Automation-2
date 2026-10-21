@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import sharp from 'sharp';
@@ -133,8 +134,8 @@ describe('Image Studio (IMAGES stage)', () => {
     const colors = [await solid(200, 40, 40), await solid(40, 160, 60), await solid(40, 60, 200)];
     let gen = 0;
     const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
-      if (/3-image plan/.test(prompt)) return `FEATURED: A laptop on a tidy desk with soft light | ALT: Laptop on a desk prepared for a WordPress installation\nBODY1: A browser window with a setup wizard, flat style | ALT: Setup wizard steps shown in a browser window\nBODY2: A checklist on a clipboard, flat style | ALT: Checklist for securing a new website`;
-      if (/clean editorial illustration/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
+      if (/Plan 3 images/.test(prompt)) return `FEATURED: A laptop on a tidy desk with soft light | ALT: Laptop on a desk prepared for a WordPress installation\nBODY1: A browser window with a setup wizard, flat style | ALT: Setup wizard steps shown in a browser window\nBODY2: A checklist on a clipboard, flat style | ALT: Checklist for securing a new website`;
+      if (/Create this image now/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
       return cannedAnswer(stageKey, prompt, language, keyword);
     };
     const driver = makeDriver(client, answer);
@@ -169,6 +170,41 @@ describe('Image Studio (IMAGES stage)', () => {
     expect(wp.media.size).toBe(3); // no duplicate media on retry
   });
 
+  it('earlier tool: the featured prompt carries the short title; a picture handed back twice is asked once more in a new chat; every picture gets the logo', async () => {
+    const red = await solid(200, 40, 40);
+    const green = await solid(40, 160, 60);
+    const blue = await solid(40, 60, 200);
+    const prompts: string[] = [];
+    // ChatGPT hands back the featured picture again for BODY1 (seen in the earlier tool); the second try is new.
+    const answers = [red, red, green, blue];
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
+      if (/Create this image now/.test(prompt)) {
+        prompts.push(prompt);
+        return { text: '', images: [answers[prompts.length - 1] ?? blue] };
+      }
+      return cannedAnswer(stageKey, prompt, language, keyword);
+    };
+    const site = await offlineSite('Repeat Blog');
+    await addLogo(site.id);
+    const driver = makeDriver(client, answer);
+    const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'How to Install WordPress', websiteId: site.id, options: { saveToWordPress: false }, idempotencyKey: 'img:repeat-1' }, { source: 'SINGLE' });
+    const t = await driver.drive(task.id);
+    const data = await stageData(t.id, 'IMAGES');
+    expect(prompts[0]).toMatch(/spelled exactly: "How to Install WordPress"/);
+    expect(prompts, data.notes.join(" | ")).toHaveLength(4);
+    expect(data.notes.join(' ')).toMatch(/ChatGPT handed back (an earlier picture|no picture)[^;]* for BODY\d; it was asked once more in a new chat/);
+    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+    expect(new Set(data.slots.flatMap((x: { sourceAssetIds: string[] }) => x.sourceAssetIds)).size).toBe(3);
+    // The logo (teal plate) sits in the corner of the featured and the body pictures.
+    for (const x of data.slots) {
+      const a = await client.mediaAsset.findUniqueOrThrow({ where: { id: x.mediaAssetId } });
+      const buf = fs.readFileSync(path.join(process.env.BAS_DATA_DIR!, a.filePath));
+      const { data: px, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      const at = (fx: number, fy: number) => { const i = (Math.round(fy * info.height) * info.width + Math.round(fx * info.width)) * 3; return [px[i], px[i + 1], px[i + 2]]; };
+      expect(near(at(0.92, 0.92), [15, 118, 110], 60), `${x.slot} logo corner`).toBe(true);
+    }
+  });
+
   it('lost upload answers are found again by slug (no duplicate media) and unusable alt text is replaced', async () => {
     const wp = await startFakeWordPress({ dropMediaAcks: 2 });
     servers.push(wp);
@@ -176,8 +212,8 @@ describe('Image Studio (IMAGES stage)', () => {
     const colors = [await solid(200, 40, 40), await solid(40, 160, 60), await solid(40, 60, 200)];
     let gen = 0;
     const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
-      if (/3-image plan/.test(prompt)) return `FEATURED: A laptop on a desk | ALT: IMG_2041.jpg\nBODY1: A setup wizard | ALT: Image of setup wizard steps in a browser\nBODY2: The same wizard again | ALT: image of setup wizard steps in a browser`;
-      if (/clean editorial illustration/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
+      if (/Plan 3 images/.test(prompt)) return `FEATURED: A laptop on a desk | ALT: IMG_2041.jpg\nBODY1: A setup wizard | ALT: Image of setup wizard steps in a browser\nBODY2: The same wizard again | ALT: image of setup wizard steps in a browser`;
+      if (/Create this image now/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
       return cannedAnswer(stageKey, prompt, language, keyword);
     };
     const driver = makeDriver(client, answer);
@@ -516,8 +552,8 @@ describe('Image Template Designer, owner photos and re-runs', () => {
   it('general article: owner uploads fill the slots and nothing is generated for them', async () => {
     const generated: string[] = [];
     const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
-      if (/3-image plan/.test(prompt)) return 'FEATURED: Desk | ALT: A tidy desk with a laptop\nBODY1: Browser | ALT: A browser with a setup wizard\nBODY2: Checklist | ALT: A checklist on a clipboard';
-      if (/clean editorial illustration/.test(prompt)) {
+      if (/Plan 3 images/.test(prompt)) return 'FEATURED: Desk | ALT: A tidy desk with a laptop\nBODY1: Browser | ALT: A browser with a setup wizard\nBODY2: Checklist | ALT: A checklist on a clipboard';
+      if (/Create this image now/.test(prompt)) {
         generated.push(prompt);
         return { text: 'Here is the image.', images: [] };
       }

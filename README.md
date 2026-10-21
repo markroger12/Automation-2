@@ -116,7 +116,11 @@ The test types these credentials itself (simulating you in the login window); th
   - **Wikimedia Commons**, or **the gallery first with Commons as a fallback**.
 
   Pictures under 250 px and exact or near-duplicates are skipped. When ChatGPT answers with text only, it is asked once more in a new chat. Your featured template gets its photos first (a two-photo design gets two photos); the body images get the rest, and no photo is used twice.
-- **Image tools from the earlier tool (optional):** The **face detector** (MediaPipe BlazeFace) is downloaded into `data\tools\mediapipe` by `npm run start:all` / `dev:all` the first time (or by `npm run tools:install`). Photos with a face then come first and crops centre on the faces (locations only, never who it is). **Upscayl** enlarges small photos before cropping (**Settings → SEO → Enlarge small celebrity photos**, on by default): download `upscayl-ncnn` from https://github.com/upscayl/upscayl-ncnn/releases, put `upscayl-bin.exe` in `data\tools\upscayl` and the `remacri-4x.param` / `remacri-4x.bin` model files (from the Upscayl app's `resources\models`) in `data\tools\upscayl\models`. A missing tool never stops an article; the Images tab says it was not used.
+- **As in the earlier tool (`markroger12/automation-old`):**
+  - **Celebrity:** up to 10 gallery photos. A cropped copy of the same photo (the same faces in the same moment) counts once. Photos with a clear face come first, the biggest face first, and soft (blurry) photos go last. With the photo check on, photos with a watermark or site name go last, another site's collage is never a body image, and the alt text is “Name – what the photo shows”. A photo much taller than its place is shown whole on a blurred copy of itself instead of losing the face.
+  - **Tigram:** the featured picture carries a short title written by ChatGPT (the title before “:”, at most ~45 characters). The body pictures are simple flat illustrations without text. A picture ChatGPT hands back twice, or a missing one, is asked once more in a new chat.
+  - **Every picture carries the website's logo:** without a body template, the logo goes in a corner.
+- **Image tools from the earlier tool (optional):** The **face detector** (MediaPipe BlazeFace) is downloaded into `data\tools\mediapipe` by `npm run start:all` / `dev:all` the first time (or by `npm run tools:install`). Photos with a face then come first and crops centre on the faces (locations only, never who it is). **Upscayl** enlarges a photo its place would stretch more than 2×, and sharpens a soft one, before cropping (**Settings → SEO → Enlarge small celebrity photos**, on by default; one folder below `data\tools\upscayl` is found too, as its zip unpacks): download `upscayl-ncnn` from https://github.com/upscayl/upscayl-ncnn/releases, put `upscayl-bin.exe` in `data\tools\upscayl` and the `remacri-4x.param` / `remacri-4x.bin` model files (from the Upscayl app's `resources\models`) in `data\tools\upscayl\models`. A missing tool never stops an article; the Images tab says it was not used.
 - General articles ask ChatGPT for an image plan and three images through the extension. Missing images never block the text: the draft continues without them, or waits for review if the site requires images. No image-rights or licensing checks are performed (owner decision); the source URL is stored for reference only.
 - After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture; 3.1.1–3.1.5 make prompts and answers readable on the new ChatGPT “Chat / Work” layout and recover an already-sent prompt after a page reload; 3.2.0 saves the image-search gallery for celebrity photos and asks for two more image hosts; 3.2.1 says exactly where the composer's text differed when a prompt cannot be placed; 3.2.2 accepts the space ChatGPT's composer puts after “](” in a link).
 - **Alt text** is checked for every rendered image:
@@ -142,6 +146,21 @@ The overall status is *healthy*, *needs attention*, *failing* or *no data yet*, 
   - it is refused while the site is paused or logged out.
 - **Edited in WordPress?** The article's WordPress tab shows **Changes made in WordPress**: the text only in the WordPress version (what an overwrite would replace) next to the text only in the app version. Read it before choosing “Overwrite WordPress draft”.
 - WordPress's own “session expired” pop-up counts as logged out. An account that may not write posts stops with that reason instead of a generic error.
+
+## Review, notes and deleting
+
+- **Hold articles for review** (Settings → Workflow) is **off by default**:
+  - review reasons never stop an article; they are shown as **Notes** on the article page;
+  - the WordPress draft is saved and the article is COMPLETED;
+  - a draft with a serious problem (for example research notes left in the text) is still saved, but a workflow never publishes it automatically, and its keyword says why.
+  - Turn the switch on for the old *Needs review* behaviour.
+- **Same-site duplicate keyword:** this still pauses before any ChatGPT work. **Approve selected**, **Allow duplicate and continue** and **Approve despite review reasons** all let it continue.
+- **Delete articles:**
+  - use the bin icon on a queue/history row, **Delete selected**, or **Delete** on the article page;
+  - this removes the article from the app only. WordPress drafts and posts stay;
+  - a report of each article is saved in `data\backups\deleted-articles` first;
+  - a running article stops and is deleted when it stops.
+- **Delete campaigns:** **Delete** on a campaign's page removes it, with or without its articles.
 
 ## Editorial tools
 

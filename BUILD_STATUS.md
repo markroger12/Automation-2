@@ -1734,3 +1734,78 @@ integration: extension 28/28, images 9/9, image-tools 3/3 (real MediaPipe with B
 npm run build                       # compiled; postbuild recorded the commit; preflight --build then said "up to date"
 npx tsx scripts/preflight.ts        # on an empty data folder: all tables, settings, prompts, face detector
 ```
+
+## Owner requests (2026-10-21): delete, approved duplicates, review off, images from automation-old
+
+**Delete articles and campaigns** (owner report: queued and completed articles could not be deleted; there was no delete at all)
+- `src/lib/tasks/delete.ts`:
+  - the article's report (stages, prompts, answers, logs) is written to `data/backups/deleted-articles/<id>-<slug>.json`;
+  - its waiting queue jobs are removed; its campaign row becomes CANCELLED; its workflow keyword becomes SKIPPED and its slot is released;
+  - the task row is deleted (stages, responses and reports cascade). WordPress is not touched.
+- **A running article** (an ACTIVE job) gets `deleteWhenStopped`. It is cancelled and deleted when `markCancelled` runs.
+- **Campaign delete:** `deleteCampaign(id, withArticles)`.
+- **UI:**
+  - queue/history: a row bin icon and “Delete selected”, with a confirmation;
+  - article page: Delete;
+  - campaign page: Delete, with an “also delete its articles” checkbox.
+- **API:**
+  - `DELETE /api/tasks/[id]`;
+  - bulk action `delete`;
+  - `DELETE /api/campaigns/[id]` with body `{ articles }`.
+
+**An approved duplicate keyword continues** (owner report)
+- **Cause:**
+  - the pre-check's reasons read “Possible duplicate on this website: …”;
+  - “Approve selected” and the article page only recognised “Duplicate keyword …”, so approval ran the plain review override;
+  - that override reset only the quality gate, so the pre-check held the article again.
+- **Fix:** `heldForDuplicate()` recognises both texts, and a FAILED pre-check stage. “Approve despite review reasons” on a duplicate hold also allows the duplicate.
+
+**Review system off by default** (owner decision): `workflow.holdForReview`, default false.
+- **Finalize:** a verified draft with review reasons is COMPLETED (“Verified WordPress draft #N. K note(s) on the article page.”).
+- **Notes:** the reasons are kept and shown as Notes on the article page.
+- **Quality-gate hard stop:** the draft is still saved, and `options.publishBlocked` records the problems. The workflow scheduler never publishes such a draft: its keyword becomes FAILED with the reason.
+- **Turned on:** the previous behaviour.
+- **Data migration** `2026-10-21-review-reasons-become-notes`: NEEDS_REVIEW tasks with a verified draft (VERIFIED_COMPLETE verified) become COMPLETED. A backup is written first. Tasks without a draft are unchanged.
+- **Override migration key list:** the 2026-10-14 override-unpin migration keeps its original key list, so the new key does not change what it recognises.
+
+**Images: the concepts of the owner's earlier tool** (`markroger12/automation-old`, uploaded by the owner; not the GitHub `Automation` repository, which is older)
+- **Celebrity** (`images/choose.ts`, `similar.ts`, `faces.ts`, `enhance.ts`, `review.ts`):
+  - up to 10 gallery photos;
+  - a cropped copy (fingerprint of the area around the main faces, ≤ 6 bits with one face, ≤ 12 with several) counts once;
+  - soft = sharpness below 0.4 × the gallery's median, with 3+ photos;
+  - ordering: uploads first, then a face before no face, sharp before soft, biggest face first;
+  - photo check: watermark last, collage last and never a body image, alt text “Name – description”;
+  - Upscayl by the photo's place: stretched > 2× → enlarged 4×; a soft photo is sharpened from a quarter-size input. The tool is found in `data/tools/upscayl` or one folder below; it runs with the tool folder as cwd.
+- **Renderer** (`src/images/render.ts`):
+  - the earlier tool's face crop: centred across, a little above the middle with room over the heads;
+  - a photo much taller than its place is shown whole on a blurred copy of itself.
+- **Tigram:**
+  - image plan v2 and generation prompt v2 (the earlier tool's texts: the featured picture shows the short title, the body pictures are flat illustrations without text);
+  - `featuredImageTitle()`; the earlier tool's default descriptions for missing plan lines;
+  - a missing or repeated picture is asked once more in a new chat (identical files are stored once, so a repeat arrives as no picture);
+  - the featured picture gets the picture-with-logo design.
+- **Logo on every picture:** without a body template, the logo goes in a corner.
+- **Not changed:** the earlier tool's own Image Search Prompt is “Search On google and give me any random colors pic high quality 5 to 10 pic simple pic random color.” This app keeps its prompt for photos of the person. The owner can paste the old one in the Prompt Manager.
+
+**Tests** (each new behaviour has a test; the duplicate and review ones fail on the previous code)
+- `tests/unit/owner-delete-review.test.ts` (8): review off on the real engine, duplicate approval both ways, finalize notes, data migration, delete of queued/completed/running articles, campaign delete.
+- `tests/unit/images.test.ts` (+3): old plan format, featured title, tall photo shown whole.
+- `tests/integration/images.test.ts` (+1): title in the featured prompt, a repeat asked again, the logo in the corner of all three pictures.
+- `tests/integration/image-tools.test.ts` (+2):
+  - soft photo last;
+  - photo check ordering, collage never body, alt text;
+  - real MediaPipe face test (with `BAS_TEST_MEDIAPIPE_DIR`);
+  - fake Upscayl with the earlier tool's arguments.
+- **Updated tests:** two Tigram e2e lists (three image prompts now follow the default plan), and image test matchers for the new prompt texts.
+
+**Not verified here:** the real ChatGPT image generation with the v2 prompts; the real Upscayl on Windows; deleting from the owner's real queue.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 304 tests pass
+integration: images 10/10, image-tools 5/5 (real MediaPipe with BAS_TEST_MEDIAPIPE_DIR), wordpress-drafts 10/10 (two
+             Rank Math tests now expect COMPLETED with notes), links 6/6, workflow-publish 6/6, content-refresh 5/5,
+             migration-upgrade 1/1
+npx next build                      # compiled
+```

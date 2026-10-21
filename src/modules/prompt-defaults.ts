@@ -229,33 +229,45 @@ CATEGORY: <exact category name>`,
     moduleKey: 'tigram-writer',
     stageKey: 'IMAGE_PLAN',
     name: 'Tigram — Image plan',
-    description: 'Featured + two body image directions with alt text.',
-    version: 1,
+    description: 'Plans the featured image (with a short title text written on it) and two simple flat body images, with alt texts (owner\'s earlier tool).',
+    version: 2,
     kind: 'text',
     previousHashes: [],
-    variables: [KEYWORD],
-    content: `Create a practical 3-image plan for the article about "{{keyword}}" using the final article's actual topic. One image is a 16:9 featured visual with space for a short editorial headline and the website logo. Two are helpful body illustrations with no text, watermark or logo. Avoid inaccurate depictions of branded UIs, real people, proprietary logos or product details you cannot verify.
+    variables: [KEYWORD, v('image_title', 'Short title for the featured picture: the article title before “:” or “–”, at most ~45 characters', true, 'stage')],
+    content: `Plan 3 images for this article about "{{keyword}}". Do not create the images yet.
 
-Return exactly three lines:
+Image 1 — FEATURED IMAGE (blog header), landscape.
+It shows this short title text, spelled exactly: "{{image_title}}".
+Large, bold, easy to read text in the middle, with empty space above and below it (the top and bottom edges will be cropped to 16:9).
+Clean, modern background that fits the topic, strong contrast, no logos, no watermark, no other words.
 
-FEATURED: <visual direction> | ALT: <specific accessible alt text>
-BODY1: <visual direction> | ALT: <specific accessible alt text>
-BODY2: <visual direction> | ALT: <specific accessible alt text>`,
+Image 2 — BODY IMAGE, landscape. A simple flat illustration of the main topic of the article.
+Image 3 — BODY IMAGE, landscape. A simple flat illustration of another key part of the article (for example the step-by-step part or the comparison).
+
+Body image style (images 2 and 3): minimal flat illustration, soft colours, plain light background, lots of empty space, only a few simple objects, NO text, letters or numbers at all, no logos, no faces.
+
+Answer only with these six lines and nothing else:
+IMAGE 1 PROMPT: <complete prompt for image 1, including the title text and style>
+IMAGE 1 ALT: <alt text, max 120 characters, contains "{{keyword}}">
+IMAGE 2 PROMPT: <complete prompt for image 2, including the style>
+IMAGE 2 ALT: <alt text, max 120 characters>
+IMAGE 3 PROMPT: <complete prompt for image 3, including the style>
+IMAGE 3 ALT: <alt text, max 120 characters>`,
   },
   {
     moduleKey: 'tigram-writer',
     stageKey: 'IMAGE_GENERATION',
     name: 'Tigram — Image generation',
-    description: 'One clean editorial illustration from an approved brief (image prompt: no language line).',
-    version: 1,
+    description: 'Sent once per planned image: ChatGPT creates the picture; the app adds the website logo and places it (owner\'s earlier tool).',
+    version: 2,
     kind: 'image',
     previousHashes: [],
-    variables: [v('image_brief', 'Approved visual direction from the image plan', true, 'stage')],
-    content: `Create one clean editorial illustration based on this approved image brief:
+    variables: [v('image_brief', 'The complete prompt for this image from the image plan', true, 'stage')],
+    content: `Create this image now, landscape (wide) format:
 
 {{image_brief}}
 
-Use the specified 16:9 composition, readable shapes, professional lighting and clear focal subject. Follow the website's configured visual style. Keep the content visually relevant and accurate; avoid unnecessary text, watermarks, third-party logos, false UI screenshots and unrequested people. No surrounding explanation.`,
+Only create the image — no text answer is needed.`,
   },
   {
     moduleKey: 'shared',

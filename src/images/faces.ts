@@ -98,3 +98,23 @@ export function faceFocus(faces: FaceBox[], width: number, height: number): { x:
   // A little below the eyes: the face and some shoulders stay in a wide crop.
   return { x: Math.min(1, Math.max(0, (x1 + x2) / 2 / width)), y: Math.min(1, Math.max(0, ((y1 + y2) / 2 + (y2 - y1) * 0.35) / height)) };
 }
+
+/** The faces that matter: at least half as tall as the biggest one (not people in the background). */
+export function mainFaces(faces: FaceBox[]): FaceBox[] {
+  if (!faces.length) return [];
+  const biggest = Math.max(...faces.map((f) => f.h));
+  return faces.filter((f) => f.h >= biggest * 0.5);
+}
+
+/** The area around the main faces as fractions of the picture, or null without faces. */
+export function mainFaceArea(faces: FaceBox[], width: number, height: number): { left: number; right: number; top: number; bottom: number } | null {
+  const main = mainFaces(faces);
+  if (!main.length || !width || !height) return null;
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  return {
+    left: clamp(Math.min(...main.map((f) => f.x)) / width),
+    right: clamp(Math.max(...main.map((f) => f.x + f.w)) / width),
+    top: clamp(Math.min(...main.map((f) => f.y)) / height),
+    bottom: clamp(Math.max(...main.map((f) => f.y + f.h)) / height),
+  };
+}

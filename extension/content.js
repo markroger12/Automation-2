@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.2.4';
+  const EXTENSION_VERSION = '3.2.5';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -106,14 +106,14 @@
       else if (s.state === 'lost') throw new JobError('CONVERSATION_LOST', 'The saved ChatGPT conversation could not be loaded.');
       await sleep(500);
     }
-    throw new JobError('ERROR', `ChatGPT composer did not become ready within ${readySec} seconds (the page layout may have changed; text boxes on the page: ${A.composerDiagnostics()}).`);
+    throw new JobError('ERROR', `ChatGPT composer did not become ready within ${readySec} seconds (the page layout may have changed; text boxes on the page: ${A.composerDiagnostics()}).`, { pageStuck: true });
   }
 
   async function typeAndVerify(prompt) {
     let lastProblem = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const composer = A.findComposer();
-      if (!composer) throw new JobError('ERROR', `Chat composer not found (text boxes on the page: ${A.composerDiagnostics()}).`);
+      if (!composer) throw new JobError('ERROR', `Chat composer not found (text boxes on the page: ${A.composerDiagnostics()}).`, { pageStuck: true });
       A.clearComposer(composer);
       for (const chip of A.pastedTextChips()) {
         const remove = chip.querySelector('button');
@@ -165,7 +165,7 @@
       if (send && !send.disabled && send.getAttribute('aria-disabled') !== 'true') break;
       await sleep(250);
     }
-    if (!send || send.disabled) throw new JobError('ERROR', 'Send button not available.');
+    if (!send || send.disabled) throw new JobError('ERROR', `Send button not available (text boxes on the page: ${A.composerDiagnostics()}).`, { pageStuck: true });
     checkCancelled();
     progress('sending');
     send.click();
@@ -407,8 +407,20 @@
     return url && /^https:\/\/chatgpt\.com\/c\/[0-9a-f-]{20,}$/i.test(url) ? url : null;
   }
 
+  /** Reload the page for this job once (the background runs the job again when the page is back). False if done before. */
+  async function reloadOnce(job, why) {
+    const key = `bas-fresh-page:${job.id}`;
+    if (sessionStorage.getItem(key)) return false;
+    sessionStorage.setItem(key, new Date().toISOString());
+    progress(`the ChatGPT page stopped working (${why.slice(0, 120)}); reloading it once`);
+    await chrome.runtime.sendMessage({ type: 'checkpoint', jobId: job.id, operationId: job.operationId, step: 'reloading' }).catch(() => {});
+    location.reload();
+    return true;
+  }
+
   async function runJob(job, config, port) {
     current = { job, port, cancelled: false, step: 'start', startedAt: Date.now(), pausedMs: 0 };
+    let typed = false;
     try {
       progress('checking the ChatGPT page');
       await waitForReady(config);
@@ -449,6 +461,7 @@
       }
 
       progress('typing the prompt');
+      typed = true;
       await typeAndVerify(job.prompt);
       await attachFiles(job, config);
       checkCancelled();
@@ -473,7 +486,17 @@
     } catch (error) {
       const code = error instanceof JobError ? error.code : 'ERROR';
       const extra = error instanceof JobError ? error.extra : {};
-      post('fail', { code, message: String(error && error.message ? error.message : error), retryAfterSec: extra.retryAfterSec ?? null, uncertain: Boolean(extra.uncertain), snapshot: A.snapshot({ step: current && current.step, error: String(error && error.message) }) });
+      let message = String(error && error.message ? error.message : error);
+      if (extra.pageStuck) {
+        // Owner report (FINAL_ARTICLE after LONG_ARTICLE): the page stopped working — no composer, or no Send button —
+        // and every retry ran on the same stuck page. Nothing was sent (these errors all come before Send): reload the
+        // page once, as a person would, and run the job again there; the prompt is typed afresh.
+        const composer = typed ? A.findComposer() : null;
+        if (composer) A.clearComposer(composer);
+        if (await reloadOnce(job, message)) return;
+        message = `${message} The ChatGPT page was reloaded once and it still did not work.`;
+      }
+      post('fail', { code, message, retryAfterSec: extra.retryAfterSec ?? null, uncertain: Boolean(extra.uncertain), freshPage: Boolean(extra.pageStuck), snapshot: A.snapshot({ step: current && current.step, error: message }) });
     } finally {
       current = null;
     }

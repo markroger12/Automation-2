@@ -1901,3 +1901,47 @@ npx vitest run --config vitest.integration.config.ts
                                     # 10 files, 80 pass, 1 skipped (real MediaPipe: MP_SRC not set)
                                     # extension 31/31
 ```
+
+### Second report: “still the same error” with 3.2.4 (extension 3.2.5)
+
+**What the first report already showed, read again**
+- TITLES, RESEARCH and LONG_ARTICLE worked in the same chat. About 20 s after LONG_ARTICLE, FINAL_ARTICLE's first try failed with **“Send button not available”**: the composer was found and the prompt typed, but there was no usable Send button.
+- The next tries failed with “Chat composer not found” or “did not become ready”. The composer was there at one moment and gone the next.
+- So the ChatGPT page itself had stopped working, whatever the markup.
+
+**Why every Retry failed the same way**
+- The extension marks a tab “ready” when its page loads, not when the composer works.
+- A retry in the same conversation therefore ran on the same stuck page without loading it again. Each retry failed within a minute, and no retry could ever succeed.
+- This was reproduced on the fake page. A new test helper (`__fakeStick`) makes the page stop working after an answer: either the composer is hidden, or a Stop button stays where Send should be. A reload clears it.
+- With 3.2.4, the next prompt failed three times with the owner's exact messages (“composer did not become ready within 8 seconds …”, “Send button not available.”). The page was never reloaded.
+
+**Fix — extension 3.2.5**
+- **Reload during the job.** When the composer is missing, never becomes ready, or has no usable Send button, the job reloads the page once and runs again on the fresh page. These errors all come before Send, so nothing has been sent. The prompt is typed afresh, and a prompt the job typed is cleared first.
+- **If it still fails,** the job stops with “… The ChatGPT page was reloaded once and it still did not work.” and the list of text boxes on the page.
+- **Next attempt.** The tab is marked, so the next attempt on it starts from a freshly loaded page, even in the same conversation. The same happens after “Tab could not start the job”.
+- **Checkpoints.** A step-only checkpoint (such as the new “reloading”) no longer erases a recorded send time. The send time is the evidence that stops a resend after a reload.
+- **Article report.** It now has `chatgptPageSnapshots`: for each failed ChatGPT job, what the extension saw on the page. That covers composer found, Send or Stop visible, generating, page URL, layout markers and the list of text boxes. Page text is never included.
+
+**Tests**
+- 3 new extension tests:
+  - stuck without a composer: reloaded, sent once;
+  - stuck without a Send button: reloaded, sent once;
+  - stuck even after the reload: stops with the reason and the text-box list, never sends; the next attempt reloads and succeeds.
+- The first two fail on 3.2.4, which retries three times on the stuck page.
+- With the background reload switched off, the third test times out on its second part. That proves the next attempt's reload is what makes it work.
+- `article-report` unit test: the page snapshot of a failed job is in the report.
+
+**Not verified here**
+- The real ChatGPT page. It is not known *why* the owner's page stopped working. A reload is what a person would do, and it is what the fix does.
+- If the page fails again right after the reload, the new report's `chatgptPageSnapshots` and the error's text-box list will show what the page offered.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                    # 10 files, 83 pass, 1 skipped (real MediaPipe: MP_SRC not set); extension 34/34
+stuck-page tests on 3.2.4           # 2 failed: three retries on the stuck page with the owner's messages
+stuck-page retry test, background reload switched off   # failed (timed out), as expected
+stuck-page, missing-DOM and handshake tests on the final 3.2.5 files   # 5 passed
+```

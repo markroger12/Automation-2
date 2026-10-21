@@ -31,6 +31,12 @@
       localStorage.setItem('fake:sends', String(v));
     },
   };
+  // Owner report (FINAL_ARTICLE after LONG_ARTICLE): the page stops working after an answer, until it is reloaded.
+  window.__fakeStick = (kind, persists) => {
+    window.__stuck = kind;
+    if (persists) localStorage.setItem('fake:stuck', kind);
+    render();
+  };
   window.__fakeStats = () => ({ sends: S.sends, convs: S.convs, lastPrompt: localStorage.getItem('fake:lastPrompt'), lastFiles: localStorage.getItem('fake:lastFiles') });
 
   const std = C.variant === 'standard';
@@ -150,13 +156,16 @@
       })
       .join('');
     const generating = Boolean(window.__generating);
+    // Stuck page (set by a test with __fakeStick): 'composer' hides the composer, 'send' leaves a Stop button where
+    // Send should be. A reload clears it unless it was made to persist.
+    const stuck = window.__stuck || localStorage.getItem('fake:stuck');
     const composer =
       C.variant === 'broken'
         ? '<div class="nothing-here"></div>'
         : std
           ? `<div id="prompt-textarea" class="ProseMirror" contenteditable="true"></div>`
           : `<textarea placeholder="Message ChatGPT" rows="3"></textarea>`;
-    const button = generating
+    const button = generating || stuck === 'send'
       ? std
         ? `<button data-testid="stop-button" aria-label="Stop streaming">■</button>`
         : `<button aria-label="Stop streaming">■</button>`
@@ -177,7 +186,7 @@
     const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
     // workLayout: the conversation shown in a “Work”/canvas layout — the whole page sits in a canvas-classed container
     // (suspected for the owner's “Chat composer not found” after the long article).
-    const page = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
+    const page = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer"${stuck === 'composer' ? ' style="display:none"' : ''}>${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
     root.innerHTML = C.workLayout ? `<div class="work-canvas-layout bg-token-canvas">${page}</div>` : page;
     const ed = document.querySelector('#prompt-textarea, textarea');
     if (ed && draft && !generating) {

@@ -736,6 +736,7 @@
         composerFound: Boolean(composer),
         composerKind: composer ? (composer.tagName === 'TEXTAREA' ? 'textarea' : 'contenteditable') : null,
         composerLength: composer ? composerText(composer).length : 0,
+        textBoxes: composerDiagnostics(),
         sendVisible: Boolean(send),
         sendEnabled: Boolean(send && !send.disabled && send.getAttribute('aria-disabled') !== 'true'),
         stopVisible: Boolean(findStopButton()),

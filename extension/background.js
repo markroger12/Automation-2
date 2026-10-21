@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.2.4';
+const EXTENSION_VERSION = '3.2.5';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox'];
 
@@ -243,10 +243,15 @@ async function runOnTab(tabId, job) {
   try {
     const target = targetUrl(job, t.url);
     const isRoot = /^https:\/\/chatgpt\.com\/?$/.test(target);
-    if (isRoot || !sameConversation(target, t.url)) {
+    // After the page stopped working (no composer / no Send button) the next job gets a freshly loaded page, even
+    // in the same conversation: before 3.2.5 every retry ran on the same stuck page (owner report).
+    const fresh = t.freshPage;
+    t.freshPage = false;
+    if (isRoot || !sameConversation(target, t.url) || fresh) {
       t.ready = false;
       await checkpoint(job.id, { step: 'navigating', target });
-      await chrome.tabs.update(tabId, { url: target });
+      if (fresh && !isRoot && sameConversation(target, t.url)) await chrome.tabs.reload(tabId);
+      else await chrome.tabs.update(tabId, { url: target });
       await waitReady(tabId, 60_000, target);
     } else if (!t.ready) {
       await waitReady(tabId, 60_000);
@@ -256,6 +261,7 @@ async function runOnTab(tabId, job) {
   } catch (e) {
     t.busy = false;
     t.job = null;
+    t.freshPage = true;
     await outboxPush('fail', { jobId: job.id, tabId: String(tabId), code: 'ERROR', message: 'Tab could not start the job: ' + e.message });
     await dropCheckpoint(job.id);
   }
@@ -435,6 +441,7 @@ chrome.runtime.onConnect.addListener((port) => {
       } else if (msg.type === 'fail') {
         await outboxPush('fail', { tabId: String(tabId), jobId, code: msg.code || 'ERROR', message: String(msg.message || 'Unknown error').slice(0, 2000), retryAfterSec: msg.retryAfterSec ?? null, uncertain: Boolean(msg.uncertain), diagnostics: msg.snapshot || {} });
         if (msg.code === 'USAGE_LIMIT') serverCfg.backoffUntil = new Date(Date.now() + (msg.retryAfterSec || 60) * 1000).toISOString();
+        if (msg.freshPage) t.freshPage = true;
         await finishTab(tabId, jobId);
         setTimeout(() => void tick(), 1000);
       }
@@ -476,7 +483,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return sendResponse({ ok: true });
       }
       case 'checkpoint':
-        await checkpoint(msg.jobId, { step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore });
+        // Only the fields given: a step-only checkpoint (e.g. 'reloading') must never erase a recorded sentAt.
+        await checkpoint(msg.jobId, Object.fromEntries(Object.entries({ step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore }).filter(([, v]) => v !== undefined)));
         return sendResponse({ ok: true });
       case 'pre-send-check': {
         const res = await api('progress', { tabId: String(tabId), jobId: msg.jobId, step: 'about to send' }).catch(() => null);

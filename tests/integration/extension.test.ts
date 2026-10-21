@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.4');
+    expect(ext?.version).toBe('3.2.5');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -548,4 +548,48 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(done.status).toBe('COMPLETED');
     expect((await fakeStats()).sends).toBe(1);
   });
+
+  // Owner report (malaak compton rock): about 20 s after LONG_ARTICLE the ChatGPT page stopped working — “Send button
+  // not available”, then “Chat composer not found” / “did not become ready” — and every Retry ran on the same stuck page.
+  async function stickPage(kind: 'composer' | 'send', persists = false) {
+    await chatPage()!.evaluate(([k, p]) => (window as unknown as { __fakeStick: (k: string, p: boolean) => void }).__fakeStick(k as string, p as boolean), [kind, persists] as const);
+  }
+
+  for (const stuck of ['composer', 'send'] as const) {
+    it(`owner report: a page stuck after an answer (${stuck === 'composer' ? 'no composer' : 'no Send button'}) is reloaded and the next prompt is sent once`, async () => {
+      fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', answers: ['Long article: alpha.', 'Final article: beta.'] };
+      browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+      const first = await request('Write the long article');
+      const one = await responseDone(first.responseId, 60_000);
+      expect(one.resultText).toContain('alpha');
+      await stickPage(stuck);
+      const second = await request('Edit the previous long article into a finished article', { conversationUrl: one.conversationUrl, newChat: false });
+      const two = await responseDone(second.responseId, 120_000);
+      expect(two.error).toBeNull();
+      expect(two.status).toBe('COMPLETED');
+      expect(two.resultText).toContain('beta');
+      expect(two.resultText).not.toContain('alpha');
+      expect((await fakeStats()).sends).toBe(2);
+    }, 200_000);
+  }
+
+  it('owner report: a page that stays stuck after the reload stops with what the page offered; the next attempt gets a freshly loaded page', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', answers: ['Long article: alpha.', 'Final article: beta.'] };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const first = await request('Write the long article');
+    const one = await responseDone(first.responseId, 60_000);
+    expect(one.resultText).toContain('alpha');
+    await stickPage('composer', true);
+    const second = await request('Edit the previous long article into a finished article', { conversationUrl: one.conversationUrl, newChat: false });
+    const job = await waitJob(second.responseId, (j) => Boolean(j.error && /reloaded/.test(j.error)), 120_000, 'stuck-page error');
+    expect(job.error).toMatch(/composer did not become ready/);
+    expect(job.error).toMatch(/text boxes on the page: div#prompt-textarea hidden in form/);
+    expect((await fakeStats()).sends).toBe(1);
+    // The page would work again once loaded afresh (the shown page stays stuck): the retry must reload it first.
+    await chatPage()!.evaluate(() => localStorage.removeItem('fake:stuck'));
+    const two = await responseDone(second.responseId, 120_000);
+    expect(two.status).toBe('COMPLETED');
+    expect(two.resultText).toContain('beta');
+    expect((await fakeStats()).sends).toBe(2);
+  }, 240_000);
 });

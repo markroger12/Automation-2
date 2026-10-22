@@ -2551,4 +2551,6 @@ next build                          # compiled
 npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 47 files, 335 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console"   # 2/2 (request with proof; limit/sign-out)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "404"              # 1/1 (fallback link)
+next build                          # compiled
 ```

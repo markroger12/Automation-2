@@ -8,16 +8,27 @@ export interface FakeSearchConsoleConfig {
   mode?: 'ok' | 'quota' | 'signed-out' | 'signed-out-about' | 'no-access';
   /** How long the live test runs after REQUEST INDEXING. */
   liveTestMs?: number;
+  /** The “Inspect any URL in …” box at the top of Search Console (default: shown). */
+  searchBox?: boolean;
 }
 
+/** An inspection link as Google's URL Inspection API gives it: the `id` is Google's token, not the URL. */
+export const fakeInspectionLink = (property: string, url: string) => `https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent(property)}&id=tok_${Buffer.from(url).toString('base64url')}&utm_medium=link`;
+
 /**
- * A FAKE Search Console URL Inspection page on https://search.google.com/ (Playwright routing; nothing reaches Google).
- * It shows a result, a REQUEST INDEXING button, a live test, then Google's answer, as on the owner's screenshot.
- * `clicks()` counts REQUEST INDEXING clicks.
+ * A FAKE Search Console on https://search.google.com/ (Playwright routing; nothing reaches Google), as the owner's
+ * screenshots show it:
+ * - `/search-console?resource_id=…` is the property's start page with the “Inspect any URL in …” box; Enter shows
+ *   the URL Inspection result (the address becomes …/inspect?resource_id=…&id=<token>);
+ * - `/search-console/inspect?…&id=<token>` shows the result directly, but with the post's URL as `id` Google answers
+ *   404 (owner report);
+ * - the result has REQUEST INDEXING, a live test, then Google's answer.
+ * `clicks()` counts REQUEST INDEXING clicks, `typed()` the URLs typed into the box.
  */
-export async function installFakeSearchConsole(context: BrowserContext, getConfig: () => FakeSearchConsoleConfig): Promise<{ clicks: () => number; opened: () => string[] }> {
+export async function installFakeSearchConsole(context: BrowserContext, getConfig: () => FakeSearchConsoleConfig): Promise<{ clicks: () => number; opened: () => string[]; typed: () => string[] }> {
   let clicks = 0;
   const opened: string[] = [];
+  const typed: string[] = [];
   await context.route('https://accounts.google.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Sign in – Google Accounts</title><h1>Sign in</h1><p>to continue to Search Console</p>' }));
   await context.route('https://search.google.com/**', async (route) => {
     const url = new URL(route.request().url());
@@ -25,20 +36,31 @@ export async function installFakeSearchConsole(context: BrowserContext, getConfi
       clicks++;
       return route.fulfill({ status: 204, body: '' });
     }
+    if (url.pathname === '/__fake/typed') {
+      typed.push(url.searchParams.get('u') ?? '');
+      return route.fulfill({ status: 204, body: '' });
+    }
     if (route.request().resourceType() !== 'document') return route.fulfill({ status: 404, body: '' });
     opened.push(url.toString());
     if (url.pathname.startsWith('/search-console/about')) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Google Search Console</title><h1>Improve your performance on Google Search</h1><a href="https://accounts.google.com/ServiceLogin">Start now</a>' });
-    const c = { mode: 'ok', liveTestMs: 1500, ...getConfig() };
-    const inspected = url.searchParams.get('id') ?? '';
+    const id = url.searchParams.get('id') ?? '';
+    if (url.pathname === '/search-console/inspect' && !id.startsWith('tok_')) {
+      return route.fulfill({ status: 404, contentType: 'text/html; charset=utf-8', body: '<!doctype html><title>Error 404 (Not Found)!!1</title><p><b>404.</b> <ins>That’s an error.</ins></p><p>The requested URL was not found on this server. <ins>That’s all we know.</ins></p>' });
+    }
+    const c = { mode: 'ok', liveTestMs: 1500, searchBox: true, ...getConfig() };
     const property = url.searchParams.get('resource_id') ?? '';
-    const page = `<!doctype html><html><head><meta charset="utf-8"><title>URL Inspection</title></head><body><div id="app">Retrieving data from Google Index…</div><script>
+    const direct = url.pathname === '/search-console/inspect' ? Buffer.from(id.slice(4), 'base64url').toString() : null;
+    const page = `<!doctype html><html><head><meta charset="utf-8"><title>Search Console</title></head><body><div id="top"></div><div id="app">Loading…</div><script>
       const C = ${JSON.stringify(c)};
+      const PROPERTY = ${JSON.stringify(property)};
+      const DIRECT = ${JSON.stringify(direct)};
       const app = document.getElementById('app');
       if (C.mode === 'signed-out') location.replace('https://accounts.google.com/ServiceLogin?service=sitemaps&continue=' + encodeURIComponent(location.href));
       if (C.mode === 'signed-out-about') location.replace('https://search.google.com/search-console/about');
-      setTimeout(() => {
-        if (C.mode === 'no-access') { app.innerHTML = '<h2>You don\\'t have access to property ${property.replace(/'/g, '')}</h2>'; return; }
-        app.innerHTML = '<h1>URL Inspection</h1><p>${inspected.replace(/'/g, '')}</p><section><h2>URL is not on Google</h2><p>This page is not indexed.</p><div><span>Page changed?</span> <div role="button" tabindex="0" id="req"><span>REQUEST INDEXING</span></div></div></section>';
+      function inspection(inspected) {
+        if (C.mode === 'no-access') { app.innerHTML = '<h2>You don\\'t have access to property ' + PROPERTY + '</h2>'; return; }
+        app.innerHTML = '<h1>URL Inspection</h1><p></p><section><h2>URL is not on Google</h2><p>This page is not indexed.</p><div><span>Page changed?</span> <div role="button" tabindex="0" id="req"><span>REQUEST INDEXING</span></div></div></section>';
+        app.querySelector('p').textContent = inspected;
         document.getElementById('req').addEventListener('click', () => {
           fetch('/__fake/click', { method: 'POST' });
           app.insertAdjacentHTML('beforeend', '<div role="dialog" id="live"><p>Testing if live URL can be indexed</p></div>');
@@ -49,9 +71,28 @@ export async function installFakeSearchConsole(context: BrowserContext, getConfi
               : '<div role="dialog"><h2>Indexing requested</h2><p>URL was added to a priority crawl queue. Submitting a page multiple times will not change its queue position or priority.</p><div role="button">Dismiss</div></div>');
           }, C.liveTestMs);
         });
-      }, 800);
+      }
+      setTimeout(() => {
+        if (C.searchBox) {
+          const domain = PROPERTY.replace('sc-domain:', '').replace('https://', '').replace('http://', '').replace(/[/]$/, '');
+          document.getElementById('top').innerHTML = '<header><input type="text" id="q"></header>';
+          const q = document.getElementById('q');
+          q.setAttribute('aria-label', 'Inspect any URL in "' + domain + '"');
+          q.setAttribute('placeholder', 'Inspect any URL in "' + domain + '"');
+          q.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' || !q.value.trim()) return;
+            fetch('/__fake/typed?u=' + encodeURIComponent(q.value.trim()));
+            history.pushState({}, '', '/search-console/inspect?resource_id=' + encodeURIComponent(PROPERTY) + '&id=tok_x');
+            app.textContent = 'Retrieving data from Google Index…';
+            const inspected = q.value.trim();
+            setTimeout(() => inspection(inspected), 800);
+          });
+        }
+        if (DIRECT) inspection(DIRECT);
+        else app.innerHTML = '<h1>Overview</h1><p>Performance · Indexing</p>';
+      }, 600);
     </script></body></html>`;
     return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: page });
   });
-  return { clicks: () => clicks, opened: () => opened };
+  return { clicks: () => clicks, opened: () => opened, typed: () => typed };
 }

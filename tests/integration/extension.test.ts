@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.0');
+    expect(ext?.version).toBe('3.4.1');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -386,7 +386,9 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(row.status).toBe('INDEXING_REQUESTED');
     expect(row.indexingStatus).toMatch(/Indexing requested in Search Console \(URL Inspection → Request indexing\).*Google: “Indexing requested URL was added to a priority crawl queue/);
     expect(browser.searchConsole.clicks()).toBe(1);
-    expect(browser.searchConsole.opened()[0]).toBe(`https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent('https://easyvibs.example/')}&id=${encodeURIComponent(url)}`);
+    // As in the owner's video: the property's Search Console page, the URL typed into “Inspect any URL in …”, Enter.
+    expect(browser.searchConsole.opened()[0]).toBe(`https://search.google.com/search-console?resource_id=${encodeURIComponent('https://easyvibs.example/')}`);
+    expect(browser.searchConsole.typed()).toEqual([url]);
     await waitFor(async () => !browser!.context.pages().some((p) => p.url().startsWith('https://search.google.com/')), 10_000, 'Search Console tab closed');
 
     // Owner request: a screenshot as proof. The extension saved the page as it stood after the click (before it
@@ -410,6 +412,23 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const { workflowView } = await import('@/lib/workflow/service');
     expect((await workflowView(siteId)).keywords.find((k) => k.id === kw.id)?.proofId).toBe(asset.id);
   }, 150_000);
+
+  it('owner report (404): without the “Inspect any URL” box, Google’s own inspection link (URL Inspection API) is opened instead', async () => {
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode: 'ok', searchBox: false }) });
+    const { kw, job, url } = await publishedForIndexing('Box Missing Person');
+    const { fakeInspectionLink } = await import('../fixtures/fake-search-console');
+    const link = fakeInspectionLink('https://easyvibs.example/', url);
+    await client.queueJob.update({ where: { id: job.id }, data: { payload: JSON.stringify({ ...JSON.parse(job.payload), inspectLink: link }) } });
+    await waitFor(async () => {
+      await browser!.tick().catch(() => {});
+      return (await client.queueJob.findUniqueOrThrow({ where: { id: job.id } })).status === 'COMPLETED';
+    }, 150_000, 'indexing request through the inspection link', 1000);
+    expect(browser.searchConsole.opened()).toEqual([`https://search.google.com/search-console?resource_id=${encodeURIComponent('https://easyvibs.example/')}`, link]);
+    expect(browser.searchConsole.typed()).toEqual([]);
+    expect(browser.searchConsole.clicks()).toBe(1);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('INDEXING_REQUESTED');
+  }, 200_000);
 
   it('owner request: Search Console’s daily limit and a signed-out Google account are reported and asked again later', async () => {
     let mode: 'quota' | 'signed-out' | 'signed-out-about' = 'quota';

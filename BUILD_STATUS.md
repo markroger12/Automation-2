@@ -2463,3 +2463,46 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 next build                          # compiled
 ```
 
+
+## Owner report (2026-10-22): the tool's URL Inspection link opens Google's “404. That's an error” (extension 3.4.1)
+
+**Report:**
+- A screenshot of Google's 404 at `search-console/inspect?resource_id=sc-domain%3Atecheflux.com&id=https%3A%2F%2Ftecheflux.com%2Fandre-rock%2F`, next to the working property page `search-console?resource_id=sc-domain:techeflux.com`.
+- The owner asked: “make the tool inspect the URL in Search Console”, with a video of how they do it by hand.
+
+**Cause:**
+- The `id` of a URL Inspection link is a token Google makes (in the owner's video: `id=SOXOcM6XHI3ojqg9m4ZYAhA`), not the post's URL. Google answers 404 for a link with the URL there, so the request could never be made.
+- Also, the extension's Search Console script was only allowed on `search-console/*`, so it never ran on the property's own page `search-console?resource_id=…`.
+
+**Now, as in the owner's video:**
+1. Automation Chrome opens the property's Search Console page (`search-console?resource_id=<property>`).
+2. It types the post's URL into **“Inspect any URL in …”** and presses Enter.
+3. When the result shows that URL, it clicks **REQUEST INDEXING**, waits for “Testing if live URL can be indexed”, and reports what Google answered (“Indexing requested”, the daily limit, …). The proof screenshot is saved as before.
+
+**Safety:**
+- Before clicking, the result must show the article's URL. Otherwise nothing is requested, and the keyword says so.
+- **Fallback:** if the box is not found or nothing loads, the tab opens Google's own inspection link instead. That link (`inspectionResultLink`) comes from the URL Inspection API when the Search Console key is set; it is fetched when the request is queued.
+- A 404 page sends the tab back to the property page once. Over four page changes in one request end it as an error.
+- The extension's site access is unchanged (`https://search.google.com/*`); only the content script's page pattern is now `https://search.google.com/search-console*`.
+- **What changed in the app:** the keyword queue link now opens Google's inspection link when the app has one (“inspect in Search Console”), otherwise the property's Search Console page (“open Search Console”). It never builds a link with the post's URL again.
+
+**Tests:**
+- **Reproduced first.** The fake Search Console now answers like Google: 404 for an inspection link whose `id` is not one of its tokens. It has a property page with the “Inspect any URL in …” box. With the old code the request timed out on that 404.
+- **Extension, real extension in Chromium:**
+  - **Normal path:** the property page opened, the URL was typed once, REQUEST INDEXING was clicked once, INDEXING_REQUESTED was recorded, the proof was saved, and the tab was closed.
+  - **New test, no box on the page:** Google's inspection link from the API is opened instead; nothing is typed, there is one click, and INDEXING_REQUESTED is recorded.
+  - **Daily limit and signed out:** still reported and asked again later.
+- **Unit:** a claimed request carries the property page, plus Google's link as the fallback, and the queued request keeps that link. The scheduler test uses the new property-page link.
+
+**Not verified here:**
+- The real Search Console page.
+- Whether Google's real “Inspect any URL” box accepts the typed URL and the synthetic Enter. If it does not, the fallback link is used when the Search Console key is set; otherwise the keyword shows “The ‘Inspect any URL’ box was not found…” or “did not load within 90 seconds after typing the URL”.
+- The box is found by its label (“Inspect any URL in …”, German “URL … prüfen/untersuchen”). Other UI languages are not recognised.
+
+**Commands run**
+```
+npx vitest run                      # 47 files, 333 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console"   # 3/3 (typing 8.5 s, fallback 51 s, limit/sign-out 9 s)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/workflow-publish.test.ts   # 2 files, 47/47 (extension 40, publish 7)
+npx tsc --noEmit                    # 0 errors
+```

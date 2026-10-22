@@ -173,7 +173,7 @@ describe('indexing after a workflow publish', () => {
     expect(google.submitted).toEqual([]); // no sitemap resubmit any more
     const jobs = await client.queueJob.findMany({ where: { queue: 'gsc' } });
     expect(jobs).toHaveLength(1);
-    expect(JSON.parse(jobs[0].payload)).toEqual({ keywordId: kw.id, url: 'https://promizeiten.example/daphne-govers/', property: PROPERTY, websiteId: siteId });
+    expect(JSON.parse(jobs[0].payload)).toEqual({ keywordId: kw.id, url: 'https://promizeiten.example/daphne-govers/', property: PROPERTY, websiteId: siteId, inspectLink: 'https://search.google.com/search-console/inspect?x' });
     let row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
     // Queued is not requested: the status changes only when Automation Chrome reports the click.
     expect(row.status).toBe('PUBLISHED');
@@ -183,7 +183,9 @@ describe('indexing after a workflow publish', () => {
     expect(await sync.indexingTick(new Date(t1.getTime() + 5000))).toMatchObject({ submitted: 0 });
     expect(await ri.waitingIndexingRequests(t1)).toBe(1);
     const claimed = await ri.claimIndexingRequest('install-1', new Date(t1.getTime() + 10_000));
-    expect(claimed).toEqual({ id: jobs[0].id, url: 'https://promizeiten.example/daphne-govers/', property: PROPERTY, inspectUrl: `https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent(PROPERTY)}&id=${encodeURIComponent('https://promizeiten.example/daphne-govers/')}` });
+    // As the owner does it: the property's page, where the URL is typed into “Inspect any URL”; Google's own inspection
+    // link (from the URL Inspection API, the key being connected) as the fallback. Never …/inspect?id=<post URL> (404).
+    expect(claimed).toEqual({ id: jobs[0].id, url: 'https://promizeiten.example/daphne-govers/', property: PROPERTY, inspectUrl: `https://search.google.com/search-console?resource_id=${encodeURIComponent(PROPERTY)}`, altUrl: 'https://search.google.com/search-console/inspect?x' });
     expect(await ri.claimIndexingRequest('install-1', new Date(t1.getTime() + 11_000))).toBeNull(); // leased
     const t2 = new Date(t1.getTime() + 60_000);
     await ri.reportIndexingRequest({ jobId: jobs[0].id, installId: 'install-1', outcome: 'REQUESTED', message: 'Indexing requested' }, t2);

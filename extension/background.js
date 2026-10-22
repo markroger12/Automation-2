@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.4.0';
+const EXTENSION_VERSION = '3.4.1';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -230,9 +230,14 @@ async function runGscJob() {
       timer = setTimeout(() => finish({ outcome: 'ERROR', message: 'Search Console did not finish within 6 minutes.' }), 6 * 60_000);
       chrome.tabs.onUpdated.addListener(onUpdated);
       chrome.tabs.update(tabId, { url: job.inspectUrl }).catch((e) => finish({ outcome: 'ERROR', message: 'Could not open Search Console: ' + e.message }));
+      // Each page of the tab asks for the job: the property's page (type the URL), and after Google's 404 or a box that
+      // did nothing, the next address. A few pages at most.
+      let pages = 0;
       gsc.onReady = async (fromTab) => {
         if (fromTab !== tabId) return;
-        const r = await chrome.tabs.sendMessage(tabId, { type: 'gsc-run', jobId: job.id }).catch((e) => ({ ok: false, error: e.message }));
+        pages++;
+        if (pages > 4) return finish({ outcome: 'ERROR', message: 'Search Console kept changing pages; the URL could not be inspected.' });
+        const r = await chrome.tabs.sendMessage(tabId, { type: 'gsc-run', jobId: job.id, typeUrl: job.url, altUrl: job.altUrl || null, attempt: pages }).catch((e) => ({ ok: false, error: e.message }));
         if (!r || (!r.ok && r.error !== 'busy')) finish({ outcome: 'ERROR', message: 'The Search Console page did not take the request: ' + ((r && r.error) || 'no answer') });
       };
       gsc.onDone = (fromTab, msg) => {

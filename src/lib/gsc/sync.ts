@@ -160,7 +160,10 @@ export async function indexingTick(now = new Date(), maxInspections = 20): Promi
     let note = 'Indexing not requested (workflow switch off); Google’s index status is checked.';
     if (kw.workflow.requestIndexing) {
       // No property set or detected: the website's URL as a URL-prefix property (as the workflow page's link does).
-      await queueIndexingRequest({ keywordId: kw.id, url: kw.publishedUrl!, property: property ?? inspectionProperty(null, site.publicUrl), websiteId: site.id }, now);
+      const requestProperty = property ?? inspectionProperty(null, site.publicUrl);
+      // Google's own URL Inspection link for the post (the fallback when the “Inspect any URL” box does not work).
+      const inspectLink = readKey() ? await inspectUrl(requestProperty, kw.publishedUrl!).then((r) => r.link).catch(() => null) : null;
+      await queueIndexingRequest({ keywordId: kw.id, url: kw.publishedUrl!, property: requestProperty, websiteId: site.id, inspectLink }, now);
       note = 'Waiting for Automation Chrome to request indexing in Search Console (URL Inspection → Request indexing).';
       submitted++;
     }

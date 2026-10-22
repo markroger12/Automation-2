@@ -10,7 +10,7 @@ import { IndexingPanel } from '@/components/indexing-panel';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
-import { inspectionProperty, inspectionUrl } from '@/lib/workflow/search-console';
+import { inspectionProperty, searchConsoleHome } from '@/lib/workflow/search-console';
 
 interface Site {
   id: string;
@@ -33,6 +33,8 @@ interface Keyword {
   task: { id: string; status: string; wpPostId: number | null; wpEditUrl: string | null } | null;
   /** Screenshot of Search Console's answer after “Request indexing”. */
   proofId?: string | null;
+  /** Google's URL Inspection link for the post (from the URL Inspection API). */
+  inspectLink?: string | null;
 }
 interface View {
   website: { id: string; name: string; timezone: string; canPublish: boolean; publicUrl: string };
@@ -356,8 +358,8 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                           </a>
                         ) : null}
                         {k.publishedUrl && view.workflow?.requestIndexing && ['PUBLISHED', 'INDEXING_REQUESTED'].includes(k.status) ? (
-                          <a className="ml-1 text-indigo-600 underline" href={inspectionUrl(inspectionProperty(view.workflow.searchConsoleProperty, view.website.publicUrl), k.publishedUrl)} target="_blank" rel="noreferrer">
-                            inspect in Search Console
+                          <a className="ml-1 text-indigo-600 underline" href={k.inspectLink ?? searchConsoleHome(inspectionProperty(view.workflow.searchConsoleProperty, view.website.publicUrl))} target="_blank" rel="noreferrer" title={k.inspectLink ? 'URL Inspection for this post' : 'Search Console: type the post URL into “Inspect any URL”'}>
+                            {k.inspectLink ? 'inspect in Search Console' : 'open Search Console'}
                           </a>
                         ) : null}
                       </td>

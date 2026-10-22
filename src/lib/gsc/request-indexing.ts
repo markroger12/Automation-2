@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { log } from '../log';
 import { enqueue } from '../queue';
-import { inspectionUrl } from '../workflow/search-console';
+import { searchConsoleHome } from '../workflow/search-console';
 
 /**
  * “Request indexing” as the owner does it (owner request): open the URL in Search Console's URL Inspection and click
@@ -23,6 +23,8 @@ export interface IndexingJobPayload {
   url: string;
   property: string;
   websiteId: string;
+  /** Google's URL Inspection link for the URL (from the URL Inspection API, when the key is connected). */
+  inspectLink?: string | null;
 }
 
 export type IndexingOutcome = 'REQUESTED' | 'QUOTA' | 'NOT_SIGNED_IN' | 'NO_ACCESS' | 'HUMAN_CHECK' | 'ERROR';
@@ -38,7 +40,7 @@ export async function waitingIndexingRequests(now = new Date()): Promise<number>
 }
 
 /** The extension takes the next request (an expired one comes back). */
-export async function claimIndexingRequest(installId: string, now = new Date()): Promise<{ id: string; url: string; property: string; inspectUrl: string } | null> {
+export async function claimIndexingRequest(installId: string, now = new Date()): Promise<{ id: string; url: string; property: string; inspectUrl: string; altUrl: string | null } | null> {
   for (let i = 0; i < 20; i++) {
     const job = await db.queueJob.findFirst({ where: { queue: GSC_QUEUE, OR: [{ status: 'WAITING', runAt: { lte: now } }, { status: 'ACTIVE', leaseUntil: { lt: now } }] }, orderBy: { runAt: 'asc' } });
     if (!job) return null;
@@ -52,7 +54,9 @@ export async function claimIndexingRequest(installId: string, now = new Date()):
     const taken = await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'ACTIVE', lockedBy: `extension:${installId}`, leaseUntil: new Date(now.getTime() + LEASE_MS), attempts: { increment: 1 }, startedAt: now } });
     if (!taken.count) return null;
     await setKeyword(p.keywordId, { indexingStatus: `Automation Chrome is requesting indexing in Search Console (URL Inspection → Request indexing) · ${now.toISOString()}` });
-    return { id: job.id, url: p.url, property: p.property, inspectUrl: inspectionUrl(p.property, p.url) };
+    // As the owner does it (owner's video): the property's page, where the URL is typed into “Inspect any URL in …”;
+    // Google's own inspection link as the fallback.
+    return { id: job.id, url: p.url, property: p.property, inspectUrl: searchConsoleHome(p.property), altUrl: p.inspectLink ?? null };
   }
   return null;
 }

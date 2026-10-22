@@ -254,12 +254,15 @@ export async function workflowView(websiteId: string) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   // Screenshots of Search Console's “Indexing requested” (proof of the request, owner request).
   const proofs = await proofsFor(keywords.filter((k) => k.publishedUrl).map((k) => k.id));
+  // Google's own URL Inspection link per post (from the URL Inspection API), when the request has one.
+  const requests = await db.queueJob.findMany({ where: { queue: 'gsc', idempotencyKey: { in: keywords.filter((k) => k.publishedUrl).map((k) => `gsc-index:${k.id}`) } }, select: { idempotencyKey: true, payload: true } });
+  const inspectLinks = new Map(requests.map((r) => [r.idempotencyKey.slice('gsc-index:'.length), parseJson<{ inspectLink?: string | null }>(r.payload, {}).inspectLink ?? null]));
   const nextSlots = workflow ? upcomingSlots(slotRules(workflow), new Date(), 7).slice(0, 8) : [];
   return {
     website: { id: site.id, name: site.name, timezone: site.timezone, canPublish: site.canPublish && Boolean(site.canPublishAcknowledgedAt), publicUrl: site.publicUrl },
     workflow: workflow ? { ...workflow, slots: parseJson<string[]>(workflow.slots, []), weekdays: parseJson<number[]>(workflow.weekdays, []) } : null,
     nextSlots,
-    keywords: keywords.map((k) => ({ ...k, secondaryKeywords: parseJson<string[]>(k.secondaryKeywords, []), task: k.taskId ? (byId.get(k.taskId) ?? null) : null, proofId: proofs.get(k.id) ?? null })),
+    keywords: keywords.map((k) => ({ ...k, secondaryKeywords: parseJson<string[]>(k.secondaryKeywords, []), task: k.taskId ? (byId.get(k.taskId) ?? null) : null, proofId: proofs.get(k.id) ?? null, inspectLink: inspectLinks.get(k.id) ?? null })),
   };
 }
 

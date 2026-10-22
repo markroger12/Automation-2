@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { setupTestDb } from '../helpers/test-db';
 import { formatSlot, parseSlot, upcomingSlots, zonedTimeToUtc } from '@/lib/workflow/time';
-import { inspectionProperty, inspectionUrl, normalizeSearchConsoleProperty } from '@/lib/workflow/search-console';
+import { inspectionProperty, normalizeSearchConsoleProperty, searchConsoleHome } from '@/lib/workflow/search-console';
 
 describe('slot time math', () => {
   it('parses h:mm AM/PM and converts wall times to UTC, DST-safe', () => {
@@ -31,14 +31,15 @@ describe('slot time math', () => {
 });
 
 describe('Search Console property', () => {
-  it('accepts URL-prefix and domain properties, builds the inspection link, and falls back to the website URL', () => {
+  it('accepts URL-prefix and domain properties, links the property’s Search Console page, and falls back to the website URL', () => {
     expect(normalizeSearchConsoleProperty('https://Tech.example/blog')).toBe('https://tech.example/blog/');
     expect(normalizeSearchConsoleProperty(' sc-domain:Tech.Example ')).toBe('sc-domain:tech.example');
     for (const bad of ['ftp://tech.example/', 'sc-domain:', 'sc-domain:not a host', 'https://u:p@tech.example/', 'https://tech.example/?q=1', 'tech.example']) expect(normalizeSearchConsoleProperty(bad), bad).toBeNull();
     expect(normalizeSearchConsoleProperty('')).toBeNull();
     expect(inspectionProperty(null, 'https://tech.example')).toBe('https://tech.example/');
     expect(inspectionProperty('sc-domain:tech.example', 'https://tech.example')).toBe('sc-domain:tech.example');
-    expect(inspectionUrl('sc-domain:tech.example', 'https://tech.example/a-post/')).toBe('https://search.google.com/search-console/inspect?resource_id=sc-domain%3Atech.example&id=https%3A%2F%2Ftech.example%2Fa-post%2F');
+    // Owner report: an inspection link with the post's URL as `id` answers 404, so the property's page is opened.
+    expect(searchConsoleHome('sc-domain:tech.example')).toBe('https://search.google.com/search-console?resource_id=sc-domain%3Atech.example');
   });
 });
 

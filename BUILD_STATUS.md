@@ -2377,3 +2377,42 @@ next build                          # compiled
 ```
 **Not verified here:** the owner's database; the migration runs there at the next start.
 
+## Owner report (2026-10-22): “how do I know indexing was requested? I never signed in to Search Console in Automation Chrome”
+
+**Report:** four published keywords showed “Sign in to Google (Search Console) in Automation Chrome, then the request is made automatically. Asked again …”. The extension had found Google's sign-in page, as designed, but the owner had no way to see the state at a glance, or to sign in from the app.
+
+**Added:**
+- **“Indexing in Search Console” panel** on the Workflow page (when the switch is on or posts are published) and on the Automation Chrome page (`src/components/indexing-panel.tsx`, `GET /api/search-console/indexing`). It shows:
+  - whether Automation Chrome is signed in to Google, judged from the last answer: a request or the daily limit means signed in, Google's sign-in page means not;
+  - how many requests were made and how many wait;
+  - what they wait for (sign-in, daily limit, Google check);
+  - the last answer, with its URL and time.
+- **Sign in to Google in Automation Chrome:** a new control job `chrome.google-signin` opens Google's sign-in page in Automation Chrome, continuing to Search Console (a new window when it is already running).
+  - The owner types the password themselves; the app never sees it.
+  - Automation Chrome is a normal Chrome without automation flags, so Google allows the sign-in, as it does for ChatGPT.
+- **Request now:** the requests that waited for the sign-in, a check or an error are made now instead of within the hour. The daily limit still waits.
+- **After the first successful request**, requests that waited for the sign-in are made next, without pressing anything.
+- **How the owner knows:** the keyword changes from “published” to “indexing requested”, with Google's sentence and the time. The panel counts it.
+
+**Tests** (`tests/unit/indexing-signin.test.ts`):
+- **Signed out:**
+  - the overview reports two waiting for sign-in and one for the daily limit;
+  - “Request now” makes the two due and leaves the daily limit;
+  - a successful request brings the rest forward, and the overview then says signed in.
+- **Sign-in button:** it enqueues one `chrome.google-signin` control job (no duplicate while one waits); an unknown action is refused; the worker has the handler; the sign-in URL is fixed.
+- **Chromium (`next dev`, scratch database):**
+  - both panels show “Google not signed in”, 2 waiting, and the last answer;
+  - the sign-in button queued the job;
+  - Request now answered `count: 2`;
+  - no console errors.
+- **`scripts/a11y-audit.ts`:** 58/58, no serious or critical violations.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 332 tests pass
+next build                          # compiled
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # 58 ok
+```
+**Not verified here:** Google's real sign-in page in the owner's Automation Chrome.
+

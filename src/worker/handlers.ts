@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { log, errorMessage } from '@/lib/log';
 import { registerControlHandler } from './control';
 import { launchAutomationChrome } from '@/lib/automation-chrome';
+import { GOOGLE_SIGNIN_URL } from '@/lib/gsc/request-indexing';
 import { deleteProfile, detectEditor, interactiveLogin, openAdminWindow, resetSession, syncCategories, testSession } from '@/wordpress/session';
 import { refreshLinkIndex } from '@/wordpress/link-index';
 import { scheduleKeywordPost, verifyKeywordPublished } from '@/wordpress/schedule';
@@ -54,6 +55,13 @@ export function registerBuiltInControlHandlers(): void {
   registerControlHandler('chrome.launch', async () => {
     const result = launchAutomationChrome();
     await log({ category: 'extension', message: `Automation Chrome launched (PID ${result.pid ?? '?'}).` });
+    return result;
+  });
+  // Owner request: sign in to Google (Search Console) in Automation Chrome. Opens Google's sign-in page there (a new
+  // window when it is already running); the owner signs in themselves — the app never sees the password.
+  registerControlHandler('chrome.google-signin', async () => {
+    const result = launchAutomationChrome(GOOGLE_SIGNIN_URL, { allowRunning: true });
+    await log({ category: 'search', message: 'Google sign-in (Search Console) opened in Automation Chrome.' });
     return result;
   });
   registerControlHandler('wp.delete-profile', async (job, payload) => {

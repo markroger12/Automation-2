@@ -5,6 +5,7 @@ import { CircleCheck, CircleDashed, Pause, Play, Rocket, Send } from 'lucide-rea
 import { api } from '@/lib/client/api';
 import { Button, CopyButton, RelativeTime, useToast } from '@/components/client';
 import { ExtensionPairing } from '@/components/extension-pairing';
+import { IndexingPanel } from '@/components/indexing-panel';
 import { Alert, Card, Chip, cx } from '@/components/ui';
 import { Textarea } from '@/components/form';
 
@@ -211,6 +212,9 @@ export function AutomationChromeWizard() {
             </p>
           ) : null}
         </Card>
+
+        {/* Google (Search Console) sign-in, for “Request indexing” after a publish (owner request). */}
+        <IndexingPanel />
       </div>
     </div>
   );

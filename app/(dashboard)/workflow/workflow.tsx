@@ -6,6 +6,7 @@ import { ArrowUpToLine, Eye, FastForward, Plus, RotateCcw, Save, Trash2, X } fro
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { TimePicker } from '@/components/time-picker';
+import { IndexingPanel } from '@/components/indexing-panel';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
@@ -294,6 +295,8 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
               </ul>
             ) : null}
           </Card>
+
+          {view.workflow?.requestIndexing || view.keywords.some((k) => k.publishedUrl) ? <IndexingPanel /> : null}
 
           <Card
             title="Keyword queue"

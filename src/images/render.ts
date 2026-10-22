@@ -1,5 +1,7 @@
 import sharp, { type OverlayOptions } from 'sharp';
 import { CANVAS, sanitizeSvg, type ImageTemplate, type Layer } from '@/lib/image-template';
+import { fontChoice } from '@/lib/fonts';
+import { covers, linesPath, loadFont, wrapMeasured } from './fonts';
 
 /**
  * The production image renderer (also used for the designer's live preview).
@@ -28,12 +30,11 @@ export interface RenderOptions {
   format?: 'webp' | 'jpeg';
 }
 
-const FONTS: Record<string, string> = {
-  sans: "Inter, 'Segoe UI', Arial, Helvetica, sans-serif",
-  serif: "Georgia, 'Times New Roman', serif",
-  condensed: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif",
-  mono: "Consolas, 'Courier New', monospace",
-};
+/** System font names for text drawn as SVG text (system fonts, or a bundled font missing a letter). */
+function systemFonts(id: string): string {
+  const f = fontChoice(id);
+  return f.bundled ? `'${f.label}', ${f.css.split(', ').slice(1).join(', ')}` : f.css;
+}
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const resolveColor = (c: string | null | undefined, accent: string) => (!c ? 'none' : c === 'accent' ? accent : c === 'transparent' ? 'none' : c);
@@ -162,22 +163,28 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
       const text = layer.uppercase ? raw.toUpperCase() : raw;
       if (!text.trim()) return null;
       const inner = Math.max(1, w - 2 * layer.padding);
+      // A bundled font is drawn from its file (same picture on every computer), lines broken by real letter widths.
+      const loaded = loadFont(layer.fontFamily, layer.fontWeight);
+      const font = loaded && covers(loaded, text) ? loaded : null;
+      const wrap = (fs: number, max: number) => (font ? wrapMeasured(font, text, fs, inner, max) : wrapText(text, fs, inner, max, layer.fontWeight));
       // Auto-fit: shrink the font (down to 60 %) until all lines fit the box; then truncate with an ellipsis.
       let fontSize = layer.fontSize;
-      let lines = wrapText(text, fontSize, inner, 99, layer.fontWeight);
+      let lines = wrap(fontSize, 99);
       const fits = (fs: number, n: number) => n <= layer.maxLines && 2 * layer.padding + fs * 1.25 + (n - 1) * fs * layer.lineHeight <= h;
       while (!fits(fontSize, lines.length) && fontSize > layer.fontSize * 0.6) {
         fontSize = Math.round(fontSize * 0.92);
-        lines = wrapText(text, fontSize, inner, 99, layer.fontWeight);
+        lines = wrap(fontSize, 99);
       }
       const roomLines = Math.max(1, Math.min(layer.maxLines, Math.floor((h - 2 * layer.padding - fontSize * 1.25) / (fontSize * layer.lineHeight)) + 1));
-      if (lines.length > roomLines) lines = wrapText(text, fontSize, inner, roomLines, layer.fontWeight);
+      if (lines.length > roomLines) lines = wrap(fontSize, roomLines);
       const lh = fontSize * layer.lineHeight;
+      const fill = esc(resolveColor(layer.color, accent));
+      const bg = layer.background ? `<rect width="${w}" height="${h}" fill="${esc(resolveColor(layer.background, accent))}"/>` : '';
+      if (font) return sharp(svgBuffer(w, h, `${bg}<path d="${linesPath(font, lines, { size: fontSize, width: w, padding: layer.padding, lineHeight: layer.lineHeight, align: layer.align })}" fill="${fill}"/>`)).png().toBuffer();
       const anchor = layer.align === 'center' ? 'middle' : layer.align === 'right' ? 'end' : 'start';
       const tx = layer.align === 'center' ? w / 2 : layer.align === 'right' ? w - layer.padding : layer.padding;
-      const bg = layer.background ? `<rect width="${w}" height="${h}" fill="${esc(resolveColor(layer.background, accent))}"/>` : '';
       const tspans = lines.map((l, i) => `<tspan x="${tx}" y="${layer.padding + fontSize + i * lh}">${esc(l)}</tspan>`).join('');
-      return sharp(svgBuffer(w, h, `${bg}<text font-family="${esc(FONTS[layer.fontFamily])}" font-size="${fontSize}" font-weight="${layer.fontWeight}" fill="${esc(resolveColor(layer.color, accent))}" text-anchor="${anchor}">${tspans}</text>`)).png().toBuffer();
+      return sharp(svgBuffer(w, h, `${bg}<text font-family="${esc(systemFonts(layer.fontFamily))}" font-size="${fontSize}" font-weight="${layer.fontWeight}" fill="${fill}" text-anchor="${anchor}">${tspans}</text>`)).png().toBuffer();
     }
     case 'rect': {
       const sw = layer.stroke ? layer.strokeWidth : 0;

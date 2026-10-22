@@ -364,3 +364,57 @@ describe('owner request: a Celebrity and a Tigram image template', () => {
     expect(withoutTitleText('Large bold title text: "How to Install WordPress".', 'FALLBACK')).toBe('FALLBACK');
   });
 });
+
+describe('owner request: more fonts for text (Helvetica-like and others), the same on every computer', () => {
+  it('every bundled font weight is shipped with its license, and the nearest weight stands in for a missing one', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { FONT_CHOICES, fontChoice, nearestWeight } = await import('@/lib/fonts');
+    const { loadFont } = await import('@/images/fonts');
+    const bundled = FONT_CHOICES.filter((f) => f.bundled);
+    expect(bundled.length).toBeGreaterThanOrEqual(20);
+    for (const f of bundled) {
+      expect(fs.existsSync(path.join('public', 'fonts', f.id, 'LICENSE.txt')), `${f.id} license`).toBe(true);
+      for (const w of f.weights) expect(loadFont(f.id, w), `${f.id} ${w}`).not.toBeNull();
+    }
+    expect(nearestWeight(fontChoice('bebas-neue'), 700)).toBe(400);
+    expect(nearestWeight(fontChoice('lato'), 600)).toBe(700);
+    expect(nearestWeight(fontChoice('arimo'), 800)).toBe(700);
+    expect(loadFont('sans', 700)).toBeNull(); // the system fonts stay system fonts
+    expect(templateSchema.parse({ layers: [{ id: 't', type: 'text', text: 'x', fontFamily: 'montserrat', x: 0, y: 0, width: 100, height: 100 }] }).layers[0]).toMatchObject({ fontFamily: 'montserrat' });
+    expect(() => templateSchema.parse({ layers: [{ id: 't', type: 'text', text: 'x', fontFamily: 'comic-sans', x: 0, y: 0, width: 100, height: 100 }] })).toThrow();
+  });
+
+  it('a bundled font is drawn from its file and lines break by its real letter widths; a missing letter falls back to system fonts', async () => {
+    const { loadFont, wrapMeasured, covers } = await import('@/images/fonts');
+    const mont = loadFont('montserrat', 700)!;
+    // Same number of letters, very different widths: only real widths tell them apart.
+    expect(wrapMeasured(mont, 'iiiiiiii iiiiiiii', 80, 700, 3)).toHaveLength(1);
+    expect(wrapMeasured(mont, 'WWWWWWWW WWWWWWWW', 80, 700, 3)).toHaveLength(2);
+    expect(wrapMeasured(mont, 'one two three four five six seven eight nine ten eleven twelve', 80, 700, 2)[1].endsWith('…')).toBe(true);
+    expect(covers(mont, 'Größe Malaak Compton-Rock')).toBe(true);
+    expect(covers(mont, 'Beijing 北京')).toBe(false);
+
+    const inkWidth = async (fontFamily: string, text = 'MALAAK COMPTON-ROCK') => {
+      const t = templateSchema.parse({ background: '#000000', layers: [{ id: 't', type: 'text', text, fontFamily, fontWeight: 700, fontSize: 120, maxLines: 1, x: 0, y: 0, width: 1920, height: 300, color: '#ffffff' }] });
+      const png = await renderCanvas({ template: t, photos: [] });
+      const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+      let left = info.width;
+      let right = -1;
+      for (let y = 0; y < 300; y++)
+        for (let x = 0; x < info.width; x++)
+          if (data[(y * info.width + x) * info.channels] > 128) {
+            left = Math.min(left, x);
+            right = Math.max(right, x);
+          }
+      return right - left;
+    };
+    const montserrat = await inkWidth('montserrat');
+    const bebas = await inkWidth('bebas-neue');
+    expect(montserrat).toBeGreaterThan(1000);
+    expect(bebas).toBeGreaterThan(300);
+    expect(bebas).toBeLessThan(montserrat * 0.75); // a condensed display font really is narrower
+    // A letter the font lacks: drawn with system fonts instead, never a box or an error.
+    expect(await inkWidth('montserrat', 'Beijing 北京')).toBeGreaterThan(100);
+  });
+});

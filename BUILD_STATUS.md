@@ -2279,3 +2279,68 @@ next build                          # compiled
 ```
 **Not verified here:** the owner's real keyword, draft #1344, and its publication in WordPress.
 
+## Owner requests (2026-10-22): more fonts (“like Helvetica”), an editor that stays in view, pickers in the app's look
+
+**Requests:**
+- “Add more good fonts to the image text, like Helvetica.”
+- “When I edit a text, the live preview / editor goes up and the text stays below; make it user friendly.”
+- With a screenshot of Chrome's colour popup: “fix the UI of all menus of this type, calendar etc.”
+
+### Fonts
+- **Choices:** 20 free fonts are added to the 4 system fonts, grouped in the font list. Each name is shown in its own font (Chrome's customizable select).
+  - Arimo has the same letter widths as Helvetica/Arial; Helvetica itself is not free to ship.
+  - The others: Inter, Roboto, Open Sans, Montserrat, Poppins, Lato, Raleway, Nunito, Oswald, Bebas Neue, Anton, Archivo Black, Barlow Condensed, Playfair Display, Merriweather, Lora, DM Serif Display, Dancing Script and Pacifico.
+- **Files:** `public/fonts/<font>/` holds the Fontsource 5.3.0 packages' Latin WOFF files (English and German letters) for weights 400/600/700/800 where they exist, plus each LICENSE.txt (SIL OFL 1.1). 1.8 MB in all.
+- **Why the renderer draws them from the files:** before, text was SVG text, so it depended on the fonts installed on the computer, and Helvetica, for example, is not on Windows.
+  - Now text in a bundled font is turned into shapes from the font file (new dependency `opentype.js` 1.3.4, published 2021, pinned; types `@types/opentype.js` 1.3.8). The picture is the same on every computer.
+  - Lines are broken by the real letter widths instead of an estimate.
+  - A text with a letter the font does not have (e.g. Chinese) is drawn with system fonts as before, never with boxes.
+  - The 4 system fonts render exactly as before.
+- **Missing weights:** a weight the font lacks uses the nearest one, in the picture and on the canvas. The weight list says so, and the browser never fakes a bold.
+- **Designer canvas:** the same files are loaded with @font-face (served from `/fonts`; the CSP already allows `font-src 'self'`).
+
+### Editor layout
+- **Sticky editor:** on wide screens (≥ 1280 px) the toolbar, canvas and preview controls stay in view while the right-hand panels scroll. Fit-zoom sizes the canvas to the window.
+- **Right-hand panels:** the selected layer comes first, then Layers, then Template. For a text layer, its Text, Font and Weight come before position and size.
+- **Edit / Real output** switch above the canvas: Real output shows the production renderer's picture at the same size.
+- **Preview controls:** the preview title, photo slots and **Check final size** sit in one row under the canvas.
+
+### Pickers in the app's look
+- **Colour:** new `src/components/color-picker.tsx` replaces both browser colour popups in the designer (layer colours and the accent).
+  - Saturation/brightness area and hue bar, with mouse and keyboard (arrows, Shift ×10);
+  - hex and R G B fields;
+  - the screen eyedropper in Chrome;
+  - swatches with the template's accent;
+  - opens above or to the left near a window edge; Escape closes it.
+  - The designer's arrow-key nudge and Delete ignore keys typed inside such popups.
+- **Time:** new `src/components/time-picker.tsx` for Workflow → Publishing slots (hour, minute and AM/PM columns, every minute). It replaces typing “3:30 PM”.
+- **Dates:** date fields already use the app's own calendar (`DatePicker`). No `<input type="date">` or `type="color"` is left in the app.
+
+### Checked
+- **Unit tests** (`images.test.ts`):
+  - every bundled weight loads and has its license, and nearest weights are right;
+  - the schema accepts the new fonts and refuses unknown ones;
+  - real-width line breaking (“iiiiiiii iiiiiiii” fits on one line where “WWWWWWWW WWWWWWWW” needs two), with an ellipsis when cut;
+  - rendered ink: Montserrat > 1000 px wide, Bebas Neue under 75 % of it;
+  - Chinese letters fall back to system fonts.
+- **A rendered sample sheet** of all 24 fonts with German letters, checked by eye.
+- **Chromium against `next dev`** (scratch database, dark theme):
+  - 24 fonts in 5 groups; Montserrat chosen;
+  - after scrolling the page 900 px, the canvas stays at the top of the window;
+  - the colour picker opens, an area click and Shift+→ on the hue set `#cc4429` on the field;
+  - Real output shows the renderer's Montserrat text;
+  - the slot picker gives “4:45 PM”;
+  - no console errors.
+- **`scripts/a11y-audit.ts`:** 58/58 pages (dark and light) with no serious or critical violations, the designer and Workflow included. The pickers were closed during the audit.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 46 files, 329 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 16 pass, 1 skipped
+next build                          # compiled
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # 58 ok
+```
+
+**Not verified here:** the owner's Windows PC and Chrome; the font list's per-font preview needs Chrome's customizable select (Chrome 135+), and other browsers show plain names.
+

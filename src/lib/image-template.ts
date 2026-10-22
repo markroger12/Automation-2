@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FONT_IDS } from './fonts';
 
 /**
  * Branded image templates (client-safe). Coordinates are always in a true
@@ -43,7 +44,7 @@ export const layerSchema = z.discriminatedUnion('type', [
     ...base,
     type: z.literal('text'),
     text: z.string().max(400),
-    fontFamily: z.enum(['sans', 'serif', 'condensed', 'mono']).default('sans'),
+    fontFamily: z.enum(FONT_IDS).default('sans'),
     fontSize: num(8, 400).default(64),
     fontWeight: z.union([z.literal(400), z.literal(600), z.literal(700), z.literal(800)]).default(700),
     color: color.default('#ffffff'),

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowUpToLine, Eye, FastForward, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
+import { TimePicker } from '@/components/time-picker';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
@@ -206,7 +207,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                 ))}
               </div>
               <div className="mt-2 flex gap-2">
-                <Input aria-label="New slot" placeholder="3:30 PM" value={newSlot} onChange={(e) => setNewSlot(e.target.value)} className="w-32" />
+                <TimePicker ariaLabel="New slot" placeholder="3:30 PM" value={newSlot} onChange={setNewSlot} className="w-36" />
                 <Button size="sm" onClick={() => { if (newSlot.trim()) setForm({ ...form, slots: [...form.slots, newSlot.trim()] }); setNewSlot(''); }}>
                   <Plus className="h-4 w-4" /> Add
                 </Button>

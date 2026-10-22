@@ -32,9 +32,11 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
+import { ColorPicker } from '@/components/color-picker';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, cx } from '@/components/ui';
 import { api, apiBlob, upload } from '@/lib/client/api';
+import { FONT_CHOICES, FONT_GROUPS, fontChoice, fontFaceCss, nearestWeight } from '@/lib/fonts';
 import {
   CANVAS,
   importForeignTemplate,
@@ -90,14 +92,18 @@ type Data = {
 };
 type Which = 'featured' | 'body';
 
-const FONTS: Record<string, string> = {
-  sans: "Inter, 'Segoe UI', Arial, Helvetica, sans-serif",
-  serif: "Georgia, 'Times New Roman', serif",
-  condensed: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif",
-  mono: "Consolas, 'Courier New', monospace",
-};
+/** @font-face rules for the bundled fonts (the renderer draws the same files). */
+const FONT_FACES = fontFaceCss();
+const WEIGHTS: [number, string][] = [
+  [400, 'Regular'],
+  [600, 'Semibold'],
+  [700, 'Bold'],
+  [800, 'Extra bold'],
+];
 const COLOR_RE = /^(#[0-9a-fA-F]{3,8}|accent|transparent|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+)\s*)?\))$/;
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+/** Height of the editor's toolbar, preview controls and hint on wide screens, where the editor stays in view. */
+const EDITOR_CHROME = 300;
 /** Space around the canvas inside its frame: the 12 px selection handles stick out 6 px past a layer's edge. */
 const FRAME_PAD = 8;
 const CURSORS: Record<Handle, string> = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
@@ -176,6 +182,8 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   const [snap, setSnap] = useState(true);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [previewTitle, setPreviewTitle] = useState(SAMPLE_TITLE);
+  /** The canvas area shows the editor, or the real output of the production renderer at the same size. */
+  const [canvasView, setCanvasView] = useState<'edit' | 'output'>('edit');
   const [photoIds, setPhotoIds] = useState<[string, string]>(['', '']);
   const [importOpen, setImportOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<Asset | null>(null);
@@ -246,7 +254,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
     const update = () => {
       if (el.clientWidth <= 0) return;
       const width = el.clientWidth - FRAME_PAD * 2;
-      const height = window.innerHeight * 0.75 - FRAME_PAD * 2 - 2;
+      const height = (window.matchMedia('(min-width: 1280px)').matches ? Math.max(240, window.innerHeight - EDITOR_CHROME) : window.innerHeight * 0.75) - FRAME_PAD * 2 - 2;
       setFitScale(Math.min(1, Math.max(0.1, Math.min(width / CANVAS.width, height / CANVAS.height))));
     };
     update();
@@ -359,7 +367,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
-      if (el && (el.closest('input, textarea, select, [contenteditable="true"]') || el.closest('dialog[open]'))) return;
+      if (el && (el.closest('input, textarea, select, [contenteditable="true"]') || el.closest('dialog[open], [role="dialog"]'))) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -519,6 +527,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
 
   return (
     <div className="space-y-4">
+      <style>{FONT_FACES}</style>
       {/* Top bar */}
       <Card padded={false}>
         <div className="flex flex-wrap items-center gap-2 p-3">
@@ -652,8 +661,9 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
           </div>
         </Card>
       ) : template ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="min-w-0 space-y-4">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+          {/* The editor stays in view while the panels on the right scroll (owner: editing a text moved the canvas away). */}
+          <div className="min-w-0 space-y-3 xl:sticky xl:top-3">
             {/* Toolbar */}
             <Card padded={false}>
               <div className="flex flex-wrap items-center gap-1.5 p-2">
@@ -696,12 +706,26 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 <Button size="sm" variant={snap ? 'secondary' : 'ghost'} aria-pressed={snap} title="Snap to edges and centers (hold Alt to bypass)" onClick={() => setSnap((v) => !v)}>
                   <Magnet className="h-4 w-4" /> Snap
                 </Button>
+                <div className="surface-2 ml-auto inline-flex rounded-lg p-0.5" role="tablist" aria-label="Canvas view">
+                  {(['edit', 'output'] as const).map((v) => (
+                    <button key={v} role="tab" type="button" aria-selected={canvasView === v} onClick={() => setCanvasView(v)} className={cx('rounded-md px-2.5 py-1 text-xs font-medium', canvasView === v ? 'surface shadow-sm' : 'text-muted')}>
+                      {v === 'edit' ? 'Edit' : 'Real output'}
+                    </button>
+                  ))}
+                </div>
               </div>
             </Card>
 
             {/* Canvas */}
-            <div ref={wrapRef} className={cx('border-app surface-2 max-h-[75vh] rounded-xl border', zoom === 'fit' ? 'overflow-hidden' : 'overflow-auto')} style={{ padding: FRAME_PAD }}>
+            <div ref={wrapRef} className={cx('border-app surface-2 relative max-h-[75vh] rounded-xl border xl:max-h-[calc(100vh_-_300px)]', zoom === 'fit' ? 'overflow-hidden' : 'overflow-auto')} style={{ padding: FRAME_PAD }}>
+              {canvasView === 'output' ? (
+                <div className="relative mx-auto" style={{ width: CANVAS.width * scale, height: CANVAS.height * scale }}>
+                  {preview.url ? <img src={preview.url} alt="Real output (production renderer)" className="h-full w-full" /> : <div className="surface h-full w-full" />}
+                  {preview.busy ? <span className="absolute right-2 top-2"><Chip>rendering…</Chip></span> : null}
+                </div>
+              ) : null}
               <div
+                hidden={canvasView === 'output'}
                 ref={stageRef}
                 role="application"
                 aria-label={`${which === 'featured' ? 'Featured' : 'Body'} image canvas, 1920 by 1080`}
@@ -750,30 +774,82 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 ) : null}
               </div>
             </div>
-            <p className="text-muted text-xs">
-              Drag to move · handles resize (Shift keeps the ratio) · top knob rotates (Shift: 15° steps) · arrows nudge 1 px (Shift: 10 px) · Delete removes · Ctrl+D duplicates · Ctrl+Z / Ctrl+Shift+Z undo/redo · Alt bypasses snapping. The canvas is an editing view; the preview on the right is the real output.
-            </p>
-
-            <Card title="Live preview" description="Drawn by the production renderer — exactly what the article pipeline produces." actions={<Button size="sm" onClick={() => void finalRender()}>Check final size</Button>}>
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-                <div className="relative">
-                  {preview.url ? <img src={preview.url} alt="Rendered preview" className="border-app w-full rounded-lg border" /> : <div className="surface-2 aspect-video rounded-lg" />}
-                  {preview.busy ? <span className="absolute right-2 top-2"><Chip>rendering…</Chip></span> : null}
-                  {preview.error ? <div className="mt-2"><Alert tone="danger">{preview.error}</Alert></div> : null}
-                  {finalInfo ? (
-                    <div className="mt-3 space-y-2">
-                      <Alert tone={finalInfo.over ? 'warning' : 'success'} title="Final output">{finalInfo.text}{finalInfo.over ? ' — over budget even at the lowest quality; simplify the design or raise the byte budget in Settings.' : ''}</Alert>
-                      <a href={finalInfo.url} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 underline">Open the final file</a>
-                    </div>
+            {/* Preview data and the final check, under the canvas so they stay in view too. */}
+            <Card padded={false}>
+              <div className="flex flex-wrap items-end gap-3 p-3">
+                <PreviewControls compact data={data} photoIds={photoIds} setPhotoIds={setPhotoIds} title={previewTitle} setTitle={setPreviewTitle} />
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => void finalRender()}>Check final size</Button>
+                  {canvasView === 'edit' ? (
+                    <Button size="sm" variant="ghost" onClick={() => setCanvasView('output')}>
+                      <Eye className="h-4 w-4" /> See real output
+                    </Button>
                   ) : null}
                 </div>
-                <PreviewControls data={data} photoIds={photoIds} setPhotoIds={setPhotoIds} title={previewTitle} setTitle={setPreviewTitle} />
               </div>
+              {preview.error || finalInfo ? (
+                <div className="space-y-2 px-3 pb-3">
+                  {preview.error ? <Alert tone="danger">{preview.error}</Alert> : null}
+                  {finalInfo ? (
+                    <Alert tone={finalInfo.over ? 'warning' : 'success'} title="Final output">
+                      {finalInfo.text}
+                      {finalInfo.over ? ' — over budget even at the lowest quality; simplify the design or raise the byte budget in Settings.' : ''}{' '}
+                      <a href={finalInfo.url} target="_blank" rel="noreferrer" className="text-indigo-600 underline">
+                        Open the final file
+                      </a>
+                    </Alert>
+                  ) : null}
+                </div>
+              ) : null}
             </Card>
+            <p className="text-muted text-xs">
+              {canvasView === 'edit'
+                ? 'Drag to move · handles resize (Shift keeps the ratio) · top knob rotates (Shift: 15°) · arrows nudge 1 px (Shift: 10 px) · Delete · Ctrl+D duplicate · Ctrl+Z / Ctrl+Shift+Z · Alt: no snapping. “Real output” shows what the article pipeline produces.'
+                : 'Real output: drawn by the production renderer, exactly what the article pipeline produces. Switch back to “Edit” to move layers.'}
+            </p>
           </div>
 
-          {/* Side panels */}
+          {/* Side panels: the selected layer first, so its settings sit next to the canvas. */}
           <div className="space-y-4">
+            {selectedLayer ? (
+              <Card
+                title={`${selectedLayer.name || selectedLayer.type}`}
+                actions={
+                  <div className="flex gap-1">
+                    <IconBtn label="Bring to front" onClick={() => order(selectedLayer.id, 'front')}><BringToFront className="h-4 w-4" /></IconBtn>
+                    <IconBtn label="Send to back" onClick={() => order(selectedLayer.id, 'back')}><SendToBack className="h-4 w-4" /></IconBtn>
+                    <IconBtn label="Duplicate (Ctrl+D)" onClick={() => duplicate(selectedLayer.id)}><Copy className="h-4 w-4" /></IconBtn>
+                    <IconBtn label="Delete layer" onClick={() => removeLayer(selectedLayer.id)}><Trash2 className="h-4 w-4" /></IconBtn>
+                  </div>
+                }
+              >
+                <LayerProperties layer={selectedLayer} accent={template.accent} fixedPhotos={fixedPhotos} onPatch={(patch, key) => patchLayer(selectedLayer.id, patch, key ? `${selectedLayer.id}:${key}` : null)} />
+              </Card>
+            ) : (
+              <Card>
+                <p className="text-muted text-sm">Click a layer on the canvas or in the list below to edit it here.</p>
+              </Card>
+            )}
+            <Card title="Layers" description="Top of the list is in front.">
+              {template.layers.length === 0 ? <p className="text-muted text-sm">No layers yet — add one from the toolbar.</p> : null}
+              <ul className="space-y-1">
+                {template.layers
+                  .map((l, i) => ({ l, i }))
+                  .reverse()
+                  .map(({ l, i }) => (
+                    <li key={l.id} className={cx('flex items-center gap-1 rounded-lg border px-2 py-1 text-sm', selected === l.id ? 'border-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/40' : 'border-app')}>
+                      <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => setSelected(l.id)}>
+                        <span className={cx(!l.visible && 'text-muted line-through')}>{l.name || l.type}</span> <span className="text-muted text-xs">{l.type === 'photo' ? `slot ${l.slot + 1}` : l.type}</span>
+                      </button>
+                      <IconBtn label={l.visible ? 'Hide' : 'Show'} onClick={() => patchLayer(l.id, { visible: !l.visible })}>{l.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}</IconBtn>
+                      <IconBtn label={l.locked ? 'Unlock' : 'Lock'} onClick={() => patchLayer(l.id, { locked: !l.locked })}>{l.locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}</IconBtn>
+                      <IconBtn label="Bring forward" disabled={i === template.layers.length - 1} onClick={() => order(l.id, 'up')}><ArrowUp className="h-3.5 w-3.5" /></IconBtn>
+                      <IconBtn label="Send backward" disabled={i === 0} onClick={() => order(l.id, 'down')}><ArrowDown className="h-3.5 w-3.5" /></IconBtn>
+                    </li>
+                  ))}
+              </ul>
+            </Card>
+
             <Card title="Template">
               <div className="space-y-3">
                 <Field label="Name" htmlFor="tpl-name">
@@ -781,7 +857,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Accent color" htmlFor="tpl-accent">
-                    <input id="tpl-accent" type="color" value={template.accent} onChange={(e) => changeSet((v) => ({ ...v, featured: { ...v.featured, accent: e.target.value }, body: v.body ? { ...v.body, accent: e.target.value } : null }), 'tpl:accent')} className="border-app h-9 w-full cursor-pointer rounded-lg border" />
+                    <ColorPicker id="tpl-accent" wide ariaLabel="Accent color" value={template.accent} onChange={(hex) => changeSet((v) => ({ ...v, featured: { ...v.featured, accent: hex }, body: v.body ? { ...v.body, accent: hex } : null }), 'tpl:accent')} />
                   </Field>
                   <ColorField id="tpl-bg" label="Background" value={template.background} accent={template.accent} onChange={(v) => changeTemplate((t) => ({ ...t, background: v ?? '#111827' }), 'tpl:bg')} />
                 </div>
@@ -805,42 +881,6 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 </div>
               </div>
             </Card>
-
-            <Card title="Layers" description="Top of the list is in front.">
-              {template.layers.length === 0 ? <p className="text-muted text-sm">No layers yet — add one from the toolbar.</p> : null}
-              <ul className="space-y-1">
-                {template.layers
-                  .map((l, i) => ({ l, i }))
-                  .reverse()
-                  .map(({ l, i }) => (
-                    <li key={l.id} className={cx('flex items-center gap-1 rounded-lg border px-2 py-1 text-sm', selected === l.id ? 'border-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/40' : 'border-app')}>
-                      <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => setSelected(l.id)}>
-                        <span className={cx(!l.visible && 'text-muted line-through')}>{l.name || l.type}</span> <span className="text-muted text-xs">{l.type === 'photo' ? `slot ${l.slot + 1}` : l.type}</span>
-                      </button>
-                      <IconBtn label={l.visible ? 'Hide' : 'Show'} onClick={() => patchLayer(l.id, { visible: !l.visible })}>{l.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}</IconBtn>
-                      <IconBtn label={l.locked ? 'Unlock' : 'Lock'} onClick={() => patchLayer(l.id, { locked: !l.locked })}>{l.locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}</IconBtn>
-                      <IconBtn label="Bring forward" disabled={i === template.layers.length - 1} onClick={() => order(l.id, 'up')}><ArrowUp className="h-3.5 w-3.5" /></IconBtn>
-                      <IconBtn label="Send backward" disabled={i === 0} onClick={() => order(l.id, 'down')}><ArrowDown className="h-3.5 w-3.5" /></IconBtn>
-                    </li>
-                  ))}
-              </ul>
-            </Card>
-
-            {selectedLayer ? (
-              <Card
-                title={`${selectedLayer.name || selectedLayer.type}`}
-                actions={
-                  <div className="flex gap-1">
-                    <IconBtn label="Bring to front" onClick={() => order(selectedLayer.id, 'front')}><BringToFront className="h-4 w-4" /></IconBtn>
-                    <IconBtn label="Send to back" onClick={() => order(selectedLayer.id, 'back')}><SendToBack className="h-4 w-4" /></IconBtn>
-                    <IconBtn label="Duplicate (Ctrl+D)" onClick={() => duplicate(selectedLayer.id)}><Copy className="h-4 w-4" /></IconBtn>
-                    <IconBtn label="Delete layer" onClick={() => removeLayer(selectedLayer.id)}><Trash2 className="h-4 w-4" /></IconBtn>
-                  </div>
-                }
-              >
-                <LayerProperties layer={selectedLayer} accent={template.accent} fixedPhotos={fixedPhotos} onPatch={(patch, key) => patchLayer(selectedLayer.id, patch, key ? `${selectedLayer.id}:${key}` : null)} />
-              </Card>
-            ) : null}
 
             <Card title="Logo" description="PNG, JPEG, WebP or SVG (SVG is sanitized and rasterized). Used by every logo layer.">
               {activeLogoId ? <img src={`/api/media/${activeLogoId}`} alt="Current logo" className="surface-2 mb-3 max-h-24 rounded-lg p-2" /> : <p className="text-muted mb-3 text-sm">No logo yet — logo layers stay empty until you upload one.</p>}
@@ -928,7 +968,29 @@ function FileButton({ label, accept, onFile }: { label: string; accept: string; 
   );
 }
 
-function PreviewControls({ data, photoIds, setPhotoIds, title, setTitle, hideTitle }: { data: Data; photoIds: [string, string]; setPhotoIds: (v: [string, string]) => void; title: string; setTitle: (v: string) => void; hideTitle?: boolean }) {
+function PreviewControls({ data, photoIds, setPhotoIds, title, setTitle, hideTitle, compact }: { data: Data; photoIds: [string, string]; setPhotoIds: (v: [string, string]) => void; title: string; setTitle: (v: string) => void; hideTitle?: boolean; compact?: boolean }) {
+  const pickPhoto = (slot: number, value: string) => setPhotoIds((slot === 0 ? [value, photoIds[1]] : [photoIds[0], value]) as [string, string]);
+  if (compact) {
+    return (
+      <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+        <Field label="Preview title ({{title}})" htmlFor="pv-title">
+          <Input id="pv-title" value={title} maxLength={300} onChange={(e) => setTitle(e.target.value)} className="px-2 py-1.5" />
+        </Field>
+        {[0, 1].map((slot) => (
+          <Field key={slot} label={`Photo slot ${slot + 1}`} htmlFor={`pv-photo-${slot}`}>
+            <Select id={`pv-photo-${slot}`} value={photoIds[slot]} onChange={(e) => pickPhoto(slot, e.target.value)} className="px-2 py-1.5">
+              <option value="">Sample photo {slot + 1}</option>
+              {data.previewPhotos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {(p.name || p.id).slice(0, 50)} ({p.width}×{p.height})
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="space-y-3">
       {!hideTitle ? (
@@ -984,13 +1046,16 @@ function LayerVisual({ layer: l, template, scale, vars, photoUrl, logoUrl }: { l
       );
     case 'text': {
       const text = fill(l.text, vars);
+      const font = fontChoice(l.fontFamily);
       return (
         <div
           className="h-full w-full overflow-hidden"
           style={{
-            fontFamily: FONTS[l.fontFamily],
+            fontFamily: font.css,
             fontSize: l.fontSize * scale,
-            fontWeight: l.fontWeight,
+            // A bundled font has only some weights: show the one the renderer uses, never a faked bold.
+            fontWeight: font.bundled ? nearestWeight(font, l.fontWeight) : l.fontWeight,
+            fontSynthesis: font.bundled ? 'none' : undefined,
             color: resolve(l.color, accent),
             textAlign: l.align,
             lineHeight: l.lineHeight,
@@ -1051,7 +1116,7 @@ function ColorField({ id, label, value, accent, onChange, nullable }: { id: stri
   return (
     <Field label={label} htmlFor={id} error={invalid ? 'Use #rrggbb, rgba(r,g,b,a), accent or transparent' : null}>
       <div className="flex items-center gap-1.5">
-        <input type="color" aria-label={`${label} picker`} value={swatch} onChange={(e) => onChange(e.target.value)} className={cx('border-app h-8 w-9 shrink-0 cursor-pointer rounded border', !value || value === 'transparent' || (value !== 'accent' && !/^#[0-9a-fA-F]{6}$/.test(value)) ? 'opacity-30' : '')} />
+        <ColorPicker ariaLabel={`${label} picker`} value={swatch} onChange={(v) => onChange(v)} swatches={[{ color: accent, label: 'accent' }]} dim={!value || value === 'transparent' || (value !== 'accent' && !/^#[0-9a-fA-F]{6}$/.test(value))} />
         <Input
           id={id}
           value={text}
@@ -1085,6 +1150,61 @@ function LayerProperties({ layer: l, accent, fixedPhotos, onPatch }: { layer: La
   }, [l.id]);
   return (
     <div className="space-y-3">
+      {/* A text layer's words and font first: what is edited most (owner: the text field was far down). */}
+      {l.type === 'text' ? (
+        <div className="space-y-2">
+          <Field label="Text" htmlFor={id('text')} help="Tokens: {{title}}, {{site}}, {{keyword}}">
+            <Textarea id={id('text')} rows={3} value={l.text} maxLength={400} onChange={(e) => onPatch({ text: e.target.value }, 'text')} />
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Font" htmlFor={id('font')}>
+              <Select id={id('font')} value={l.fontFamily} onChange={(e) => onPatch({ fontFamily: e.target.value })} className="px-2 py-1.5" style={{ fontFamily: fontChoice(l.fontFamily).css }}>
+                {FONT_GROUPS.map((g) => (
+                  <optgroup key={g} label={g}>
+                    {FONT_CHOICES.filter((f) => f.group === g).map((f) => (
+                      <option key={f.id} value={f.id} style={{ fontFamily: f.css }}>
+                        {f.id === 'arimo' ? 'Arimo (Helvetica / Arial look)' : f.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Weight" htmlFor={id('weight')}>
+              <Select id={id('weight')} value={l.fontWeight} onChange={(e) => onPatch({ fontWeight: Number(e.target.value) })} className="px-2 py-1.5">
+                {WEIGHTS.map(([w, name]) => {
+                  const font = fontChoice(l.fontFamily);
+                  const used = nearestWeight(font, w);
+                  return (
+                    <option key={w} value={w}>
+                      {name}
+                      {font.bundled && used !== w ? ` (this font: ${WEIGHTS.find(([x]) => x === used)?.[1] ?? used})` : ''}
+                    </option>
+                  );
+                })}
+              </Select>
+            </Field>
+            {num('fontSize', 'Size (max)', l.fontSize, 8, 400)}
+            {num('maxLines', 'Max lines', l.maxLines, 1, 8)}
+            {num('lineHeight', 'Line height', l.lineHeight, 0.8, 2.5, 0.05)}
+            {num('padding', 'Padding', l.padding, 0, 200)}
+            <Field label="Align" htmlFor={id('align')}>
+              <Select id={id('align')} value={l.align} onChange={(e) => onPatch({ align: e.target.value })} className="px-2 py-1.5">
+                <option value="left">Left</option>
+                <option value="center">Center</option>
+                <option value="right">Right</option>
+              </Select>
+            </Field>
+            <div className="flex items-end pb-2">
+              <Checkbox label="UPPERCASE" checked={l.uppercase} onChange={(e) => onPatch({ uppercase: e.target.checked })} />
+            </div>
+            <ColorField id={id('color')} label="Color" value={l.color} accent={accent} onChange={(v) => onPatch({ color: v ?? '#ffffff' }, 'color')} />
+            <ColorField id={id('bg')} label="Background" value={l.background} accent={accent} nullable onChange={(v) => onPatch({ background: v }, 'background')} />
+          </div>
+          <p className="text-muted text-xs">Long titles shrink down to 60 % of the size, then end with “…”.</p>
+        </div>
+      ) : null}
+
       <Field label="Layer name" htmlFor={id('name')}>
         <Input id={id('name')} value={l.name} maxLength={60} onChange={(e) => onPatch({ name: e.target.value }, 'name')} className="px-2 py-1.5" />
       </Field>
@@ -1151,49 +1271,6 @@ function LayerProperties({ layer: l, accent, fixedPhotos, onPatch }: { layer: La
               {num('plateRadius', 'Plate radius', l.plateRadius, 0, 540)}
             </div>
           ) : null}
-        </div>
-      ) : null}
-
-      {l.type === 'text' ? (
-        <div className="space-y-2">
-          <Field label="Text" htmlFor={id('text')} help="Tokens: {{title}}, {{site}}, {{keyword}}">
-            <Textarea id={id('text')} rows={2} value={l.text} maxLength={400} onChange={(e) => onPatch({ text: e.target.value }, 'text')} />
-          </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Font" htmlFor={id('font')}>
-              <Select id={id('font')} value={l.fontFamily} onChange={(e) => onPatch({ fontFamily: e.target.value })} className="px-2 py-1.5">
-                <option value="sans">Sans</option>
-                <option value="serif">Serif</option>
-                <option value="condensed">Condensed</option>
-                <option value="mono">Mono</option>
-              </Select>
-            </Field>
-            <Field label="Weight" htmlFor={id('weight')}>
-              <Select id={id('weight')} value={l.fontWeight} onChange={(e) => onPatch({ fontWeight: Number(e.target.value) })} className="px-2 py-1.5">
-                <option value={400}>Regular</option>
-                <option value={600}>Semibold</option>
-                <option value={700}>Bold</option>
-                <option value={800}>Extra bold</option>
-              </Select>
-            </Field>
-            {num('fontSize', 'Size (max)', l.fontSize, 8, 400)}
-            {num('maxLines', 'Max lines', l.maxLines, 1, 8)}
-            {num('lineHeight', 'Line height', l.lineHeight, 0.8, 2.5, 0.05)}
-            {num('padding', 'Padding', l.padding, 0, 200)}
-            <Field label="Align" htmlFor={id('align')}>
-              <Select id={id('align')} value={l.align} onChange={(e) => onPatch({ align: e.target.value })} className="px-2 py-1.5">
-                <option value="left">Left</option>
-                <option value="center">Center</option>
-                <option value="right">Right</option>
-              </Select>
-            </Field>
-            <div className="flex items-end pb-2">
-              <Checkbox label="UPPERCASE" checked={l.uppercase} onChange={(e) => onPatch({ uppercase: e.target.checked })} />
-            </div>
-            <ColorField id={id('color')} label="Color" value={l.color} accent={accent} onChange={(v) => onPatch({ color: v ?? '#ffffff' }, 'color')} />
-            <ColorField id={id('bg')} label="Background" value={l.background} accent={accent} nullable onChange={(v) => onPatch({ background: v }, 'background')} />
-          </div>
-          <p className="text-muted text-xs">Long titles shrink down to 60 % of the size, then end with “…”.</p>
         </div>
       ) : null}
 

@@ -418,3 +418,83 @@ describe('owner request: more fonts for text (Helvetica-like and others), the sa
     expect(await inkWidth('montserrat', 'Beijing 北京')).toBeGreaterThan(100);
   });
 });
+
+describe('owner report: in a group photo the faces at both edges were cut in half (Michael Joseph Consuelos, featured image)', () => {
+  // Four people side by side in a wide photo (1500×1000), each face a colour; the place is the split design's half (952×1080).
+  const FACES = [
+    { colour: [230, 30, 30], x: 180 },
+    { colour: [30, 200, 30], x: 530 },
+    { colour: [30, 30, 230], x: 830 },
+    { colour: [230, 210, 30], x: 1180 },
+  ];
+  const group = () =>
+    sharp({ create: { width: 1500, height: 1000, channels: 3, background: { r: 128, g: 128, b: 128 } } })
+      .composite(FACES.map((f) => ({ input: { create: { width: 140, height: 150, channels: 3 as const, background: { r: f.colour[0], g: f.colour[1], b: f.colour[2] } } }, left: f.x, top: 300 })))
+      .png()
+      .toBuffer();
+  const fr = (f: { x: number }) => ({ left: f.x / 1500, right: (f.x + 140) / 1500, top: 0.3, bottom: 0.45 });
+  const focus = { x: 0.5, y: 0.375, area: { left: 180 / 1500, right: 1320 / 1500, top: 0.3, bottom: 0.45 }, faces: FACES.map(fr) };
+
+  /** How much of each face shows in the left place (1 = whole, 0 = not there). */
+  async function shown(png: Buffer) {
+    const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const full = 140 * 150 * (1080 / 1000) ** 2;
+    return FACES.map((f) => {
+      let n = 0;
+      for (let y = 0; y < 1080; y++)
+        for (let x = 0; x < 952; x++) {
+          const i = (y * info.width + x) * 3;
+          if (Math.abs(data[i] - f.colour[0]) < 12 && Math.abs(data[i + 1] - f.colour[1]) < 12 && Math.abs(data[i + 2] - f.colour[2]) < 12) n++;
+        }
+      return Math.round((n / full) * 100) / 100;
+    });
+  }
+
+  it('no face is cut by the edge of its place: as many whole faces as fit, the others left out', async () => {
+    const t = presetSplit('#0066ff');
+    t.layers = t.layers.filter((l) => l.type === 'photo');
+    const png = await renderCanvas({ template: t, photos: [await group(), await photo(10, 10, 10)], focus: [focus as never, null] });
+    const parts = await shown(png);
+    for (const p of parts) expect(p < 0.03 || p > 0.95, `face shares in the place: ${parts.join(', ')}`).toBe(true);
+    expect(parts.filter((p) => p > 0.95).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('the same group photo in a 16:9 place keeps all four faces; a crop without face boxes works as before', async () => {
+    const { cropBox } = await import('@/images/render');
+    // 16:9: everyone fits, centred on the group as before.
+    const wide = cropBox(1500, 1000, 1920, 1080, focus);
+    expect(wide.left).toBe(0);
+    // A narrow place: the window's edges fall between faces (padded for hair and ears), never on one.
+    const narrow = cropBox(1500, 1000, 952, 1080, focus);
+    const s = narrow.rw / 1500;
+    for (const f of FACES) {
+      const l = (f.x - 28) * s;
+      const r = (f.x + 168) * s;
+      const whole = l >= narrow.left && r <= narrow.left + 952;
+      const out = r <= narrow.left || l >= narrow.left + 952;
+      expect(whole || out, `face at ${f.x}: window ${narrow.left}–${narrow.left + 952}`).toBe(true);
+    }
+    // Stage results saved before this change carry no face boxes: the crop centres on the area, as before.
+    expect(cropBox(1500, 1000, 952, 1080, { ...focus, faces: undefined }).left).toBe(Math.round(0.5 * narrow.rw - 476));
+  });
+
+  it('each place takes, of equally good photos, one whose faces fit it whole; the wide group photo moves to the 16:9 body place', async () => {
+    const { fitsPlace, photosForPlaces } = await import('@/worker/pipelines/images');
+    const half = { width: 952, height: 1080 };
+    const body = { width: 1920, height: 1080 };
+    const groupFacts = { faces: FACES.map(fr), aspect: 1.5 };
+    const pairFacts = { faces: [fr({ x: 600 }), fr({ x: 800 })], aspect: 1.5 };
+    expect(fitsPlace(groupFacts, half)).toBe(false);
+    expect(fitsPlace(groupFacts, body)).toBe(true);
+    expect(fitsPlace(pairFacts, half)).toBe(true);
+    expect(fitsPlace(undefined, half)).toBe(true); // no face boxes (older run, or no detector): as before
+    const facts: Record<string, { faces: ReturnType<typeof fr>[]; aspect: number }> = { group: groupFacts, pair: pairFacts, solo: { faces: [fr({ x: 700 })], aspect: 1.5 } };
+    const fits = (id: string, place: { width: number; height: number }) => fitsPlace(facts[id], place);
+    // The group photo has the biggest faces and comes first; the featured halves take the two that fit.
+    const featured = photosForPlaces(['group', 'pair', 'solo'], [half, half], fits, () => 'face');
+    expect(featured).toEqual({ picked: ['pair', 'solo'], rest: ['group'], moved: 2 });
+    expect(photosForPlaces(featured.rest, [body, body], fits, () => 'face').picked).toEqual(['group']);
+    // A worse photo (another tier: soft, watermark, no face) is never taken over a better one just because it fits.
+    expect(photosForPlaces(['group', 'pair'], [half], fits, (id) => (id === 'group' ? 'sharp' : 'soft')).picked).toEqual(['group']);
+  });
+});

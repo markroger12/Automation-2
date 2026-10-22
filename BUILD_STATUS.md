@@ -2554,3 +2554,40 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "404"              # 1/1 (fallback link)
 next build                          # compiled
 ```
+
+## Owner report (2026-10-22): faces cut in half in a group photo (“Michael Joseph Consuelos”, featured image)
+
+**Report:** a screenshot of a two-photo featured image (WordPress media #1362). In the left photo, four people stand side by side, and the faces at both edges are cut in half.
+
+**Cause:**
+- **The crop:** it centred on the area around all main faces, the earlier tool's rule. When that area was wider than the place, the faces at both edges were cut through. The left half of the split design is 952×1080, so it keeps only about 58 % of a 3:2 photo's width.
+- **The choice of photos:** it never looked at whether a photo fits its place. Photos are ordered by the biggest face, so a group photo often comes first and lands in the narrow half.
+
+**Fix (face locations only, never who it is):**
+- **Crop** (`cropBox`, `src/images/render.ts`):
+  - When the main faces fit, the crop is as before.
+  - Otherwise its edges are placed between faces, padded for hair and ears, never on one. It keeps as many whole faces as fit: the bigger ones first, then those nearest the middle of the group, centred when that cuts no other face.
+  - If no whole face can be kept, it centres on the biggest face.
+- **Choice of photos** (`photosForPlaces`, `fitsPlace`):
+  - Each place takes, of the photos just as good as the next one, one whose main faces fit it whole. “Just as good” means the same photo-check flag and the same rank (face, soft).
+  - A wide group photo then moves on to the 16:9 body image, where it fits.
+  - A worse photo (soft, watermarked, no face) is never taken over a better one just because it fits, and the owner's uploads keep their places.
+  - The Images tab notes how many photos were placed this way.
+- **What is stored:** the measured face boxes and the photo's shape are kept with the stage's photo facts.
+  - A stage result saved before this change has no face boxes, so it crops as before.
+  - **Regenerate images** measures again (the stage state is cleared), so it uses the new crop.
+
+**Tests (reproduced first):**
+- **Unit, `images.test.ts`:**
+  - **reproduction:** a 3:2 photo with four faces side by side in the split design's left place. Before, the edge faces showed 8 % and 7 % (cut). Now each face shows whole or not at all, and at least two show whole;
+  - the crop window never runs through a padded face, the 16:9 place keeps everyone, and focus without face boxes crops as before;
+  - **choice:** the featured halves take the pair and the single photo, the group photo goes to the body place, and a worse photo is not preferred because it fits.
+
+**Not verified here:** the owner's photos with the real face detector. The real MediaPipe test needs `BAS_TEST_MEDIAPIPE_DIR`; the boxes here are given, not detected.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run tests/unit/images.test.ts   # 26/26
+npx vitest run                      # 47 files, 338 tests pass
+```

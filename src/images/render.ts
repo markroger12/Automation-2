@@ -20,8 +20,9 @@ export interface RenderInput {
   vars?: Record<string, string>;
 }
 
-/** Where a crop should centre: a point, and/or the area around the main faces (fractions of the picture). */
-export type PhotoFocus = { x: number; y: number; area?: { left: number; right: number; top: number; bottom: number } } | null;
+type Area = { left: number; right: number; top: number; bottom: number };
+/** Where a crop should centre: a point, and/or the area around the main faces, and each main face (fractions of the picture). */
+export type PhotoFocus = { x: number; y: number; area?: Area; faces?: Area[] } | null;
 
 export interface RenderOptions {
   width: number;
@@ -93,6 +94,62 @@ async function rounded(buf: Buffer, w: number, h: number, radius: number): Promi
   return sharp(buf).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
 }
 
+/**
+ * Where a photo is cut for its place (cover crop) around the faces — face LOCATIONS only. The earlier tool's rule:
+ * the main faces centred across, a little above the middle with room over the heads. Owner report (a group photo in
+ * a narrow place had the faces at both edges cut in half): when the faces are wider than the place, it keeps as many
+ * whole faces as fit — the bigger ones, then the middle ones first — and its edges never run through a face.
+ */
+export function cropBox(sw: number, sh: number, w: number, h: number, focus: NonNullable<PhotoFocus>): { rw: number; rh: number; left: number; top: number } {
+  const scale = Math.max(w / sw, h / sh);
+  const rw = Math.ceil(sw * scale);
+  const rh = Math.ceil(sh * scale);
+  let area = focus.area;
+  let left: number | null = null;
+  if (area && focus.faces?.length) {
+    // Hair and ears reach a little past the detected face.
+    const boxes = focus.faces.map((f) => ({ l: Math.max(0, (f.left - (f.right - f.left) * 0.2) * rw), r: Math.min(rw, (f.right + (f.right - f.left) * 0.2) * rw), f }));
+    const all = { l: Math.min(...boxes.map((b) => b.l)), r: Math.max(...boxes.map((b) => b.r)) };
+    if (all.r - all.l > w) {
+      const middle = (all.l + all.r) / 2;
+      const clamp = (x: number) => Math.min(Math.max(0, Math.round(x)), rw - w);
+      const judge = (x: number) => {
+        const inside = boxes.filter((b) => b.l >= x && b.r <= x + w);
+        const cut = boxes.some((b) => b.r > x && b.l < x + w && !(b.l >= x && b.r <= x + w));
+        const size = inside.reduce((n, b) => n + (b.f.bottom - b.f.top), 0);
+        const centre = inside.length ? (Math.min(...inside.map((b) => b.l)) + Math.max(...inside.map((b) => b.r))) / 2 : x + w / 2;
+        return { x, inside, cut, size, off: Math.abs(centre - middle) };
+      };
+      const options = boxes
+        .flatMap((b) => [b.l, b.r - w])
+        .map((x) => judge(clamp(x)))
+        .filter((o) => !o.cut && o.inside.length)
+        .sort((a, b) => b.inside.length - a.inside.length || b.size - a.size || a.off - b.off);
+      const best = options[0];
+      if (best) {
+        // Centre the kept faces when that cuts no other face.
+        const kept = { l: Math.min(...best.inside.map((b) => b.l)), r: Math.max(...best.inside.map((b) => b.r)) };
+        const centred = judge(clamp((kept.l + kept.r) / 2 - w / 2));
+        left = !centred.cut && centred.inside.length === best.inside.length ? centred.x : best.x;
+        area = { left: Math.min(...best.inside.map((b) => b.f.left)), right: Math.max(...best.inside.map((b) => b.f.right)), top: Math.min(...best.inside.map((b) => b.f.top)), bottom: Math.max(...best.inside.map((b) => b.f.bottom)) };
+      } else {
+        // Faces too close together to keep any whole: the biggest one in the middle.
+        const big = [...focus.faces].sort((a, b) => b.bottom - b.top - (a.bottom - a.top))[0];
+        area = big;
+      }
+    }
+  }
+  let top: number;
+  if (area) {
+    left ??= ((area.left + area.right) / 2) * rw - w / 2;
+    top = Math.min(((area.top + area.bottom) / 2) * rh - h * 0.4, area.top * rh - h * 0.08);
+  } else {
+    left = focus.x * rw - w / 2;
+    top = focus.y * rh - h / 2;
+  }
+  return { rw, rh, left: Math.min(Math.max(0, Math.round(left)), rw - w), top: Math.min(Math.max(0, Math.round(top)), rh - h) };
+}
+
 async function photoTile(src: Buffer, w: number, h: number, focus: PhotoFocus, mode: 'auto' | 'center' | 'top'): Promise<Buffer> {
   const upright = await sharp(src, { failOn: 'none' }).rotate().toBuffer();
   const meta = await sharp(upright).metadata();
@@ -106,23 +163,7 @@ async function photoTile(src: Buffer, w: number, h: number, focus: PhotoFocus, m
     return sharp(backdrop).composite([{ input: whole, gravity: 'centre' }]).png().toBuffer();
   }
   if (focus) {
-    // Crop around the faces — face LOCATION only.
-    const scale = Math.max(w / sw, h / sh);
-    const rw = Math.ceil(sw * scale);
-    const rh = Math.ceil(sh * scale);
-    let left: number;
-    let top: number;
-    if (focus.area) {
-      // The earlier tool's rule: centred across, a little above the middle with room over the heads.
-      const a = focus.area;
-      left = ((a.left + a.right) / 2) * rw - w / 2;
-      top = Math.min(((a.top + a.bottom) / 2) * rh - h * 0.4, a.top * rh - h * 0.08);
-    } else {
-      left = focus.x * rw - w / 2;
-      top = focus.y * rh - h / 2;
-    }
-    left = Math.min(Math.max(0, Math.round(left)), rw - w);
-    top = Math.min(Math.max(0, Math.round(top)), rh - h);
+    const { rw, rh, left, top } = cropBox(sw, sh, w, h, focus);
     return sharp(upright).resize(rw, rh).extract({ left, top, width: w, height: h }).png().toBuffer();
   }
   const position = mode === 'top' ? 'north' : mode === 'center' ? 'centre' : sharp.strategy.attention;

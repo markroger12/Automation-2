@@ -320,7 +320,37 @@ const COLLAGE_WORDS = /\b(collage|kollage|side[-\s]by[-\s]side|split[-\s]screen|
 
 type Area = { left: number; right: number; top: number; bottom: number };
 /** What was measured about a gallery photo (kept in the stage state, so a retry measures nothing again). */
-type PhotoFacts = { n: number; h: number; area: Area | null; faceprint?: string; sharpness: number };
+type PhotoFacts = { n: number; h: number; area: Area | null; faceprint?: string; sharpness: number; faces?: Area[]; aspect?: number };
+
+/**
+ * Whether a photo's main faces fit a place of this size whole (owner report: a group photo in the narrow half of the
+ * featured design had the faces at both edges cut). Unknown faces count as fitting.
+ */
+export function fitsPlace(f: Pick<PhotoFacts, 'faces' | 'aspect'> | undefined, place: { width: number; height: number }): boolean {
+  if (!f?.faces?.length || !f.aspect) return true;
+  // The share of the photo's width a cover crop keeps; faces padded for hair and ears, as the crop does.
+  const kept = Math.min(1, place.width / place.height / f.aspect);
+  const left = Math.min(...f.faces.map((a) => a.left - (a.right - a.left) * 0.2));
+  const right = Math.max(...f.faces.map((a) => a.right + (a.right - a.left) * 0.2));
+  return right - left <= kept;
+}
+
+/**
+ * One photo per place, in the order given: each place takes the first photo, or a photo just as good (same `tier`)
+ * further down whose faces fit it whole. The others keep their order for the next places.
+ */
+export function photosForPlaces<T>(photos: T[], places: { width: number; height: number }[], fits: (photo: T, place: { width: number; height: number }) => boolean, tier: (photo: T) => string): { picked: T[]; rest: T[]; moved: number } {
+  const rest = [...photos];
+  const picked: T[] = [];
+  let moved = 0;
+  for (const place of places) {
+    if (!rest.length) break;
+    const i = rest.findIndex((p) => tier(p) === tier(rest[0]) && fits(p, place));
+    if (i > 0) moved++;
+    picked.push(...rest.splice(Math.max(0, i), 1));
+  }
+  return { picked, rest, moved };
+}
 
 interface CelebState extends Record<string, unknown> {
   galleryIds?: string[];
@@ -358,10 +388,14 @@ async function measurePhotos(ctx: PipelineContext, photos: MediaAsset[], notes: 
       const found = boxes?.[i] ?? [];
       const main = mainFaces(found);
       const area = mainFaceArea(found, meta.width ?? 0, meta.height ?? 0);
+      const W = meta.width ?? 0;
+      const H = meta.height ?? 0;
       facts[p.id] = {
         n: main.length,
         h: main.length ? Math.max(...main.map((f) => f.h)) : 0,
         area,
+        faces: W && H ? main.map((f) => ({ left: f.x / W, right: (f.x + f.w) / W, top: f.y / H, bottom: (f.y + f.h) / H })) : undefined,
+        aspect: W && H ? W / H : undefined,
         faceprint: area ? await faceFingerprint(bufs[i], area).catch(() => undefined) : undefined,
         sharpness: await pictureSharpness(bufs[i]).catch(() => 0),
       };
@@ -473,6 +507,7 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   //    identifies anyone. Like the earlier tool, a check that cannot be done never stops the images.
   const alts = new Map<string, string>();
   const collages = new Set<string>();
+  const flag = new Map<string, number>();
   if (ctx.config.celebrityPhotoReview && usable.length) {
     const sample = usable.slice(0, 8);
     let res: Awaited<ReturnType<PipelineContext['askChatGPT']>> | null = null;
@@ -485,7 +520,6 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     }
     if (res?.status === 'waiting') return waiting('Waiting for ChatGPT: photo check');
     const verdicts = res?.status === 'completed' ? parsePhotoCheck(res.text, sample.length) : new Map<number, { watermark: boolean; collage: boolean; alt: string }>();
-    const flag = new Map<string, number>();
     sample.forEach((a, i) => {
       const v = verdicts.get(i + 1);
       if (v?.alt) alts.set(a.id, v.alt);
@@ -505,20 +539,29 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const siteSettings = templateSet(parseSiteImageSettings(site.imageSettings), 'celebrity');
   const featuredNeeds = Math.max(1, templatePhotoSlots(siteSettings.featured));
   const single = usable.filter((a) => !collages.has(a.id));
-  const featuredPhotos = single.length ? single.slice(0, featuredNeeds) : usable.slice(0, 1);
+  const featuredPlaces = placeSizes(siteSettings.featured);
+  const bodyPlace = placeSizes(siteSettings.body)[0] ?? { width: CANVAS.width, height: CANVAS.height };
+  // Owner report (a group photo in the narrow half of the featured design had the faces at both edges cut): each place
+  // takes, of the photos just as good as the next one, one whose faces fit it whole; a wide group photo moves on to a
+  // wider place (the body image). Your uploads keep their places.
+  const tier = (a: MediaAsset) => `${flag.get(a.id) ?? 0}:${rank(a)}`;
+  const fits = (a: MediaAsset, place: { width: number; height: number }) => a.origin === 'UPLOADED' || fitsPlace(facts[a.id], place);
+  const featuredSlots = Array.from({ length: featuredNeeds }, (_, i) => featuredPlaces[i] ?? featuredPlaces[0] ?? { width: CANVAS.width, height: CANVAS.height });
+  const forFeatured = single.length ? photosForPlaces(single, featuredSlots, fits, tier) : { picked: usable.slice(0, 1), rest: [], moved: 0 };
+  const featuredPhotos = forFeatured.picked;
   if (!single.length && featuredPhotos.length) notes.push('Every photo found is a collage of another site; the featured image uses one of them. Upload photos on the Images tab to replace it.');
-  const rest = single.slice(featuredPhotos.length);
+  const forBody = photosForPlaces(forFeatured.rest, [bodyPlace, bodyPlace], fits, tier);
+  const rest = [...forBody.picked, ...forBody.rest];
+  if (forFeatured.moved + forBody.moved) notes.push(`${forFeatured.moved + forBody.moved} photo(s) chosen for a place their faces fit whole; a group photo too wide for its place was used further down.`);
   if (rest.length < 2) notes.push(`${usable.length} usable photo(s): the featured design took ${featuredPhotos.length}, ${rest.length} left for the body image(s); none is used twice.`);
   // The earlier tool's alt text: the name, then what the photo shows.
   const properName = name === name.toLowerCase() ? name.replace(/(^|[\s-])(\p{L})/gu, (_m, gap: string, letter: string) => gap + letter.toUpperCase()) : name;
   const alt = (a: MediaAsset, fallback: string) => (alts.get(a.id) ? `${properName} – ${alts.get(a.id)}`.slice(0, 125) : fallback);
   const lang = ctx.task.language;
   const enhance = settings.seo.enhanceCelebrityImages;
-  const featuredPlaces = placeSizes(siteSettings.featured);
-  const bodyPlace = placeSizes(siteSettings.body)[0] ?? { width: CANVAS.width, height: CANVAS.height };
   const focusOf = (a: MediaAsset): PhotoFocus => {
     const area = facts[a.id]?.area;
-    return area ? { x: (area.left + area.right) / 2, y: (area.top + area.bottom) / 2, area } : null;
+    return area ? { x: (area.left + area.right) / 2, y: (area.top + area.bottom) / 2, area, faces: facts[a.id]?.faces } : null;
   };
   // A photo its place would stretch, or a soft one, is enhanced first (Upscayl remacri-4x, when installed and on).
   const prep = async (a: MediaAsset, place: { width: number; height: number }) => {

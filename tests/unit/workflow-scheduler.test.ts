@@ -167,10 +167,12 @@ describe('publishing scheduler', () => {
     expect((await kw('How to Install WordPress')).indexingStatus).toMatch(/not evidence of indexing/);
     await wf.keywordAction(siteId, { keywordIds: [a.id], action: 'indexed' });
     expect((await kw('How to Install WordPress')).status).toBe('INDEXED');
-    // The calendar shows reserved and free slots.
+    // The calendar shows reserved and free slots. Free slots are counted from the real clock (a past slot is never
+    // free), so they are looked for in the coming days, not in the test's fixed October window.
     const cal = await wf.calendar('2026-10-20T00:00:00Z', 3);
     expect(cal.entries.some((e) => e.status === 'WRITING' && e.keyword === 'jaguar')).toBe(true);
-    expect(cal.entries.some((e) => e.status === 'FREE')).toBe(true);
+    const coming = await wf.calendar(new Date().toISOString(), 3);
+    expect(coming.entries.some((e) => e.status === 'FREE')).toBe(true);
   });
 
   it('draft-only website: once its slot passes, a verified draft is kept for the owner and leaves the backlog', async () => {

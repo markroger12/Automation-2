@@ -7,6 +7,7 @@ import { parseJson } from '../json';
 import { parseImport } from '../campaigns/parse';
 import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/router';
 import { retryTask } from '../tasks/lifecycle';
+import { overrideQuality } from '../tasks/actions';
 import { deleteTask } from '../tasks/delete';
 import { DEFAULT_SLOT_TIMEZONE, isValidTimeZone, parseSlot, formatSlot, upcomingSlots } from './time';
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
@@ -122,7 +123,7 @@ export async function addKeywords(websiteId: string, raw: unknown) {
 
 export const keywordActionSchema = z.object({
   keywordIds: z.array(z.string().max(40)).min(1).max(500),
-  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'indexing-requested', 'indexed', 'delete']),
+  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'force', 'indexing-requested', 'indexed', 'delete']),
   writer: z.string().max(40).optional(),
   /** With “delete”: also delete the keywords' articles from the app (WordPress is never changed). */
   articles: z.boolean().optional(),
@@ -170,6 +171,11 @@ export async function keywordAction(websiteId: string, raw: unknown) {
         if (kw.status !== 'FAILED') continue;
         if (kw.taskId) {
           const task = await db.articleTask.findUnique({ where: { id: kw.taskId } });
+          // A saved draft with serious problems would stop at once again (owner report): that needs Force continue.
+          if (task?.status === 'COMPLETED' && parseJson<{ publishBlocked?: string[] }>(task.options, {}).publishBlocked?.length) {
+            notes.push(`“${kw.keyword}”: its draft is saved but has serious problems, so Retry would stop again. Use Force continue to publish it at the next free slot anyway.`);
+            continue;
+          }
           if (task && ['FAILED', 'NEEDS_REVIEW', 'CANCELLED'].includes(task.status)) await retryTask(task.id);
         }
         // Back into the queue with a fresh retry budget and the next free slot.
@@ -181,6 +187,32 @@ export async function keywordAction(websiteId: string, raw: unknown) {
           await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'WAITING', retries: 0, lastError: null, scheduledAt: null } });
         }
         break;
+      case 'force': {
+        // Owner request: “Force continue” — the owner accepts the problems the quality gate found (audited, one keyword
+        // at a time) and the article goes on: a saved draft is published at the next free slot like any other; an
+        // article held for review gets “Approve despite review reasons”. Publishing permission is still required.
+        if (kw.status !== 'FAILED' || !kw.taskId) {
+          notes.push(`“${kw.keyword}” is not stopped by a problem; nothing to force.`);
+          continue;
+        }
+        const task = await db.articleTask.findUnique({ where: { id: kw.taskId } });
+        const options = parseJson<Record<string, unknown> & { publishBlocked?: string[] }>(task?.options ?? null, {});
+        if (task?.status === 'COMPLETED' && task.wpPostId && options.publishBlocked?.length) {
+          const { publishBlocked, ...rest } = options;
+          const reason = 'Force continue from the workflow keyword queue';
+          await db.articleTask.update({ where: { id: task.id }, data: { options: JSON.stringify({ ...rest, publishForced: { at: new Date().toISOString(), problems: publishBlocked }, ...(rest.duplicateOverride ? {} : { duplicateOverride: { reason, at: new Date().toISOString() } }) }) } });
+          await db.duplicateMatch.updateMany({ where: { taskId: task.id, status: 'OPEN' }, data: { status: 'OVERRIDDEN' } });
+          await audit('task.force-continue', 'ArticleTask', task.id, { keyword: kw.keyword, wpPostId: task.wpPostId, problems: publishBlocked });
+        } else if (task?.status === 'NEEDS_REVIEW') {
+          await overrideQuality(task.id, { reason: 'Force continue from the workflow keyword queue' });
+        } else {
+          notes.push(`“${kw.keyword}”: its article failed (${(task?.message ?? 'no article').slice(0, 120)}). Use Retry.`);
+          continue;
+        }
+        const at = await reserveSlot({ ...wf, website: await db.website.findUniqueOrThrow({ where: { id: websiteId } }) }, kw.id, new Date(Date.now() + SCHEDULE_LEAD_MS));
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'WRITING', retries: 0, lastError: at ? 'Forced by you: continues despite the problems found.' : 'No free slot found; add slots to the workflow.', scheduledAt: at } });
+        break;
+      }
       case 'indexing-requested':
         if (!['PUBLISHED', 'INDEXING_REQUESTED'].includes(kw.status)) {
           notes.push(`“${kw.keyword}” is not published yet.`);

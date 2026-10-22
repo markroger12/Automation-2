@@ -2230,3 +2230,52 @@ next build                          # compiled
 - The owner's signed-in Google account in Automation Chrome.
 - Live ChatGPT with the photo search in a long article chat.
 
+## Owner report (2026-10-22): a draft stopped by the duplicate check could not be continued (“malaak compton-rock”); “Force continue”
+
+**Report:** the keyword queue showed “failed” with “Draft #1344 saved but not published: 12 % of the wording (longest identical run 68 words, 5 identical paragraph(s)) repeats ‘Who Is Malaak Compton-Rock? All About Chris Rock's Ex-Wife’ on Techeflux … Fix the draft, then publish it yourself or retry here.” Then: “add an option, force continue”.
+
+**Why it was stuck:**
+- The article is COMPLETED with a verified draft and `publishBlocked` (a hard stop while review holds are off).
+- Retry only retried FAILED, NEEDS_REVIEW or CANCELLED articles, so it put the keyword back to WRITING. The next scheduler tick found the same block and set it to FAILED again.
+- Editing the draft in WordPress does not clear the block either.
+- **Reproduced on the previous code:** Retry answered “1 updated”, and the next tick set FAILED with the same message.
+
+**Fix:**
+- **Force continue** on the keyword queue's selection bar (`keywordAction` action `force`):
+  - a dialog lists every selected stopped keyword with its problems;
+  - **a saved draft with `publishBlocked`:** the block is lifted, and the problems are kept as `publishForced {at, problems}` on the article;
+  - **a duplicate finding** gets the existing duplicate override (reason “Force continue from the workflow keyword queue”), and its open Duplicate Review matches become OVERRIDDEN;
+  - `task.force-continue` is audited;
+  - the keyword goes back with the next free slot, and the scheduler treats the draft like any verified draft: READY, then scheduled for its slot.
+  - **An article held for review** (review holds on) gets “Approve despite review reasons” with the same reason.
+  - **An article that failed for another reason** (e.g. the composer) is not forced: “Use Retry”.
+  - **A keyword that is not stopped** is left alone.
+- Publishing still needs the website's publishing permission (acknowledgement); nothing else about publishing changed.
+- **Retry** on such a keyword now changes nothing and says to use Force continue.
+- **The keyword message** now says: “Publish it yourself in WordPress, or select it and use Force continue to publish it at the next free slot anyway.”
+
+**Not changed:** the duplicate check itself. The draft really repeats about 12 % of the other article's wording, including 5 whole paragraphs; Force continue is the owner's decision to publish it anyway.
+
+**Tests** (`tests/unit/workflow-force-continue.test.ts`, failing on the previous code):
+- **Stopped draft:**
+  - Retry changes nothing and gives the note;
+  - Force continue lifts the block, records the problems, overrides the duplicate match, writes the audit row and reserves a slot;
+  - the next scheduler tick makes it READY.
+- **Not forced:** a waiting keyword and a technically failed article.
+- **Held for review:** the article is re-queued with the quality override.
+- **Chromium (`next dev`, scratch database):** select the stopped keyword → Force continue → the dialog lists the duplicate problem → confirm. The API answered `changed: 1`, the row shows “writing … Forced by you”, and there were no console errors. Checked on a warm and on a freshly started server.
+  - A first try reported 200 but changed nothing, with no audit row. That script closed the browser about 3 s after the click, while the route was still compiling, so the request never reached the handler. Both later runs waited for the response.
+
+**Found while running the suite:** `workflow-scheduler.test.ts` (“write-ahead horizon …”) had begun to fail on the unchanged code as well (checked with `git stash`).
+- **Cause:** its calendar check looked for FREE slots in a fixed window (2026-10-20 to 10-23). `calendar()` counts free slots from the real clock, because a past slot is never free, so after 10:00 UTC on 2026-10-22 that window had none.
+- **Fix:** the test now looks for free slots in the coming three days. The reserved-slot check keeps the fixed window. The app is unchanged.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 46 files, 327 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 6 pass
+next build                          # compiled
+```
+**Not verified here:** the owner's real keyword, draft #1344, and its publication in WordPress.
+

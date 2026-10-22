@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpToLine, Eye, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import { ArrowUpToLine, Eye, FastForward, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
@@ -62,6 +62,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteArticles, setDeleteArticles] = useState(false);
+  const [confirmForce, setConfirmForce] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -303,6 +304,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                   <Button size="sm" onClick={() => void action('writer', { writer: 'tigram-writer' })}>Tigram</Button>
                   <Button size="sm" onClick={() => void action('top')}><ArrowUpToLine className="h-3.5 w-3.5" /> To top</Button>
                   <Button size="sm" onClick={() => void action('retry')}><RotateCcw className="h-3.5 w-3.5" /> Retry</Button>
+                  <Button size="sm" onClick={() => setConfirmForce(true)} title="Continue a stopped article despite the problems found"><FastForward className="h-3.5 w-3.5" /> Force continue</Button>
                   <Button size="sm" onClick={() => void action('skip')}>Skip</Button>
                   <Button size="sm" onClick={() => void action('restore')}>Restore</Button>
                   <Button size="sm" onClick={() => void action('indexing-requested')}>Indexing requested</Button>
@@ -357,6 +359,31 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
           </Card>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmForce}
+        title={`Force continue ${view.keywords.filter((k) => selected.has(k.id) && k.status === 'FAILED').length} keyword(s)?`}
+        confirmLabel="Force continue"
+        busy={busy}
+        onCancel={() => setConfirmForce(false)}
+        onConfirm={() => {
+          setConfirmForce(false);
+          void action('force');
+        }}
+      >
+        <div className="space-y-2">
+          <p>You accept the problems found below. A saved draft is published at the next free slot like any other (only on a website with publishing switched on); an article held for review continues as with “Approve despite review reasons”. This is recorded.</p>
+          <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-xs">
+            {view.keywords
+              .filter((k) => selected.has(k.id) && k.status === 'FAILED')
+              .map((k) => (
+                <li key={k.id}>
+                  <span className="font-medium">{k.keyword}</span>: {k.lastError ?? 'stopped'}
+                </li>
+              ))}
+          </ul>
+          {view.keywords.some((k) => selected.has(k.id) && k.status !== 'FAILED') ? <p className="text-muted text-xs">Keywords that are not stopped are left as they are.</p> : null}
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog open={confirmDelete} title={`Delete ${selected.size} keyword(s)?`} confirmLabel="Delete" tone="danger" busy={busy} onCancel={() => setConfirmDelete(false)} onConfirm={() => void removeKeywords()}>
         <div className="space-y-2">
           <p>The keywords are removed from this workflow. Drafts and posts in WordPress stay as they are.</p>

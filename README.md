@@ -158,7 +158,7 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
 - **Hold articles for review** (Settings → Workflow) is **off by default**:
   - review reasons never stop an article; they are shown as **Notes** on the article page;
   - the WordPress draft is saved and the article is COMPLETED;
-  - a draft with a serious problem (for example research notes left in the text) is still saved, but a workflow never publishes it automatically, and its keyword says why.
+  - a draft with a serious problem (for example research notes left in the text, or much of its wording repeating another article) is still saved, but a workflow never publishes it automatically, and its keyword says why. To publish it anyway, select the keyword in the workflow's keyword queue and use **Force continue**: the dialog lists the problems you accept, and the draft is published at the next free slot (only where publishing is allowed). This is recorded in the audit log; Retry would only stop again.
   - Turn the switch on for the old *Needs review* behaviour.
 - **Same-site duplicate keyword:** this still pauses before any ChatGPT work. **Approve selected**, **Allow duplicate and continue** and **Approve despite review reasons** all let it continue.
 - **Delete articles:**

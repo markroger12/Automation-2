@@ -13,6 +13,7 @@ import { requestCancel, retryTask } from '../tasks/lifecycle';
 import { parseImport, type ImportRow } from './parse';
 import { ROUTER_VERSION, normalizeWriter, parseRoutingRules, resolveWriter } from './router';
 import { isNearDuplicate } from './dedupe';
+import { deletedPostKeys } from '../tasks/deleted-posts';
 
 /**
  * Bulk campaigns: preview (pure, no writes), create (rows stored as entered,
@@ -146,7 +147,9 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
   for (let i = 0; siteIds.length && i < keys.length; i += 400) {
     existing.push(...(await db.articleTask.findMany({ where: { websiteId: { in: siteIds }, normalizedKeyword: { in: keys.slice(i, i + 400) }, status: { notIn: ['CANCELLED', 'FAILED'] } }, select: { id: true, websiteId: true, normalizedKeyword: true, status: true } })));
   }
-  const posts = siteIds.length ? await db.linkTarget.findMany({ where: { websiteId: { in: siteIds }, status: 'ACTIVE' }, select: { websiteId: true, title: true, url: true, keyword: true } }) : [];
+  // Posts of articles you deleted here do not count (owner request: a deleted article can be written again).
+  const deleted = await deletedPostKeys();
+  const posts = siteIds.length ? (await db.linkTarget.findMany({ where: { websiteId: { in: siteIds }, status: 'ACTIVE' }, select: { websiteId: true, wpPostId: true, title: true, url: true, keyword: true } })).filter((p) => !deleted.has(`${p.websiteId}:${p.wpPostId}`)) : [];
   for (const row of rows) {
     if (!row.websiteId || row.status === 'INVALID' || row.status === 'SKIPPED') continue;
     const task = existing.find((t) => t.websiteId === row.websiteId && t.normalizedKeyword === normalizeKeyword(row.keyword));

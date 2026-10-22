@@ -12,6 +12,7 @@ import { evaluateArticleEvidence } from '@/lib/research/ledger';
 import { baseVariables } from '@/lib/prompts/variables';
 import { recordMetric } from '@/lib/metrics';
 import { isNearDuplicate } from '@/lib/campaigns/dedupe';
+import { deletedPostKeys } from '@/lib/tasks/deleted-posts';
 import { STOPWORDS } from '@/lib/plagiarism/text';
 import type { TemplateVars } from '@/lib/prompts/template';
 import type { StageManifest } from '@/modules/types';
@@ -83,7 +84,9 @@ export function duplicatePrecheck(manifest: StageManifest): PipelineStage {
       const near = siteTasks.filter((o) => isNearDuplicate(o.keyword, ctx.task.keyword));
       // Posts already published on this website whose title covers every content word of the keyword.
       const words = contentWords(ctx.task.keyword);
-      const published = words.length >= 2 ? (await db.linkTarget.findMany({ where: { websiteId: ctx.task.websiteId, status: 'ACTIVE' }, select: { wpPostId: true, title: true, url: true }, take: 5000 })).filter((p) => { const tw = new Set(contentWords(p.title)); return words.every((w) => tw.has(w)); }) : [];
+      // Posts of articles you deleted here do not count (owner request: a deleted article can be written again).
+      const deleted = await deletedPostKeys();
+      const published = words.length >= 2 ? (await db.linkTarget.findMany({ where: { websiteId: ctx.task.websiteId, status: 'ACTIVE' }, select: { wpPostId: true, title: true, url: true }, take: 5000 })).filter((p) => { const tw = new Set(contentWords(p.title)); return !deleted.has(`${ctx.task.websiteId}:${p.wpPostId}`) && words.every((w) => tw.has(w)); }) : [];
       const options = parseJson<Record<string, unknown>>(ctx.task.options, {});
       if ((sameSite.length || near.length) && options.allowDuplicate !== true) {
         const hits = [...sameSite.map((s) => ({ id: s.id, keyword: ctx.task.keyword, status: s.status })), ...near];
@@ -131,6 +134,7 @@ export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
   const settings = await getSettings();
   return assembleArticle({
     boldLinks: settings.content.boldLinks,
+    title: ctx.task.selectedTitle ?? ctx.task.seoTitle,
     bodyHtml,
     language: ctx.task.language,
     moduleKey: ctx.task.moduleKey,

@@ -42,6 +42,15 @@ export interface FakeChatGptConfig {
   galleryCount?: number;
   /** Extra gallery pictures on other hosts (the extension reports these as links). */
   galleryLinks?: string[];
+  /** Only this many thumbnails are on the page, the last one with “+N” (owner report: 3 shown of 10). */
+  galleryShown?: number;
+  /**
+   * 'strip': the viewer keeps every picture in the page, hidden except the one shown, and shows the next one a moment
+   * after “Next” (owner report: only some of ChatGPT's 10 pictures were saved).
+   */
+  galleryViewer?: 'single' | 'strip';
+  /** Answers are shown in a writing block with a “Writing” label and Copy/expand buttons (owner report). */
+  writingBlock?: boolean;
   /**
    * Image-search answers show these pictures as a grid of captioned cards that the page cannot load (broken-picture
    * icon with its alt text), while the address itself works (owner report: “Open image in new tab” shows the photo).

@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpToLine, Eye, Plus, RotateCcw, Save, X } from 'lucide-react';
+import { ArrowUpToLine, Eye, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { Button, useToast } from '@/components/client';
+import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
@@ -60,6 +60,9 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [keep, setKeep] = useState<Set<number>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteArticles, setDeleteArticles] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const v = await api<View>(`/api/websites/${siteId}/workflow`);
@@ -120,6 +123,21 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
       await load();
     } catch (e) {
       toast('error', (e as Error).message);
+    }
+  }
+
+  async function removeKeywords() {
+    setBusy(true);
+    try {
+      const r = await api<{ changed: number; notes: string[] }>(`/api/websites/${siteId}/workflow/keywords/action`, { body: { keywordIds: [...selected], action: 'delete', articles: deleteArticles } });
+      toast('success', `${r.changed} keyword(s) deleted${deleteArticles ? ' with their articles' : ''}. WordPress was not changed.${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
+      setSelected(new Set());
+      await load();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
     }
   }
 
@@ -289,6 +307,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                   <Button size="sm" onClick={() => void action('restore')}>Restore</Button>
                   <Button size="sm" onClick={() => void action('indexing-requested')}>Indexing requested</Button>
                   <Button size="sm" onClick={() => void action('indexed')}>Verified indexed</Button>
+                  <Button size="sm" variant="danger" onClick={() => { setDeleteArticles(false); setConfirmDelete(true); }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
                 </div>
               ) : null
             }
@@ -338,6 +357,17 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
           </Card>
         </div>
       </div>
+      <ConfirmDialog open={confirmDelete} title={`Delete ${selected.size} keyword(s)?`} confirmLabel="Delete" tone="danger" busy={busy} onCancel={() => setConfirmDelete(false)} onConfirm={() => void removeKeywords()}>
+        <div className="space-y-2">
+          <p>The keywords are removed from this workflow. Drafts and posts in WordPress stay as they are.</p>
+          {view.keywords.some((k) => selected.has(k.id) && k.task) ? (
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={deleteArticles} onChange={(e) => setDeleteArticles(e.target.checked)} />
+              <span>Also delete their articles from the app (a report of each is saved in data\backups\deleted-articles first)</span>
+            </label>
+          ) : null}
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

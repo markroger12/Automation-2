@@ -2022,3 +2022,89 @@ npx vitest run --config vitest.integration.config.ts
 images integration test after the Regenerate Images change   # 10/10
 next build                          # compiled
 ```
+
+## Owner reports (2026-10-21, evening): delete in the keyword queue; deleted articles counted as duplicates; “Writing” under the title; the Quick Bio before the introduction; 3 of 10 gallery photos (extension 3.2.7)
+
+### 1. Delete in the workflow keyword queue
+- **Asked for:** the queue (Workflow → Keyword queue) had Retry/Skip/Restore, but no Delete. Rows like “The article was deleted by you.” or “The post was changed to trash in WordPress” could not be removed.
+- **Delete button:** the selection bar has **Delete** with a confirmation. It removes the keywords and their slot reservations.
+- **Articles:** when a selected keyword has an article, a checkbox offers to delete the articles from the app too. It uses the same delete as the article queue, so a report backup is written first and a running article is deleted when it stops. Without it, the article stays; a running one continues as a normal article.
+- **WordPress:** never changed.
+
+### 2. A deleted article must not count as a duplicate when it is written again
+- **Cause:** deleting an article removed the task, but its WordPress post stayed in the website's post index (used for internal links). Bulk Campaigns therefore marked the keyword **“Already published: …”** (EXISTING_POST → DUPLICATE), and the duplicate pre-check warned about it. Other articles' duplicate findings that pointed at the deleted article also stayed.
+- **Fix:**
+  - On delete, the article's post is remembered (setting `deleted-article-posts`). The campaign preview and the duplicate pre-check skip it. Its keyword is cleared in the post index.
+  - The post stays in the index for internal links while it is on the website. WordPress is not changed.
+  - Duplicate findings of other articles that pointed at the deleted one are removed with it.
+- **Note:** if the old post is still published, writing the keyword again creates a second post. Trash the old one in WordPress if it is not wanted.
+
+### 3. “Writing” under the title, the title repeated, the Quick Bio before the introduction
+- **What happened:**
+  - Every article showed “Writing” under its title.
+  - Some showed the Quick Bio right after the title, then the title again as a heading, then the introduction.
+- **Cause:**
+  - ChatGPT now shows long answers in a **writing block** (owner's screenshot: a card labelled “Writing” with Copy and expand buttons). The extension took the label as the answer's first line.
+  - With “Writing” as the first line, the cleaner did not recognise the following title line, so the title stayed in the body as an H2.
+  - The assembly then took “Writing” as the introduction and put the Quick Bio after it.
+- **Fix:**
+  - **App:** `cleanModelMarkdown` drops a line that is only “Writing”/“Schreiben” before looking for the title. The title is compared loosely (case, punctuation).
+  - **Assembly:** it drops such a paragraph, and a first heading that repeats the post title, so articles saved before the fix are cleaned when they are assembled again (for example by Regenerate). A line with real text (“Writing is his second career.”) stays.
+  - **Extension 3.2.7:** it skips the writing block's label when it reads an answer.
+- **Already-saved drafts in WordPress are not changed by this.** Regenerating the article's text or images re-assembles it, or remove the line in WordPress.
+
+### 4. Only some of ChatGPT's 10 gallery photos were saved (Lola Simone Rock)
+- **What happened:**
+  - The answer showed 3 thumbnails with “+10”, and a viewer with a Next arrow.
+  - The extension saved 10 pictures, but only 6 were different (exact copies are stored once), so 4 of ChatGPT's photos were missed.
+  - The article itself uses 3 images (featured, body 1, body 2) by design.
+- **Likely cause:**
+  - The viewer keeps its other pictures in the page, hidden.
+  - At each step the extension took the largest *file* in the viewer, not the picture it showed, and read it before a sliding viewer had changed. So it got the same pictures again.
+  - Reproduced on the fake page (`galleryShown: 3`, `galleryViewer: 'strip'`): 3.2.6 saved 1 large picture of 10.
+- **Fix — extension 3.2.7:**
+  - each step takes the picture the viewer shows (visible, loaded, largest on screen);
+  - it waits up to 6 s for a different picture after Next;
+  - it stops when nothing new comes or the viewer comes back to a picture already taken.
+
+### Tests
+- **Unit:**
+  - keyword Delete, with and without articles; slot reservation removed;
+  - a deleted article's keyword is no longer a duplicate (campaign preview READY), and its duplicate findings are removed. Both fail on the previous code.
+  - the Anika Bissel answer (“Writing”, title, article) cleans and assembles with the Quick Bio after the introduction;
+  - a body saved before the fix is cleaned at assembly. Both fail on the previous code.
+- **Extension (fake page):**
+  - an answer in a writing block is saved without “Writing”. It fails on the 3.2.6 adapter.
+  - 3 thumbnails with “+10”: all 10 large pictures are saved. 3.2.6 saved 1.
+
+**Not verified here:** the real ChatGPT writing block and gallery viewer markup. The fixes rest on the screenshots.
+
+### 5. Search Console: a website added as a URL-prefix property
+- **Reported by the owner** (screenshots):
+  - Easy Vibs is in Search Console as **https://easyvibs.co.uk/** (URL prefix);
+  - the app asked for **sc-domain:easyvibs.co.uk**, and Google refused: “User does not have sufficient permission for site 'sc-domain:easyvibs.co.uk'”.
+- **Fix:**
+  - **Detection.** The service account's own list of properties (`GET /webmasters/v3/sites`) decides which property to use.
+    - The configured property is kept when the account can use it.
+    - Otherwise the first usable property of the same website is used: the domain property, then the URL prefix of the website address, then its www / non-www and http variants. An unverified entry or another website's property never stands in.
+  - **Saved and logged.** A detected property is saved on the website and logged (“Search Console property https://… detected (…; sc-domain:… is not shared with it)”). The page then shows the property in use.
+  - **Where it applies:** sync, the indexing checks and **Test connection**. Test connection now also says which properties the account can use.
+  - **When nothing matches,** the error names the properties the account can use and how to add it in Search Console.
+- **Tests (fake Google):**
+  - only `https://easyvibs.example/` shared while `sc-domain:easyvibs.example` is set: the sync works on the URL-prefix property and saves it. On the previous code it fails with the owner's message.
+  - the rules for picking (configured first, domain, address, www/http; unverified and other sites never);
+  - a website without any shared property gets the new message.
+- **Not verified here:** the owner's real Search Console account.
+
+### Commands run
+```
+new tests on the previous code       # keyword delete, deleted-article duplicate, Writing/title (2), writing block,
+                                     # 10-picture viewer (1 of 10 saved), URL-prefix property: all failed as expected
+npx tsc --noEmit                     # 0 errors
+npx vitest run                       # 44 files, 314 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                     # 10 files, 87 pass, 1 skipped (real MediaPipe: MP_SRC not set); extension 37/37
+next build                           # compiled
+```
+The integration run started before the Search Console change. That change touches no code the integration tests run; its own tests are unit tests (`search-console-live`, 9/9).
+The keyword Delete button and its dialog were not clicked in a browser here (typecheck and build only).

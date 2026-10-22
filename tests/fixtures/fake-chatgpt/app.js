@@ -143,7 +143,7 @@
         const doneStreaming = !(isLast && window.__generating);
         const gallery =
           t.gallery && doneStreaming
-            ? `<div class="image-gallery">${Array.from({ length: t.gallery }, (_, k) => `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`).join('')}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
+            ? `<div class="image-gallery">${Array.from({ length: Math.min(t.gallery, C.galleryShown || t.gallery) }, (_, k) => `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`).join('')}${C.galleryShown && t.gallery > C.galleryShown ? `<span class="more">${t.gallery}</span>` : ''}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
             : '';
         // galleryBroken: captioned cards whose pictures the page cannot load (a broken-picture icon with its alt text).
         const cards =
@@ -153,7 +153,9 @@
         const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>${gallery}${cards}`;
         if (C.turnMarkup === 'article') return `<article data-testid="conversation-turn-${i}" data-turn="assistant"><h6 class="sr-only">ChatGPT said:</h6><div data-message-author-role="assistant">${content}</div></article>`;
         if (C.turnMarkup === 'units') {
-          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${md(t.text || '')}</div>${gallery}${cards}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
+          // writingBlock: the answer inside ChatGPT's writing block, under its “Writing” label (owner report).
+          const answerHtml = C.writingBlock ? `<div data-writing-block="true"><div class="wb-header"><span>Writing</span><button aria-label="Copy">⧉</button><button aria-label="Expand">⤢</button></div>${md(t.text || '')}</div>` : md(t.text || '');
+          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${answerHtml}</div>${gallery}${cards}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
         }
         return std
           ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="assistant">${content}</div></div>`
@@ -185,7 +187,9 @@
     const dlg = window.__dlg;
     const dialog =
       dlg && dlg.count
-        ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+        ? C.galleryViewer === 'strip'
+          ? `<div role="dialog" class="viewer">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" alt="Large photo ${i + 1}"${i === dlg.shown ? '' : ' style="display:none"'}>`).join('')}<button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+          : `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
         : '';
     // staleStreaming: a page-wide “streaming” marker that stays after the picture is finished (owner report).
     const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
@@ -214,13 +218,22 @@
     const thumb = t.closest('.gal-thumb');
     if (thumb) {
       const imgs = document.querySelectorAll('.gal-thumb');
-      window.__dlg = { k: Number(thumb.getAttribute('data-k')), count: imgs.length };
+      const k = Number(thumb.getAttribute('data-k'));
+      window.__dlg = { k, shown: k, count: C.galleryShown ? C.galleryCount : imgs.length };
       window.__galleryOpened = (window.__galleryOpened || 0) + 1;
       render();
       return;
     }
     if (t.closest('[role="dialog"] button[aria-label="Next"]') && window.__dlg) {
       window.__dlg = { ...window.__dlg, k: Math.min(window.__dlg.count - 1, window.__dlg.k + 1) };
+      // 'strip': the picture shown changes a moment after the click (a slide), the old one stays visible meanwhile.
+      if (C.galleryViewer === 'strip') {
+        setTimeout(() => {
+          if (!window.__dlg) return;
+          window.__dlg = { ...window.__dlg, shown: window.__dlg.k };
+          render();
+        }, 700);
+      } else window.__dlg = { ...window.__dlg, shown: window.__dlg.k };
       render();
       return;
     }

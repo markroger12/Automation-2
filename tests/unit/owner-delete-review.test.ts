@@ -189,6 +189,55 @@ describe('owner requests: delete, duplicate approval, no review hold', () => {
     expect(settingsSchema.parse({}).seo.celebrityPhotoReview).toBe(true);
   });
 
+  it('keyword queue: Delete removes keywords (and, when asked, their articles); WordPress is never changed', async () => {
+    const wf = await import('@/lib/workflow/service');
+    const workflow = (await client.workflow.findFirst({ where: { websiteId: site }, orderBy: { createdAt: 'asc' } })) ?? (await client.workflow.create({ data: { websiteId: site, name: 'Owner workflow' } }));
+    const withArticle = await tigramTask('Dixie Queue Article', 'kw-del:1');
+    const keepArticle = await tigramTask('Mary Queue Article', 'kw-del:2');
+    await client.articleTask.update({ where: { id: withArticle.id }, data: { status: 'COMPLETED', wpPostId: 501 } });
+    await client.articleTask.update({ where: { id: keepArticle.id }, data: { status: 'COMPLETED', wpPostId: 502 } });
+    const mk = (keyword: string, status: string, taskId: string | null, position: number) => client.workflowKeyword.create({ data: { workflowId: workflow.id, keyword, normalizedKeyword: keyword.toLowerCase(), position, writerType: 'TIGRAM', status, taskId } });
+    const a = await mk('Dixie Queue Article', 'FAILED', withArticle.id, 1);
+    const b = await mk('Mary Queue Article', 'FAILED', keepArticle.id, 2);
+    const c = await mk('tech trends queue', 'SKIPPED', null, 3);
+    await client.slotReservation.create({ data: { websiteId: site, scheduledAt: new Date('2026-11-01T04:00:00Z'), workflowKeywordId: a.id } });
+
+    const r1 = await wf.keywordAction(site, { keywordIds: [a.id, c.id], action: 'delete', articles: true });
+    expect(r1.changed).toBe(2);
+    expect(await client.workflowKeyword.count({ where: { id: { in: [a.id, c.id] } } })).toBe(0);
+    expect(await client.slotReservation.count({ where: { workflowKeywordId: a.id } })).toBe(0);
+    expect(await client.articleTask.findUnique({ where: { id: withArticle.id } })).toBeNull();
+    expect(fs.readdirSync(path.join(dir, 'backups', 'deleted-articles')).some((f) => f.startsWith(withArticle.id))).toBe(true);
+
+    // Without “also delete their articles”: the keyword goes, the article stays.
+    await wf.keywordAction(site, { keywordIds: [b.id], action: 'delete' });
+    expect(await client.workflowKeyword.count({ where: { id: b.id } })).toBe(0);
+    expect(await client.articleTask.findUnique({ where: { id: keepArticle.id } })).not.toBeNull();
+  });
+
+  it('an article deleted here is not a duplicate when it is written again (its post, the findings pointing at it)', async () => {
+    const svc = await import('@/lib/campaigns/service');
+    const old = await tigramTask('Latest Tech Info Beaconsoft', 'dup-del:1');
+    const other = await tigramTask('Another Tech Article', 'dup-del:2');
+    await client.articleTask.update({ where: { id: old.id }, data: { status: 'COMPLETED', wpPostId: 601 } });
+    await client.linkTarget.create({ data: { websiteId: site, wpPostId: 601, url: 'https://owner-site.example/latest-tech-info-beaconsoft/', title: 'Latest Tech Info Beaconsoft', keyword: 'Latest Tech Info Beaconsoft', status: 'ACTIVE' } });
+    await client.duplicateMatch.create({ data: { taskId: other.id, otherTaskId: old.id, otherTitle: 'Latest Tech Info Beaconsoft', otherWebsite: 'Owner Site', sameWebsite: true, severity: 'HIGH', wordingWords: 300, factWords: 0, longestRun: 40, nearSentences: 5, exactParagraphs: 2, wordingShare: 0.5, excerpts: '[]', status: 'OPEN' } });
+    const preview = async () => (await svc.previewCampaign({ text: 'keyword,kind\nLatest Tech Info Beaconsoft,tigram', websiteId: site })).rows[0];
+    const before = await preview();
+    expect(before.status).toBe('DUPLICATE');
+    expect(before.issues.map((i) => i.kind)).toEqual(expect.arrayContaining(['EXISTING_TASK', 'EXISTING_POST']));
+
+    const { deleteTask } = await import('@/lib/tasks/delete');
+    await deleteTask(old.id);
+    const after = await preview();
+    expect(after.issues.map((i) => i.kind)).not.toContain('EXISTING_TASK');
+    expect(after.issues.map((i) => i.kind)).not.toContain('EXISTING_POST');
+    expect(after.status).toBe('READY');
+    // WordPress and the link index keep the post (it is still on the website); it only stops counting as a duplicate.
+    expect(await client.linkTarget.findFirst({ where: { websiteId: site, wpPostId: 601 } })).toMatchObject({ status: 'ACTIVE', keyword: null });
+    expect(await client.duplicateMatch.count({ where: { otherTaskId: old.id } })).toBe(0);
+  });
+
   it('photo check answers are read as the earlier tool read them (bold, “Photo 2”, ja/nein, collage named in the description)', async () => {
     const { parsePhotoCheck } = await import('@/worker/pipelines/images');
     const v = parsePhotoCheck('**1:** watermark=no | collage=no | alt=smiling at a dinner party\nPhoto 2: watermark=ja | alt=promotional thumbnail, two men side by side with a circle\n3 - collage=yes | watermark=no | alt=photo grid of a family\n4: watermark=no | collage=no | alt="standing on a red carpet."\nNote: nothing else', 4);

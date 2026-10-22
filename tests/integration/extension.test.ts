@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.6');
+    expect(ext?.version).toBe('3.2.7');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -360,6 +360,31 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(await chatPage()!.evaluate(() => (window as unknown as { __galleryOpened?: number }).__galleryOpened)).toBe(1);
     expect((await fakeStats()).sends).toBe(1);
   });
+
+  it('owner report: an answer in a writing block is saved without its “Writing” label', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', writingBlock: true, answers: ['Lola Simone Rock is the eldest daughter of Chris Rock.\n\n## Who Is Lola Simone Rock?\n\nShe was born in 2002.'] };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Edit the previous long article into a finished article');
+    const done = await responseDone(req.responseId, 60_000);
+    expect(done.status).toBe('COMPLETED');
+    expect(done.resultText!.startsWith('Lola Simone Rock is the eldest daughter')).toBe(true);
+    expect(done.resultText).not.toMatch(/^Writing$/m);
+    expect(done.resultText).toContain('## Who Is Lola Simone Rock?');
+  });
+
+  it('owner report: 3 thumbnails with “+10”: every picture of the viewer is saved (the viewer keeps the others hidden in the page)', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryCount: 10, galleryShown: 3, galleryViewer: 'strip' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Search the web for real photos of Lola Simone Rock and show them as an image gallery.', { expectGallery: true });
+    const done = await responseDone(req.responseId, 150_000);
+    expect(done.status).toBe('COMPLETED');
+    const assets = await client.mediaAsset.findMany({ where: { responseId: req.responseId } });
+    // Ten different large pictures (1024×576), one per viewer step.
+    const large = assets.filter((a) => (a.width ?? 0) >= 1000);
+    expect(large).toHaveLength(10);
+    expect(new Set(large.map((a) => a.sha256)).size).toBe(10);
+    expect((await fakeStats()).sends).toBe(1);
+  }, 200_000);
 
   it('owner report: gallery pictures the page cannot show (broken-picture icons) are reported as links for the app to download', async () => {
     const broken = [1, 2, 3, 4].map((n) => `https://broken.example/andre-rock-${n}.jpg`);

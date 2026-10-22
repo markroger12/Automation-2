@@ -8,6 +8,7 @@ import { parseJson } from '../json';
 import { dataPaths } from '../paths';
 import { articleReport, articleReportFilename } from './report';
 import { requestCancel } from './lifecycle';
+import { rememberDeletedPost } from './deleted-posts';
 
 /**
  * Delete articles from this app (owner request: queued and completed articles could not be removed). WordPress is
@@ -19,7 +20,7 @@ import { requestCancel } from './lifecycle';
 export const deletedArticlesDir = () => path.join(dataPaths.backups(), 'deleted-articles');
 
 export async function deleteTask(taskId: string): Promise<{ status: 'deleted' | 'deleting' }> {
-  const task = await db.articleTask.findUnique({ where: { id: taskId }, select: { id: true, keyword: true, slug: true, status: true, options: true } });
+  const task = await db.articleTask.findUnique({ where: { id: taskId }, select: { id: true, keyword: true, slug: true, status: true, options: true, websiteId: true, wpPostId: true } });
   if (!task) throw new AppError(404, 'NOT_FOUND', 'Task not found.');
   const active = await db.queueJob.count({ where: { taskId, status: 'ACTIVE' } });
   if (active) {
@@ -36,13 +37,13 @@ export async function deleteTask(taskId: string): Promise<{ status: 'deleted' | 
 
 /** Called when a cancelled task stops: deletes it if the owner asked for that while it was running. */
 export async function deleteIfRequested(taskId: string): Promise<boolean> {
-  const task = await db.articleTask.findUnique({ where: { id: taskId }, select: { id: true, keyword: true, slug: true, status: true, options: true } });
+  const task = await db.articleTask.findUnique({ where: { id: taskId }, select: { id: true, keyword: true, slug: true, status: true, options: true, websiteId: true, wpPostId: true } });
   if (!task || parseJson<Record<string, unknown>>(task.options, {}).deleteWhenStopped !== true) return false;
   await deleteNow(task);
   return true;
 }
 
-async function deleteNow(task: { id: string; keyword: string; slug: string | null; status: string }) {
+async function deleteNow(task: { id: string; keyword: string; slug: string | null; status: string; websiteId: string; wpPostId: number | null }) {
   const dir = deletedArticlesDir();
   fs.mkdirSync(dir, { recursive: true });
   const report = await articleReport(task.id);
@@ -55,6 +56,10 @@ async function deleteNow(task: { id: string; keyword: string; slug: string | nul
       await tx.slotReservation.deleteMany({ where: { workflowKeywordId: k.id } });
       await tx.workflowKeyword.update({ where: { id: k.id }, data: { taskId: null, status: 'SKIPPED', lastError: 'The article was deleted by you.' } });
     }
+    // Other articles' duplicate findings that pointed at this one are gone with it.
+    await tx.duplicateMatch.deleteMany({ where: { otherTaskId: task.id } });
+    // Its WordPress post (never changed) no longer counts as “already published” when the keyword is written again.
+    if (task.wpPostId) await rememberDeletedPost({ websiteId: task.websiteId, wpPostId: task.wpPostId, keyword: task.keyword }, tx);
     await tx.articleTask.delete({ where: { id: task.id } });
   });
   await audit('task.delete', 'ArticleTask', task.id, { keyword: task.keyword, status: task.status, backup: `${task.id}-${articleReportFilename(task)}` });

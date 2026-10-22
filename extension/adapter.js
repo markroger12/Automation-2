@@ -421,6 +421,25 @@
     return qs(['[role="dialog"]']);
   }
 
+  /**
+   * The picture the viewer shows now: visible, loaded, the largest on screen. Owner report (3 thumbnails, “+10”): the
+   * viewer keeps its other pictures in the page, hidden; taking the largest file there gave the same picture each time.
+   */
+  function shownPicture(dialog) {
+    let best = null;
+    let bestArea = 0;
+    for (const img of dialog.querySelectorAll('img')) {
+      if (!img.complete || (img.naturalWidth || 0) < 200 || !isVisible(img)) continue;
+      const r = img.getBoundingClientRect();
+      const area = Math.min(r.width, innerWidth) * Math.min(r.height, innerHeight);
+      if (area > bestArea) {
+        best = img;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+
   function galleryNextButton(dialog) {
     return qs(['button[aria-label*="Next" i]', 'button[aria-label*="Weiter" i]', 'button[aria-label*="Nächste" i]', 'button[data-testid*="next" i]'], dialog);
   }
@@ -604,6 +623,11 @@
     return [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...body.map((r) => `| ${r.join(' | ')} |`)].join('\n');
   }
 
+  /** The “Writing” label ChatGPT shows above a writing block (owner report: it stood under every article's title). */
+  function writingLabel(el) {
+    return /^(?:writing|schreiben)$/i.test((el.textContent || '').trim()) && !el.querySelector('p, h1, h2, h3, li, table');
+  }
+
   function blockMd(root, depth) {
     const parts = [];
     for (const child of root.childNodes) {
@@ -637,6 +661,7 @@
       else if (tag === 'pre') parts.push('```\n' + el.textContent.replace(/\n$/, '') + '\n```');
       else if (tag === 'blockquote') parts.push(blockMd(el, depth).split('\n').map((l) => `> ${l}`).join('\n'));
       else if (tag === 'hr') parts.push('---');
+      else if (writingLabel(el)) continue;
       else if (tag === 'div' || tag === 'section' || tag === 'span' || tag === 'article') {
         const inner = blockMd(el, depth);
         if (inner.trim()) parts.push(inner);
@@ -784,6 +809,7 @@
     galleryThumbs,
     brokenPicture,
     galleryDialog,
+    shownPicture,
     galleryNextButton,
     closeGalleryDialog,
     promptMismatchReport,

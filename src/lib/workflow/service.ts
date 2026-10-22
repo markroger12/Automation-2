@@ -7,6 +7,7 @@ import { parseJson } from '../json';
 import { parseImport } from '../campaigns/parse';
 import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/router';
 import { retryTask } from '../tasks/lifecycle';
+import { deleteTask } from '../tasks/delete';
 import { DEFAULT_SLOT_TIMEZONE, isValidTimeZone, parseSlot, formatSlot, upcomingSlots } from './time';
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
 import { normalizeSearchConsoleProperty } from './search-console';
@@ -121,11 +122,16 @@ export async function addKeywords(websiteId: string, raw: unknown) {
 
 export const keywordActionSchema = z.object({
   keywordIds: z.array(z.string().max(40)).min(1).max(500),
-  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'indexing-requested', 'indexed']),
+  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'indexing-requested', 'indexed', 'delete']),
   writer: z.string().max(40).optional(),
+  /** With “delete”: also delete the keywords' articles from the app (WordPress is never changed). */
+  articles: z.boolean().optional(),
 });
 
-/** Owner actions on queued keywords. Nothing is deleted; INDEXED is only recorded from the owner's own verification. */
+/**
+ * Owner actions on queued keywords. INDEXED is only recorded from the owner's own verification. “delete” removes the
+ * keyword rows (and, when asked, their articles from the app); WordPress is never changed.
+ */
 export async function keywordAction(websiteId: string, raw: unknown) {
   const input = keywordActionSchema.parse(raw);
   const wf = await ensureWorkflow(websiteId);
@@ -189,6 +195,18 @@ export async function keywordAction(websiteId: string, raw: unknown) {
         }
         await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'INDEXED', indexingStatus: `Verified as indexed by you on ${new Date().toISOString().slice(0, 10)}.` } });
         break;
+      case 'delete': {
+        const task = kw.taskId ? await db.articleTask.findUnique({ where: { id: kw.taskId }, select: { id: true } }) : null;
+        if (task && input.articles) {
+          const r = await deleteTask(task.id);
+          if (r.status === 'deleting') notes.push(`“${kw.keyword}”: its article is running and is deleted as soon as it stops.`);
+        } else if (task && kw.status === 'WRITING') {
+          notes.push(`“${kw.keyword}”: its article keeps running as a normal article (not in the workflow any more).`);
+        }
+        await db.slotReservation.deleteMany({ where: { workflowKeywordId: kw.id } });
+        await db.workflowKeyword.deleteMany({ where: { id: kw.id } });
+        break;
+      }
     }
     changed++;
   }

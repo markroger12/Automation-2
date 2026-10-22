@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { db } from '../db';
 import { log } from '../log';
 import { getValue, setValue } from '../settings';
-import { siteProperty } from '../search-performance/service';
 import { listSitemaps, readKey, searchAnalytics, submitSitemap, inspectUrl, type AnalyticsRow } from './client';
+import { resolveWebsiteProperty } from './property';
 
 /**
  * Live Search Console data (owner request). Every sync stores one snapshot (source GSC_API) that replaces the
@@ -33,14 +33,21 @@ export interface SyncState {
 }
 export const syncKey = (websiteId: string) => `gsc.sync.${websiteId}`;
 
+/** The website's property; detected from the service account's own list when the configured one is not usable. */
 export async function websiteProperty(websiteId: string): Promise<{ site: { id: string; name: string; publicUrl: string }; property: string | null }> {
-  const site = await db.website.findUniqueOrThrow({ where: { id: websiteId }, select: { id: true, name: true, publicUrl: true, searchConsoleProperty: true, workflows: { select: { searchConsoleProperty: true }, take: 1 } } });
-  return { site, property: siteProperty(site, site.workflows[0]?.searchConsoleProperty) };
+  const { site, property } = await resolveWebsiteProperty(websiteId);
+  return { site, property };
 }
 
 export async function syncWebsite(websiteId: string, now = new Date()): Promise<SyncState & { days: number; pages: number; queries: number; hours: number }> {
-  const { site, property } = await websiteProperty(websiteId);
-  if (!property) throw new Error(`${site.name} has no Search Console property (website page → Search Console property).`);
+  const { site, property, accessible } = await resolveWebsiteProperty(websiteId, { fresh: true });
+  if (!property) throw new Error(`${site.name} has no Search Console property (website page → Search Console property)${accessible?.length ? `; the service account can use: ${accessible.map((p) => p.siteUrl).join(', ')}` : ''}.`);
+  if (accessible && !accessible.some((p) => p.siteUrl === property && p.permissionLevel !== 'siteUnverifiedUser')) {
+    const key = readKey();
+    const msg = `${key?.client_email ?? 'The service account'} has no access to ${property}${accessible.length ? ` (it can use: ${accessible.map((p) => p.siteUrl).join(', ')})` : ' (it has no property yet)'}. In Search Console, open the property of ${site.publicUrl} → Settings → Users and permissions, and add ${key?.client_email ?? 'the service account'} with “Full” permission.`;
+    await setValue(syncKey(websiteId), { at: now.toISOString(), ok: false, error: msg } satisfies SyncState);
+    throw new Error(msg);
+  }
   try {
     const today = ptDate(now);
     const curStart = shift(today, -27);

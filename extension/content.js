@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.2.6';
+  const EXTENSION_VERSION = '3.2.7';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -328,6 +328,21 @@
    * it with “Next” like a person and save up to 10 large pictures, plus the thumbnails. Pictures this extension may not
    * read are reported as links; the app downloads those through its own safe fetcher. Returns { images, imageLinks }.
    */
+  /** The picture the gallery viewer shows, once it differs from `previous` (up to 6 s; then whatever it shows). */
+  async function viewerPicture(previous) {
+    const deadline = Date.now() + 6000;
+    let shown = null;
+    while (Date.now() < deadline) {
+      checkCancelled();
+      const dialog = A.galleryDialog();
+      if (!dialog) return null;
+      shown = A.shownPicture(dialog);
+      if (shown && (shown.currentSrc || shown.src) !== previous) return shown;
+      await sleep(250);
+    }
+    return shown;
+  }
+
   async function collectGallery(job, userEl, config) {
     const deadline = Date.now() + (config.galleryWaitSec || 90) * 1000;
     let thumbs = A.galleryThumbs(userEl);
@@ -353,16 +368,20 @@
       if (!opener) throw new Error('no picture to open');
       opener.click();
       await sleep(1200);
+      // One picture per step: wait until the viewer shows a different one after “Next” (it may slide), stop when it
+      // shows nothing new or comes back to a picture already taken.
+      let previous = null;
       for (let step = 0; step < 12 && picked.length < 10; step++) {
+        const img = await viewerPicture(previous);
+        if (!img) break;
+        const src = img.currentSrc || img.src;
+        if (step > 0 && (src === previous || seen.has(src))) break;
+        add(img);
+        previous = src;
         const dialog = A.galleryDialog();
-        if (!dialog) break;
-        const big = Array.from(dialog.querySelectorAll('img')).filter((i) => (i.naturalWidth || 0) >= 200);
-        big.sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight);
-        if (big[0]) add(big[0]);
-        const next = A.galleryNextButton(dialog);
+        const next = dialog && A.galleryNextButton(dialog);
         if (!next || next.disabled) break;
         next.click();
-        await sleep(900);
       }
       A.closeGalleryDialog();
     } catch (e) {

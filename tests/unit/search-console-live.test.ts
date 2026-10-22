@@ -16,6 +16,8 @@ const sa = makeServiceAccount();
 const PROPERTY = 'sc-domain:promizeiten.example';
 const NOW = new Date('2026-10-16T12:00:00Z'); // 05:00 in Pacific Time: “today” is 2026-10-16
 let indexedUrls = new Set<string>();
+// The service account's properties (the fake reads this array, so a test can share another property).
+const properties = [{ siteUrl: PROPERTY, permissionLevel: 'SITE_FULL_USER' }];
 
 function analytics(body: AnalyticsBody) {
   const dim = body.dimensions[0];
@@ -46,7 +48,7 @@ beforeAll(async () => {
   google = await startFakeGoogle({
     publicKey: sa.publicKey,
     email: sa.email,
-    properties: [{ siteUrl: PROPERTY, permissionLevel: 'SITE_FULL_USER' }],
+    properties,
     analytics,
     sitemaps: ['https://promizeiten.example/sitemap_index.xml'],
     inspection: (url) => (indexedUrls.has(url) ? { verdict: 'PASS', coverageState: 'Submitted and indexed', lastCrawlTime: '2026-10-16T13:05:00Z' } : { verdict: 'NEUTRAL', coverageState: 'Discovered - currently not indexed' }),
@@ -116,11 +118,40 @@ describe('live sync', () => {
     await sync.syncWebsite(siteId, new Date(NOW.getTime() + 3 * 3600_000));
     expect(await client.searchPerformanceSnapshot.count({ where: { websiteId: siteId, source: 'GSC_API' } })).toBe(1);
     expect(await client.searchPerformanceSnapshot.count({ where: { websiteId: siteId, source: 'GSC_EXPORT' } })).toBe(1);
-    await client.website.update({ where: { id: siteId }, data: { searchConsoleProperty: 'sc-domain:other.example' } });
-    await expect(sync.syncWebsite(siteId, NOW)).rejects.toThrow(/may not do this for sc-domain:other\.example.*add bas-sync@test-project\.iam\.gserviceaccount\.com with “Full” permission/);
+    // A website none of whose properties is shared with the service account: the message names what it can use.
+    await client.website.update({ where: { id: siteId }, data: { searchConsoleProperty: 'sc-domain:other.example', publicUrl: 'https://other.example' } });
+    await expect(sync.syncWebsite(siteId, NOW)).rejects.toThrow(/bas-sync@test-project\.iam\.gserviceaccount\.com has no access to sc-domain:other\.example \(it can use: sc-domain:promizeiten\.example\).*add bas-sync@test-project\.iam\.gserviceaccount\.com with “Full” permission/);
     const { getValue } = await import('@/lib/settings');
     expect(await getValue<{ ok: boolean; error: string }>(sync.syncKey(siteId), { ok: true, error: '' })).toMatchObject({ ok: false });
-    await client.website.update({ where: { id: siteId }, data: { searchConsoleProperty: PROPERTY } });
+    await client.website.update({ where: { id: siteId }, data: { searchConsoleProperty: PROPERTY, publicUrl: 'https://promizeiten.example' } });
+  });
+
+  it('owner report: a website shared as a URL-prefix property is found although “sc-domain:” was set', async () => {
+    const websites = await import('@/lib/websites');
+    const easy = (await websites.createWebsite({ name: 'Easy Vibs', publicUrl: 'https://easyvibs.example', language: 'en', targetCountry: 'United Kingdom', timezone: 'UTC' })).id;
+    await client.website.update({ where: { id: easy }, data: { searchConsoleProperty: 'sc-domain:easyvibs.example' } });
+    properties.push({ siteUrl: 'https://easyvibs.example/', permissionLevel: 'SITE_OWNER' });
+    try {
+      const r = await sync.syncWebsite(easy, NOW);
+      expect(r.ok).toBe(true);
+      expect((await client.website.findUniqueOrThrow({ where: { id: easy } })).searchConsoleProperty).toBe('https://easyvibs.example/');
+      expect(google.calls.some((c) => c.path === '/webmasters/v3/sites/https://easyvibs.example//searchAnalytics/query')).toBe(true);
+      expect(google.calls.some((c) => c.path.startsWith('/webmasters/v3/sites/sc-domain:easyvibs.example/'))).toBe(false);
+      expect((await client.log.findFirstOrThrow({ where: { category: 'search-console' }, orderBy: { createdAt: 'desc' } })).message).toMatch(/Easy Vibs: Search Console property https:\/\/easyvibs\.example\/ detected .*sc-domain:easyvibs\.example is not shared with it/);
+    } finally {
+      properties.pop();
+    }
+  });
+
+  it('which property stands for a website: the configured one when usable, else domain, the address, then www/http variants', async () => {
+    const { pickProperty, propertyCandidates } = await import('@/lib/gsc/property');
+    expect(propertyCandidates('https://www.easyvibs.co.uk')).toEqual(['sc-domain:easyvibs.co.uk', 'https://www.easyvibs.co.uk/', 'https://easyvibs.co.uk/', 'http://www.easyvibs.co.uk/', 'http://easyvibs.co.uk/']);
+    const full = (siteUrl: string) => ({ siteUrl, permissionLevel: 'SITE_FULL_USER' });
+    expect(pickProperty('sc-domain:easyvibs.co.uk', 'https://easyvibs.co.uk', [full('https://easyvibs.co.uk/')])).toEqual({ property: 'https://easyvibs.co.uk/', detected: true });
+    expect(pickProperty('sc-domain:easyvibs.co.uk', 'https://easyvibs.co.uk', [full('sc-domain:easyvibs.co.uk'), full('https://easyvibs.co.uk/')])).toEqual({ property: 'sc-domain:easyvibs.co.uk', detected: false });
+    expect(pickProperty(null, 'https://easyvibs.co.uk', [full('https://www.easyvibs.co.uk/')])).toEqual({ property: 'https://www.easyvibs.co.uk/', detected: true });
+    // An unverified entry is not usable; another website's property never stands in.
+    expect(pickProperty('sc-domain:easyvibs.co.uk', 'https://easyvibs.co.uk', [{ siteUrl: 'https://easyvibs.co.uk/', permissionLevel: 'siteUnverifiedUser' }, full('https://other.example/')])).toEqual({ property: 'sc-domain:easyvibs.co.uk', detected: false });
   });
 });
 

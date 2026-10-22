@@ -4,6 +4,7 @@ import { SITE_OVERRIDES_MIGRATION_ID, unpinDefaultSiteOverrides } from './site-o
 import { REVIEW_NOTES_MIGRATION_ID, reviewReasonsBecomeNotes } from './review-notes-migration';
 import { HUMANIZER_DEFAULT_MIGRATION_ID, humanizerOffByDefault } from './humanizer-default-migration';
 import { PHOTO_CHECK_MIGRATION_ID, celebrityPhotoCheckOn } from './photo-check-migration';
+import { PUBLISHED_SLOT_MIGRATION_ID, publishedAtRealTime } from './published-slot-migration';
 
 /** Built-in data migrations are registered here as milestones add them. */
 export function loadBuiltInDataMigrations(): void {
@@ -31,5 +32,10 @@ export function loadBuiltInDataMigrations(): void {
     id: PHOTO_CHECK_MIGRATION_ID,
     description: 'Celebrity photo check on by default (as in the earlier tool): the global switch and unfinished celebrity articles are switched on once, so collages of other sites are recognised and left out.',
     run: celebrityPhotoCheckOn,
+  });
+  registerDataMigration({
+    id: PUBLISHED_SLOT_MIGRATION_ID,
+    description: 'Published workflow articles show in the calendar when they were really published (not on a later slot they never used); that slot is free again. Backup written first.',
+    run: publishedAtRealTime,
   });
 }

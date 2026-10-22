@@ -134,6 +134,26 @@ describe('approved publishing path', () => {
     expect(await schedule.verifyKeywordPublished(kw.id)).toEqual({ skipped: 'not scheduled' });
   });
 
+  it('owner report: a draft the owner published in WordPress (not at its slot) shows on the day it was published, and its slot is free again', async () => {
+    const t = await draftTask('How to Speed Up WordPress', 'pub:draft-4');
+    const slot = new Date(Date.now() + 27 * 3_600_000);
+    const kw = await readyKeyword('How to Speed Up WordPress', t.id, slot);
+    // The owner published the draft themselves today (the keyword said “publish it yourself”).
+    const publishedAt = new Date(Math.floor((Date.now() - 2 * 3_600_000) / 1000) * 1000);
+    Object.assign(wp.posts.get(t.wpPostId!)!, { status: 'publish', date_gmt: publishedAt.toISOString().slice(0, 19) });
+    expect(await schedule.scheduleKeywordPost(kw.id)).toEqual({ published: true });
+    const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+    expect(row.status).toBe('PUBLISHED');
+    expect(row.publishedAt?.toISOString()).toBe(publishedAt.toISOString());
+    // Before: it stayed on tomorrow's slot in the calendar, and that slot stayed reserved.
+    expect(row.scheduledAt?.toISOString()).toBe(publishedAt.toISOString());
+    expect(await client.slotReservation.count({ where: { workflowKeywordId: kw.id } })).toBe(0);
+    const { calendar } = await import('@/lib/workflow/service');
+    const cal = await calendar(new Date(Date.now() - 86_400_000).toISOString(), 3);
+    expect(cal.entries.find((e) => e.keywordId === kw.id)?.at).toBe(publishedAt.toISOString());
+    expect(await client.auditLog.count({ where: { action: 'publish.permit', details: { contains: 'Speed Up' } } })).toBe(0); // nothing was published by the tool
+  });
+
   it('a slot too close to schedule safely moves to the next free slot instead of publishing early', async () => {
     const t = await draftTask('How to Back Up WordPress', 'pub:draft-2');
     const kw = await readyKeyword('How to Back Up WordPress', t.id, new Date(Date.now() + 60_000));

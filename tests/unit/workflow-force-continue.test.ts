@@ -99,3 +99,31 @@ describe('owner request: Force continue for a draft stopped by the quality check
     expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('WRITING');
   });
 });
+
+describe('owner report: an article published today showed on tomorrow’s slot in the calendar', () => {
+  it('the data migration moves published keywords to their real publish time and frees the slot; on-slot ones stay', async () => {
+    const tomorrow = new Date('2026-10-23T12:00:00.000Z'); // 5:00 PM in Pakistan
+    const today = new Date('2026-10-22T09:13:00.000Z');
+    const off = await client.workflowKeyword.create({ data: { workflowId, keyword: 'malaak compton-rock (published)', normalizedKeyword: 'malaak published', position: 20, status: 'PUBLISHED', scheduledAt: tomorrow, publishedAt: today, publishedUrl: 'https://publishing.example/malaak/' } });
+    await client.slotReservation.create({ data: { websiteId: siteId, scheduledAt: tomorrow, workflowKeywordId: off.id } });
+    const onSlot = new Date('2026-10-22T12:30:00.000Z');
+    const normal = await client.workflowKeyword.create({ data: { workflowId, keyword: 'Andi Rock', normalizedKeyword: 'andi rock', position: 21, status: 'INDEXING_REQUESTED', scheduledAt: onSlot, publishedAt: onSlot } });
+    await client.slotReservation.create({ data: { websiteId: siteId, scheduledAt: onSlot, workflowKeywordId: normal.id } });
+
+    // Registered (it ran once when this test database was set up, before these rows existed).
+    const { runDataMigrations } = await import('@/lib/data-migrations');
+    expect((await runDataMigrations(client)).join(' ')).toMatch(/2026-10-22-published-at-real-time: already applied/);
+    const { publishedAtRealTime } = await import('@/lib/published-slot-migration');
+    const report = await publishedAtRealTime(client);
+    expect(report).toMatchObject({ moved: [{ keyword: 'malaak compton-rock (published)', from: tomorrow.toISOString(), to: today.toISOString() }], backupFile: expect.stringContaining('2026-10-22-published-at-real-time.json') });
+
+    const moved = await client.workflowKeyword.findUniqueOrThrow({ where: { id: off.id } });
+    expect(moved.scheduledAt?.toISOString()).toBe(today.toISOString());
+    expect(await client.slotReservation.count({ where: { workflowKeywordId: off.id } })).toBe(0);
+    // The keyword published at its slot keeps it.
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: normal.id } })).scheduledAt?.toISOString()).toBe(onSlot.toISOString());
+    expect(await client.slotReservation.count({ where: { workflowKeywordId: normal.id } })).toBe(1);
+    // Nothing left to move.
+    expect(await publishedAtRealTime(client)).toMatchObject({ moved: [] });
+  });
+});

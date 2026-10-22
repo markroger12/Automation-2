@@ -2344,3 +2344,36 @@ BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   #
 
 **Not verified here:** the owner's Windows PC and Chrome; the font list's per-font preview needs Chrome's customizable select (Chrome 135+), and other browsers show plain names.
 
+## Owner report (2026-10-22): “published today, but the calendar shows it tomorrow” (malaak compton-rock)
+
+**Report:** the Publishing Calendar showed “malaak compton-rock — published (verified)” on Friday 23 October, 5:00 PM, although it was published on the 22nd. The owner asked for a way to correct it.
+
+**Cause:**
+- The owner published the stopped draft in WordPress (the old keyword message said “publish it yourself”).
+- Force continue then gave the keyword the next free slot, Friday 5:00 PM.
+- When the scheduler came to schedule it, WordPress already showed the post as published. `scheduleKeywordPost` recorded PUBLISHED with the real publish time (`publishedAt`), but kept `scheduledAt` (the slot the calendar shows) and the slot's reservation.
+- `verifyKeywordPublished` had the same gap.
+- **Reproduced first:** an integration test on the fake WordPress, with the post published 2 h ago and the slot tomorrow. On the previous code `scheduledAt` stayed on tomorrow's slot.
+
+**Fix:**
+- **One place records a publication** (`markPublished` in `src/wordpress/schedule.ts`). When WordPress's publish time differs from the slot by a minute or more:
+  - the keyword's calendar time becomes the real publish time;
+  - the reserved slot is released, so another article can use it;
+  - a log line says so.
+- A post published at its slot is unchanged.
+- **Data migration `2026-10-22-published-at-real-time`:** published, indexing-requested and indexed keywords recorded before this get the same correction once. It runs with the next `npm run start:all`, and a backup is written to `data/backups/migrations/` first.
+- No button is needed: it corrects itself.
+
+**Tests:**
+- `workflow-publish.test.ts`, new: published by the owner before its slot → PUBLISHED at the real time, the reservation is gone, the calendar entry is at the real time, and no publish permit was used.
+- `workflow-force-continue.test.ts`, new: the migration moves the off-slot keyword and frees its slot, keeps the on-slot one with its reservation, runs only once, and writes a backup.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 46 files, 330 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts tests/integration/migration-upgrade.test.ts   # 8 pass
+next build                          # compiled
+```
+**Not verified here:** the owner's database; the migration runs there at the next start.
+

@@ -2590,4 +2590,6 @@ next build                          # compiled
 npx tsc --noEmit                    # 0 errors
 npx vitest run tests/unit/images.test.ts   # 26/26
 npx vitest run                      # 47 files, 338 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 16 pass, 1 skipped (real MediaPipe)
+next build                          # compiled
 ```

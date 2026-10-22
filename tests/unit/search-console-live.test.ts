@@ -4,8 +4,9 @@ import { setupTestDb } from '../helpers/test-db';
 import { makeServiceAccount, startFakeGoogle, type AnalyticsBody, type FakeGoogle } from '../fixtures/fake-google';
 
 /**
- * Live Search Console (owner request): service-account login, sync into the Search Performance analysis, sitemap
- * resubmit ~35 s after a verified publish, and Google's URL Inspection as proof. Against a fake Google.
+ * Live Search Console (owner request): service-account login, sync into the Search Performance analysis, “Request
+ * indexing” queued for Automation Chrome ~35 s after a verified publish (URL Inspection → Request indexing, as the
+ * owner does it; not a sitemap resubmit), and Google's URL Inspection as proof. Against a fake Google.
  */
 let client: PrismaClient;
 let google: FakeGoogle;
@@ -161,19 +162,36 @@ describe('indexing after a workflow publish', () => {
     return client.workflowKeyword.create({ data: { workflowId: wf.id, keyword, normalizedKeyword: keyword.toLowerCase(), position: 1, status: 'PUBLISHED', publishedUrl: url, publishedAt } });
   }
 
-  it('resubmits the sitemap ~35 s after publishing, then marks INDEXED only when Google says the URL is on Google', async () => {
+  it('~35 s after publishing, “Request indexing” is queued for Automation Chrome (not a sitemap); INDEXED only when Google says the URL is on Google', async () => {
+    const ri = await import('@/lib/gsc/request-indexing');
     const publishedAt = new Date('2026-10-16T12:00:00Z');
     const kw = await publishedKeyword('Daphne Govers', 'https://promizeiten.example/daphne-govers/', true, publishedAt);
     // 20 s after publishing: too early.
     expect(await sync.indexingTick(new Date(publishedAt.getTime() + 20_000))).toMatchObject({ submitted: 0 });
     const t1 = new Date(publishedAt.getTime() + 36_000);
     expect(await sync.indexingTick(t1)).toMatchObject({ submitted: 1 });
-    expect(google.submitted).toEqual(['https://promizeiten.example/sitemap_index.xml']);
+    expect(google.submitted).toEqual([]); // no sitemap resubmit any more
+    const jobs = await client.queueJob.findMany({ where: { queue: 'gsc' } });
+    expect(jobs).toHaveLength(1);
+    expect(JSON.parse(jobs[0].payload)).toEqual({ keywordId: kw.id, url: 'https://promizeiten.example/daphne-govers/', property: PROPERTY, websiteId: siteId });
     let row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
-    expect(row.status).toBe('INDEXING_REQUESTED');
-    expect(row.indexingRequestedAt?.toISOString()).toBe(t1.toISOString());
-    expect(row.indexingStatus).toMatch(/Sitemap resubmitted to Google .* A request is not proof of indexing/);
+    // Queued is not requested: the status changes only when Automation Chrome reports the click.
+    expect(row.status).toBe('PUBLISHED');
+    expect(row.indexingStatus).toMatch(/Waiting for Automation Chrome to request indexing in Search Console/);
     expect(row.indexCheckAt?.toISOString()).toBe('2026-10-16T13:00:00.000Z'); // 1 h after publishing
+    // A second tick does not queue it again.
+    expect(await sync.indexingTick(new Date(t1.getTime() + 5000))).toMatchObject({ submitted: 0 });
+    expect(await ri.waitingIndexingRequests(t1)).toBe(1);
+    const claimed = await ri.claimIndexingRequest('install-1', new Date(t1.getTime() + 10_000));
+    expect(claimed).toEqual({ id: jobs[0].id, url: 'https://promizeiten.example/daphne-govers/', property: PROPERTY, inspectUrl: `https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent(PROPERTY)}&id=${encodeURIComponent('https://promizeiten.example/daphne-govers/')}` });
+    expect(await ri.claimIndexingRequest('install-1', new Date(t1.getTime() + 11_000))).toBeNull(); // leased
+    const t2 = new Date(t1.getTime() + 60_000);
+    await ri.reportIndexingRequest({ jobId: jobs[0].id, installId: 'install-1', outcome: 'REQUESTED', message: 'Indexing requested' }, t2);
+    row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+    expect(row.status).toBe('INDEXING_REQUESTED');
+    expect(row.indexingRequestedAt?.toISOString()).toBe(t2.toISOString());
+    expect(row.indexingStatus).toMatch(/Indexing requested in Search Console \(URL Inspection → Request indexing\) .* A request is not proof of indexing/);
+    expect((await client.queueJob.findUniqueOrThrow({ where: { id: jobs[0].id } })).status).toBe('COMPLETED');
     // 1 h: Google has not indexed it yet → next check at 6 h.
     expect(await sync.indexingTick(new Date('2026-10-16T13:00:30Z'))).toMatchObject({ inspected: 1, indexed: 0 });
     row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
@@ -192,10 +210,10 @@ describe('indexing after a workflow publish', () => {
     indexedUrls = new Set();
     const publishedAt = new Date('2026-10-01T00:00:00Z');
     const kw = await publishedKeyword('Ohne Antrag', 'https://promizeiten.example/ohne-antrag/', false, publishedAt);
-    const submittedBefore = google.submitted.length;
+    const queuedBefore = await client.queueJob.count({ where: { queue: 'gsc' } });
     await sync.indexingTick(new Date('2026-10-01T00:01:00Z'));
     let row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
-    expect(google.submitted.length).toBe(submittedBefore);
+    expect(await client.queueJob.count({ where: { queue: 'gsc' } })).toBe(queuedBefore);
     expect(row).toMatchObject({ status: 'PUBLISHED', indexingRequestedAt: null });
     expect(row.indexingStatus).toMatch(/Indexing not requested/);
     // Walk through every scheduled check without an index: the last one ends the checks.
@@ -210,9 +228,75 @@ describe('indexing after a workflow publish', () => {
     expect(row.indexingStatus).toMatch(/Not indexed 14 days after publishing/);
   });
 
-  it('does nothing without a connected key', async () => {
+  it('a request that is still waiting (Google signed out in Automation Chrome) stays visible next to Google’s answer; INDEXED is never stepped back', async () => {
+    const ri = await import('@/lib/gsc/request-indexing');
+    indexedUrls = new Set();
+    const publishedAt = new Date('2026-10-17T00:00:00Z');
+    const kw = await publishedKeyword('Signed Out', 'https://promizeiten.example/signed-out/', true, publishedAt);
+    await sync.indexingTick(new Date('2026-10-17T00:01:00Z'));
+    const claimed = await ri.claimIndexingRequest('install-1', new Date('2026-10-17T00:01:10Z'));
+    await ri.reportIndexingRequest({ jobId: claimed!.id, installId: 'install-1', outcome: 'NOT_SIGNED_IN' }, new Date('2026-10-17T00:02:00Z'));
+    const job = await client.queueJob.findUniqueOrThrow({ where: { id: claimed!.id } });
+    expect(job).toMatchObject({ status: 'WAITING', errorCode: 'NOT_SIGNED_IN' });
+    expect(job.runAt.toISOString()).toBe('2026-10-17T01:02:00.000Z');
+    await sync.indexingTick(new Date('2026-10-17T01:00:10Z'));
+    let row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+    expect(row.status).toBe('PUBLISHED');
+    expect(row.indexingStatus).toMatch(/^Google: not on Google yet .* · Request indexing: Sign in to Google \(Search Console\) in Automation Chrome/);
+    // The request is made while Google indexes it: a late report never steps INDEXED back.
+    const again = await ri.claimIndexingRequest('install-1', new Date('2026-10-17T06:00:00Z'));
+    indexedUrls = new Set(['https://promizeiten.example/signed-out/']);
+    await sync.indexingTick(new Date('2026-10-17T06:00:10Z'));
+    await ri.reportIndexingRequest({ jobId: again!.id, installId: 'install-1', outcome: 'REQUESTED' }, new Date('2026-10-17T06:02:00Z'));
+    row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+    expect(row.status).toBe('INDEXED');
+    expect(row.indexingStatus).toMatch(/^Google: URL is on Google/);
+    // A request still queued for a URL Google already shows (or a deleted keyword) is dropped, not opened.
+    const late = await publishedKeyword('Late Request', 'https://promizeiten.example/late-request/', true, new Date('2026-10-17T07:00:00Z'));
+    await sync.indexingTick(new Date('2026-10-17T07:01:00Z'));
+    await client.workflowKeyword.update({ where: { id: late.id }, data: { status: 'INDEXED' } });
+    expect(await ri.claimIndexingRequest('install-1', new Date('2026-10-17T07:02:00Z'))).toBeNull();
+    expect(await client.queueJob.findUniqueOrThrow({ where: { idempotencyKey: `gsc-index:${late.id}` } })).toMatchObject({ status: 'CANCELLED', error: 'Google already shows the URL as indexed.' });
+  });
+
+  it('daily limit: asked again the next day; an account without access to the property fails with what to do', async () => {
+    const ri = await import('@/lib/gsc/request-indexing');
+    const a = await publishedKeyword('Quota Day', 'https://promizeiten.example/quota-day/', true, new Date('2026-10-18T00:00:00Z'));
+    const b = await publishedKeyword('No Access', 'https://promizeiten.example/no-access/', true, new Date('2026-10-18T00:00:00Z'));
+    await sync.indexingTick(new Date('2026-10-18T00:01:00Z'));
+    const now = new Date('2026-10-18T00:02:00Z');
+    const jobA = await client.queueJob.findUniqueOrThrow({ where: { idempotencyKey: `gsc-index:${a.id}` } });
+    const jobB = await client.queueJob.findUniqueOrThrow({ where: { idempotencyKey: `gsc-index:${b.id}` } });
+    // Only the extension holding the job may report it.
+    expect(await ri.reportIndexingRequest({ jobId: jobA.id, installId: 'i', outcome: 'REQUESTED' }, now)).toEqual({ ok: false, error: 'Not claimed by this extension' });
+    const claimedIds = [(await ri.claimIndexingRequest('i', now))?.id, (await ri.claimIndexingRequest('i', now))?.id];
+    expect(claimedIds.sort()).toEqual([jobA.id, jobB.id].sort());
+    expect(await ri.reportIndexingRequest({ jobId: jobA.id, installId: 'other', outcome: 'REQUESTED' }, now)).toEqual({ ok: false, error: 'Not claimed by this extension' });
+    await ri.reportIndexingRequest({ jobId: jobA.id, installId: 'i', outcome: 'QUOTA', message: 'Quota exceeded' }, now);
+    await ri.reportIndexingRequest({ jobId: jobB.id, installId: 'i', outcome: 'NO_ACCESS' }, now);
+    expect((await client.queueJob.findUniqueOrThrow({ where: { id: jobA.id } })).runAt.toISOString()).toBe('2026-10-18T20:02:00.000Z');
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: a.id } })).indexingStatus).toMatch(/daily limit for indexing requests was reached\. Google: “Quota exceeded”/);
+    expect((await client.queueJob.findUniqueOrThrow({ where: { id: jobB.id } })).status).toBe('FAILED');
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: b.id } })).indexingStatus).toMatch(/cannot use sc-domain:promizeiten\.example in Search Console/);
+    expect(await ri.reportIndexingRequest({ jobId: 'nope', installId: 'i', outcome: 'REQUESTED' })).toEqual({ ok: false, error: 'Unknown job' });
+    // A repeated report of a finished job changes nothing.
+    expect(await ri.reportIndexingRequest({ jobId: jobB.id, installId: 'i', outcome: 'REQUESTED' }, now)).toEqual({ ok: false, error: 'Not claimed by this extension' });
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: b.id } })).status).toBe('PUBLISHED');
+  });
+
+  it('without a connected key indexing is still requested (Automation Chrome needs no key), but Google is not asked', async () => {
     gsc.forgetKey();
-    expect(await sync.indexingTick(new Date('2026-10-20T00:00:00Z'))).toEqual({ submitted: 0, inspected: 0, indexed: 0 });
+    const kw = await publishedKeyword('Ohne Schlüssel', 'https://promizeiten.example/ohne-schluessel/', true, new Date('2026-10-19T00:00:00Z'));
+    expect(await sync.indexingTick(new Date('2026-10-20T00:00:00Z'))).toEqual({ submitted: 1, inspected: 0, indexed: 0 });
+    expect(await client.queueJob.count({ where: { idempotencyKey: `gsc-index:${kw.id}` } })).toBe(1);
+    // A website without a property: its URL is used as a URL-prefix property (as the workflow page's link does).
+    const websites = await import('@/lib/websites');
+    const other = await websites.createWebsite({ name: 'Ohne Property', publicUrl: 'https://ohne-property.example', language: 'de', targetCountry: 'Germany', timezone: 'UTC' });
+    const wf = await client.workflow.create({ data: { websiteId: other.id, name: 'wf other', requestIndexing: true } });
+    const okw = await client.workflowKeyword.create({ data: { workflowId: wf.id, keyword: 'Ohne Property', normalizedKeyword: 'ohne property', position: 1, status: 'PUBLISHED', publishedUrl: 'https://ohne-property.example/x/', publishedAt: new Date('2026-10-19T00:00:00Z') } });
+    await sync.indexingTick(new Date('2026-10-20T00:00:30Z'));
+    const job = await client.queueJob.findUniqueOrThrow({ where: { idempotencyKey: `gsc-index:${okw.id}` } });
+    expect(JSON.parse(job.payload).property).toBe('https://ohne-property.example/');
     expect(await sync.syncDue()).toEqual([]);
     gsc.saveKey(sa.json);
   });

@@ -33,6 +33,15 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
     tabId: id,
     openConversationUrls: z.array(z.string().max(500)).max(10).default([]),
   }),
+  // Search Console “Request indexing” in Automation Chrome (owner request).
+  z.object({ action: z.literal('gsc-claim'), installId: id }),
+  z.object({
+    action: z.literal('gsc-result'),
+    installId: id,
+    jobId: id,
+    outcome: z.enum(['REQUESTED', 'QUOTA', 'NOT_SIGNED_IN', 'NO_ACCESS', 'HUMAN_CHECK', 'ERROR']),
+    message: z.string().max(1000).optional().nullable(),
+  }),
   z.object({
     action: z.literal('progress'),
     installId: id,

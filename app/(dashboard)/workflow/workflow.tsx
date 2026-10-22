@@ -241,7 +241,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
             </Field>
             <Checkbox
               label="Request indexing after publishing"
-              help="With Search Console connected (Search Performance page): about 35 seconds after a verified publish, the site's sitemap is resubmitted to Google, then Google's URL Inspection is asked for proof (1 h, 6 h, 24 h, then daily for 14 days). “Indexed” appears only when Google says the URL is on Google. Without the connection, a Search Console link appears and you request indexing yourself."
+              help="As you do it by hand: about 35 seconds after a verified publish, Automation Chrome opens the URL in Search Console (URL Inspection) and clicks “Request indexing”. Sign in to Google once in Automation Chrome with the account that owns the property; Search Console allows only a few requests a day, the rest wait for the next day. With Search Console connected (Search Performance page), Google's URL Inspection is then asked for proof (1 h, 6 h, 24 h, then daily for 14 days). “Indexed” appears only when Google says the URL is on Google."
               checked={form.requestIndexing}
               onChange={(e) => setForm({ ...form, requestIndexing: e.target.checked })}
             />

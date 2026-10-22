@@ -1632,7 +1632,7 @@ The owner created a Google Cloud service account (no billing needed). Previously
 - **The existing analysis works on it:** trends, declining pages, published articles without impressions, and Content Refresh evidence. The 1,000-row export cap no longer applies to live data.
 - **Page:** a live badge in the text, the last sync (or its error), and a “Last hours (live)” table.
 
-**Indexing after a workflow publish** (`indexingTick`)
+**Indexing after a workflow publish** (`indexingTick`) — *replaced on 2026-10-22: the request is now made in Search Console's URL Inspection by Automation Chrome, as the owner does it; see “Request indexing as the owner does it” below. The proof part is unchanged.*
 - **Sitemap resubmit:** 35 s after a verified publish, if the workflow has “Request indexing after publishing” on, the sitemaps Search Console knows for the property are resubmitted (`sitemaps.submit`). If there are none, `<site>/sitemap_index.xml` is submitted.
   - The keyword becomes INDEXING_REQUESTED, with the note “a request is not proof of indexing”.
   - Google's “Request indexing” button has no API.
@@ -2149,3 +2149,84 @@ npx vitest run --config vitest.integration.config.ts   # 10 files, 88 pass, 1 sk
 next build                          # compiled
 ```
 The integration run started before the menu headings were added. They change only the sidebar markup; it was checked in Chromium.
+
+## Owner requests (2026-10-22, later): request indexing as the owner does it; photos in the article's chat; optional variables in the Tigram image plan (extension 3.3.0)
+
+### 1. Request indexing as the owner does it (URL Inspection → Request indexing), not by resubmitting the sitemap
+The owner: “I first inspect the URL, then click Request indexing.” Google has no API for that button: the URL Inspection API only reads the status, and the Indexing API is not used. So **Automation Chrome clicks it**, with the Google account the owner signs in there.
+- **Queue** (`src/lib/gsc/request-indexing.ts`, new queue `gsc`): about 35 s after a verified publish, with the workflow switch on, one request per keyword is queued (idempotent: `gsc-index:<keywordId>`). The keyword shows “Waiting for Automation Chrome to request indexing…”. It does not need the service-account key. Without a property the website's URL is used as a URL-prefix property, as the workflow page's link does.
+- **Extension 3.3.0:**
+  - `background.js` sees waiting requests in the `hello` answer and claims one (`gsc-claim`, 8-min lease). It opens `https://search.google.com/search-console/inspect?resource_id=<property>&id=<url>` in a background tab, and closes the tab afterwards.
+  - The new content script `gsc.js` waits for the inspection result (≤ 90 s) and clicks **REQUEST INDEXING**. It then waits (≤ 4 min) while Google tests the live URL, and reports what Google said (`gsc-result`).
+  - It reads English and German Search Console. It only reads the page text and clicks that one button.
+  - While Google works, `gsc.js` sends a small “alive” message every 10 s, so Chrome does not stop the extension background in the middle. If Chrome restarted it anyway, the restarted background still reports the answer it receives (with the job id) and closes the tab.
+  - A report is accepted only from the extension that holds the job (ACTIVE, `lockedBy`). A late or repeated report changes nothing.
+  - Google's sign-in page and Search Console's start page for signed-out visitors (`/search-console/about`) both count as “not signed in”.
+  - **New host permission:** `https://search.google.com/*`.
+- **Outcomes:**
+
+  | Outcome | What happens |
+  | --- | --- |
+  | Indexing requested | The keyword becomes INDEXING_REQUESTED with Google's sentence and “a request is not proof of indexing”. |
+  | Daily limit (“Quota exceeded”) | Asked again in 20 h. |
+  | Google sign-in page | “Sign in to Google (Search Console) in Automation Chrome”; asked again in 1 h. |
+  | A Google check (reCAPTCHA) | Left to the owner; asked again in 1 h. |
+  | No access / URL not in property | Failed, with what to do. |
+  | Other errors | Retried hourly, failed after 4 tries with “request it yourself in Search Console”. |
+
+  - Google's checks and sign-in are reported, never handled.
+  - A request still waiting stays visible next to Google's index status (“· Request indexing: …”).
+  - A late report never moves an INDEXED keyword back.
+  - A request for a URL Google already shows as indexed, or for a deleted keyword, is cancelled instead of opened.
+- **Proof unchanged:** INDEXED only from Google's URL Inspection API verdict PASS (needs the key). The sitemap code was removed (`listSitemaps`/`submitSitemap`).
+- **Chrome autostart:** waiting `gsc` requests count as work, so Automation Chrome is opened for them like for ChatGPT work.
+- **Workflow switch help text** describes the new flow.
+
+### 2. Celebrity photo search and photo check in the article's chat
+- The owner: a new ChatGPT chat was opened for the photo search, and another one for the collage check. They want the prompts in the chat where the article was written.
+- Now `IMAGE_SEARCH` (first try) and `PHOTO_CHECK` are sent to the article's conversation (`newChat: false`). Stages run one after another, so nothing else is in that chat at the same time. The gallery is read only from the answer to its own prompt (turn-scoped, unchanged).
+- Only when that search answers with text only is it asked **once more in a new chat**, as before.
+- The Tigram image prompts already used the article's chat (only a repeat goes to a new chat).
+
+### 3. Tigram image plan: `{{keyword}}` and `{{image_title}}` optional
+- Both are now `required: false` in the shipped definition.
+- The seed updates the variable list of existing prompt rows, without touching the owner's prompt text. An own image-plan prompt without them saves without “Required variable … is not used” warnings.
+
+### Tests
+- **Unit** (`search-console-live.test.ts`, fake Google):
+  - the request is queued at 36 s; there is no sitemap call; the payload is right;
+  - a second tick does not queue it again; a claim is leased;
+  - REQUESTED → INDEXING_REQUESTED → INDEXED by URL Inspection;
+  - signed out → retried in 1 h, with the note next to Google's answer;
+  - a late REQUESTED never moves INDEXED back; an already-indexed URL is cancelled;
+  - quota → +20 h; no access → failed; an unknown job is refused;
+  - without a key the request is still queued; without a property the website URL is used.
+- **Extension (Playwright Chromium with the real extension, fake Search Console** `tests/fixtures/fake-search-console.ts`):
+  - the URL Inspection page opens with the right `resource_id`/`id`, REQUEST INDEXING is clicked once, the keyword becomes INDEXING_REQUESTED, and the tab is closed;
+  - daily limit, a Google sign-in redirect and Search Console's signed-out start page are reported and scheduled again.
+- **Images (integration):**
+  - the photo search and photo check are claimed in the article's chat (`newChat` false, the article's conversation URL);
+  - a text-only search is asked again in a new chat (`[false, true]`).
+  - These two failed on the previous `images.ts` (checked by swapping it back).
+- **Prompts:** IMAGE_PLAN variables optional after seeding over a row marked required; an own prompt without them saves with no warnings. This failed on the previous defaults.
+- **Permission test:** the narrow host list now includes `https://search.google.com/*`; still no blanket permission.
+
+### Commands run
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 45 files, 324 tests pass
+npx vitest run --config vitest.integration.config.ts   # 10 files, 90 pass, 1 skipped (real MediaPipe); extension 39/39
+next build                          # compiled
+```
+- **Final code:** the full integration run started before the last extension changes (report only from the job's holder, “alive” messages, Search Console's start page as signed out). After them, tsc, the unit suite and the two Search Console extension tests were run again: all pass.
+- **Checked by swapping the previous code back:**
+  - without the start-page rule, the start-page case times out;
+  - the image-chat tests and the prompt test also fail on the previous code.
+
+### Not verified here
+- The “background restarted while Google answered” path: Playwright keeps the extension background attached, so Chrome never stops it in tests.
+- The real Search Console page: its button and dialog texts are matched in English and German from Google's wording, but they were not seen live here.
+- Google's real daily limit.
+- The owner's signed-in Google account in Automation Chrome.
+- Live ChatGPT with the photo search in a long article chat.
+

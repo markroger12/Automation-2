@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.2.7');
+    expect(ext?.version).toBe('3.3.0');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -360,6 +360,60 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(await chatPage()!.evaluate(() => (window as unknown as { __galleryOpened?: number }).__galleryOpened)).toBe(1);
     expect((await fakeStats()).sends).toBe(1);
   });
+
+  // Owner request: after a publish, request indexing as the owner does it (URL Inspection → REQUEST INDEXING), not by
+  // resubmitting the sitemap. Google has no API for that button, so Automation Chrome clicks it.
+  async function publishedForIndexing(keyword: string) {
+    const wf = (await client.workflow.findFirst({ where: { websiteId: siteId } })) ?? (await client.workflow.create({ data: { websiteId: siteId, name: 'Indexing workflow', requestIndexing: true } }));
+    const url = `https://easyvibs.example/${keyword.toLowerCase().replace(/\W+/g, '-')}/`;
+    const kw = await client.workflowKeyword.create({ data: { workflowId: wf.id, keyword, normalizedKeyword: keyword.toLowerCase(), position: 1, status: 'PUBLISHED', publishedUrl: url, publishedAt: new Date() } });
+    const { queueIndexingRequest } = await import('@/lib/gsc/request-indexing');
+    const { job } = await queueIndexingRequest({ keywordId: kw.id, url, property: 'https://easyvibs.example/', websiteId: siteId });
+    return { kw, job, url };
+  }
+
+  it('owner request: indexing is requested in Search Console (URL Inspection → REQUEST INDEXING), once, and the tab is closed', async () => {
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode: 'ok' }) });
+    const { kw, job, url } = await publishedForIndexing('Anabella Raye Sherman');
+    const done = await waitFor(async () => {
+      await browser!.tick().catch(() => {});
+      const j = await client.queueJob.findUniqueOrThrow({ where: { id: job.id } });
+      return j.status === 'COMPLETED' ? j : null;
+    }, 90_000, 'indexing request', 1000);
+    expect(done.status).toBe('COMPLETED');
+    const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+    expect(row.status).toBe('INDEXING_REQUESTED');
+    expect(row.indexingStatus).toMatch(/Indexing requested in Search Console \(URL Inspection → Request indexing\).*Google: “Indexing requested URL was added to a priority crawl queue/);
+    expect(browser.searchConsole.clicks()).toBe(1);
+    expect(browser.searchConsole.opened()[0]).toBe(`https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent('https://easyvibs.example/')}&id=${encodeURIComponent(url)}`);
+    await waitFor(async () => !browser!.context.pages().some((p) => p.url().startsWith('https://search.google.com/')), 10_000, 'Search Console tab closed');
+  }, 150_000);
+
+  it('owner request: Search Console’s daily limit and a signed-out Google account are reported and asked again later', async () => {
+    let mode: 'quota' | 'signed-out' | 'signed-out-about' = 'quota';
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode }) });
+    const wait = (id: string, code: string) => waitFor(async () => {
+      await browser!.tick().catch(() => {});
+      const j = await client.queueJob.findUniqueOrThrow({ where: { id } });
+      return j.errorCode === code && j.status === 'WAITING' ? j : null;
+    }, 90_000, code, 1000);
+    const quota = await publishedForIndexing('Quota Person');
+    const q = await wait(quota.job.id, 'QUOTA');
+    expect(q.runAt.getTime()).toBeGreaterThan(Date.now() + 19 * 3600_000);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: quota.kw.id } })).indexingStatus).toMatch(/daily limit for indexing requests was reached.*Quota exceeded/);
+    mode = 'signed-out';
+    const out = await publishedForIndexing('Signed Out Person');
+    const o = await wait(out.job.id, 'NOT_SIGNED_IN');
+    expect(o.runAt.getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: out.kw.id } })).indexingStatus).toMatch(/Sign in to Google \(Search Console\) in Automation Chrome/);
+    // Signed out, Search Console may show its start page instead of the sign-in page.
+    mode = 'signed-out-about';
+    const about = await publishedForIndexing('Start Page Person');
+    await wait(about.job.id, 'NOT_SIGNED_IN');
+    expect(browser.searchConsole.clicks()).toBe(1);
+  }, 240_000);
 
   it('owner report: an answer in a writing block is saved without its “Writing” label', async () => {
     fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', writingBlock: true, answers: ['Lola Simone Rock is the eldest daughter of Chris Rock.\n\n## Who Is Lola Simone Rock?\n\nShe was born in 2002.'] };

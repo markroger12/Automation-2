@@ -401,9 +401,10 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     const source = ctx.config.celebrityPhotoSource ?? 'chatgpt';
     const timeoutMs = settings.advanced.linkCheckTimeoutSec * 1000 * 2;
     if (ids.length < 4 && source !== 'commons') {
-      // No photo from the first search (ChatGPT answered with text only): once more in a new chat.
+      // In the chat the article was written in (owner request: no new chat for the photos). No photo from that search
+      // (ChatGPT answered with text only): once more in a new chat.
       for (let attempt = state.emptySearches ?? 0; attempt < 2; attempt++) {
-        const res = await ctx.askChatGPT('IMAGE_SEARCH', { person_name: name }, { part: attempt ? 'gallery-2' : 'gallery', newChat: true, expectGallery: true });
+        const res = await ctx.askChatGPT('IMAGE_SEARCH', { person_name: name }, { part: attempt ? 'gallery-2' : 'gallery', newChat: attempt > 0, expectGallery: true });
         if (res.status === 'waiting') return waiting(`Waiting for ChatGPT: photo gallery of ${name}${attempt ? ' (second try)' : ''}`);
         await ctx.progress(`Saving gallery photos of ${name}…`);
         const g = await collectChatGPTGallery({ uploadedIds: res.images.map((i) => i.mediaAssetId), links: res.imageLinks, taskId: ctx.taskId, websiteId: ctx.task.websiteId, responseId: res.responseId, max: 10 - ids.length, timeoutMs });
@@ -476,7 +477,8 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     const sample = usable.slice(0, 8);
     let res: Awaited<ReturnType<PipelineContext['askChatGPT']>> | null = null;
     try {
-      res = await ctx.askChatGPT('PHOTO_CHECK', { photo_count: String(sample.length) }, { part: 'check', newChat: true, attachments: sample.map((a, i) => ({ mediaAssetId: a.id, name: `photo-${i + 1}.webp`, mime: a.mime ?? 'image/webp' })) });
+      // In the article's chat too (owner request), right after the photo search.
+      res = await ctx.askChatGPT('PHOTO_CHECK', { photo_count: String(sample.length) }, { part: 'check', attachments: sample.map((a, i) => ({ mediaAssetId: a.id, name: `photo-${i + 1}.webp`, mime: a.mime ?? 'image/webp' })) });
     } catch (error) {
       if (!(error instanceof TransientError || error instanceof UncertainSideEffectError)) throw error;
       notes.push(`Photo check skipped (${(error as Error).message.slice(0, 160)}); collages could not be recognised, the photos were used in their order.`);

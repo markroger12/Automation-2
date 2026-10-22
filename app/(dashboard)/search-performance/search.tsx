@@ -76,7 +76,7 @@ interface Connection {
   detectedFrom?: string | null;
 }
 
-/** Live Search Console data through the owner's service account (Google's official API; read data, resubmit sitemaps). */
+/** Live Search Console data through the owner's service account (Google's official API; read-only data and URL Inspection proof). */
 function LiveConnection({ websiteId, property, liveSync, onSynced }: { websiteId: string; property: string; liveSync: Data['liveSync']; onSynced: () => Promise<void> }) {
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);

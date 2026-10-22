@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { db } from '../db';
 import { log } from '../log';
 import { getValue, setValue } from '../settings';
-import { listSitemaps, readKey, searchAnalytics, submitSitemap, inspectUrl, type AnalyticsRow } from './client';
+import { readKey, searchAnalytics, inspectUrl, type AnalyticsRow } from './client';
 import { resolveWebsiteProperty } from './property';
+import { pendingRequestNote, queueIndexingRequest } from './request-indexing';
+import { inspectionProperty } from '../workflow/search-console';
 
 /**
  * Live Search Console data (owner request). Every sync stores one snapshot (source GSC_API) that replaces the
@@ -122,9 +124,9 @@ export async function syncWebsite(websiteId: string, now = new Date()): Promise<
   }
 }
 
-// ------------------------------------------------------------------ indexing: sitemap resubmit + proof
+// ------------------------------------------------------------------ indexing: Search Console request + proof
 
-/** Wait after a verified publish before resubmitting the sitemap (owner: “30 or 40 seconds after publishing”). */
+/** Wait after a verified publish before indexing is requested (owner: “30 or 40 seconds after publishing”). */
 export const SUBMIT_AFTER_MS = 35_000;
 /** URL-inspection checks after publishing: 1 h, 6 h, 24 h, then daily until 14 days. */
 export const CHECK_OFFSETS_H = [1, 6, 24, 48, 72, 96, 120, 144, 168, 192, 216, 240, 264, 288, 312, 336];
@@ -134,52 +136,38 @@ function nextCheck(publishedAt: Date, checksDone: number): Date | null {
   return h === undefined ? null : new Date(publishedAt.getTime() + h * 3600_000);
 }
 
-/** The sitemaps Search Console already knows for the property, else the site's Rank Math/Yoast sitemap index. */
-async function resubmitSitemaps(property: string, publicUrl: string): Promise<string[]> {
-  const known = (await listSitemaps(property)).map((s) => s.path).filter((p) => /^https?:\/\//.test(p));
-  const targets = known.length ? known : [`${publicUrl.replace(/\/+$/, '')}/sitemap_index.xml`];
-  for (const t of targets) await submitSitemap(property, t);
-  return targets;
-}
-
 /**
- * Published workflow posts: resubmit the sitemap ~35 s after a verified publish (workflow switch “request
- * indexing”), then ask Google's URL Inspection for proof. INDEXED only when Google says the URL is on Google.
+ * Published workflow posts: ~35 s after a verified publish, queue “Request indexing” for Automation Chrome (workflow
+ * switch “request indexing”), then ask Google's URL Inspection API for proof (needs the service-account key).
+ * INDEXED only when Google says the URL is on Google.
  */
 export async function indexingTick(now = new Date(), maxInspections = 20): Promise<{ submitted: number; inspected: number; indexed: number }> {
-  if (!readKey()) return { submitted: 0, inspected: 0, indexed: 0 };
   let submitted = 0;
   let inspected = 0;
   let indexed = 0;
 
-  // 1. Newly published: request (sitemap) and schedule the first check.
+  // 1. Newly published: request indexing as the owner does it — URL Inspection → REQUEST INDEXING in Search Console,
+  //    by Automation Chrome (owner request: not by resubmitting the sitemap) — and schedule the first check.
   const fresh = await db.workflowKeyword.findMany({
     where: { status: 'PUBLISHED', indexCheckAt: null, indexChecks: 0, publishedUrl: { not: null }, publishedAt: { lte: new Date(now.getTime() - SUBMIT_AFTER_MS) } },
-    include: { workflow: { select: { requestIndexing: true, websiteId: true, searchConsoleProperty: true } } },
+    include: { workflow: { select: { requestIndexing: true, websiteId: true } } },
     take: 50,
   });
-  const submittedFor = new Map<string, string>();
   for (const kw of fresh) {
     const { site, property } = await websiteProperty(kw.workflow.websiteId);
-    if (!property) continue;
+    if (!property && !kw.workflow.requestIndexing) continue;
     const publishedAt = kw.publishedAt ?? now;
-    let status = kw.status;
     let note = 'Indexing not requested (workflow switch off); Google’s index status is checked.';
-    let requestedAt: Date | null = null;
     if (kw.workflow.requestIndexing) {
-      try {
-        if (!submittedFor.has(site.id)) submittedFor.set(site.id, (await resubmitSitemaps(property, site.publicUrl)).join(', '));
-        requestedAt = now;
-        status = 'INDEXING_REQUESTED';
-        note = `Sitemap resubmitted to Google (${submittedFor.get(site.id)}) at ${now.toISOString()}. A request is not proof of indexing; Google is asked for the index status next.`;
-        submitted++;
-      } catch (error) {
-        note = `Sitemap could not be resubmitted: ${(error as Error).message}`;
-      }
+      // No property set or detected: the website's URL as a URL-prefix property (as the workflow page's link does).
+      await queueIndexingRequest({ keywordId: kw.id, url: kw.publishedUrl!, property: property ?? inspectionProperty(null, site.publicUrl), websiteId: site.id }, now);
+      note = 'Waiting for Automation Chrome to request indexing in Search Console (URL Inspection → Request indexing).';
+      submitted++;
     }
-    await db.workflowKeyword.update({ where: { id: kw.id }, data: { status, indexingRequestedAt: requestedAt ?? kw.indexingRequestedAt, indexingStatus: note, indexCheckAt: nextCheck(publishedAt, 0) ?? now } });
+    await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexingStatus: note, indexCheckAt: nextCheck(publishedAt, 0) ?? now } });
     await log({ category: 'search', message: `${site.name}: “${kw.keyword}” published — ${note}` });
   }
+  if (!readKey()) return { submitted, inspected, indexed };
 
   // 2. Proof: URL Inspection when a check is due.
   const due = await db.workflowKeyword.findMany({
@@ -190,7 +178,11 @@ export async function indexingTick(now = new Date(), maxInspections = 20): Promi
   });
   for (const kw of due) {
     const { site, property } = await websiteProperty(kw.workflow.websiteId);
-    if (!property) continue;
+    if (!property) {
+      // Requested without a known property: look again tomorrow (keeps the due list free for the others).
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexCheckAt: new Date(now.getTime() + 24 * 3600_000) } });
+      continue;
+    }
     const checks = kw.indexChecks + 1;
     try {
       const { result } = await inspectUrl(property, kw.publishedUrl!);
@@ -203,10 +195,10 @@ export async function indexingTick(now = new Date(), maxInspections = 20): Promi
         continue;
       }
       const next = nextCheck(kw.publishedAt ?? now, checks);
-      await db.workflowKeyword.update({
-        where: { id: kw.id },
-        data: { indexChecks: checks, indexCheckAt: next, indexingStatus: next ? `Google: not on Google yet (${what}); next check ${next.toISOString()}` : `Not indexed 14 days after publishing (Google: ${what}). No more automatic checks.` },
-      });
+      // A request still waiting (not signed in, daily limit) stays visible next to Google's answer.
+      const pending = kw.status === 'PUBLISHED' ? await pendingRequestNote(kw.id) : null;
+      const status = next ? `Google: not on Google yet (${what}); next check ${next.toISOString()}` : `Not indexed 14 days after publishing (Google: ${what}). No more automatic checks.`;
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: next, indexingStatus: pending ? `${status} · ${pending}` : status } });
     } catch (error) {
       // Quota or permission: try again in an hour, the schedule does not advance.
       await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexCheckAt: new Date(now.getTime() + 3600_000), indexingStatus: `Index status not checked: ${(error as Error).message}` } });

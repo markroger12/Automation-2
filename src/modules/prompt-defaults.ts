@@ -240,7 +240,8 @@ CATEGORY: <exact category name>`,
     version: 2,
     kind: 'text',
     previousHashes: [],
-    variables: [KEYWORD, v('image_title', 'Short title for the featured picture: the article title before “:” or “–”, at most ~45 characters', true, 'stage')],
+    // Owner request: optional, so an own image-plan prompt without them saves without warnings.
+    variables: [{ ...KEYWORD, required: false }, v('image_title', 'Short title for the featured picture: the article title before “:” or “–”, at most ~45 characters', false, 'stage')],
     content: `Plan 3 images for this article about "{{keyword}}". Do not create the images yet.
 
 Image 1 — FEATURED IMAGE (blog header), landscape.

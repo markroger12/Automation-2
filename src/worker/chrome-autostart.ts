@@ -69,7 +69,7 @@ const fileStore = {
 };
 
 export async function currentWork(now = new Date()): Promise<Work> {
-  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff] = await Promise.all([
+  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff, indexing] = await Promise.all([
     db.articleTask.count({ where: { status: 'QUEUED', legacy: false } }),
     db.articleTask.count({ where: { status: { in: RUNNING_STATUSES }, legacy: false } }),
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: now } } }),
@@ -78,10 +78,12 @@ export async function currentWork(now = new Date()): Promise<Work> {
     db.humanizerRun.count({ where: { status: { in: ['QUEUED', 'WAITING'] } } }),
     db.queueJob.findFirst({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: new Date(now.getTime() - STALLED_MS) } }, orderBy: { runAt: 'asc' }, select: { id: true } }),
     inBackoff(db, now),
+    // Search Console “Request indexing” is made in Automation Chrome too (owner request).
+    db.queueJob.count({ where: { queue: 'gsc', OR: [{ status: 'WAITING', runAt: { lte: now } }, { status: 'ACTIVE' }] } }),
   ]);
   return {
-    needsChrome: queued > 0 || waitingPrompts > 0,
-    busy: queued + running + openPrompts + runs > 0,
+    needsChrome: queued > 0 || waitingPrompts > 0 || indexing > 0,
+    busy: queued + running + openPrompts + runs + indexing > 0,
     waitingPrompts,
     stalledPromptId: stalled && !claimed && !backoff ? stalled.id : null,
   };

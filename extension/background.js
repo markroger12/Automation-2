@@ -14,9 +14,9 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.2.7';
+const EXTENSION_VERSION = '3.3.0';
 const DEFAULT_SERVER = 'http://localhost:3000';
-const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox'];
+const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
 let cfg = null;
 let serverCfg = {
@@ -151,6 +151,66 @@ async function flushOutbox() {
     }
   }
   await chrome.storage.local.set({ outbox: remaining });
+}
+
+// ---------------- Search Console: request indexing ----------------
+
+/**
+ * Owner request: after a publish, request indexing as the owner does — open the URL in Search Console's URL Inspection
+ * (signed in with the owner's Google account in this Chrome) and click REQUEST INDEXING (gsc.js). The tab is opened in
+ * the background and closed afterwards. Sign-in pages and Google's checks are never handled here: they are reported.
+ */
+const gsc = { running: false, onReady: null, onDone: null };
+
+async function runGscJob() {
+  gsc.running = true;
+  let tabId = null;
+  try {
+    const res = await api('gsc-claim', {});
+    const job = res && res.job;
+    if (!job) return;
+    // A blank tab first, then the page (the tab exists before its first request).
+    const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
+    tabId = tab.id;
+    await chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 500));
+    const result = await new Promise((resolve) => {
+      let timer = null;
+      const onUpdated = (id, info, t) => {
+        if (id !== tabId) return;
+        const u = info.url || (t && t.url) || '';
+        // Google's sign-in page, or Search Console's start page that a signed-out visitor gets.
+        if (/^https:\/\/accounts\.google\.com\/|^https:\/\/search\.google\.com\/search-console\/about/.test(u)) finish({ outcome: 'NOT_SIGNED_IN', message: 'Search Console asked to sign in to Google.' });
+      };
+      const finish = (r) => {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        gsc.onReady = null;
+        gsc.onDone = null;
+        resolve(r);
+      };
+      timer = setTimeout(() => finish({ outcome: 'ERROR', message: 'Search Console did not finish within 6 minutes.' }), 6 * 60_000);
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      chrome.tabs.update(tabId, { url: job.inspectUrl }).catch((e) => finish({ outcome: 'ERROR', message: 'Could not open Search Console: ' + e.message }));
+      gsc.onReady = async (fromTab) => {
+        if (fromTab !== tabId) return;
+        const r = await chrome.tabs.sendMessage(tabId, { type: 'gsc-run', jobId: job.id }).catch((e) => ({ ok: false, error: e.message }));
+        if (!r || (!r.ok && r.error !== 'busy')) finish({ outcome: 'ERROR', message: 'The Search Console page did not take the request: ' + ((r && r.error) || 'no answer') });
+      };
+      gsc.onDone = (fromTab, msg) => {
+        if (fromTab === tabId && msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null });
+      };
+    });
+    await outboxPush('gsc-result', { jobId: job.id, outcome: result.outcome, message: result.message ? String(result.message).slice(0, 900) : null });
+    setTimeout(() => void tick(), 500);
+  } catch (e) {
+    lastError = e.message;
+  } finally {
+    if (tabId !== null) await chrome.tabs.remove(tabId).catch(() => {});
+    gsc.running = false;
+    gsc.onReady = null;
+    gsc.onDone = null;
+  }
 }
 
 // ---------------- tabs ----------------
@@ -351,6 +411,8 @@ async function tick() {
       await setBadge('VER', '#b91c1c');
       return;
     }
+    // Search Console “Request indexing” (owner request): one at a time, in a tab of its own.
+    if (!cfg.paused && (serverCfg.gscWaiting || 0) > 0 && !gsc.running) void runGscJob();
     if (cfg.paused || serverCfg.claimsPaused) {
       await setBadge('II', '#6b7280');
       return;
@@ -475,6 +537,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       case 'url-changed':
         if (tabId !== null) tabState(tabId).url = msg.url;
+        return sendResponse({ ok: true });
+      case 'gsc-ready':
+        if (gsc.onReady) void gsc.onReady(tabId);
+        return sendResponse({ ok: true });
+      case 'gsc-done':
+        if (gsc.onDone) gsc.onDone(tabId, msg);
+        else if (msg.jobId && /^[\w-]{1,64}$/.test(String(msg.jobId))) {
+          // Chrome restarted this background while Google was answering: still report it, and close the tab.
+          void outboxPush('gsc-result', { jobId: String(msg.jobId), outcome: msg.outcome, message: msg.message ? String(msg.message).slice(0, 900) : null });
+          if (tabId !== null) void chrome.tabs.remove(tabId).catch(() => {});
+        }
+        return sendResponse({ ok: true });
+      case 'gsc-alive':
         return sendResponse({ ok: true });
       case 'come-to-front': {
         // ChatGPT draws a picture only in a visible tab (owner's earlier tool did the same).

@@ -10,6 +10,7 @@ import { claimChatGPTJob, completeChatGPTJob, failChatGPTJob, reportChatGPTProgr
 import { resumeLoginPausedTasks } from '../tasks/lifecycle';
 import { openIncident } from '../recovery';
 import { verifyConnectionKey } from './keys';
+import { claimIndexingRequest, reportIndexingRequest, waitingIndexingRequests } from '../gsc/request-indexing';
 import { agentRequestSchema, type AgentRequest } from './schemas';
 import { AGENT_PROTOCOL_VERSION, EXPECTED_EXTENSION_VERSION } from './version';
 
@@ -117,6 +118,13 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
       }
       return { job: await describeJob(result.job, result.payload, result.reconcile, result.leaseUntil) };
     }
+    case 'gsc-claim': {
+      const mismatch = await versionMismatch(body.installId);
+      if (mismatch) return { job: null, reason: 'version-mismatch', message: mismatch };
+      return { job: await claimIndexingRequest(body.installId) };
+    }
+    case 'gsc-result':
+      return reportIndexingRequest({ jobId: body.jobId, installId: body.installId, outcome: body.outcome, message: body.message ?? null });
     case 'progress':
       return reportChatGPTProgress({
         jobId: body.jobId,
@@ -179,12 +187,13 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
     if (resumed) await log({ category: 'extension', message: `ChatGPT signed in; resumed ${resumed} paused task(s).` });
   }
   const versionOk = body.version === EXPECTED_EXTENSION_VERSION;
-  const [waiting, active, slots, backoffUntil, paused] = await Promise.all([
+  const [waiting, active, slots, backoffUntil, paused, gscWaiting] = await Promise.all([
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: now } } }),
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'ACTIVE' } }),
     allowedSlots(),
     inBackoff(),
     getValue<boolean>(CLAIMS_PAUSED_KEY, false),
+    waitingIndexingRequests(now),
   ]);
   return {
     ok: true,
@@ -205,6 +214,8 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
       backoffUntil: backoffUntil?.toISOString() ?? null,
       claimsPaused: paused,
       waitingJobs: waiting,
+      // Search Console “Request indexing” requests waiting for Automation Chrome.
+      gscWaiting,
       warning: settings.browser.chatgptTabs > 3 ? 'More than 3 ChatGPT tabs can trigger account-wide rate limiting.' : null,
     },
   };

@@ -107,7 +107,7 @@ export type StageStatus = (typeof STAGE_STATUSES)[number];
 export const STAGE_KINDS = ['chatgpt', 'local', 'gate', 'wordpress'] as const;
 export type StageKind = (typeof STAGE_KINDS)[number];
 
-export const QUEUES = ['article', 'chatgpt', 'control', 'workflow', 'humanizer', 'maintenance'] as const;
+export const QUEUES = ['article', 'chatgpt', 'control', 'workflow', 'humanizer', 'maintenance', 'gsc'] as const;
 export type QueueName = (typeof QUEUES)[number];
 
 export const JOB_STATUSES = ['WAITING', 'ACTIVE', 'COMPLETED', 'FAILED', 'CANCELLED'] as const;

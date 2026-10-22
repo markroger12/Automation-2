@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { db } from '../db';
-import { log } from '../log';
+import { errorMessage, log } from '../log';
 import { getValue, setValue } from '../settings';
 import { readKey, searchAnalytics, inspectUrl, type AnalyticsRow } from './client';
 import { resolveWebsiteProperty } from './property';
@@ -198,16 +198,28 @@ export async function indexingTick(now = new Date(), maxInspections = 20): Promi
         continue;
       }
       const next = nextCheck(kw.publishedAt ?? now, checks);
-      // A request still waiting (not signed in, daily limit) stays visible next to Google's answer.
-      const pending = kw.status === 'PUBLISHED' ? await pendingRequestNote(kw.id) : null;
+      // A request still waiting (not signed in, daily limit, asked again by the owner) stays visible next to Google's answer.
+      const pending = await pendingRequestNote(kw.id);
       const status = next ? `Google: not on Google yet (${what}); next check ${next.toISOString()}` : `Not indexed 14 days after publishing (Google: ${what}). No more automatic checks.`;
       await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: next, indexingStatus: pending ? `${status} · ${pending}` : status } });
     } catch (error) {
-      // Quota or permission: try again in an hour, the schedule does not advance.
-      await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexCheckAt: new Date(now.getTime() + 3600_000), indexingStatus: `Index status not checked: ${(error as Error).message}` } });
+      // Quota, permission or the network: try again in an hour, the schedule does not advance. What happened to the
+      // indexing request stays visible (owner screenshot: “Index status not checked: fetch failed” hid it).
+      const pending = await pendingRequestNote(kw.id);
+      const requested = !pending && kw.status === 'INDEXING_REQUESTED' && kw.indexingRequestedAt ? `Indexing requested in Search Console at ${kw.indexingRequestedAt.toISOString()}.` : null;
+      const also = pending ?? requested;
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexCheckAt: new Date(now.getTime() + 3600_000), indexingStatus: `Index status not checked: ${checkError(error)}; asked again in an hour.${also ? ` · ${also}` : ''}` } });
     }
   }
   return { submitted, inspected, indexed };
+}
+
+/** Node's fetch says only “fetch failed”: name the network problem behind it. */
+function checkError(error: unknown): string {
+  const cause = (error as { cause?: { code?: string; message?: string } } | null)?.cause;
+  if (error instanceof Error && error.message === 'fetch failed') return `Google could not be reached from this computer (${cause?.code ?? cause?.message ?? 'network error'})`;
+  if (error instanceof Error && error.name === 'TimeoutError') return 'Google did not answer within a minute';
+  return errorMessage(error);
 }
 
 /** Websites whose live data is due (connected key, a property, last sync older than SYNC_EVERY_MS). */

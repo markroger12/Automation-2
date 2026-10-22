@@ -49,7 +49,8 @@ export async function handleGscProof(req: Request): Promise<Response> {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, buffer, { mode: 0o600 });
   const p = JSON.parse(job.payload) as IndexingJobPayload;
-  await enqueue({ queue: 'control', kind: 'gsc.proof', idempotencyKey: `gsc-proof:${jobId}`, websiteId: p.websiteId, relatedId: p.keywordId, payload: { jobId, keywordId: p.keywordId, url: p.url }, maxAttempts: 1 });
+  // One screenshot per run of the request (a request asked again from the keyword queue runs again).
+  await enqueue({ queue: 'control', kind: 'gsc.proof', idempotencyKey: `gsc-proof:${jobId}:${job.startedAt?.getTime() ?? 0}`, websiteId: p.websiteId, relatedId: p.keywordId, payload: { jobId, keywordId: p.keywordId, url: p.url }, maxAttempts: 1 });
   return agentJson({ ok: true }, 200, origin);
 }
 

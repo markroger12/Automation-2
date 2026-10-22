@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpToLine, Eye, FastForward, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import { ArrowUpToLine, Eye, FastForward, Plus, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { TimePicker } from '@/components/time-picker';
@@ -66,6 +66,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [keep, setKeep] = useState<Set<number>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [acted, setActed] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteArticles, setDeleteArticles] = useState(false);
   const [confirmForce, setConfirmForce] = useState(false);
@@ -122,12 +123,13 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
     }
   }
 
-  async function action(act: string, extra: Record<string, unknown> = {}) {
+  async function action(act: string, extra: Record<string, unknown> = {}, done = (n: number) => `${n} keyword(s) updated.`) {
     try {
       const r = await api<{ changed: number; notes: string[] }>(`/api/websites/${siteId}/workflow/keywords/action`, { body: { keywordIds: [...selected], action: act, ...extra } });
-      toast(r.notes.length ? 'info' : 'success', `${r.changed} keyword(s) updated.${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
+      toast(r.notes.length ? 'info' : 'success', `${done(r.changed)}${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
       setSelected(new Set());
       await load();
+      setActed((n) => n + 1);
     } catch (e) {
       toast('error', (e as Error).message);
     }
@@ -300,7 +302,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
             ) : null}
           </Card>
 
-          {view.workflow?.requestIndexing || view.keywords.some((k) => k.publishedUrl) ? <IndexingPanel /> : null}
+          {view.workflow?.requestIndexing || view.keywords.some((k) => k.publishedUrl) ? <IndexingPanel version={acted} /> : null}
 
           <Card
             title="Keyword queue"
@@ -315,8 +317,9 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                   <Button size="sm" onClick={() => setConfirmForce(true)} title="Continue a stopped article despite the problems found"><FastForward className="h-3.5 w-3.5" /> Force continue</Button>
                   <Button size="sm" onClick={() => void action('skip')}>Skip</Button>
                   <Button size="sm" onClick={() => void action('restore')}>Restore</Button>
-                  <Button size="sm" onClick={() => void action('indexing-requested')}>Indexing requested</Button>
-                  <Button size="sm" onClick={() => void action('indexed')}>Verified indexed</Button>
+                  <Button size="sm" onClick={() => void action('request-indexing', {}, (n) => `Automation Chrome requests indexing in Search Console for ${n} keyword(s) now; Google's answer shows on each keyword.`)} title="Automation Chrome inspects the post URL in Search Console and clicks REQUEST INDEXING now"><Send className="h-3.5 w-3.5" /> Request indexing</Button>
+                  <Button size="sm" onClick={() => void action('indexing-requested')} title="You requested indexing yourself in Search Console">Mark requested</Button>
+                  <Button size="sm" onClick={() => void action('indexed')} title="You checked in Search Console that the URL is on Google">Mark indexed</Button>
                   <Button size="sm" variant="danger" onClick={() => { setDeleteArticles(false); setConfirmDelete(true); }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
                 </div>
               ) : null

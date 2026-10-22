@@ -21,7 +21,7 @@ interface IndexingOverview {
  * “Request indexing” in Search Console, made by Automation Chrome after a publish (owner: “how do I know the request
  * was made? I never signed in to Search Console there”): what was requested, what waits and why, and the sign-in.
  */
-export function IndexingPanel() {
+export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
   const toast = useToast();
   const [o, setO] = useState<IndexingOverview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,7 +30,8 @@ export function IndexingPanel() {
     void load().catch(() => {});
     const t = setInterval(() => void load().catch(() => {}), 15_000);
     return () => clearInterval(t);
-  }, [load]);
+    // `version` changes after an action on the keyword queue (e.g. “Request indexing”): show it at once.
+  }, [load, version]);
   async function act(action: 'signin' | 'now') {
     setBusy(true);
     try {
@@ -54,7 +55,7 @@ export function IndexingPanel() {
   const when = (iso: string) => `${formatInZone(iso, 'Asia/Karachi')} PK`;
   const needsSignIn = o.signedIn === false || o.notSignedIn > 0;
   return (
-    <Card title="Indexing in Search Console" description="About 35 seconds after a publish, Automation Chrome opens the post in Search Console (URL Inspection) and clicks “Request indexing”, as you do by hand. The keyword then shows “indexing requested” and Google's answer.">
+    <Card title="Indexing in Search Console" description="About 35 seconds after a publish (or when you select keywords and click “Request indexing”), Automation Chrome opens Search Console, inspects the post's URL and clicks “Request indexing”, as you do by hand. The keyword then shows “indexing requested” and Google's answer.">
       <div className="space-y-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <Chip tone={o.signedIn === true ? 'success' : needsSignIn ? 'warning' : 'neutral'}>

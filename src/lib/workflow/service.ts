@@ -13,6 +13,7 @@ import { DEFAULT_SLOT_TIMEZONE, isValidTimeZone, parseSlot, formatSlot, upcoming
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
 import { normalizeSearchConsoleProperty } from './search-console';
 import { proofsFor } from '../gsc/proof';
+import { requestIndexingNow, requestProperty } from '../gsc/request-indexing';
 
 /**
  * Per-website publishing workflow: settings (slots in Asia/Karachi by
@@ -124,15 +125,16 @@ export async function addKeywords(websiteId: string, raw: unknown) {
 
 export const keywordActionSchema = z.object({
   keywordIds: z.array(z.string().max(40)).min(1).max(500),
-  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'force', 'indexing-requested', 'indexed', 'delete']),
+  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'force', 'request-indexing', 'indexing-requested', 'indexed', 'delete']),
   writer: z.string().max(40).optional(),
   /** With “delete”: also delete the keywords' articles from the app (WordPress is never changed). */
   articles: z.boolean().optional(),
 });
 
 /**
- * Owner actions on queued keywords. INDEXED is only recorded from the owner's own verification. “delete” removes the
- * keyword rows (and, when asked, their articles from the app); WordPress is never changed.
+ * Owner actions on queued keywords. INDEXED is only recorded from the owner's own verification. “request-indexing” has
+ * Automation Chrome request indexing in Search Console now. “delete” removes the keyword rows (and, when asked, their
+ * articles from the app); WordPress is never changed.
  */
 export async function keywordAction(websiteId: string, raw: unknown) {
   const input = keywordActionSchema.parse(raw);
@@ -140,6 +142,7 @@ export async function keywordAction(websiteId: string, raw: unknown) {
   const rows = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, id: { in: input.keywordIds } } });
   let changed = 0;
   const notes: string[] = [];
+  const property = input.action === 'request-indexing' && rows.some((k) => k.publishedUrl) ? await requestProperty(websiteId) : null;
   for (const kw of rows) {
     switch (input.action) {
       case 'writer': {
@@ -212,6 +215,22 @@ export async function keywordAction(websiteId: string, raw: unknown) {
         }
         const at = await reserveSlot({ ...wf, website: await db.website.findUniqueOrThrow({ where: { id: websiteId } }) }, kw.id, new Date(Date.now() + SCHEDULE_LEAD_MS));
         await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'WRITING', retries: 0, lastError: at ? 'Forced by you: continues despite the problems found.' : 'No free slot found; add slots to the workflow.', scheduledAt: at } });
+        break;
+      }
+      case 'request-indexing': {
+        // Owner request: “Request indexing” on the keyword queue, made by Automation Chrome as the owner does it.
+        if (kw.status === 'INDEXED') {
+          notes.push(`“${kw.keyword}” is already on Google; nothing to request.`);
+          continue;
+        }
+        if (!kw.publishedUrl || !property || !['PUBLISHED', 'INDEXING_REQUESTED'].includes(kw.status)) {
+          notes.push(`“${kw.keyword}” is not published yet.`);
+          continue;
+        }
+        if ((await requestIndexingNow({ keywordId: kw.id, url: kw.publishedUrl, property, websiteId })) === 'running') {
+          notes.push(`“${kw.keyword}”: Automation Chrome is requesting indexing for it right now.`);
+          continue;
+        }
         break;
       }
       case 'indexing-requested':

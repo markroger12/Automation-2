@@ -1,7 +1,8 @@
 import { db } from '../db';
 import { log } from '../log';
 import { enqueue } from '../queue';
-import { searchConsoleHome } from '../workflow/search-console';
+import { inspectionProperty, searchConsoleHome } from '../workflow/search-console';
+import { resolveWebsiteProperty } from './property';
 
 /**
  * “Request indexing” as the owner does it (owner request): open the URL in Search Console's URL Inspection and click
@@ -33,6 +34,33 @@ export type IndexingOutcome = 'REQUESTED' | 'QUOTA' | 'NOT_SIGNED_IN' | 'NO_ACCE
 export async function queueIndexingRequest(p: IndexingJobPayload, now = new Date()) {
   const { job, created } = await enqueue({ queue: GSC_QUEUE, kind: KIND, idempotencyKey: `gsc-index:${p.keywordId}`, websiteId: p.websiteId, payload: p, runAt: now, maxAttempts: 4 });
   return { job, created };
+}
+
+/** The property a request is made in: the website's (detected when the key is connected), else its URL as a URL prefix. */
+export async function requestProperty(websiteId: string): Promise<string> {
+  const { site, property } = await resolveWebsiteProperty(websiteId);
+  return property ?? inspectionProperty(null, site.publicUrl);
+}
+
+/**
+ * “Request indexing” on the keyword queue (owner request): Automation Chrome makes the request now, also when the
+ * workflow switch is off or an earlier request was answered (that request is asked again: one per keyword). A request
+ * Automation Chrome is making right now is left alone ('running').
+ */
+export async function requestIndexingNow(p: IndexingJobPayload, now = new Date()): Promise<'queued' | 'running'> {
+  const job = await db.queueJob.findUnique({ where: { idempotencyKey: `gsc-index:${p.keywordId}` } });
+  if (!job) {
+    await queueIndexingRequest(p, now);
+  } else {
+    if (job.status === 'ACTIVE' && job.leaseUntil && job.leaseUntil > now) return 'running';
+    const before = JSON.parse(job.payload) as IndexingJobPayload;
+    const payload: IndexingJobPayload = { ...p, inspectLink: p.inspectLink ?? (before.url === p.url && before.property === p.property ? (before.inspectLink ?? null) : null) };
+    // Compare-and-set, as the extension's claim does: a claim in between wins.
+    const reset = await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'WAITING', runAt: now, attempts: 0, lockedBy: null, leaseUntil: null, startedAt: null, finishedAt: null, error: null, errorCode: null, payload: JSON.stringify(payload) } });
+    if (!reset.count) return 'running';
+  }
+  await setKeyword(p.keywordId, { indexingStatus: `Waiting for Automation Chrome to request indexing in Search Console (asked by you ${now.toISOString()}).` });
+  return 'queued';
 }
 
 export async function waitingIndexingRequests(now = new Date()): Promise<number> {
@@ -114,10 +142,11 @@ async function setKeyword(id: string, data: { status?: string; indexingRequested
   await db.workflowKeyword.updateMany({ where: { id, status: onlyIfPublished ? { in: ['PUBLISHED', 'INDEXING_REQUESTED'] } : { not: 'INDEXED' } }, data });
 }
 
-/** Why a queued request has not been made yet (shown next to Google's index status), or null. */
+/** A request not made yet: why it waits, or that it waits or runs (shown next to Google's index status); else null. */
 export async function pendingRequestNote(keywordId: string): Promise<string | null> {
-  const job = await db.queueJob.findFirst({ where: { queue: GSC_QUEUE, idempotencyKey: `gsc-index:${keywordId}`, status: 'WAITING', error: { not: null } }, select: { error: true } });
-  return job?.error ? `Request indexing: ${job.error}` : null;
+  const job = await db.queueJob.findFirst({ where: { queue: GSC_QUEUE, idempotencyKey: `gsc-index:${keywordId}`, status: { in: ['WAITING', 'ACTIVE'] } }, select: { status: true, error: true } });
+  if (!job) return null;
+  return `Request indexing: ${job.status === 'ACTIVE' ? 'Automation Chrome is making it now.' : (job.error ?? 'waiting for Automation Chrome.')}`;
 }
 
 export interface IndexingOverview {

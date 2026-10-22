@@ -203,6 +203,7 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
     - it shows whether Google is signed in there and what was requested or waits;
     - **Sign in to Google in Automation Chrome** opens Google's sign-in there (you type the password yourself);
     - **Request now** makes the waiting requests at once.
+  - **Request indexing on the keyword queue:** select published keywords and click **Request indexing**. Automation Chrome makes the request now, also when the workflow switch was off or an earlier request was answered. An indexed keyword is left out. **Mark requested** and **Mark indexed** only record what you did yourself in Search Console.
   - **Proof:** after each request, a screenshot of Search Console as Automation Chrome saw it (“Indexing requested …”) is saved with the article. It is linked as **Search Console screenshot** in the keyword queue, and the latest one is shown in the panel.
   - Extension 3.4.0 asks Chrome for the `pageCapture` permission for this: it saves a copy of the page, which works even in a background tab or a minimized window. The copy is deleted once the screenshot is made.
 - **Publishing Calendar** (sidebar, under Workflow): reserved and free slots of every workflow, two weeks at a time, in Pakistan time.

@@ -302,4 +302,40 @@ describe('indexing after a workflow publish', () => {
     expect(await sync.syncDue()).toEqual([]);
     gsc.saveKey(sa.json);
   });
+
+  it('owner screenshot: “Index status not checked: fetch failed” says why, and keeps what happened to the indexing request', async () => {
+    const ri = await import('@/lib/gsc/request-indexing');
+    const net = await import('node:net');
+    indexedUrls = new Set();
+    const waiting = await publishedKeyword('Andre Rock', 'https://promizeiten.example/andre-rock/', true, new Date('2026-10-21T00:00:00Z'));
+    const requested = await publishedKeyword('Andi Rock', 'https://promizeiten.example/andi-rock/', true, new Date('2026-10-21T00:00:00Z'));
+    await sync.indexingTick(new Date('2026-10-21T00:01:00Z'));
+    const job = await client.queueJob.findUniqueOrThrow({ where: { idempotencyKey: `gsc-index:${requested.id}` } });
+    await client.queueJob.updateMany({ where: { queue: 'gsc', id: { not: job.id }, status: 'WAITING', idempotencyKey: { not: `gsc-index:${waiting.id}` } }, data: { status: 'CANCELLED' } });
+    while (true) {
+      const claimed = await ri.claimIndexingRequest('install-1', new Date('2026-10-21T00:02:00Z'));
+      if (!claimed) break;
+      if (claimed.id === job.id) await ri.reportIndexingRequest({ jobId: job.id, installId: 'install-1', outcome: 'REQUESTED' }, new Date('2026-10-21T00:03:00Z'));
+      else await ri.reportIndexingRequest({ jobId: claimed.id, installId: 'install-1', outcome: 'NOT_SIGNED_IN' }, new Date('2026-10-21T00:03:00Z'));
+    }
+    // The owner's computer cannot reach Google's API (Node says only “fetch failed”).
+    const closedPort = await new Promise<number>((resolve) => {
+      const server = net.createServer().listen(0, '127.0.0.1', () => {
+        const { port } = server.address() as import('node:net').AddressInfo;
+        server.close(() => resolve(port));
+      });
+    });
+    process.env.GSC_API_BASE = `http://127.0.0.1:${closedPort}`;
+    try {
+      await sync.indexingTick(new Date('2026-10-21T01:00:10Z'));
+    } finally {
+      process.env.GSC_API_BASE = google.url;
+    }
+    const a = await client.workflowKeyword.findUniqueOrThrow({ where: { id: waiting.id } });
+    expect(a.indexingStatus).toBe('Index status not checked: Google could not be reached from this computer (ECONNREFUSED); asked again in an hour. · Request indexing: Sign in to Google (Search Console) in Automation Chrome, then the request is made automatically.');
+    const b = await client.workflowKeyword.findUniqueOrThrow({ where: { id: requested.id } });
+    expect(b.status).toBe('INDEXING_REQUESTED');
+    expect(b.indexingStatus).toBe('Index status not checked: Google could not be reached from this computer (ECONNREFUSED); asked again in an hour. · Indexing requested in Search Console at 2026-10-21T00:03:00.000Z.');
+    expect(b.indexCheckAt?.toISOString()).toBe('2026-10-21T02:00:10.000Z');
+  });
 });

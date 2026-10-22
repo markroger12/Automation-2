@@ -2507,3 +2507,48 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx tsc --noEmit                    # 0 errors
 next build                          # compiled
 ```
+
+## Owner request (2026-10-22): a “Request indexing” option on the keyword queue
+
+**Request:** with a screenshot of the keyword queue's selection bar: “add a request indexing option here”.
+
+**What it does:**
+- **Request indexing** (new, on the selection bar): Automation Chrome makes the Search Console request now for the selected published keywords, as described in the 3.4.1 section above.
+  - It also works when the workflow switch “Request indexing after publishing” was off.
+  - It works when an earlier request was answered (requested, daily limit, error). That request is asked again, so there is still one request per keyword.
+  - A request Automation Chrome is making right now is left alone.
+  - An indexed keyword is left out (“already on Google”), and an unpublished one too.
+  - The keyword shows “Waiting for Automation Chrome to request indexing … (asked by you …)”, and the Indexing in Search Console panel updates at once (it refreshed only every 15 s).
+  - The action is audited like the other keyword actions.
+- **Labels:** the two existing buttons only record what the owner did by hand, so they are now **Mark requested** and **Mark indexed**, with a tooltip. They were “Indexing requested” and “Verified indexed”, next to which a “Request indexing” button would be confusing. Their behaviour is unchanged.
+- **Found while testing:** a request made a second time got no proof screenshot. The render job's key was the request's id, so the second one was taken as a repeat. The key now also carries the run's start time.
+
+**Also in the owner's screenshot: “Index status not checked: fetch failed”.**
+- That is all Node says when Google's API cannot be reached from the PC. The error behind it is now named, e.g. “Google could not be reached from this computer (ECONNREFUSED); asked again in an hour.”
+- The message used to replace what happened to the indexing request. Now the request's state stays after it: waiting and why, being made now, or “Indexing requested in Search Console at …”.
+- A request asked again for a keyword already marked as requested also stays visible next to Google's answer. Before, this showed only for published keywords.
+
+**Tests (reproduced first):**
+- **`indexing-signin.test.ts`, new test:** the action was refused (“Invalid option”) before.
+  - It requests two published keywords: one requested before, one never queued.
+  - It leaves out the indexed and the unpublished ones, with notes.
+  - It shows the status, leaves a running request alone, and a second proof screenshot is queued.
+  - With the old proof key, the test fails (1 proof instead of 2).
+- **`search-console-live.test.ts`, new test:** with Google's API unreachable (a closed port), the status read “Index status not checked: fetch failed” before. Now it names ECONNREFUSED and keeps the request's state.
+- **Chromium smoke (scratch database, dev server):**
+  - three keywords like the owner's selected (two published with “fetch failed”, one indexed);
+  - the bar shows Request indexing, Mark requested and Mark indexed;
+  - the toast says 2 requested, and that “Jordan Rock” is already on Google;
+  - both rows show “Waiting for Automation Chrome …”;
+  - the panel went from no waiting request to “1 waiting” 0.46 s after the click; no console errors.
+
+**Not verified here:**
+- The request itself on the real Search Console page (as for 3.4.1 above).
+- The real network error behind the owner's “fetch failed”: it is on the owner's PC; the new message will name it.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 335 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console"   # 2/2 (request with proof; limit/sign-out)
+```

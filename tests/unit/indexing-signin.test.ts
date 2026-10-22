@@ -109,3 +109,50 @@ describe('owner request: a screenshot as proof of the request — what the uploa
     expect(denied.status).toBe(401);
   });
 });
+
+describe('owner request: “Request indexing” on the keyword queue', () => {
+  it('the selected published keywords are requested now by Automation Chrome, also after an earlier answer; a second proof screenshot is made', async () => {
+    const { createConnectionKey } = await import('@/lib/agent/keys');
+    const { handleGscProof } = await import('@/lib/gsc/proof');
+    const service = await import('@/lib/workflow/service');
+    const key = (await createConnectionKey()).key;
+    const mhtml = Buffer.from('From: <Saved by Blink>\r\nMIME-Version: 1.0\r\n\r\n<h2>Indexing requested</h2>').toString('base64');
+    const upload = (jobId: string) =>
+      handleGscProof(new Request('http://127.0.0.1:3000/api/extension/gsc-proof', { method: 'POST', headers: { host: '127.0.0.1:3000', authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ installId: 'install-1', jobId, mhtmlBase64: mhtml }) }));
+    // Only the requests of this test are open.
+    await client.queueJob.updateMany({ where: { queue: 'gsc', status: { in: ['WAITING', 'ACTIVE'] } }, data: { status: 'CANCELLED' } });
+
+    // Andre Rock: requested before, with its proof. Andi Rock: published while nothing was queued for it (e.g. the
+    // workflow switch was off). One indexed, one not published yet.
+    const andre = await published('Andre Rock');
+    expect((await ri.claimIndexingRequest('install-1'))?.id).toBe(andre.job.id);
+    expect((await upload(andre.job.id)).status).toBe(200);
+    await ri.reportIndexingRequest({ jobId: andre.job.id, installId: 'install-1', outcome: 'REQUESTED', message: 'Indexing requested' });
+    const andi = await client.workflowKeyword.create({ data: { workflowId, keyword: 'Andi Rock', normalizedKeyword: 'andi rock', position: 2, status: 'PUBLISHED', publishedUrl: 'https://techeflux.example/andi-rock/', publishedAt: new Date(), indexingStatus: 'Index status not checked: fetch failed' } });
+    const indexed = await client.workflowKeyword.create({ data: { workflowId, keyword: 'Malaak Compton-Rock', normalizedKeyword: 'malaak compton-rock', position: 3, status: 'INDEXED', publishedUrl: 'https://techeflux.example/malaak/', publishedAt: new Date() } });
+    const writing = await client.workflowKeyword.create({ data: { workflowId, keyword: 'Not Yet', normalizedKeyword: 'not yet', position: 4, status: 'WAITING' } });
+
+    const r = await service.keywordAction(siteId, { keywordIds: [andre.kw.id, andi.id, indexed.id, writing.id], action: 'request-indexing' });
+    expect(r.changed).toBe(2);
+    expect(r.notes.join(' ')).toMatch(/“Malaak Compton-Rock” is already on Google/);
+    expect(r.notes.join(' ')).toMatch(/“Not Yet” is not published yet/);
+    expect(await ri.waitingIndexingRequests(new Date())).toBe(2);
+    // The earlier request is asked again (still one request per keyword); the other is queued, with the website's property.
+    expect(await client.queueJob.findUniqueOrThrow({ where: { id: andre.job.id } })).toMatchObject({ status: 'WAITING', attempts: 0, lockedBy: null, error: null, finishedAt: null });
+    const andiJob = await client.queueJob.findUniqueOrThrow({ where: { idempotencyKey: `gsc-index:${andi.id}` } });
+    expect(JSON.parse(andiJob.payload)).toMatchObject({ keywordId: andi.id, url: 'https://techeflux.example/andi-rock/', property: 'https://techeflux.example/', websiteId: siteId });
+    // Each keyword says so (it said “fetch failed” before); an indexed one is not touched.
+    for (const id of [andre.kw.id, andi.id]) expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id } })).indexingStatus).toMatch(/^Waiting for Automation Chrome to request indexing in Search Console \(asked by you/);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: indexed.id } })).status).toBe('INDEXED');
+    expect(await client.auditLog.count({ where: { action: 'workflow.keywords.action', details: { contains: 'request-indexing' } } })).toBe(1);
+
+    // A request Automation Chrome is making right now is left alone.
+    const taken = await ri.claimIndexingRequest('install-1');
+    expect(taken?.id).toBe(andre.job.id);
+    const busy = await service.keywordAction(siteId, { keywordIds: [andre.kw.id], action: 'request-indexing' });
+    expect(busy).toMatchObject({ changed: 0, notes: ['“Andre Rock”: Automation Chrome is requesting indexing for it right now.'] });
+    // The second run's proof is made too (before: taken as a repeat of the first one and never rendered).
+    expect((await upload(andre.job.id)).status).toBe(200);
+    expect(await client.queueJob.count({ where: { queue: 'control', kind: 'gsc.proof', relatedId: andre.kw.id } })).toBe(2);
+  });
+});

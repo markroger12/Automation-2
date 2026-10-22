@@ -14,6 +14,7 @@ interface IndexingOverview {
   requested: number;
   signedIn: boolean | null;
   last: { url: string; outcome: string; at: string; message: string | null } | null;
+  lastProof: { id: string; url: string | null; at: string } | null;
 }
 
 /**
@@ -80,6 +81,16 @@ export function IndexingPanel() {
         ) : (
           <p className="text-muted text-xs">No request made yet.</p>
         )}
+        {o.lastProof ? (
+          <div className="flex items-start gap-3">
+            <a href={`/api/media/${o.lastProof.id}`} target="_blank" rel="noreferrer" className="shrink-0" title="Open the screenshot">
+              <img src={`/api/media/${o.lastProof.id}`} alt="Search Console after “Request indexing” (latest)" className="border-app h-20 w-36 rounded border object-cover object-top" />
+            </a>
+            <p className="text-muted text-xs">
+              Latest proof: Search Console as Automation Chrome saw it after “Request indexing”{o.lastProof.url ? ` for ${o.lastProof.url.replace(/^https?:\/\//, '')}` : ''} · {when(o.lastProof.at)}. Each keyword's own screenshot is linked in the keyword queue.
+            </p>
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={busy} onClick={() => void act('signin')}>
             Sign in to Google in Automation Chrome

@@ -3,11 +3,12 @@ import type { AddressInfo } from 'node:net';
 
 /**
  * Minimal Node HTTP server that serves the SAME agent handlers as the Next.js
- * routes (/api/extension/agent, /upload, /media/:id) against the test DB.
+ * routes (/api/extension/agent, /upload, /gsc-proof, /media/:id) against the test DB.
  */
 export async function startAgentServer(): Promise<{ origin: string; close: () => Promise<void>; requests: { action: string }[] }> {
   const { handleAgentRequest } = await import('@/lib/agent/handler');
   const { handleUpload, handleMediaDownload } = await import('@/lib/agent/files');
+  const { handleGscProof } = await import('@/lib/gsc/proof');
   const requests: { action: string }[] = [];
   const server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -27,6 +28,7 @@ export async function startAgentServer(): Promise<{ origin: string; close: () =>
       }
       let response: Response;
       if (req.url?.startsWith('/api/extension/upload')) response = await handleUpload(request);
+      else if (req.url?.startsWith('/api/extension/gsc-proof')) response = req.method === 'OPTIONS' ? await handleAgentRequest(request) : await handleGscProof(request);
       else if (req.url?.startsWith('/api/extension/media/')) {
         const id = req.url.split('/api/extension/media/')[1].split('?')[0];
         response = req.method === 'OPTIONS' ? await handleAgentRequest(request) : await handleMediaDownload(request, id);

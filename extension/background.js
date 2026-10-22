@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.3.0';
+const EXTENSION_VERSION = '3.4.0';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -160,7 +160,45 @@ async function flushOutbox() {
  * (signed in with the owner's Google account in this Chrome) and click REQUEST INDEXING (gsc.js). The tab is opened in
  * the background and closed afterwards. Sign-in pages and Google's checks are never handled here: they are reported.
  */
-const gsc = { running: false, onReady: null, onDone: null };
+const gsc = { running: false, onReady: null, onDone: null, proof: null };
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/**
+ * Owner request: proof of the request, like Search Console's “Indexing requested” on screen. The page is saved as it
+ * stands (pageCapture: works in a background tab and a minimized window, where a screen capture cannot); the
+ * dashboard turns the copy into a PNG with the article. A proof that cannot be saved never stops the request.
+ */
+async function saveGscProof(tabId, jobId) {
+  try {
+    await new Promise((r) => setTimeout(r, 800)); // let the dialog finish opening
+    // The copy lives in a temporary file that Chrome sometimes drops before it can be read ("could not be found"):
+    // a fresh copy is taken, up to three times.
+    let mhtmlBase64 = null;
+    let size = 0;
+    for (let attempt = 1; !mhtmlBase64; attempt++) {
+      try {
+        const blob = await chrome.pageCapture.saveAsMHTML({ tabId });
+        if (!blob) throw new Error('Chrome returned no page copy');
+        mhtmlBase64 = await blobToBase64(blob);
+        size = blob.size;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        await new Promise((r) => setTimeout(r, 300 * attempt));
+      }
+    }
+    await api('gsc-proof', { jobId, mhtmlBase64 }, '/api/extension/gsc-proof');
+    gsc.proof = { jobId, ok: true, bytes: size, at: Date.now() };
+  } catch (e) {
+    gsc.proof = { jobId, ok: false, error: e.message, at: Date.now() };
+    lastError = 'Search Console screenshot not saved: ' + e.message;
+  }
+}
 
 async function runGscJob() {
   gsc.running = true;
@@ -201,6 +239,8 @@ async function runGscJob() {
         if (fromTab === tabId && msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null });
       };
     });
+    // The proof goes first: the dashboard takes it only while this request is still open.
+    if (result.outcome === 'REQUESTED' || result.outcome === 'QUOTA') await saveGscProof(tabId, job.id);
     await outboxPush('gsc-result', { jobId: job.id, outcome: result.outcome, message: result.message ? String(result.message).slice(0, 900) : null });
     setTimeout(() => void tick(), 500);
   } catch (e) {
@@ -544,9 +584,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'gsc-done':
         if (gsc.onDone) gsc.onDone(tabId, msg);
         else if (msg.jobId && /^[\w-]{1,64}$/.test(String(msg.jobId))) {
-          // Chrome restarted this background while Google was answering: still report it, and close the tab.
-          void outboxPush('gsc-result', { jobId: String(msg.jobId), outcome: msg.outcome, message: msg.message ? String(msg.message).slice(0, 900) : null });
-          if (tabId !== null) void chrome.tabs.remove(tabId).catch(() => {});
+          // Chrome restarted this background while Google was answering: still report it (proof first), close the tab.
+          void (async () => {
+            if (tabId !== null && (msg.outcome === 'REQUESTED' || msg.outcome === 'QUOTA')) await saveGscProof(tabId, String(msg.jobId));
+            await outboxPush('gsc-result', { jobId: String(msg.jobId), outcome: msg.outcome, message: msg.message ? String(msg.message).slice(0, 900) : null });
+            if (tabId !== null) await chrome.tabs.remove(tabId).catch(() => {});
+          })();
         }
         return sendResponse({ ok: true });
       case 'gsc-alive':
@@ -719,6 +762,6 @@ chrome.alarms.create('bas-poll', { periodInMinutes: 0.5 });
 
 // Test/diagnostic hooks (no privileged actions).
 self.basTick = tick;
-self.basState = () => ({ cfg: cfg && { serverOrigin: cfg.serverOrigin, installId: cfg.installId, paired: Boolean(cfg.key) }, serverCfg, versionMessage, lastError, tabs: Array.from(tabs.entries()).map(([id, t]) => ({ id, ready: t.ready, busy: t.busy, url: t.url, jobId: t.jobId })) });
+self.basState = () => ({ cfg: cfg && { serverOrigin: cfg.serverOrigin, installId: cfg.installId, paired: Boolean(cfg.key) }, serverCfg, versionMessage, lastError, gscProof: gsc.proof, tabs: Array.from(tabs.entries()).map(([id, t]) => ({ id, ready: t.ready, busy: t.busy, url: t.url, jobId: t.jobId })) });
 
 void restoreAfterWorkerRestart().then(() => tick());

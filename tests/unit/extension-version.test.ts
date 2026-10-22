@@ -17,7 +17,8 @@ describe('extension version constants', () => {
 
   it('requests only narrow permissions (no blanket https://*/*)', () => {
     const manifest = JSON.parse(ext('manifest.json')) as { permissions: string[]; host_permissions: string[] };
-    expect(manifest.permissions.sort()).toEqual(['alarms', 'notifications', 'storage', 'tabs']);
+    // pageCapture: the proof copy of the Search Console page after “Request indexing” (owner request).
+    expect(manifest.permissions.sort()).toEqual(['alarms', 'notifications', 'pageCapture', 'storage', 'tabs']);
     expect(manifest.host_permissions).not.toContain('https://*/*');
     expect(manifest.host_permissions).not.toContain('<all_urls>');
     // ChatGPT, its two generated-image CDNs (image capture, M8), the two hosts of its image-search gallery

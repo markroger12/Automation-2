@@ -12,6 +12,7 @@ import { deleteTask } from '../tasks/delete';
 import { DEFAULT_SLOT_TIMEZONE, isValidTimeZone, parseSlot, formatSlot, upcomingSlots } from './time';
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
 import { normalizeSearchConsoleProperty } from './search-console';
+import { proofsFor } from '../gsc/proof';
 
 /**
  * Per-website publishing workflow: settings (slots in Asia/Karachi by
@@ -251,12 +252,14 @@ export async function workflowView(websiteId: string) {
   const keywords = workflow ? await db.workflowKeyword.findMany({ where: { workflowId: workflow.id }, orderBy: [{ position: 'asc' }] }) : [];
   const tasks = keywords.some((k) => k.taskId) ? await db.articleTask.findMany({ where: { id: { in: keywords.map((k) => k.taskId).filter((x): x is string => Boolean(x)) } }, select: { id: true, status: true, wpPostId: true, wpEditUrl: true } }) : [];
   const byId = new Map(tasks.map((t) => [t.id, t]));
+  // Screenshots of Search Console's “Indexing requested” (proof of the request, owner request).
+  const proofs = await proofsFor(keywords.filter((k) => k.publishedUrl).map((k) => k.id));
   const nextSlots = workflow ? upcomingSlots(slotRules(workflow), new Date(), 7).slice(0, 8) : [];
   return {
     website: { id: site.id, name: site.name, timezone: site.timezone, canPublish: site.canPublish && Boolean(site.canPublishAcknowledgedAt), publicUrl: site.publicUrl },
     workflow: workflow ? { ...workflow, slots: parseJson<string[]>(workflow.slots, []), weekdays: parseJson<number[]>(workflow.weekdays, []) } : null,
     nextSlots,
-    keywords: keywords.map((k) => ({ ...k, secondaryKeywords: parseJson<string[]>(k.secondaryKeywords, []), task: k.taskId ? (byId.get(k.taskId) ?? null) : null })),
+    keywords: keywords.map((k) => ({ ...k, secondaryKeywords: parseJson<string[]>(k.secondaryKeywords, []), task: k.taskId ? (byId.get(k.taskId) ?? null) : null, proofId: proofs.get(k.id) ?? null })),
   };
 }
 

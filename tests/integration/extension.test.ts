@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.3.0');
+    expect(ext?.version).toBe('3.4.0');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -388,6 +388,27 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(browser.searchConsole.clicks()).toBe(1);
     expect(browser.searchConsole.opened()[0]).toBe(`https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent('https://easyvibs.example/')}&id=${encodeURIComponent(url)}`);
     await waitFor(async () => !browser!.context.pages().some((p) => p.url().startsWith('https://search.google.com/')), 10_000, 'Search Console tab closed');
+
+    // Owner request: a screenshot as proof. The extension saved the page as it stood after the click (before it
+    // reported, while the request was still open); the worker turns that copy into a PNG with the article.
+    const proofJob = await client.queueJob.findFirstOrThrow({ where: { queue: 'control', kind: 'gsc.proof', relatedId: kw.id } });
+    const payload = JSON.parse(proofJob.payload);
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { dataPaths } = await import('@/lib/paths');
+    const copy = path.join(dataPaths.uploads(), 'gsc-proof', `${job.id}.mhtml`);
+    const mhtml = fs.readFileSync(copy, 'latin1').replace(/=\r?\n/g, '');
+    expect(mhtml).toMatch(/^From:|MIME-Version:/);
+    expect(mhtml).toContain('Indexing requested');
+    const { configureTestBrowser } = await import('../helpers/browser');
+    configureTestBrowser();
+    const { renderGscProof } = await import('@/lib/gsc/proof');
+    const rendered = await renderGscProof(payload);
+    const asset = await client.mediaAsset.findUniqueOrThrow({ where: { id: String(rendered.mediaAssetId) } });
+    expect(asset).toMatchObject({ role: 'INDEXING_PROOF', sourceUrl: url, notes: `gsc-proof:${kw.id}`, width: 1366, height: 900 });
+    expect(fs.existsSync(copy)).toBe(false); // the page copy is not kept
+    const { workflowView } = await import('@/lib/workflow/service');
+    expect((await workflowView(siteId)).keywords.find((k) => k.id === kw.id)?.proofId).toBe(asset.id);
   }, 150_000);
 
   it('owner request: Search Console’s daily limit and a signed-out Google account are reported and asked again later', async () => {

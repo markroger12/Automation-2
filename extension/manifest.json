@@ -2,10 +2,10 @@
   "manifest_version": 3,
   "name": "Blog Automation Studio – ChatGPT Agent",
   "short_name": "BAS Agent",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Runs article prompts from your local Blog Automation Studio in your signed-in ChatGPT tabs, and requests indexing in your Search Console. Talks only to your localhost dashboard.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "tabs", "notifications", "alarms"],
+  "permissions": ["storage", "tabs", "notifications", "alarms", "pageCapture"],
   "host_permissions": ["https://chatgpt.com/*", "https://*.oaiusercontent.com/*", "https://oaidalleapiprodscus.blob.core.windows.net/*", "https://images.openai.com/*", "https://*.mm.bing.net/*", "https://search.google.com/*", "http://localhost/*", "http://127.0.0.1/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [

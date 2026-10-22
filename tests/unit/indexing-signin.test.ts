@@ -79,3 +79,33 @@ describe('owner request: know whether indexing was requested, and sign in to Goo
     expect(ri.GOOGLE_SIGNIN_URL).toBe('https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console');
   });
 });
+
+describe('owner request: a screenshot as proof of the request — what the upload accepts', () => {
+  it('only the extension holding the open request may upload, only an MHTML page copy; then the worker gets a render job', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { createConnectionKey } = await import('@/lib/agent/keys');
+    const { handleGscProof } = await import('@/lib/gsc/proof');
+    const { dataPaths } = await import('@/lib/paths');
+    const key = (await createConnectionKey()).key;
+    const upload = (body: unknown) =>
+      handleGscProof(new Request('http://127.0.0.1:3000/api/extension/gsc-proof', { method: 'POST', headers: { host: '127.0.0.1:3000', origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop', authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }));
+    const { kw, job } = await published('Proof Person');
+    // Only this request is open (the requests of the test above are set aside).
+    await client.queueJob.updateMany({ where: { queue: 'gsc', id: { not: job.id }, status: { in: ['WAITING', 'ACTIVE'] } }, data: { status: 'CANCELLED' } });
+    const mhtml = Buffer.from('From: <Saved by Blink>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related;\r\n\r\n<h2>Indexing requested</h2>').toString('base64');
+    // Not taken by this extension yet.
+    expect((await upload({ installId: 'install-1', jobId: job.id, mhtmlBase64: mhtml })).status).toBe(403);
+    const claimed = await ri.claimIndexingRequest('install-1');
+    expect(claimed?.id).toBe(job.id);
+    expect((await upload({ installId: 'someone-else', jobId: job.id, mhtmlBase64: mhtml })).status).toBe(403);
+    expect((await upload({ installId: 'install-1', jobId: job.id, mhtmlBase64: Buffer.from('<html>not a page copy</html>').toString('base64') })).status).toBe(400);
+    const ok = await upload({ installId: 'install-1', jobId: job.id, mhtmlBase64: mhtml });
+    expect(ok.status).toBe(200);
+    expect(fs.readFileSync(path.join(dataPaths.uploads(), 'gsc-proof', `${job.id}.mhtml`), 'utf8')).toContain('Indexing requested');
+    expect(await client.queueJob.findFirstOrThrow({ where: { queue: 'control', kind: 'gsc.proof' } })).toMatchObject({ relatedId: kw.id, status: 'WAITING' });
+    // A wrong key never gets in.
+    const denied = await handleGscProof(new Request('http://127.0.0.1:3000/api/extension/gsc-proof', { method: 'POST', headers: { host: '127.0.0.1:3000', authorization: 'Bearer wrong', 'content-type': 'application/json' }, body: JSON.stringify({ installId: 'install-1', jobId: job.id, mhtmlBase64: mhtml }) }));
+    expect(denied.status).toBe(401);
+  });
+});

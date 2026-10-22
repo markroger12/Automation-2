@@ -31,6 +31,8 @@ interface Keyword {
   lastError: string | null;
   position: number;
   task: { id: string; status: string; wpPostId: number | null; wpEditUrl: string | null } | null;
+  /** Screenshot of Search Console's answer after “Request indexing”. */
+  proofId?: string | null;
 }
 interface View {
   website: { id: string; name: string; timezone: string; canPublish: boolean; publicUrl: string };
@@ -346,6 +348,11 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                         {k.publishedUrl ? (
                           <a className="ml-1 text-indigo-600 underline" href={k.publishedUrl} target="_blank" rel="noreferrer">
                             live post
+                          </a>
+                        ) : null}
+                        {k.proofId ? (
+                          <a className="ml-1 text-indigo-600 underline" href={`/api/media/${k.proofId}`} target="_blank" rel="noreferrer" title="Screenshot of Search Console after “Request indexing”">
+                            Search Console screenshot
                           </a>
                         ) : null}
                         {k.publishedUrl && view.workflow?.requestIndexing && ['PUBLISHED', 'INDEXING_REQUESTED'].includes(k.status) ? (

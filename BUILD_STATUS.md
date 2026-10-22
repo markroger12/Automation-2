@@ -2416,3 +2416,50 @@ BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   #
 ```
 **Not verified here:** Google's real sign-in page in the owner's Automation Chrome.
 
+## Owner request (2026-10-22): a screenshot as proof that indexing was requested (extension 3.4.0)
+
+**Request:** with a screenshot of Search Console's green “Indexing requested” dialog: “after the indexing request, show a screenshot like this as proof, so I know.”
+
+**Why not a plain screen capture:**
+- `chrome.tabs.captureVisibleTab` needs either access to every website (`<all_urls>`) or a click on the extension at that moment. It also fails when the window is minimized (the owner keeps Automation Chrome minimized), and the requests run in a background tab.
+- This project keeps the extension's website access narrow, so the screen capture was not used.
+
+**How it works:**
+- **Extension:** the new `pageCapture` permission lets the extension save the page itself as it stands: an MHTML copy of the page with its styles and pictures. It works in a background tab and a minimized window.
+  - After Search Console answers “Indexing requested” (or the daily limit), the extension waits for the dialog to finish opening and saves the copy.
+  - It uploads the copy before reporting the result, because the dashboard takes it only while the request is still open. A copy that cannot be saved never stops the request.
+  - Chrome keeps the copy in a temporary file that it sometimes drops before it can be read (“A requested file or directory could not be found”): about half of the runs at first. A fresh copy is now taken, up to three times; after that, 6 of 6 runs passed.
+- **Dashboard** (`POST /api/extension/gsc-proof`, `src/lib/gsc/proof.ts`):
+  - **Who may upload:** only the extension holding that request (ACTIVE, `lockedBy`), with the connection key, from localhost.
+  - **What is accepted:** only an MHTML file (its MIME header) of at most 15 MB, stored in `data/uploads/gsc-proof` with mode 600.
+  - **Rendering:** a `gsc.proof` control job makes the worker open the copy in a headless browser with scripts off and every network request blocked, and take a 1366×900 PNG.
+  - **Storage:** the PNG is stored with the article (media role `INDEXING_PROOF`, the post URL as its source), and the copy is deleted.
+- **Where the owner sees it:**
+  - **Search Console screenshot** link on the keyword in the keyword queue;
+  - the latest screenshot (thumbnail) in the Indexing in Search Console panel.
+- **What it proves:** the screenshot shows what Search Console showed after the click. Whether the page is indexed still comes only from Google's URL Inspection.
+
+**Tests:**
+- **Extension, real extension in Chromium with the fake Search Console:**
+  - after the request, the page copy was saved and uploaded (it contains “Indexing requested”);
+  - the worker made a 1366×900 PNG stored as `INDEXING_PROOF` with the post URL;
+  - the copy was deleted;
+  - the keyword queue links the screenshot.
+  - The fake page has no styles, so its screenshot is plain text; a styled page renders with its styles, as checked separately.
+- **Permission test:** the narrow host list is unchanged. The permissions add `pageCapture`, with the reason written in the test.
+
+**Not verified here:**
+- The real Search Console page saved and rendered.
+  - Its styles are in the copy only if Chrome had loaded them.
+  - A page that only draws with scripts would look different offline.
+- Chrome's permission prompt for `pageCapture` on the owner's PC: an unpacked extension normally gets it on reload.
+- **Unit test** (`indexing-signin.test.ts`): the upload is refused before the extension takes the request, refused for another extension, refused for a file that is not a page copy, and refused with a wrong key. Accepted, the copy is stored and a `gsc.proof` job is queued.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 332 tests pass (before the upload unit test); then indexing-signin + extension-version: 5 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 39/39
+next build                          # compiled
+```
+

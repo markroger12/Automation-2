@@ -3,9 +3,13 @@ import { route } from '@/lib/api';
 import { db } from '@/lib/db';
 import { enqueue } from '@/lib/queue';
 import { indexingOverview, requestWaitingNow } from '@/lib/gsc/request-indexing';
+import { PROOF_ROLE } from '@/lib/gsc/proof';
 
-/** “Request indexing” in Search Console by Automation Chrome: what was requested, what waits and why. */
-export const GET = route({}, async () => indexingOverview());
+/** “Request indexing” in Search Console by Automation Chrome: what was requested, what waits and why, the last proof. */
+export const GET = route({}, async () => {
+  const proof = await db.mediaAsset.findFirst({ where: { role: PROOF_ROLE }, orderBy: { createdAt: 'desc' }, select: { id: true, sourceUrl: true, createdAt: true } });
+  return { ...(await indexingOverview()), lastProof: proof ? { id: proof.id, url: proof.sourceUrl, at: proof.createdAt.toISOString() } : null };
+});
 
 /**
  * `signin`: open Google's sign-in (continuing to Search Console) in Automation Chrome, for the owner to sign in there.

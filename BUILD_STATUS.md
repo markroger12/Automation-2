@@ -2505,4 +2505,5 @@ npx vitest run                      # 47 files, 333 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console"   # 3/3 (typing 8.5 s, fallback 51 s, limit/sign-out 9 s)
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/workflow-publish.test.ts   # 2 files, 47/47 (extension 40, publish 7)
 npx tsc --noEmit                    # 0 errors
+next build                          # compiled
 ```

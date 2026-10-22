@@ -33,6 +33,8 @@ npm run setup
 
 ## Run
 
+Find any page with the **search box** above Overview (Ctrl+K); “Articles: …” searches your articles.
+
 ```powershell
 npm run dev:all        # development: dashboard + worker (auto-reload)
 # or, for daily use:
@@ -109,7 +111,7 @@ The test types these credentials itself (simulating you in the login window); th
 
 ## Images
 
-- **Image Template** (sidebar) — a per-website designer on a true 1920×1080 canvas for the featured image and, optionally, body images. Drag/resize/rotate, layers, undo/redo (Ctrl+Z / Ctrl+Shift+Z), snapping (hold Alt to bypass), arrow-key nudge, zoom/fit, presets (single photo with corner logo, split photo with centre logo), logo upload (PNG/JPEG/WebP or SVG, which is sanitized and rasterized), fixed photos, accent colour, and Polotno-style JSON import (image URLs are never fetched; nothing in the file is executed). The live preview is drawn by the same renderer the article pipeline uses; **Check final size** shows the real output size against your byte budget (Settings → SEO).
+- **Image Template** (sidebar) — a per-website designer on a true 1920×1080 canvas for the featured image and, optionally, body images, with a **Celebrity** and a **Tigram** template set (**Copy from Celebrity / Tigram** copies one into the other). Photo places can be rectangles or **circles with a coloured ring** (*Circle photo slot*, preset *Photo with circle photo*). Tigram's featured picture goes into the Tigram featured design (ChatGPT draws it without text; the design writes the title) unless *Use the featured design for Tigram featured images* is off. Drag/resize/rotate, layers, undo/redo (Ctrl+Z / Ctrl+Shift+Z), snapping (hold Alt to bypass), arrow-key nudge, zoom/fit, presets (single photo with corner logo, split photo with centre logo), logo upload (PNG/JPEG/WebP or SVG, which is sanitized and rasterized), fixed photos, accent colour, and Polotno-style JSON import (image URLs are never fetched; nothing in the file is executed). The live preview is drawn by the same renderer the article pipeline uses; **Check final size** shows the real output size against your byte budget (Settings → SEO).
 - **Article → Images tab** — rendered images with alt text, the photos that were collected, your own uploads (used before anything searched or generated) and “Don’t use” for any source photo. **Regenerate images** re-renders and updates the same WordPress draft.
 - Celebrity articles collect a bounded photo gallery, as in the earlier tool. Your own uploads (Images tab) come first; after that the source is **Settings → SEO, links & images → Celebrity photo source**:
   - **ChatGPT image search gallery (default):** ChatGPT is asked to search the web and show photos of the person. The extension opens the gallery, steps through it and saves the pictures; pictures on other sites are downloaded by the app (12 MB cap, private hosts blocked).

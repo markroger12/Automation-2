@@ -2108,3 +2108,44 @@ next build                           # compiled
 ```
 The integration run started before the Search Console change. That change touches no code the integration tests run; its own tests are unit tests (`search-console-live`, 9/9).
 The keyword Delete button and its dialog were not clicked in a browser here (typecheck and build only).
+
+## Owner requests (2026-10-22): Celebrity and Tigram image templates, a circle photo place, a search box and a clearer menu
+
+### Celebrity and Tigram image templates
+- **Image Template** has two template sets, **Celebrity image template** and **Tigram image template**. Each has a featured and a body design.
+- The Tigram set is saved as `imageSettings.tigram`. Until it is changed it is the Celebrity designs (“Same as Celebrity until you change it”). Saved settings without it read as before.
+- **Tigram featured design (on by default):**
+  - ChatGPT is asked for the featured picture **without text**. The plan's sentences about written title text are dropped, and “No text, letters, words or numbers anywhere in the picture (the title is added later on top of it)” is added.
+  - The picture goes into the Tigram featured design, whose title layer writes the title.
+  - Switched off, the earlier behaviour returns: ChatGPT writes the short title on the picture, which gets the body design (logo).
+- **Copy from Celebrity / Copy from Tigram** copies the other set's featured and body designs. Undo goes back; *Save templates* keeps it.
+- A Tigram featured design with two picture places falls back to the single-photo preset with a note, because a Tigram article has one featured picture.
+
+### Circle photo place
+- Photo places (and fixed photos) have **Shape** (Rectangle / Circle) and a **Border** (colour, width).
+- A circle cuts the photo to a circle, with the ring drawn inside the place. The editing canvas shows the same.
+- **Toolbar:** *Circle photo slot* adds a square circle place with an accent ring.
+- **Preset:** *Photo with circle photo* (owner's example): main photo across the canvas, the second photo in a circle with an accent ring, and the logo top left.
+
+### Search box and clearer menu
+- **Search box** above Overview (Ctrl+K or “/”):
+  - it filters the menu pages, case- and accent-insensitive; a section that matches keeps its pages;
+  - Enter opens the first page;
+  - “Articles: …” opens Article History filtered by the words.
+- **Menu headings:** Articles, Websites, Content tools, Growth & publishing, System, in the same order as before. Sub-pages sit on a guide line under their page.
+
+### Tests
+- **Renderer:** a circle place shows the second photo inside, the main photo in the box's corner outside the circle, and the accent ring at the edge; the preset uses slot 2 for the circle.
+- **Template sets:** old settings read as before, and editing Tigram leaves Celebrity unchanged; the plan's title-text sentences are removed.
+- **Pipeline (integration):** the Tigram featured design takes the featured picture (asked for without text) while Celebrity keeps its split design. The “title on the picture” behaviour is tested with the switch off.
+- **Sidebar search:** filtering rules.
+- **Chromium (`next dev`, scratch database):** clicked through Tigram tab, circle preset, circle slot (Shape = circle), Copy enabled, Save, and sidebar search “plag” then Enter opens Plagiarism Evidence. No console errors. The new menu was checked in dark and light themes.
+
+### Commands run
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 45 files, 321 tests pass
+npx vitest run --config vitest.integration.config.ts   # 10 files, 88 pass, 1 skipped (real MediaPipe)
+next build                          # compiled
+```
+The integration run started before the menu headings were added. They change only the sidebar markup; it was checked in Chromium.

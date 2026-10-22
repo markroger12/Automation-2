@@ -71,6 +71,21 @@ function svgBuffer(w: number, h: number, inner: string): Buffer {
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w)}" height="${Math.round(h)}" viewBox="0 0 ${Math.round(w)} ${Math.round(h)}">${inner}</svg>`);
 }
 
+/** A photo cut to its place's shape (rounded rectangle or circle) with the border drawn inside it. */
+async function framed(buf: Buffer, w: number, h: number, l: { radius: number; shape: 'rect' | 'circle'; stroke: string | null; strokeWidth: number }, accent: string): Promise<Buffer> {
+  const sw = l.stroke ? Math.min(l.strokeWidth, Math.min(w, h) / 2) : 0;
+  if (l.shape === 'circle') {
+    const mask = svgBuffer(w, h, `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="#fff"/>`);
+    const parts: OverlayOptions[] = [{ input: mask, blend: 'dest-in' }];
+    if (sw) parts.push({ input: svgBuffer(w, h, `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${Math.max(0, w / 2 - sw / 2)}" ry="${Math.max(0, h / 2 - sw / 2)}" fill="none" stroke="${esc(resolveColor(l.stroke!, accent))}" stroke-width="${sw}"/>`) });
+    return sharp(buf).ensureAlpha().composite(parts).png().toBuffer();
+  }
+  const cut = await rounded(buf, w, h, l.radius);
+  if (!sw) return cut;
+  const ring = svgBuffer(w, h, `<rect x="${sw / 2}" y="${sw / 2}" width="${Math.max(0, w - sw)}" height="${Math.max(0, h - sw)}" rx="${Math.max(0, l.radius - sw / 2)}" fill="none" stroke="${esc(resolveColor(l.stroke!, accent))}" stroke-width="${sw}"/>`);
+  return sharp(cut).ensureAlpha().composite([{ input: ring }]).png().toBuffer();
+}
+
 async function rounded(buf: Buffer, w: number, h: number, radius: number): Promise<Buffer> {
   if (!radius) return buf;
   const mask = svgBuffer(w, h, `<rect x="0" y="0" width="${w}" height="${h}" rx="${radius}" ry="${radius}" fill="#fff"/>`);
@@ -120,13 +135,13 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
   switch (layer.type) {
     case 'photo': {
       const src = input.photos[layer.slot] ?? input.photos[0];
-      if (!src) return sharp({ create: { width: w, height: h, channels: 4, background: accent } }).png().toBuffer();
-      return rounded(await photoTile(src, w, h, input.focus?.[layer.slot] ?? null, layer.focus), w, h, layer.radius);
+      if (!src) return framed(await sharp({ create: { width: w, height: h, channels: 4, background: accent } }).png().toBuffer(), w, h, layer, accent);
+      return framed(await photoTile(src, w, h, input.focus?.[layer.slot] ?? null, layer.focus), w, h, layer, accent);
     }
     case 'fixed-photo': {
       const src = input.fixedPhotos?.[layer.assetId];
       if (!src) return null;
-      return rounded(await photoTile(src, w, h, null, 'auto'), w, h, layer.radius);
+      return framed(await photoTile(src, w, h, null, 'auto'), w, h, layer, accent);
     }
     case 'logo': {
       if (!input.logo) return null;

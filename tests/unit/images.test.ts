@@ -172,6 +172,28 @@ describe('production renderer', () => {
     await expectColor(png, 1700, 200, [0, 0, 0]); // hidden layer not drawn
   });
 
+  it('owner request: a circle photo place cuts the photo to a circle with a ring; the preset puts the second photo there', async () => {
+    const t = templateSchema.parse({
+      background: '#000000',
+      accent: '#3b48ff',
+      layers: [
+        { id: 'bg', type: 'photo', slot: 0, x: 0, y: 0, width: 1920, height: 1080 },
+        { id: 'c', type: 'photo', slot: 1, x: 1000, y: 100, width: 800, height: 800, shape: 'circle', stroke: 'accent', strokeWidth: 20 },
+      ],
+    });
+    const png = await renderCanvas({ template: t, photos: [await photo(255, 255, 255), await photo(255, 0, 0)] });
+    await expectColor(png, 1400, 500, [255, 0, 0]); // inside the circle: the second photo
+    await expectColor(png, 1030, 130, [255, 255, 255]); // the box's corner, outside the circle: the main photo shows
+    await expectColor(png, 1400, 108, [59, 72, 255]); // the ring at the top edge, in the accent colour
+    // The preset: main photo across the canvas, the second photo in the circle.
+    const { presetPhotoCircle } = await import('@/lib/image-template');
+    const preset = presetPhotoCircle('#3b48ff');
+    expect(preset.layers.filter((l) => l.type === 'photo').map((l) => (l.type === 'photo' ? [l.slot, l.shape] : null))).toEqual([[0, 'rect'], [1, 'circle']]);
+    const p2 = await renderCanvas({ template: preset, photos: [await photo(255, 255, 255), await photo(255, 0, 0)] });
+    await expectColor(p2, 1450, 540, [255, 0, 0]);
+    await expectColor(p2, 400, 540, [255, 255, 255]);
+  });
+
   it('clips rotated and off-canvas layers instead of failing, and draws fixed photos and the logo plate', async () => {
     const t = templateSchema.parse({
       layers: [
@@ -317,5 +339,28 @@ describe('earlier tool (automation-old): Tigram plan lines, featured title, tall
     const bottom = at(600, 660);
     expect(top[0]).toBeGreaterThan(200); // the very top of the photo is still there (red)
     expect(bottom[2]).toBeGreaterThan(200); // and its bottom (blue)
+  });
+});
+
+describe('owner request: a Celebrity and a Tigram image template', () => {
+  it('saved settings without Tigram templates read as before; Tigram then uses the Celebrity designs with the featured design on', async () => {
+    const { parseSiteImageSettings, templateSet, withTemplateSet, presetSplit } = await import('@/lib/image-template');
+    const old = parseSiteImageSettings(JSON.stringify({ featured: presetSplit('#123456'), body: null, logoAssetId: null }));
+    expect(old.tigram).toBeNull();
+    expect(templateSet(old, 'tigram')).toEqual({ featured: old.featured, body: null, useFeatured: true });
+    // Editing Tigram creates its own set; the Celebrity designs stay as they were.
+    const own = withTemplateSet(old, 'tigram', { ...templateSet(old, 'tigram'), featured: presetSingle('#123456'), useFeatured: false });
+    expect(own.featured).toEqual(old.featured);
+    expect(templateSet(own, 'tigram')).toMatchObject({ featured: { name: 'Single photo · corner logo' }, useFeatured: false });
+    expect(templateSet(own, 'celebrity').featured.name).toBe(old.featured.name);
+  });
+
+  it('the plan’s featured description loses what it says about written title text (the design writes the title)', async () => {
+    const { withoutTitleText } = await import('@/worker/pipelines/images');
+    const out = withoutTitleText('Modern blog header illustration featuring the exact title text "Pulsamento" in large, bold letters. A drummer on a stage with warm lights and a rhythmic pattern in the background.', 'FALLBACK');
+    expect(out).not.toMatch(/title text|Pulsamento/);
+    expect(out).toMatch(/^A drummer on a stage/);
+    expect(out).toMatch(/No text, letters, words or numbers anywhere in the picture/);
+    expect(withoutTitleText('Large bold title text: "How to Install WordPress".', 'FALLBACK')).toBe('FALLBACK');
   });
 });

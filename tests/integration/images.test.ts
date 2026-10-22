@@ -170,7 +170,7 @@ describe('Image Studio (IMAGES stage)', () => {
     expect(wp.media.size).toBe(3); // no duplicate media on retry
   });
 
-  it('earlier tool: the featured prompt carries the short title; a picture handed back twice is asked once more in a new chat; every picture gets the logo', async () => {
+  it('earlier tool (Tigram featured design off): the featured prompt carries the short title; a picture handed back twice is asked once more in a new chat; every picture gets the logo', async () => {
     const red = await solid(200, 40, 40);
     const green = await solid(40, 160, 60);
     const blue = await solid(40, 60, 200);
@@ -186,6 +186,9 @@ describe('Image Studio (IMAGES stage)', () => {
     };
     const site = await offlineSite('Repeat Blog');
     await addLogo(site.id);
+    // Image Template → Tigram: “Use the featured design for Tigram featured images” switched off.
+    const { defaultSiteImageSettings, presetSingle } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings(), tigram: { featured: presetSingle(), body: null, useFeatured: false } }) } });
     const driver = makeDriver(client, answer);
     const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'How to Install WordPress', websiteId: site.id, options: { saveToWordPress: false }, idempotencyKey: 'img:repeat-1' }, { source: 'SINGLE' });
     const t = await driver.drive(task.id);
@@ -203,6 +206,39 @@ describe('Image Studio (IMAGES stage)', () => {
       const at = (fx: number, fy: number) => { const i = (Math.round(fy * info.height) * info.width + Math.round(fx * info.width)) * 3; return [px[i], px[i + 1], px[i + 2]]; };
       expect(near(at(0.92, 0.92), [15, 118, 110], 60), `${x.slot} logo corner`).toBe(true);
     }
+  });
+
+  it('owner request: the Tigram featured design takes the featured picture (drawn without text) and writes the title; Celebrity keeps its own design', async () => {
+    const prompts: string[] = [];
+    const colors = [await solid(200, 40, 40), await solid(40, 160, 60), await solid(40, 60, 200)];
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
+      if (/Create this image now/.test(prompt)) {
+        prompts.push(prompt);
+        return { text: '', images: [colors[prompts.length - 1] ?? colors[2]] };
+      }
+      return cannedAnswer(stageKey, prompt, language, keyword);
+    };
+    const site = await offlineSite('Tigram Design Blog');
+    await addLogo(site.id);
+    // Celebrity: the two-photo split design. Tigram: its own one-picture design (logo plate top right).
+    const { defaultSiteImageSettings, presetSingle, presetSplit } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings('#0b5fff'), featured: presetSplit('#0b5fff'), tigram: { featured: presetSingle('#0b5fff'), body: null, useFeatured: true } }) } });
+    const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'How to Install WordPress', websiteId: site.id, options: { saveToWordPress: false }, idempotencyKey: 'img:tigram-design-1' }, { source: 'SINGLE' });
+    const t = await makeDriver(client, answer).drive(task.id);
+    const data = await stageData(t.id, 'IMAGES');
+    // The featured picture is asked for without text; the design writes the title.
+    expect(prompts[0]).not.toMatch(/spelled exactly/);
+    expect(prompts[0]).toMatch(/No text, letters, words or numbers anywhere in the picture/);
+    expect(data.notes.join(' ')).not.toMatch(/single-photo preset/);
+    const featured = data.slots.find((x: { slot: string }) => x.slot === 'FEATURED');
+    const a = await client.mediaAsset.findUniqueOrThrow({ where: { id: featured.mediaAssetId } });
+    const { data: px, info } = await sharp(fs.readFileSync(path.join(process.env.BAS_DATA_DIR!, a.filePath))).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const at = (fx: number, fy: number) => { const i = (Math.round(fy * info.height) * info.width + Math.round(fx * info.width)) * 3; return [px[i], px[i + 1], px[i + 2]]; };
+    // Tigram's single design: the red picture across the middle (the Celebrity split design has its accent divider
+    // there), its logo plate in the top right corner (the split design's logo is in the centre), the title band below.
+    expect(near(at(0.5, 0.3), [200, 40, 40], 40)).toBe(true);
+    expect(near(at(0.89, 0.1), [15, 118, 110], 60)).toBe(true);
+    expect(at(0.2, 0.95)[0]).toBeLessThan(120);
   });
 
   it('lost upload answers are found again by slug (no duplicate media) and unusable alt text is replaced', async () => {

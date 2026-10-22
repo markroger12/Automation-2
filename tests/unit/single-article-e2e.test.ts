@@ -214,11 +214,13 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const final = await drive(task.id, 'en');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
     // IMAGES = the image plan prompt, then three images: the scripted answer has no plan lines, so the earlier tool's
-    // default descriptions are used (the featured one carries the short title). The scripted answers carry no
-    // picture, so each image is asked once more in a new chat.
+    // default descriptions are used. With the Tigram featured design (on by default) the featured picture is asked for
+    // without text — the design writes the title. The scripted answers carry no picture, so each image is asked once
+    // more in a new chat.
     expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS', ...Array(7).fill('IMAGES'), 'HUMANIZE']);
-    // The image prompts go out in parallel: the featured one (any position) carries the short title.
-    expect(responses.filter((r) => r.stageKey === 'IMAGES' && r.renderedPrompt.startsWith('Create this image now') && r.renderedPrompt.includes('spelled exactly: "How to Install WordPress"')).length).toBeGreaterThan(0);
+    const imagePrompts = responses.filter((r) => r.stageKey === 'IMAGES' && r.renderedPrompt.startsWith('Create this image now'));
+    expect(imagePrompts.some((r) => r.renderedPrompt.includes('No text, letters, words or numbers anywhere in the picture (the title is added later'))).toBe(true);
+    expect(imagePrompts.some((r) => r.renderedPrompt.includes('spelled exactly'))).toBe(false);
     expect(responses[0].renderedPrompt).toContain('Secondary keywords (use only where natural): hosting, plugins');
     expect(responses[0].renderedPrompt).not.toContain('Not used by default template');
     expect(responses[1].renderedPrompt).toContain('Tech & Apps');

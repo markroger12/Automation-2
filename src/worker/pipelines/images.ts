@@ -7,7 +7,7 @@ import { getSettings } from '@/lib/settings';
 import { parseJson } from '@/lib/json';
 import { fromDataRelative } from '@/lib/paths';
 import { NeedsReviewError, TransientError, UncertainSideEffectError } from '@/lib/pipeline-errors';
-import { CANVAS, parseSiteImageSettings, presetBodyCornerLogo, presetSingle, type ImageTemplate } from '@/lib/image-template';
+import { CANVAS, parseSiteImageSettings, presetBodyCornerLogo, presetSingle, templateSet, templateSetFor, type ImageTemplate } from '@/lib/image-template';
 import { outputSize, renderCleanImage, renderTemplate, type PhotoFocus } from '@/images/render';
 import { normalizeAltText, type AltSlot } from '@/images/alt-text';
 import { hammingDistance, storeRendered } from '@/images/store';
@@ -88,10 +88,12 @@ interface RenderPlan {
 
 async function renderAll(ctx: PipelineContext, plan: RenderPlan, notes: string[]): Promise<ImageSlot[]> {
   const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
-  const settings = parseSiteImageSettings(site.imageSettings);
+  const siteSettings = parseSiteImageSettings(site.imageSettings);
+  // The writer's own templates (Image Template → Celebrity / Tigram).
+  const settings = templateSet(siteSettings, templateSetFor(ctx.task.moduleKey));
   const size = outputSize(ctx.config.imageOutputSize);
   const opts = { ...size, maxBytes: ctx.config.imageMaxBytes };
-  const { logo, fixedPhotos } = await loadTemplateAssets(site.id, settings, [settings.featured, settings.body]);
+  const { logo, fixedPhotos } = await loadTemplateAssets(site.id, siteSettings, [settings.featured, settings.body]);
   const usesLogo = [settings.featured, settings.body].some((t) => t?.layers.some((l) => l.type === 'logo' && l.visible));
   if (!logo && usesLogo) notes.push('No site logo uploaded yet (Image Template → Logo); the images were rendered without it.');
   const title = (ctx.task.selectedTitle ?? ctx.task.seoTitle ?? ctx.task.keyword).trim();
@@ -120,7 +122,7 @@ async function renderAll(ctx: PipelineContext, plan: RenderPlan, notes: string[]
     if (templatePhotoSlots(template) > plan.featuredPhotos.length && plan.featuredPhotos.length === 1) {
       // A two-photo design with one usable photo: never repeat a photo — use the single-photo preset.
       template = presetSingle(template.accent);
-      notes.push('Only one photo was available for the two-photo featured design; the single-photo preset was used.');
+      notes.push(ctx.task.moduleKey === 'tigram-writer' ? 'The Tigram featured design has more than one picture place, but a Tigram article has one featured picture; the single-photo preset was used (Image Template → Tigram: use a one-picture design).' : 'Only one photo was available for the two-photo featured design; the single-photo preset was used.');
     }
     const photos = await Promise.all(plan.featuredPhotos.map((p) => p.buffer ?? readAsset(p.asset)));
     const r = await renderTemplate({ template, photos, focus: plan.featuredPhotos.map((p) => p.focus ?? null), logo, fixedPhotos, vars: { title, site: site.name, keyword: ctx.task.keyword } }, opts);
@@ -195,11 +197,25 @@ export function featuredImageTitle(title: string): string {
   return words.join(' ') || text.slice(0, 45);
 }
 
+const NO_TEXT = 'No text, letters, words or numbers anywhere in the picture (the title is added later on top of it).';
+
+/** The plan's featured description without what it says about written title text, then “no text” (featured design on). */
+export function withoutTitleText(direction: string, fallback: string): string {
+  const kept = direction
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => !/\b(title|text|words?|letters?|lettering|typography|headline|caption|font|spelled)\b/i.test(s))
+    .join(' ')
+    .trim();
+  return kept.length >= 30 ? `${kept} ${NO_TEXT}` : fallback;
+}
+
 /** The earlier tool's default descriptions, for a plan line ChatGPT did not give. */
-function defaultImagePlan(keyword: string, imageTitle: string): Record<ImageSlotName, { direction: string; alt: string }> {
+function defaultImagePlan(keyword: string, imageTitle: string, featuredDesign = false): Record<ImageSlotName, { direction: string; alt: string }> {
   const body = (topic: string) => `A minimal flat illustration about ${topic}. Soft colours, plain light background, lots of empty space, only a few simple objects, no text, letters or numbers at all, no logos, no faces.`;
   return {
-    FEATURED: { direction: `A clean, modern blog header image about "${keyword}". Large bold title text in the middle, spelled exactly: "${imageTitle}". Empty space above and below the text, simple background that fits the topic, strong contrast, no logos, no watermark, no other words.`, alt: keyword },
+    FEATURED: featuredDesign
+      ? { direction: `A clean, modern wide blog header picture about "${keyword}": a simple scene that fits the topic, strong contrast, calm space in the lower third. ${NO_TEXT} No logos, no watermark.`, alt: keyword }
+      : { direction: `A clean, modern blog header image about "${keyword}". Large bold title text in the middle, spelled exactly: "${imageTitle}". Empty space above and below the text, simple background that fits the topic, strong contrast, no logos, no watermark, no other words.`, alt: keyword },
     BODY1: { direction: body(keyword), alt: `${keyword} illustration` },
     BODY2: { direction: body(`the main steps and tips of ${keyword}`), alt: `${keyword} guide illustration` },
   };
@@ -210,13 +226,18 @@ const sha = async (a: MediaAsset) => createHash('sha256').update(await readAsset
 async function generalImages(ctx: PipelineContext): Promise<StageResult> {
   const notes: string[] = [];
   const imageTitle = featuredImageTitle((ctx.task.selectedTitle ?? ctx.task.seoTitle ?? ctx.task.keyword).trim());
+  // Owner request: the Tigram featured design (Image Template → Tigram) takes the featured picture and writes the title
+  // itself, so ChatGPT draws that picture without text.
+  const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId }, select: { imageSettings: true } });
+  const featuredDesign = templateSet(parseSiteImageSettings(site.imageSettings), templateSetFor(ctx.task.moduleKey)).useFeatured;
   const planRes = await ctx.askChatGPT('IMAGE_PLAN', { image_title: imageTitle });
   if (planRes.status === 'waiting') return waiting('Waiting for ChatGPT: image plan');
-  const fallback = defaultImagePlan(ctx.task.keyword, imageTitle);
+  const fallback = defaultImagePlan(ctx.task.keyword, imageTitle, featuredDesign);
   const parsed = parseImagePlan(planRes.text);
   const plan = (['FEATURED', 'BODY1', 'BODY2'] as const).map((slot) => {
     const p = parsed.find((x) => x.slot === slot);
-    return { slot, direction: p?.direction ?? fallback[slot].direction, alt: p?.alt || fallback[slot].alt };
+    const direction = p?.direction ?? fallback[slot].direction;
+    return { slot, direction: slot === 'FEATURED' && featuredDesign && p ? withoutTitleText(direction, fallback.FEATURED.direction) : direction, alt: p?.alt || fallback[slot].alt };
   });
   if (parsed.length < 3) notes.push(`The image plan had ${parsed.length} of 3 usable lines; the earlier tool's default description was used for the rest.`);
   // Owner uploads (Images tab) fill the slots first, in upload order; only the rest is generated.
@@ -261,10 +282,11 @@ async function generalImages(ctx: PipelineContext): Promise<StageResult> {
     byslot.set(p.slot, { asset, alt: p.alt });
   }
   const featured = byslot.get('FEATURED');
-  // The featured picture carries its own title (ChatGPT wrote it); like the body images it gets the website's logo.
+  // Featured design on: the picture goes into the writer's featured design, which writes the title. Off: the picture
+  // carries its own title (ChatGPT wrote it) and, like the body images, gets the website's logo.
   const slots = await renderAll(
     ctx,
-    { featuredPhotos: featured ? [{ asset: featured.asset }] : [], featuredAlt: featured?.alt ?? imageTitle, featuredAsBody: !owned.has('FEATURED'), body1: byslot.get('BODY1'), body2: byslot.get('BODY2') },
+    { featuredPhotos: featured ? [{ asset: featured.asset }] : [], featuredAlt: featured?.alt ?? imageTitle, featuredAsBody: !featuredDesign && !owned.has('FEATURED'), body1: byslot.get('BODY1'), body2: byslot.get('BODY2') },
     notes,
   );
   return finish(ctx, { slots, gallery: [...byslot.entries()].map(([slot, v]) => ({ id: v.asset.id, source: v.asset.role === 'UPLOAD' ? 'your upload' : 'ChatGPT image', sourceUrl: v.asset.sourceUrl, title: slot, used: true })), plan, notes, warnings: [] });
@@ -478,7 +500,7 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   //    became half of the featured image); with only collages the featured image takes one. A photo is never used
   //    twice: a small gallery leaves body images out instead of repeating one.
   const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
-  const siteSettings = parseSiteImageSettings(site.imageSettings);
+  const siteSettings = templateSet(parseSiteImageSettings(site.imageSettings), 'celebrity');
   const featuredNeeds = Math.max(1, templatePhotoSlots(siteSettings.featured));
   const single = usable.filter((a) => !collages.has(a.id));
   const featuredPhotos = single.length ? single.slice(0, featuredNeeds) : usable.slice(0, 1);

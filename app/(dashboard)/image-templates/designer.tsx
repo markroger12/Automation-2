@@ -40,13 +40,18 @@ import {
   importForeignTemplate,
   presetBodyCornerLogo,
   presetSingle,
+  presetPhotoCircle,
   presetSplit,
   sanitizeSvg,
   templateSchema,
+  templateSet,
+  withTemplateSet,
   type EmbeddedPicture,
   type ImageTemplate,
   type Layer,
   type SiteImageSettings,
+  type TemplateSet,
+  type WriterTemplates,
 } from '@/lib/image-template';
 import {
   anchorRotatedResize,
@@ -162,6 +167,8 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   const [hist, setHist] = useState<History<SiteImageSettings> | null>(null);
   const [saved, setSaved] = useState('');
   const [which, setWhich] = useState<Which>('featured');
+  // Owner request: a Celebrity and a Tigram image template, each with a featured and a body design.
+  const [set, setSet] = useState<TemplateSet>('celebrity');
   const [selected, setSelected] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
@@ -196,7 +203,8 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   }, [siteId]);
 
   const settings = hist?.present ?? null;
-  const template = settings ? settings[which] : null;
+  const view = settings ? templateSet(settings, set) : null;
+  const template = view ? view[which] : null;
   const dirty = settings ? JSON.stringify(settings) !== saved : false;
 
   useEffect(() => {
@@ -208,13 +216,15 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
 
   // ---- state changes (all through the history)
   const change = useCallback((fn: (s: SiteImageSettings) => SiteImageSettings, key: string | null = null) => setHist((h) => (h ? commit(h, fn(h.present), key) : h)), []);
+  /** Change the templates of the writer being edited (Celebrity or Tigram). */
+  const changeSet = useCallback((fn: (v: WriterTemplates) => WriterTemplates, key: string | null = null) => change((s) => withTemplateSet(s, set, fn(templateSet(s, set))), key), [change, set]);
   const changeTemplate = useCallback(
     (fn: (t: ImageTemplate) => ImageTemplate, key: string | null = null) =>
-      change((s) => {
-        const t = s[which];
-        return t ? { ...s, [which]: fn(t) } : s;
+      changeSet((v) => {
+        const t = v[which];
+        return t ? { ...v, [which]: fn(t) } : v;
       }, key),
-    [change, which],
+    [changeSet, which],
   );
   const patchLayer = useCallback((id: string, patch: Record<string, unknown>, key: string | null = null) => changeTemplate((t) => updateLayer(t, id, patch as Partial<Layer>), key), [changeTemplate]);
 
@@ -306,7 +316,11 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
     } else if (d.kind === 'rotate') {
       patch = { rotation: rotationFromPointer({ x: d.start.x + d.start.width / 2, y: d.start.y + d.start.height / 2 }, p, e.shiftKey) };
     }
-    setHist((h) => (h ? replacePresent(h, { ...h.present, [which]: updateLayer(h.present[which]!, d.id, patch) }) : h));
+    setHist((h) => {
+      if (!h) return h;
+      const v = templateSet(h.present, set);
+      return replacePresent(h, withTemplateSet(h.present, set, { ...v, [which]: updateLayer(v[which]!, d.id, patch) }));
+    });
   }
   function endDrag() {
     const d = drag.current;
@@ -316,7 +330,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   }
 
   // ---- layer actions
-  const addLayer = (type: NewLayerType, opts: { slot?: number; assetId?: string } = {}) => {
+  const addLayer = (type: NewLayerType, opts: { slot?: number; assetId?: string; circle?: boolean } = {}) => {
     if (!template) return;
     if (template.layers.length >= 40) return toast('error', 'A template can have at most 40 layers.');
     const layer = createLayer(type, opts);
@@ -384,7 +398,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   // ---- live preview through the production renderer (debounced)
   const [preview, setPreview] = useState<{ url: string; busy: boolean; error: string | null }>({ url: '', busy: false, error: null });
   const [finalInfo, setFinalInfo] = useState<{ url: string; text: string; over: boolean } | null>(null);
-  const previewKey = settings ? JSON.stringify([which, template, previewTitle, photoIds, activeLogoId]) : '';
+  const previewKey = settings ? JSON.stringify([set, which, template, previewTitle, photoIds, activeLogoId]) : '';
   useEffect(() => {
     if (!settings) return;
     const ctrl = new AbortController();
@@ -536,6 +550,23 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
               </button>
             ))}
           </div>
+          <div className="surface-2 ml-1 inline-flex rounded-lg p-0.5" role="tablist" aria-label="Writer">
+            {(['celebrity', 'tigram'] as const).map((w) => (
+              <button
+                key={w}
+                role="tab"
+                aria-selected={set === w}
+                type="button"
+                onClick={() => {
+                  setSet(w);
+                  setSelected(null);
+                }}
+                className={cx('rounded-md px-3 py-1.5 text-sm font-medium', set === w ? 'surface shadow-sm' : 'text-muted')}
+              >
+                {w === 'celebrity' ? 'Celebrity image template' : 'Tigram image template'}
+              </button>
+            ))}
+          </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {dirty ? <Chip tone="warning">Unsaved changes</Chip> : <Chip tone="success">Saved</Chip>}
             <Button size="sm" variant="ghost" aria-label="Undo (Ctrl+Z)" title="Undo (Ctrl+Z)" disabled={!hist.past.length} onClick={() => setHist((h) => (h ? undo(h) : h))}>
@@ -554,7 +585,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 if (!template) return;
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' }));
-                a.download = `${data.website.name}-${which}-template.json`.replace(/[^\w.-]+/g, '-');
+                a.download = `${data.website.name}-${set}-${which}-template.json`.replace(/[^\w.-]+/g, '-');
                 a.click();
                 setTimeout(() => URL.revokeObjectURL(a.href), 1000);
               }}
@@ -569,9 +600,42 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
             </Button>
           </div>
         </div>
+        <div className="border-app flex flex-wrap items-center gap-3 border-t px-3 py-2 text-sm">
+          {set === 'tigram' ? (
+            <>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={view?.useFeatured ?? true} onChange={(e) => changeSet((v) => ({ ...v, useFeatured: e.target.checked }))} />
+                <span>Use the featured design for Tigram featured images</span>
+              </label>
+              <span className="text-muted text-xs">
+                {view?.useFeatured ?? true
+                  ? 'ChatGPT draws the featured picture without text; this design adds the title and logo. Use a one-picture design.'
+                  : 'ChatGPT writes the title on the featured picture; it gets the body design, like the body pictures.'}
+              </span>
+              {!settings.tigram ? <Chip tone="info">Same as Celebrity until you change it</Chip> : null}
+            </>
+          ) : (
+            <span className="text-muted text-xs">Celebrity articles: the gallery photos go into the featured design's photo places; body images use the body design.</span>
+          )}
+          <Button
+            size="sm"
+            className="ml-auto"
+            disabled={set === 'celebrity' && !settings.tigram}
+            title={set === 'celebrity' && !settings.tigram ? 'The Tigram templates are the Celebrity ones until you change them.' : undefined}
+            onClick={() => {
+              const from = set === 'celebrity' ? 'tigram' : 'celebrity';
+              const source = JSON.parse(JSON.stringify(templateSet(settings, from))) as WriterTemplates;
+              changeSet((v) => ({ ...v, featured: source.featured, body: source.body }));
+              setSelected(null);
+              toast('success', `Copied the ${from === 'celebrity' ? 'Celebrity' : 'Tigram'} featured and body designs. Save templates to keep them (Undo goes back).`);
+            }}
+          >
+            <Copy className="h-4 w-4" /> {set === 'celebrity' ? 'Copy from Tigram' : 'Copy from Celebrity'}
+          </Button>
+        </div>
       </Card>
 
-      {which === 'body' && !settings.body ? (
+      {which === 'body' && !view?.body ? (
         <Card title="Body images: clean photo" description="Body images are normally clean 16:9 crops of the photo or illustration — no text, no logo, no watermark.">
           <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
             <div>
@@ -580,7 +644,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
             </div>
             <div className="space-y-3 text-sm">
               <p>To brand body images too, start a body template:</p>
-              <Button onClick={() => change((s) => ({ ...s, body: presetBodyCornerLogo(s.featured.accent) }))}>
+              <Button onClick={() => changeSet((v) => ({ ...v, body: presetBodyCornerLogo(v.featured.accent) }))}>
                 <LayoutTemplate className="h-4 w-4" /> Photo with corner logo
               </Button>
               <PreviewControls data={data} photoIds={photoIds} setPhotoIds={setPhotoIds} title={previewTitle} setTitle={setPreviewTitle} hideTitle />
@@ -596,6 +660,9 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 <span className="text-muted px-1 text-xs font-medium uppercase">Add</span>
                 <Button size="sm" variant="ghost" onClick={() => addLayer('photo', { slot: template.layers.some((l) => l.type === 'photo' && l.slot === 0) ? 1 : 0 })}>
                   <ImageIcon className="h-4 w-4" /> Photo slot
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => addLayer('photo', { slot: template.layers.some((l) => l.type === 'photo' && l.slot === 0) ? 1 : 0, circle: true })}>
+                  <Circle className="h-4 w-4" /> Circle photo slot
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => addLayer('text')}>
                   <Type className="h-4 w-4" /> Text
@@ -714,7 +781,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Accent color" htmlFor="tpl-accent">
-                    <input id="tpl-accent" type="color" value={template.accent} onChange={(e) => change((s) => ({ ...s, featured: { ...s.featured, accent: e.target.value }, body: s.body ? { ...s.body, accent: e.target.value } : null }), 'tpl:accent')} className="border-app h-9 w-full cursor-pointer rounded-lg border" />
+                    <input id="tpl-accent" type="color" value={template.accent} onChange={(e) => changeSet((v) => ({ ...v, featured: { ...v.featured, accent: e.target.value }, body: v.body ? { ...v.body, accent: e.target.value } : null }), 'tpl:accent')} className="border-app h-9 w-full cursor-pointer rounded-lg border" />
                   </Field>
                   <ColorField id="tpl-bg" label="Background" value={template.background} accent={template.accent} onChange={(v) => changeTemplate((t) => ({ ...t, background: v ?? '#111827' }), 'tpl:bg')} />
                 </div>
@@ -723,13 +790,14 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                   <div className="flex flex-wrap gap-2">
                     {which === 'featured' ? (
                       <>
-                        <Button size="sm" onClick={() => change((s) => ({ ...s, featured: presetSingle(s.featured.accent) }))}>Single photo · corner logo</Button>
-                        <Button size="sm" onClick={() => change((s) => ({ ...s, featured: presetSplit(s.featured.accent) }))}>Split photo · center logo</Button>
+                        <Button size="sm" onClick={() => changeSet((v) => ({ ...v, featured: presetSingle(v.featured.accent) }))}>Single photo · corner logo</Button>
+                        <Button size="sm" onClick={() => changeSet((v) => ({ ...v, featured: presetSplit(v.featured.accent) }))}>Split photo · center logo</Button>
+                        <Button size="sm" onClick={() => changeSet((v) => ({ ...v, featured: presetPhotoCircle(v.featured.accent) }))}>Photo with circle photo</Button>
                       </>
                     ) : (
                       <>
-                        <Button size="sm" onClick={() => change((s) => ({ ...s, body: presetBodyCornerLogo(s.featured.accent) }))}>Photo with corner logo</Button>
-                        <Button size="sm" onClick={() => change((s) => ({ ...s, body: null }))}>Back to clean photo</Button>
+                        <Button size="sm" onClick={() => changeSet((v) => ({ ...v, body: presetBodyCornerLogo(v.featured.accent) }))}>Photo with corner logo</Button>
+                        <Button size="sm" onClick={() => changeSet((v) => ({ ...v, body: null }))}>Back to clean photo</Button>
                       </>
                     )}
                   </div>
@@ -887,21 +955,27 @@ function PreviewControls({ data, photoIds, setPhotoIds, title, setTitle, hideTit
   );
 }
 
+/** A photo place's shape and border on the editing canvas (the production renderer draws the same). */
+function frameStyle(l: { radius: number; shape: 'rect' | 'circle'; stroke: string | null; strokeWidth: number }, scale: number, accent: string): CSSProperties {
+  return { borderRadius: l.shape === 'circle' ? '50%' : l.radius * scale, border: l.stroke && l.strokeWidth ? `${l.strokeWidth * scale}px solid ${resolve(l.stroke, accent)}` : undefined, boxSizing: 'border-box' };
+}
+
 function LayerVisual({ layer: l, template, scale, vars, photoUrl, logoUrl }: { layer: Layer; template: ImageTemplate; scale: number; vars: Record<string, string>; photoUrl: (slot: number) => string | null; logoUrl: string | null }) {
   const accent = template.accent;
   switch (l.type) {
     case 'photo': {
       const url = photoUrl(l.slot);
+      const frame = frameStyle(l, scale, accent);
       return url ? (
-        <img src={url} alt="" draggable={false} className="h-full w-full object-cover" style={{ borderRadius: l.radius * scale, objectPosition: l.focus === 'top' ? 'top' : 'center' }} />
+        <img src={url} alt="" draggable={false} className="h-full w-full object-cover" style={{ ...frame, objectPosition: l.focus === 'top' ? 'top' : 'center' }} />
       ) : (
-        <div className="flex h-full w-full items-center justify-center text-white/80" style={{ borderRadius: l.radius * scale, background: l.slot ? 'linear-gradient(135deg,#f97316,#7c2d12)' : 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', fontSize: Math.max(10, 48 * scale) }}>
+        <div className="flex h-full w-full items-center justify-center text-white/80" style={{ ...frame, background: l.slot ? 'linear-gradient(135deg,#f97316,#7c2d12)' : 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', fontSize: Math.max(10, 48 * scale) }}>
           Photo {l.slot + 1}
         </div>
       );
     }
     case 'fixed-photo':
-      return l.assetId ? <img src={`/api/media/${l.assetId}`} alt="" draggable={false} className="h-full w-full object-cover" style={{ borderRadius: l.radius * scale }} /> : <div className="h-full w-full bg-slate-400/60" />;
+      return l.assetId ? <img src={`/api/media/${l.assetId}`} alt="" draggable={false} className="h-full w-full object-cover" style={frameStyle(l, scale, accent)} /> : <div className="h-full w-full bg-slate-400/60" />;
     case 'logo':
       return (
         <div className="flex h-full w-full items-center justify-center" style={l.plate ? { background: resolve(l.plateColor, accent), borderRadius: l.plateRadius * scale, padding: l.platePadding * scale } : undefined}>
@@ -1038,7 +1112,16 @@ function LayerProperties({ layer: l, accent, fixedPhotos, onPatch }: { layer: La
               <option value="top">Top</option>
             </Select>
           </Field>
-          {num('radius', 'Corner radius', l.radius, 0, 540)}
+          <Field label="Shape" htmlFor={id('shape')}>
+            <Select id={id('shape')} value={l.shape} onChange={(e) => onPatch({ shape: e.target.value })} className="px-2 py-1.5">
+              <option value="rect">Rectangle</option>
+              <option value="circle">Circle</option>
+            </Select>
+          </Field>
+          {l.shape === 'rect' ? num('radius', 'Corner radius', l.radius, 0, 540) : <span />}
+          <ColorField id={id('stroke')} label="Border" value={l.stroke} accent={accent} nullable onChange={(v) => onPatch({ stroke: v }, 'stroke')} />
+          {num('strokeWidth', 'Border width', l.strokeWidth, 0, 100)}
+          {l.shape === 'circle' && Math.abs(l.width - l.height) > 1 ? <p className="text-muted col-span-2 text-xs">Make the box square (same width and height) for a round circle.</p> : null}
         </div>
       ) : null}
 

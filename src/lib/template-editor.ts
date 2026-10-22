@@ -176,10 +176,13 @@ export function newLayerId(prefix: string): string {
 export type NewLayerType = Layer['type'];
 
 /** Sensible defaults for a new layer, centered on the canvas. */
-export function createLayer(type: NewLayerType, opts: { slot?: number; assetId?: string; svg?: string } = {}): Layer {
+export function createLayer(type: NewLayerType, opts: { slot?: number; assetId?: string; svg?: string; circle?: boolean } = {}): Layer {
   const center = (w: number, h: number) => ({ x: (CANVAS.width - w) / 2, y: (CANVAS.height - h) / 2, width: w, height: h });
   const map: Record<NewLayerType, LayerInput> = {
-    photo: { id: newLayerId('photo'), name: `Photo slot ${(opts.slot ?? 0) + 1}`, type: 'photo', slot: opts.slot ?? 0, ...center(960, 1080) },
+    // A circle photo place: a square box (so the circle is round) with an accent ring.
+    photo: opts.circle
+      ? { id: newLayerId('photo'), name: `Circle photo ${(opts.slot ?? 0) + 1}`, type: 'photo', slot: opts.slot ?? 0, ...center(720, 720), shape: 'circle', stroke: 'accent', strokeWidth: 18 }
+      : { id: newLayerId('photo'), name: `Photo slot ${(opts.slot ?? 0) + 1}`, type: 'photo', slot: opts.slot ?? 0, ...center(960, 1080) },
     'fixed-photo': { id: newLayerId('fixed'), name: 'Fixed photo', type: 'fixed-photo', assetId: opts.assetId ?? '', ...center(640, 360) },
     logo: { id: newLayerId('logo'), name: 'Logo', type: 'logo', ...center(300, 130), plate: true },
     text: { id: newLayerId('text'), name: 'Text', type: 'text', text: '{{title}}', ...center(1400, 220), fontSize: 72, fontWeight: 800, maxLines: 2 },

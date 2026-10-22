@@ -25,9 +25,19 @@ const base = {
   locked: z.boolean().default(false),
 };
 
+/**
+ * A photo place's frame (owner request: a circle photo place with a coloured ring, as in a two-person featured image).
+ * 'circle' cuts the photo to the circle (an ellipse in a non-square box); the border is drawn inside the place.
+ */
+const photoFrame = {
+  shape: z.enum(['rect', 'circle']).default('rect'),
+  stroke: color.nullable().default(null),
+  strokeWidth: num(0, 100).default(0),
+};
+
 export const layerSchema = z.discriminatedUnion('type', [
-  z.object({ ...base, type: z.literal('photo'), slot: z.number().int().min(0).max(1).default(0), radius: num(0, 540).default(0), focus: z.enum(['auto', 'center', 'top']).default('auto') }),
-  z.object({ ...base, type: z.literal('fixed-photo'), assetId: z.string().max(40), radius: num(0, 540).default(0) }),
+  z.object({ ...base, type: z.literal('photo'), slot: z.number().int().min(0).max(1).default(0), radius: num(0, 540).default(0), focus: z.enum(['auto', 'center', 'top']).default('auto'), ...photoFrame }),
+  z.object({ ...base, type: z.literal('fixed-photo'), assetId: z.string().max(40), radius: num(0, 540).default(0), ...photoFrame }),
   z.object({ ...base, type: z.literal('logo'), plate: z.boolean().default(false), plateColor: color.default('#ffffff'), platePadding: num(0, 200).default(16), plateRadius: num(0, 540).default(12) }),
   z.object({
     ...base,
@@ -60,13 +70,43 @@ export const templateSchema = z.object({
 });
 export type ImageTemplate = z.output<typeof templateSchema>;
 
-export const siteImageSettingsSchema = z.object({
+/** The Tigram writer's own templates (owner request: a Celebrity and a Tigram image template). */
+export const writerTemplatesSchema = z.object({
   featured: templateSchema,
-  /** Body images: null = clean photo/illustration cropped to 16:9 (no text, no logo). */
+  body: templateSchema.nullable().default(null),
+  /**
+   * On: ChatGPT draws the featured picture without text and it goes into this featured design, whose title layer shows
+   * the title. Off: ChatGPT writes the title on the picture, which gets the body design (logo) like the body pictures.
+   */
+  useFeatured: z.boolean().default(true),
+});
+export type WriterTemplates = z.output<typeof writerTemplatesSchema>;
+
+export const siteImageSettingsSchema = z.object({
+  /** Celebrity featured image (the photo design). */
+  featured: templateSchema,
+  /** Celebrity body images: null = clean photo cropped to 16:9 (no text, no logo). */
   body: templateSchema.nullable().default(null),
   logoAssetId: z.string().max(40).nullable().default(null),
+  /** Tigram templates; null = the Celebrity templates are used for Tigram too (with the featured design on). */
+  tigram: writerTemplatesSchema.nullable().default(null),
 });
 export type SiteImageSettings = z.output<typeof siteImageSettingsSchema>;
+
+export type TemplateSet = 'celebrity' | 'tigram';
+
+/** The templates one writer uses on a website. */
+export function templateSet(s: SiteImageSettings, set: TemplateSet): WriterTemplates {
+  if (set === 'tigram' && s.tigram) return s.tigram;
+  return { featured: s.featured, body: s.body, useFeatured: true };
+}
+
+/** The settings with one writer's templates replaced. */
+export function withTemplateSet(s: SiteImageSettings, set: TemplateSet, t: WriterTemplates): SiteImageSettings {
+  return set === 'tigram' ? { ...s, tigram: t } : { ...s, featured: t.featured, body: t.body };
+}
+
+export const templateSetFor = (moduleKey: string): TemplateSet => (moduleKey === 'tigram-writer' ? 'tigram' : 'celebrity');
 
 let counter = 0;
 const lid = (p: string) => `${p}${(counter++).toString(36)}`;
@@ -105,6 +145,20 @@ export function presetSplit(accent = '#4f46e5'): ImageTemplate {
   });
 }
 
+/** Preset (owner request): the main photo across the canvas, the second photo in a circle with an accent ring. */
+export function presetPhotoCircle(accent = '#4f46e5'): ImageTemplate {
+  return templateSchema.parse({
+    name: 'Photo with circle photo',
+    background: '#f3f4f6',
+    accent,
+    layers: [
+      { id: lid('photo'), name: 'Main photo', type: 'photo', slot: 0, x: 0, y: 0, width: 1920, height: 1080 },
+      { id: lid('circle'), name: 'Circle photo', type: 'photo', slot: 1, x: 1020, y: 110, width: 860, height: 860, shape: 'circle', stroke: 'accent', strokeWidth: 22 },
+      { id: lid('logo'), name: 'Logo', type: 'logo', x: 50, y: 40, width: 260, height: 110, plate: true, plateColor: '#ffffff' },
+    ],
+  });
+}
+
 /** Body preset: the photo full-bleed with a small logo in the corner (no text). */
 export function presetBodyCornerLogo(accent = '#4f46e5'): ImageTemplate {
   return templateSchema.parse({
@@ -118,10 +172,10 @@ export function presetBodyCornerLogo(accent = '#4f46e5'): ImageTemplate {
   });
 }
 
-export const FEATURED_PRESETS = { single: presetSingle, split: presetSplit } as const;
+export const FEATURED_PRESETS = { single: presetSingle, split: presetSplit, circle: presetPhotoCircle } as const;
 
 export function defaultSiteImageSettings(accent?: string): SiteImageSettings {
-  return { featured: presetSingle(accent), body: null, logoAssetId: null };
+  return { featured: presetSingle(accent), body: null, logoAssetId: null, tigram: null };
 }
 
 export function parseSiteImageSettings(raw: string | null | undefined): SiteImageSettings {

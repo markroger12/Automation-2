@@ -11,11 +11,13 @@ export interface NavItem {
   children?: NavItem[];
   /** Additional path prefixes that should highlight this item. */
   match?: string[];
+  /** A heading shown above this item; it applies to the items after it (owner request: easier to find pages). */
+  section?: string;
 }
 
 export const NAV_ITEMS: NavItem[] = [
   { href: '/', label: 'Overview', icon: 'LayoutDashboard' },
-  { href: '/single-article', label: 'Single Article', icon: 'PenLine' },
+  { href: '/single-article', label: 'Single Article', icon: 'PenLine', section: 'Articles' },
   { href: '/queue', label: 'Article Queue', icon: 'ListOrdered', match: ['/articles'] },
   { href: '/campaigns', label: 'Bulk Campaigns', icon: 'Layers' },
   { href: '/history', label: 'Article History', icon: 'History' },
@@ -24,9 +26,10 @@ export const NAV_ITEMS: NavItem[] = [
     href: '/websites',
     label: 'Websites',
     icon: 'Globe',
+    section: 'Websites',
     children: [{ href: '/website-control', label: 'Website Control', icon: 'LayoutGrid' }],
   },
-  { href: '/prompts', label: 'Prompt Manager', icon: 'MessageSquareText' },
+  { href: '/prompts', label: 'Prompt Manager', icon: 'MessageSquareText', section: 'Content tools' },
   {
     href: '/editorial',
     label: 'Editorial Tools',
@@ -43,6 +46,7 @@ export const NAV_ITEMS: NavItem[] = [
     href: '/productivity',
     label: 'Productivity',
     icon: 'Gauge',
+    section: 'Growth & publishing',
     children: [{ href: '/search-performance', label: 'Search Performance', icon: 'LineChart' }],
   },
   {
@@ -52,7 +56,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [{ href: '/calendar', label: 'Publishing Calendar', icon: 'CalendarDays' }],
   },
   { href: '/image-templates', label: 'Image Template', icon: 'Image' },
-  { href: '/settings', label: 'Settings', icon: 'Settings' },
+  { href: '/settings', label: 'Settings', icon: 'Settings', section: 'System' },
   {
     href: '/diagnostics',
     label: 'Logs / Diagnostics',
@@ -68,3 +72,34 @@ export const NAV_ITEMS: NavItem[] = [
 
 /** Pages not yet built in the current milestone. Updated as milestones land. */
 export const SOON_ROUTES = new Set<string>([]);
+
+/**
+ * The menu filtered by a search (owner request: a search box above Overview). A section whose name matches keeps all
+ * its pages; otherwise only its matching pages are kept (with the section). Case and accents are ignored.
+ */
+export function filterNav(items: NavItem[], query: string): NavItem[] {
+  const fold = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return items;
+  const hit = (item: NavItem) => words.every((w) => fold(`${item.label} ${item.href.replace(/[/-]/g, ' ')}`).includes(w));
+  const out: NavItem[] = [];
+  for (const item of items) {
+    if (hit(item)) out.push(item);
+    else {
+      const children = (item.children ?? []).filter(hit);
+      if (children.length) out.push({ ...item, children });
+    }
+  }
+  return out;
+}
+
+/** The heading each top-level page belongs to (the last `section` before it, in menu order). */
+export const NAV_SECTIONS: Record<string, string | null> = (() => {
+  const out: Record<string, string | null> = {};
+  let current: string | null = null;
+  for (const item of NAV_ITEMS) {
+    if (item.section) current = item.section;
+    out[item.href] = current;
+  }
+  return out;
+})();

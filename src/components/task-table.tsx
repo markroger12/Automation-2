@@ -27,6 +27,8 @@ export interface TaskTableProps {
   mode: 'queue' | 'history';
   websites: { id: string; name: string }[];
   initialGroup?: Group;
+  /** A search from the sidebar (“Articles: …”). */
+  initialQuery?: string;
   pollMs?: number;
   campaignId?: string;
 }
@@ -42,7 +44,7 @@ interface Filters {
   to: string;
 }
 
-export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3000, campaignId }: TaskTableProps) {
+export function TaskTable({ storageKey, mode, websites, initialGroup, initialQuery, pollMs = 3000, campaignId }: TaskTableProps) {
   const toast = useToast();
   const [filters, setFilters] = usePersistentState<Filters>(`${storageKey}:filters`, {
     group: initialGroup ?? 'all',
@@ -67,6 +69,10 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
     if (initialGroup) setFilters((f) => ({ ...f, group: initialGroup }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialGroup]);
+  useEffect(() => {
+    if (initialQuery !== undefined) setFilters((f) => ({ ...f, q: initialQuery, group: 'all' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
 
   const query = useMemo(() => {
     const p = new URLSearchParams({ group: filters.group, sort: filters.sort, dir: filters.dir, limit: String(limit) });

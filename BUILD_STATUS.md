@@ -2696,4 +2696,5 @@ real-photo harness (scratch): 17 Commons photos, real MediaPipe face + person de
 Chromium smoke of the pen tool (scratch database, dev server)
 npx vitest run                      # 47 files, 342 tests pass (final head)
 BAS_TEST_MEDIAPIPE_DIR=<scratch mediapipe> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 3 files, 26/26 (the real-MediaPipe test ran: not skipped)
+next build                          # compiled
 ```

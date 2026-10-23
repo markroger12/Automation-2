@@ -2915,3 +2915,45 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 48 files, 350 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 47/47
 ```
+
+## Owner report (2026-10-23): articles queued by the workflow get no category chosen
+
+**Cause:**
+- A workflow keyword has no category of its own. Every workflow article took the website's default category, which a category sync sets to “Uncategorized” (or the first category).
+- Tigram's CATEGORY stage (ChatGPT chooses one existing category) runs only when the task has no category. The default looked like the owner's choice, so the stage was skipped: in the workflow, and in Single Article / Bulk when the category was left to the writer (“Let the CATEGORY stage choose”, “chosen by the writer”).
+- Celebrity had no category stage at all.
+- **Reproduced first:** the new `tests/unit/category-choice.test.ts` failed 7/7 on the old code.
+
+**Fix (owner decision: ChatGPT chooses):**
+- **One CATEGORY stage for both writers** (`src/worker/pipelines/category.ts`):
+  - ChatGPT chooses one of the website's synced categories; “Uncategorized” is offered only when there is no other;
+  - with one category left it is taken without a prompt;
+  - an answer naming no existing category keeps the website's default, with a warning.
+- **When it runs:**
+  - for a task without a category, and for every workflow task (also those queued before this fix, which carry the default as a placeholder);
+  - never once the WordPress draft exists (`wpPostId`): the saved post keeps its category, which the draft checks compare.
+- **Celebrity:** a CATEGORY stage after QUICK_BIO, with its own prompt (Prompt Manager: “Celebrity — Category”, seeded at start). A category chosen in Single Article or a Bulk row skips it. Celebrity tasks still get the website default at creation, so the pre-check is unchanged.
+- **Tigram:** without a chosen category the task no longer takes the website default at creation, in Single Article and Bulk too. The CATEGORY stage chooses, with the default as the fallback.
+
+**Tests:**
+- **New `tests/unit/category-choice.test.ts` (7):**
+  - workflow Celebrity: one category prompt, without “Uncategorized”, result “Celebrities”;
+  - workflow Tigram on a website whose default is “Uncategorized”: the stage runs;
+  - Single Article Tigram left to the stage: no default at creation, the stage runs;
+  - an owner-chosen category: no prompt, the stage is skipped;
+  - no matching answer: the default is kept, with a note;
+  - an existing draft: no prompt, the category is unchanged;
+  - Bulk preview: a Tigram row without a category stays empty, a Celebrity row takes the default.
+- **`prompt-seed.test.ts`:** 16 shipped prompts instead of 15.
+
+**Not verified here:**
+- The owner's own websites and their category names (German installs: “Unkategorisiert”/“Ohne Kategorie” are treated as “Uncategorized”, “Allgemein” is not).
+
+**Commands run**
+```
+npx vitest run tests/unit/category-choice.test.ts   # old code: 7 failed; new: 7/7
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 357 tests: 356 pass, prompt-seed failed on the old count of 15
+npx vitest run tests/unit/prompt-seed.test.ts   # after the update to 16: 3/3
+npx vitest run --config vitest.integration.config.ts tests/integration/migration-upgrade.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 20/20
+```

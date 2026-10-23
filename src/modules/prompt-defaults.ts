@@ -216,6 +216,23 @@ Then deliver the full article as Markdown, without a redundant title heading or 
 Keep paragraphs easy to follow and varied in length. Distinguish verified facts from estimates, opinions, unsupported product claims and current information you cannot confirm. Do not pretend to have tested software or products unless the research actually provides that evidence. No fabricated statistics, links, release dates, quotations or testimonials. No empty filler sections. The primary goal is to solve the reader's question, not to game a plugin score.`,
   },
   {
+    moduleKey: 'celebrity-writer',
+    stageKey: 'CATEGORY',
+    name: 'Celebrity — Category',
+    description: 'Pick exactly one existing synchronized WordPress category (only for articles without a chosen category, e.g. from the workflow).',
+    version: 1,
+    kind: 'text',
+    previousHashes: [],
+    variables: [KEYWORD, v('categories', 'Synchronized category names, one per line', true, 'stage')],
+    content: `Select exactly one suitable WordPress category for the article about "{{keyword}}" from this list:
+
+{{categories}}
+
+Choose only a category literally present in the list. Output a single line:
+
+CATEGORY: <exact category name>`,
+  },
+  {
     moduleKey: 'tigram-writer',
     stageKey: 'CATEGORY',
     name: 'Tigram — Category',

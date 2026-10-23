@@ -1,7 +1,7 @@
 {
   "name": "blog-automation-studio-desktop",
   "productName": "Blog Automation Studio",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": true,
   "description": "Blog Automation Studio as a desktop app: the dashboard in its own window, the server and the worker in the background.",
   "author": "Blog Automation Studio",

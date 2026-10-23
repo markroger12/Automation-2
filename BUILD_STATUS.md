@@ -2797,3 +2797,23 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 next build                          # compiled (final head)
 ```
 Merged into `claude/desktop-app` as well (typecheck 0 errors there), so the Windows installer carries it.
+
+## Owner report (2026-10-23): the installed app stopped at “The data could not be prepared”
+The owner installed the Windows app (to `C:\New folder\Blog Automation Studio`) with the data folder `F:\claude\Automation-2\data`. The app stopped with “prisma migrate deploy failed”, and the log showed `Cannot find module 'fast-check'` (required by `prisma → @prisma/config → effect`).
+
+**Cause:**
+- `desktop/prepare.mjs` copied `node_modules` minus a hand-written list of “test tools”, and `fast-check` was on that list. The Prisma CLI loads it for every migration.
+- The Linux check passed only because the bundle sat inside the repository: Node.js found `fast-check` in the repository's own `node_modules`, which an installed app does not have.
+- **Reproduced here:** the old bundle, copied outside the repository, fails with the owner's exact error.
+
+**Fix (desktop 3.0.1):**
+- **`prepare.mjs`:** the bundle's `node_modules` now holds exactly what the tool loads. That is found as Node.js finds it: the tool's dependencies plus the Prisma CLI (migrations) and tsx (the worker and the start-up steps), and everything those depend on, which on this machine came to 111 packages. Packages for other systems are left out, and a needed package that is not installed stops the build.
+- **New `desktop/check-bundle.mjs`:** copies the bundle to a new temporary folder outside the repository and runs it there with its own Node.js:
+  - the start-up steps on a new data folder;
+  - then the dashboard server and the worker;
+  - it fails unless the dashboard answers HTTP 200 and the worker runs.
+- **Windows workflow:** runs this check before it builds the installer.
+
+**Tests:**
+- `check-bundle.mjs` on the old bundle: “Cannot find module 'fast-check'”, exit 1.
+- On the new bundle: migrations and settings ✓, dashboard HTTP 200 and worker running ✓, exit 0.

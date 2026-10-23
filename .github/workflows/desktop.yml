@@ -38,6 +38,11 @@ jobs:
       - name: Assemble the bundle (the tool and Node.js for Windows)
         run: node desktop/prepare.mjs
 
+      # Runs a copy of the bundle outside the repository, as the installed app does: start-up steps on a new data
+      # folder, the dashboard and the worker (owner report: a package missing from the bundle stopped the app).
+      - name: Check the bundle outside the repository
+        run: node desktop/check-bundle.mjs
+
       - name: Install Electron and electron-builder
         working-directory: desktop
         run: npm ci --no-audit --no-fund

@@ -23,13 +23,10 @@ if (!fs.existsSync(path.join(root, '.next', 'BUILD_ID'))) {
 }
 
 // ---- the tool
-const KEEP = ['package.json', 'next.config.ts', 'tsconfig.json', '.env.example', 'middleware.ts', 'prisma', 'src', 'scripts', 'public', 'extension', '.next', 'node_modules'];
-// Test and build tools the running app never loads.
-const SKIP_MODULES = new Set(['vitest', '@vitest', 'vite', 'axe-core', 'fast-check', 'concurrently', '@types', 'tailwindcss', '@tailwindcss', '.cache']);
+const KEEP = ['package.json', 'next.config.ts', 'tsconfig.json', '.env.example', 'middleware.ts', 'prisma', 'src', 'scripts', 'public', 'extension', '.next'];
 const skip = (rel) => {
   const parts = rel.split(path.sep);
   if (parts[0] === '.next' && parts[1] === 'cache') return true;
-  if (parts[0] === 'node_modules' && SKIP_MODULES.has(parts[1])) return true;
   // Never a database or a secret.
   return /\.db(-journal|-wal|-shm)?$/.test(rel) || path.basename(rel) === '.env';
 };
@@ -39,6 +36,54 @@ for (const item of KEEP) {
   fs.cpSync(from, path.join(bundle, 'app', item), { recursive: true, verbatimSymlinks: true, filter: (src) => !skip(path.relative(root, src)) });
   console.log(`  app/${item}`);
 }
+
+// ---- the packages the tool loads
+// Owner report: the installed app stopped at “prisma migrate deploy failed … Cannot find module 'fast-check'”. A list
+// of packages to leave out had dropped one the Prisma CLI loads (prisma → @prisma/config → effect → fast-check). Now
+// only what the tool needs is taken, found as Node.js finds it: the tool's dependencies, plus the Prisma CLI
+// (migrations) and tsx (the worker and the start-up steps run from TypeScript), and everything they depend on.
+const modules = path.join(root, 'node_modules');
+const RUNTIME_TOOLS = ['prisma', 'tsx'];
+/** The folder Node.js loads `name` from when `from` (a package folder) requires it; null when it is not installed. */
+function resolvePackage(name, from) {
+  for (let dir = from; dir.startsWith(root); dir = path.dirname(dir)) {
+    const candidate = path.join(dir, 'node_modules', name);
+    if (fs.existsSync(path.join(candidate, 'package.json'))) return candidate;
+    if (dir === root) break;
+  }
+  return null;
+}
+function runtimePackages() {
+  const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const found = new Set();
+  const missing = [];
+  const queue = [...Object.keys(rootPkg.dependencies ?? {}), ...RUNTIME_TOOLS].map((name) => ({ name, from: root, optional: false }));
+  while (queue.length) {
+    const { name, from, optional } = queue.shift();
+    const dir = resolvePackage(name, from);
+    if (!dir) {
+      // Optional packages for other systems (e.g. the Linux build of sharp on Windows) are not installed.
+      if (!optional) missing.push(`${name} (needed by ${path.relative(root, from) || 'the tool'})`);
+      continue;
+    }
+    if (found.has(dir)) continue;
+    found.add(dir);
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const optionalNames = new Set([...Object.keys(pkg.optionalDependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})]);
+    for (const dep of new Set([...Object.keys(pkg.dependencies ?? {}), ...optionalNames])) queue.push({ name: dep, from: dir, optional: optionalNames.has(dep) && !(pkg.dependencies ?? {})[dep] });
+  }
+  if (missing.length) throw new Error(`Packages the tool needs are not installed (run npm ci): ${missing.join(', ')}`);
+  return [...found].sort();
+}
+const packages = runtimePackages();
+for (const dir of packages) {
+  const rel = path.relative(root, dir);
+  // A package's own nested node_modules are copied only for the packages found above.
+  fs.cpSync(dir, path.join(bundle, 'app', rel), { recursive: true, verbatimSymlinks: true, filter: (src) => !path.relative(dir, src).split(path.sep).includes('node_modules') });
+}
+// The generated Prisma client (@prisma/client loads it from here).
+fs.cpSync(path.join(modules, '.prisma'), path.join(bundle, 'app', 'node_modules', '.prisma'), { recursive: true });
+console.log(`  app/node_modules (${packages.length} packages the tool loads)`);
 
 // ---- Node.js
 const base = `https://nodejs.org/dist/${NODE_VERSION}`;

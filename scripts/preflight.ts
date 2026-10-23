@@ -16,10 +16,12 @@ import { loadEnv } from '../src/lib/env';
 import { runMigrations } from './migrate';
 import { runSeed } from './seed';
 import { installMediapipe } from './install-tools';
-import { faceToolAvailable } from '../src/images/faces';
+import { faceToolAvailable, personModelAvailable } from '../src/images/faces';
 
 const root = projectRoot();
 const marker = path.join(root, '.next', 'bas-build-source.txt');
+/** Started by the desktop app (owner request: the tool as a Windows program, no Node.js or npm to install). */
+const desktop = process.env.BAS_DESKTOP === '1';
 
 /** The code version: the git commit plus a fingerprint of uncommitted changes (empty when git is unavailable). */
 function sourceVersion(): string {
@@ -40,12 +42,14 @@ async function main() {
     if (v) fs.writeFileSync(marker, v);
     return;
   }
-  console.log('▸ Preparing (the safe steps of npm run setup: data folders, .env, migrations with backup, settings)…');
+  console.log(desktop ? '▸ Preparing your data (migrations with a backup first, settings)…' : '▸ Preparing (the safe steps of npm run setup: data folders, .env, migrations with backup, settings)…');
   const major = Number(process.versions.node.split('.')[0]);
-  if (major < 26) console.warn(`  ⚠ Node.js 26+ is required (found ${process.versions.node}). Install the latest Node.js from https://nodejs.org.`);
+  // The desktop app runs the tool on its own built-in Node.js (nothing to install).
+  if (major < 26 && !desktop) console.warn(`  ⚠ Node.js 26+ is required (found ${process.versions.node}). Install the latest Node.js from https://nodejs.org.`);
   ensureDataDirs();
   const envFile = path.join(root, '.env');
-  if (!fs.existsSync(envFile)) {
+  // The desktop app passes its settings itself and never writes into its installation folder.
+  if (!desktop && !fs.existsSync(envFile)) {
     fs.writeFileSync(envFile, fs.readFileSync(path.join(root, '.env.example'), 'utf8'), { flag: 'wx' });
     console.log('  Created .env from .env.example ✓');
   }
@@ -53,9 +57,9 @@ async function main() {
   await runMigrations();
   await runSeed();
   // The face detector from the earlier tool (free, ~20 MB); without internet the images just skip face positions.
-  if (!faceToolAvailable()) {
-    console.log('▸ Installing the face detector for photo crops (once)…');
-    await installMediapipe().catch((error) => console.warn(`  ⚠ Face detector not installed now (${(error as Error).message}); run npm run tools:install later.`));
+  if (!faceToolAvailable() || !personModelAvailable()) {
+    console.log(faceToolAvailable() ? '▸ Installing the person detector for photo crops (once)…' : '▸ Installing the face detector for photo crops (once)…');
+    await installMediapipe().catch((error) => console.warn(`  ⚠ Face detector not installed now (${(error as Error).message}); ${desktop ? 'it is tried again at the next start' : 'run npm run tools:install later'}.`));
   }
   if (!args.includes('--build')) return;
   const built = fs.existsSync(path.join(root, '.next', 'BUILD_ID'));
@@ -77,6 +81,6 @@ async function main() {
 
 main().catch((error) => {
   console.error(`\n✖ Could not prepare the app: ${error instanceof Error ? error.message : String(error)}`);
-  console.error('  Your data was not reset. Run `npm run setup` to see each step, then `npm run start:all` again.');
+  console.error(desktop ? '  Your data was not reset. The log has each step; start the app again after fixing the cause.' : '  Your data was not reset. Run `npm run setup` to see each step, then `npm run start:all` again.');
   process.exit(1);
 });

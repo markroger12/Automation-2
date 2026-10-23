@@ -39,6 +39,7 @@ Run before handing over a release. Each line says **where it can be verified**: 
 - [ ] One **Celebrity** and one **Tigram** article from Single Article reach a verified WordPress draft on a real site (English), and one German article.
 - [ ] Images: featured image and body images render with the site template and upload once.
 - [ ] Celebrity photos from the **ChatGPT image search gallery**:
+  - the Image search prompt and the photo check go into the article's ChatGPT chat (no new chat);
   - after the Image search prompt, the gallery is opened and stepped through;
   - the Images tab lists the saved pictures as “ChatGPT image search”;
   - three distinct photos are used for the three slots.
@@ -46,6 +47,11 @@ Run before handing over a release. Each line says **where it can be verified**: 
 - [ ] Rank Math (if installed): focus keyword, SEO title and description visible in the editor; the score shown is the one Rank Math displays.
 - [ ] Plagiarism Evidence: Wikipedia and linked pages are read (coverage list “compared”); with a `SERPER_API_KEY`, search results appear.
 - [ ] Workflow on a site **with publishing allowed**: a draft is scheduled for its slot at the right local time and published by WordPress; on a draft-only site nothing is published.
+- [ ] **Request indexing** (extension 3.3.0, workflow switch on, Google signed in once in Automation Chrome):
+  - about a minute after a publish, a background tab opens the post in Search Console's URL Inspection;
+  - REQUEST INDEXING is clicked once and the tab closes;
+  - the keyword shows “Indexing requested … Google: …”, and Search Console's URL Inspection for the post shows the request;
+  - signed out of Google, the keyword asks you to sign in in Automation Chrome.
 - [ ] Backup and restore: `npm run db:backup -- --media`, then restore it into a copy and open the dashboard.
 - [ ] Site health (website page): **Test session** shows the login session, REST API, account permissions, editor and Rank Math as measured; one real draft save appears with its duration.
 - [ ] Research Evidence on a real celebrity article: cited pages are fetched (status OK), claims show their sources, and a contradicted fact is visible.

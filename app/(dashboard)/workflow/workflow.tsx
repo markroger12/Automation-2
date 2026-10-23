@@ -2,13 +2,15 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpToLine, Eye, Plus, RotateCcw, Save, X } from 'lucide-react';
+import { ArrowUpToLine, Eye, FastForward, Plus, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
-import { Button, useToast } from '@/components/client';
+import { Button, ConfirmDialog, useToast } from '@/components/client';
+import { TimePicker } from '@/components/time-picker';
+import { IndexingPanel } from '@/components/indexing-panel';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
-import { inspectionProperty, inspectionUrl } from '@/lib/workflow/search-console';
+import { inspectionProperty, searchConsoleHome } from '@/lib/workflow/search-console';
 
 interface Site {
   id: string;
@@ -29,6 +31,10 @@ interface Keyword {
   lastError: string | null;
   position: number;
   task: { id: string; status: string; wpPostId: number | null; wpEditUrl: string | null } | null;
+  /** Screenshot of Search Console's answer after “Request indexing”. */
+  proofId?: string | null;
+  /** Google's URL Inspection link for the post (from the URL Inspection API). */
+  inspectLink?: string | null;
 }
 interface View {
   website: { id: string; name: string; timezone: string; canPublish: boolean; publicUrl: string };
@@ -60,6 +66,11 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [keep, setKeep] = useState<Set<number>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [acted, setActed] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteArticles, setDeleteArticles] = useState(false);
+  const [confirmForce, setConfirmForce] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const v = await api<View>(`/api/websites/${siteId}/workflow`);
@@ -112,14 +123,30 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
     }
   }
 
-  async function action(act: string, extra: Record<string, unknown> = {}) {
+  async function action(act: string, extra: Record<string, unknown> = {}, done = (n: number) => `${n} keyword(s) updated.`) {
     try {
       const r = await api<{ changed: number; notes: string[] }>(`/api/websites/${siteId}/workflow/keywords/action`, { body: { keywordIds: [...selected], action: act, ...extra } });
-      toast(r.notes.length ? 'info' : 'success', `${r.changed} keyword(s) updated.${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
+      toast(r.notes.length ? 'info' : 'success', `${done(r.changed)}${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
+      setSelected(new Set());
+      await load();
+      setActed((n) => n + 1);
+    } catch (e) {
+      toast('error', (e as Error).message);
+    }
+  }
+
+  async function removeKeywords() {
+    setBusy(true);
+    try {
+      const r = await api<{ changed: number; notes: string[] }>(`/api/websites/${siteId}/workflow/keywords/action`, { body: { keywordIds: [...selected], action: 'delete', articles: deleteArticles } });
+      toast('success', `${r.changed} keyword(s) deleted${deleteArticles ? ' with their articles' : ''}. WordPress was not changed.${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
       setSelected(new Set());
       await load();
     } catch (e) {
       toast('error', (e as Error).message);
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
     }
   }
 
@@ -187,7 +214,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                 ))}
               </div>
               <div className="mt-2 flex gap-2">
-                <Input aria-label="New slot" placeholder="3:30 PM" value={newSlot} onChange={(e) => setNewSlot(e.target.value)} className="w-32" />
+                <TimePicker ariaLabel="New slot" placeholder="3:30 PM" value={newSlot} onChange={setNewSlot} className="w-36" />
                 <Button size="sm" onClick={() => { if (newSlot.trim()) setForm({ ...form, slots: [...form.slots, newSlot.trim()] }); setNewSlot(''); }}>
                   <Plus className="h-4 w-4" /> Add
                 </Button>
@@ -223,7 +250,7 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
             </Field>
             <Checkbox
               label="Request indexing after publishing"
-              help="With Search Console connected (Search Performance page): about 35 seconds after a verified publish, the site's sitemap is resubmitted to Google, then Google's URL Inspection is asked for proof (1 h, 6 h, 24 h, then daily for 14 days). “Indexed” appears only when Google says the URL is on Google. Without the connection, a Search Console link appears and you request indexing yourself."
+              help="As you do it by hand: about 35 seconds after a verified publish, Automation Chrome opens the URL in Search Console (URL Inspection) and clicks “Request indexing”. Sign in to Google once in Automation Chrome with the account that owns the property; Search Console allows only a few requests a day, the rest wait for the next day. With Search Console connected (Search Performance page), Google's URL Inspection is then asked for proof (1 h, 6 h, 24 h, then daily for 14 days). “Indexed” appears only when Google says the URL is on Google."
               checked={form.requestIndexing}
               onChange={(e) => setForm({ ...form, requestIndexing: e.target.checked })}
             />
@@ -275,6 +302,8 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
             ) : null}
           </Card>
 
+          {view.workflow?.requestIndexing || view.keywords.some((k) => k.publishedUrl) ? <IndexingPanel version={acted} /> : null}
+
           <Card
             title="Keyword queue"
             description={Object.entries(counts).map(([k, n]) => `${n} ${KW_LABEL[k] ?? k.toLowerCase()}`).join(' · ') || 'Empty'}
@@ -285,10 +314,13 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                   <Button size="sm" onClick={() => void action('writer', { writer: 'tigram-writer' })}>Tigram</Button>
                   <Button size="sm" onClick={() => void action('top')}><ArrowUpToLine className="h-3.5 w-3.5" /> To top</Button>
                   <Button size="sm" onClick={() => void action('retry')}><RotateCcw className="h-3.5 w-3.5" /> Retry</Button>
+                  <Button size="sm" onClick={() => setConfirmForce(true)} title="Continue a stopped article despite the problems found"><FastForward className="h-3.5 w-3.5" /> Force continue</Button>
                   <Button size="sm" onClick={() => void action('skip')}>Skip</Button>
                   <Button size="sm" onClick={() => void action('restore')}>Restore</Button>
-                  <Button size="sm" onClick={() => void action('indexing-requested')}>Indexing requested</Button>
-                  <Button size="sm" onClick={() => void action('indexed')}>Verified indexed</Button>
+                  <Button size="sm" onClick={() => void action('request-indexing', {}, (n) => `Automation Chrome requests indexing in Search Console for ${n} keyword(s) now; Google's answer shows on each keyword.`)} title="Automation Chrome inspects the post URL in Search Console and clicks REQUEST INDEXING now"><Send className="h-3.5 w-3.5" /> Request indexing</Button>
+                  <Button size="sm" onClick={() => void action('indexing-requested')} title="You requested indexing yourself in Search Console">Mark requested</Button>
+                  <Button size="sm" onClick={() => void action('indexed')} title="You checked in Search Console that the URL is on Google">Mark indexed</Button>
+                  <Button size="sm" variant="danger" onClick={() => { setDeleteArticles(false); setConfirmDelete(true); }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
                 </div>
               ) : null
             }
@@ -323,9 +355,14 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
                             live post
                           </a>
                         ) : null}
+                        {k.proofId ? (
+                          <a className="ml-1 text-indigo-600 underline" href={`/api/media/${k.proofId}`} target="_blank" rel="noreferrer" title="Screenshot of Search Console after “Request indexing”">
+                            Search Console screenshot
+                          </a>
+                        ) : null}
                         {k.publishedUrl && view.workflow?.requestIndexing && ['PUBLISHED', 'INDEXING_REQUESTED'].includes(k.status) ? (
-                          <a className="ml-1 text-indigo-600 underline" href={inspectionUrl(inspectionProperty(view.workflow.searchConsoleProperty, view.website.publicUrl), k.publishedUrl)} target="_blank" rel="noreferrer">
-                            inspect in Search Console
+                          <a className="ml-1 text-indigo-600 underline" href={k.inspectLink ?? searchConsoleHome(inspectionProperty(view.workflow.searchConsoleProperty, view.website.publicUrl))} target="_blank" rel="noreferrer" title={k.inspectLink ? 'URL Inspection for this post' : 'Search Console: type the post URL into “Inspect any URL”'}>
+                            {k.inspectLink ? 'inspect in Search Console' : 'open Search Console'}
                           </a>
                         ) : null}
                       </td>
@@ -338,6 +375,42 @@ export function WorkflowPage({ sites, initialSiteId }: { sites: Site[]; initialS
           </Card>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmForce}
+        title={`Force continue ${view.keywords.filter((k) => selected.has(k.id) && k.status === 'FAILED').length} keyword(s)?`}
+        confirmLabel="Force continue"
+        busy={busy}
+        onCancel={() => setConfirmForce(false)}
+        onConfirm={() => {
+          setConfirmForce(false);
+          void action('force');
+        }}
+      >
+        <div className="space-y-2">
+          <p>You accept the problems found below. A saved draft is published at the next free slot like any other (only on a website with publishing switched on); an article held for review continues as with “Approve despite review reasons”. This is recorded.</p>
+          <ul className="max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-xs">
+            {view.keywords
+              .filter((k) => selected.has(k.id) && k.status === 'FAILED')
+              .map((k) => (
+                <li key={k.id}>
+                  <span className="font-medium">{k.keyword}</span>: {k.lastError ?? 'stopped'}
+                </li>
+              ))}
+          </ul>
+          {view.keywords.some((k) => selected.has(k.id) && k.status !== 'FAILED') ? <p className="text-muted text-xs">Keywords that are not stopped are left as they are.</p> : null}
+        </div>
+      </ConfirmDialog>
+      <ConfirmDialog open={confirmDelete} title={`Delete ${selected.size} keyword(s)?`} confirmLabel="Delete" tone="danger" busy={busy} onCancel={() => setConfirmDelete(false)} onConfirm={() => void removeKeywords()}>
+        <div className="space-y-2">
+          <p>The keywords are removed from this workflow. Drafts and posts in WordPress stay as they are.</p>
+          {view.keywords.some((k) => selected.has(k.id) && k.task) ? (
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={deleteArticles} onChange={(e) => setDeleteArticles(e.target.checked)} />
+              <span>Also delete their articles from the app (a report of each is saved in data\backups\deleted-articles first)</span>
+            </label>
+          ) : null}
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

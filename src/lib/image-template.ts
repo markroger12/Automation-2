@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FONT_IDS } from './fonts';
 
 /**
  * Branded image templates (client-safe). Coordinates are always in a true
@@ -25,15 +26,36 @@ const base = {
   locked: z.boolean().default(false),
 };
 
+/**
+ * A point drawn with the pen tool (owner request: an Illustrator-like pen for custom photo places and shapes): its
+ * place in fractions of the layer box (0–1), and its two curve handles as offsets from it in the same units (0, 0 =
+ * a corner). Fractions keep the shape when the box is resized.
+ */
+const penPoint = z.object({ x: num(-1, 2), y: num(-1, 2), ix: num(-4, 4).default(0), iy: num(-4, 4).default(0), ox: num(-4, 4).default(0), oy: num(-4, 4).default(0) });
+export type PenPoint = z.output<typeof penPoint>;
+const penPoints = z.array(penPoint).min(2).max(200);
+
+/**
+ * A photo place's frame (owner request: a circle photo place with a coloured ring, as in a two-person featured image).
+ * 'circle' cuts the photo to the circle (an ellipse in a non-square box); the border is drawn inside the place.
+ * 'path' cuts it to a shape drawn with the pen tool (`points`, always closed).
+ */
+const photoFrame = {
+  shape: z.enum(['rect', 'circle', 'path']).default('rect'),
+  points: penPoints.optional(),
+  stroke: color.nullable().default(null),
+  strokeWidth: num(0, 100).default(0),
+};
+
 export const layerSchema = z.discriminatedUnion('type', [
-  z.object({ ...base, type: z.literal('photo'), slot: z.number().int().min(0).max(1).default(0), radius: num(0, 540).default(0), focus: z.enum(['auto', 'center', 'top']).default('auto') }),
-  z.object({ ...base, type: z.literal('fixed-photo'), assetId: z.string().max(40), radius: num(0, 540).default(0) }),
+  z.object({ ...base, type: z.literal('photo'), slot: z.number().int().min(0).max(1).default(0), radius: num(0, 540).default(0), focus: z.enum(['auto', 'center', 'top']).default('auto'), ...photoFrame }),
+  z.object({ ...base, type: z.literal('fixed-photo'), assetId: z.string().max(40), radius: num(0, 540).default(0), ...photoFrame }),
   z.object({ ...base, type: z.literal('logo'), plate: z.boolean().default(false), plateColor: color.default('#ffffff'), platePadding: num(0, 200).default(16), plateRadius: num(0, 540).default(12) }),
   z.object({
     ...base,
     type: z.literal('text'),
     text: z.string().max(400),
-    fontFamily: z.enum(['sans', 'serif', 'condensed', 'mono']).default('sans'),
+    fontFamily: z.enum(FONT_IDS).default('sans'),
     fontSize: num(8, 400).default(64),
     fontWeight: z.union([z.literal(400), z.literal(600), z.literal(700), z.literal(800)]).default(700),
     color: color.default('#ffffff'),
@@ -47,9 +69,27 @@ export const layerSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('rect'), fill: color.default('accent'), stroke: color.nullable().default(null), strokeWidth: num(0, 100).default(0), radius: num(0, 540).default(0) }),
   z.object({ ...base, type: z.literal('circle'), fill: color.default('accent'), stroke: color.nullable().default(null), strokeWidth: num(0, 100).default(0) }),
   z.object({ ...base, type: z.literal('svg'), svg: z.string().max(50_000) }),
+  // A shape drawn with the pen tool: closed (filled) or open (a line).
+  z.object({ ...base, type: z.literal('path'), points: penPoints, closed: z.boolean().default(true), fill: color.default('accent'), stroke: color.nullable().default(null), strokeWidth: num(0, 100).default(0) }),
 ]);
 export type Layer = z.output<typeof layerSchema>;
 export type LayerInput = z.input<typeof layerSchema>;
+
+/**
+ * The SVG path of pen points in a box of w×h pixels: straight lines between corners, cubic curves where a point has
+ * handles. Used by the renderer and the designer alike.
+ */
+export function penPathD(points: PenPoint[], closed: boolean, w: number, h: number): string {
+  if (!points.length) return '';
+  const f = (n: number) => Math.round(n * 100) / 100;
+  const P = (x: number, y: number) => `${f(x * w)} ${f(y * h)}`;
+  let d = `M${P(points[0].x, points[0].y)}`;
+  const seg = (a: PenPoint, b: PenPoint) =>
+    a.ox || a.oy || b.ix || b.iy ? ` C${P(a.x + a.ox, a.y + a.oy)} ${P(b.x + b.ix, b.y + b.iy)} ${P(b.x, b.y)}` : ` L${P(b.x, b.y)}`;
+  for (let i = 1; i < points.length; i++) d += seg(points[i - 1], points[i]);
+  if (closed && points.length > 2) d += `${seg(points[points.length - 1], points[0])} Z`;
+  return d;
+}
 
 export const templateSchema = z.object({
   version: z.literal(1).default(1),
@@ -60,13 +100,43 @@ export const templateSchema = z.object({
 });
 export type ImageTemplate = z.output<typeof templateSchema>;
 
-export const siteImageSettingsSchema = z.object({
+/** The Tigram writer's own templates (owner request: a Celebrity and a Tigram image template). */
+export const writerTemplatesSchema = z.object({
   featured: templateSchema,
-  /** Body images: null = clean photo/illustration cropped to 16:9 (no text, no logo). */
+  body: templateSchema.nullable().default(null),
+  /**
+   * On: ChatGPT draws the featured picture without text and it goes into this featured design, whose title layer shows
+   * the title. Off: ChatGPT writes the title on the picture, which gets the body design (logo) like the body pictures.
+   */
+  useFeatured: z.boolean().default(true),
+});
+export type WriterTemplates = z.output<typeof writerTemplatesSchema>;
+
+export const siteImageSettingsSchema = z.object({
+  /** Celebrity featured image (the photo design). */
+  featured: templateSchema,
+  /** Celebrity body images: null = clean photo cropped to 16:9 (no text, no logo). */
   body: templateSchema.nullable().default(null),
   logoAssetId: z.string().max(40).nullable().default(null),
+  /** Tigram templates; null = the Celebrity templates are used for Tigram too (with the featured design on). */
+  tigram: writerTemplatesSchema.nullable().default(null),
 });
 export type SiteImageSettings = z.output<typeof siteImageSettingsSchema>;
+
+export type TemplateSet = 'celebrity' | 'tigram';
+
+/** The templates one writer uses on a website. */
+export function templateSet(s: SiteImageSettings, set: TemplateSet): WriterTemplates {
+  if (set === 'tigram' && s.tigram) return s.tigram;
+  return { featured: s.featured, body: s.body, useFeatured: true };
+}
+
+/** The settings with one writer's templates replaced. */
+export function withTemplateSet(s: SiteImageSettings, set: TemplateSet, t: WriterTemplates): SiteImageSettings {
+  return set === 'tigram' ? { ...s, tigram: t } : { ...s, featured: t.featured, body: t.body };
+}
+
+export const templateSetFor = (moduleKey: string): TemplateSet => (moduleKey === 'tigram-writer' ? 'tigram' : 'celebrity');
 
 let counter = 0;
 const lid = (p: string) => `${p}${(counter++).toString(36)}`;
@@ -105,6 +175,20 @@ export function presetSplit(accent = '#4f46e5'): ImageTemplate {
   });
 }
 
+/** Preset (owner request): the main photo across the canvas, the second photo in a circle with an accent ring. */
+export function presetPhotoCircle(accent = '#4f46e5'): ImageTemplate {
+  return templateSchema.parse({
+    name: 'Photo with circle photo',
+    background: '#f3f4f6',
+    accent,
+    layers: [
+      { id: lid('photo'), name: 'Main photo', type: 'photo', slot: 0, x: 0, y: 0, width: 1920, height: 1080 },
+      { id: lid('circle'), name: 'Circle photo', type: 'photo', slot: 1, x: 1020, y: 110, width: 860, height: 860, shape: 'circle', stroke: 'accent', strokeWidth: 22 },
+      { id: lid('logo'), name: 'Logo', type: 'logo', x: 50, y: 40, width: 260, height: 110, plate: true, plateColor: '#ffffff' },
+    ],
+  });
+}
+
 /** Body preset: the photo full-bleed with a small logo in the corner (no text). */
 export function presetBodyCornerLogo(accent = '#4f46e5'): ImageTemplate {
   return templateSchema.parse({
@@ -118,10 +202,10 @@ export function presetBodyCornerLogo(accent = '#4f46e5'): ImageTemplate {
   });
 }
 
-export const FEATURED_PRESETS = { single: presetSingle, split: presetSplit } as const;
+export const FEATURED_PRESETS = { single: presetSingle, split: presetSplit, circle: presetPhotoCircle } as const;
 
 export function defaultSiteImageSettings(accent?: string): SiteImageSettings {
-  return { featured: presetSingle(accent), body: null, logoAssetId: null };
+  return { featured: presetSingle(accent), body: null, logoAssetId: null, tigram: null };
 }
 
 export function parseSiteImageSettings(raw: string | null | undefined): SiteImageSettings {

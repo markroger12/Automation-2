@@ -68,6 +68,46 @@ describe('extension agent endpoint', () => {
     expect((await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-2', version: '3.0.0' }))).status).toBe(200);
   });
 
+  it("the desktop app's ChatGPT tab: its own key and install id, prompts only to it while connected, never Search Console", async () => {
+    const { EXPECTED_EXTENSION_VERSION } = await import('@/lib/agent/version');
+    const { enqueue } = await import('@/lib/queue');
+    const app = 'k'.repeat(43);
+    const version = EXPECTED_EXTENSION_VERSION;
+    const payload = { operationId: 'diag:desktop', taskId: null, stageKey: 'DIAGNOSTIC', prompt: 'Reply with OK', promptHash: 'h', conversationUrl: null, newChat: true, attachments: [], expectImages: false, timeoutSec: 60, language: 'en' };
+    const { job } = await enqueue({ queue: 'chatgpt', kind: 'chatgpt.diagnostic', idempotencyKey: 'chatgpt:diag:desktop', priority: 100, maxAttempts: 2, payload });
+    process.env.BAS_DESKTOP_AGENT_KEY = app;
+    try {
+      const appHello = { action: 'hello', installId: 'desktop-app', version };
+      // The app's key works only with its install id, and the extension's key never with it.
+      expect((await handler.handleAgentRequest(req(appHello, { key: app, origin: null }))).status).toBe(200);
+      expect((await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-3', version }, { key: app }))).status).toBe(403);
+      expect((await handler.handleAgentRequest(req(appHello))).status).toBe(403);
+      expect((await handler.handleAgentRequest(req(appHello, { key: 'x'.repeat(43), origin: null }))).status).toBe(401);
+      // While the app is connected, Automation Chrome's extension is told so and gets no prompt.
+      const extHello = (await (await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-3', version }))).json()) as { config: { chatgptInApp: boolean } };
+      expect(extHello.config.chatgptInApp).toBe(true);
+      const refused = (await (await handler.handleAgentRequest(req({ action: 'claim', installId: 'inst-3', tabId: '17' }))).json()) as { job: null; reason: string };
+      expect(refused).toMatchObject({ job: null, reason: 'in-app' });
+      // The app gets it; Search Console requests are never handed to the app.
+      const claimed = (await (await handler.handleAgentRequest(req({ action: 'claim', installId: 'desktop-app', tabId: 'app-1' }, { key: app, origin: null }))).json()) as { job: { id: string } | null };
+      expect(claimed.job?.id).toBe(job.id);
+      const gsc = (await (await handler.handleAgentRequest(req({ action: 'gsc-claim', installId: 'desktop-app' }, { key: app, origin: null }))).json()) as { job: null; reason: string };
+      expect(gsc).toMatchObject({ job: null, reason: 'not-here' });
+      // Gone for 75 s+ (app closed): the extension takes ChatGPT again.
+      await client.workerStatus.update({ where: { id: 'extension:desktop-app' }, data: { lastSeenAt: new Date(Date.now() - 80_000) } });
+      const again = (await (await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-3', version }))).json()) as { config: { chatgptInApp: boolean } };
+      expect(again.config.chatgptInApp).toBe(false);
+      // Paused in the app (ChatGPT switched to Automation Chrome): at once.
+      await handler.handleAgentRequest(req({ ...appHello, claimsPaused: true }, { key: app, origin: null }));
+      const paused = (await (await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-3', version }))).json()) as { config: { chatgptInApp: boolean } };
+      expect(paused.config.chatgptInApp).toBe(false);
+    } finally {
+      delete process.env.BAS_DESKTOP_AGENT_KEY;
+    }
+    // Without the app (npm run start:all), nobody can use its install id.
+    expect((await handler.handleAgentRequest(req({ action: 'hello', installId: 'desktop-app', version }, { key: app, origin: null }))).status).toBe(401);
+  });
+
   it('answers CORS preflight only for extension origins', async () => {
     const pre = await handler.handleAgentRequest(new Request('http://127.0.0.1:3000/api/extension/agent', { method: 'OPTIONS', headers: { origin: EXT, host: '127.0.0.1:3000' } }));
     expect(pre.status).toBe(204);

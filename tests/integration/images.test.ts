@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import sharp from 'sharp';
@@ -133,8 +134,8 @@ describe('Image Studio (IMAGES stage)', () => {
     const colors = [await solid(200, 40, 40), await solid(40, 160, 60), await solid(40, 60, 200)];
     let gen = 0;
     const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
-      if (/3-image plan/.test(prompt)) return `FEATURED: A laptop on a tidy desk with soft light | ALT: Laptop on a desk prepared for a WordPress installation\nBODY1: A browser window with a setup wizard, flat style | ALT: Setup wizard steps shown in a browser window\nBODY2: A checklist on a clipboard, flat style | ALT: Checklist for securing a new website`;
-      if (/clean editorial illustration/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
+      if (/Plan 3 images/.test(prompt)) return `FEATURED: A laptop on a tidy desk with soft light | ALT: Laptop on a desk prepared for a WordPress installation\nBODY1: A browser window with a setup wizard, flat style | ALT: Setup wizard steps shown in a browser window\nBODY2: A checklist on a clipboard, flat style | ALT: Checklist for securing a new website`;
+      if (/Create this image now/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
       return cannedAnswer(stageKey, prompt, language, keyword);
     };
     const driver = makeDriver(client, answer);
@@ -169,6 +170,77 @@ describe('Image Studio (IMAGES stage)', () => {
     expect(wp.media.size).toBe(3); // no duplicate media on retry
   });
 
+  it('earlier tool (Tigram featured design off): the featured prompt carries the short title; a picture handed back twice is asked once more in a new chat; every picture gets the logo', async () => {
+    const red = await solid(200, 40, 40);
+    const green = await solid(40, 160, 60);
+    const blue = await solid(40, 60, 200);
+    const prompts: string[] = [];
+    // ChatGPT hands back the featured picture again for BODY1 (seen in the earlier tool); the second try is new.
+    const answers = [red, red, green, blue];
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
+      if (/Create this image now/.test(prompt)) {
+        prompts.push(prompt);
+        return { text: '', images: [answers[prompts.length - 1] ?? blue] };
+      }
+      return cannedAnswer(stageKey, prompt, language, keyword);
+    };
+    const site = await offlineSite('Repeat Blog');
+    await addLogo(site.id);
+    // Image Template → Tigram: “Use the featured design for Tigram featured images” switched off.
+    const { defaultSiteImageSettings, presetSingle } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings(), tigram: { featured: presetSingle(), body: null, useFeatured: false } }) } });
+    const driver = makeDriver(client, answer);
+    const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'How to Install WordPress', websiteId: site.id, options: { saveToWordPress: false }, idempotencyKey: 'img:repeat-1' }, { source: 'SINGLE' });
+    const t = await driver.drive(task.id);
+    const data = await stageData(t.id, 'IMAGES');
+    expect(prompts[0]).toMatch(/spelled exactly: "How to Install WordPress"/);
+    expect(prompts, data.notes.join(" | ")).toHaveLength(4);
+    expect(data.notes.join(' ')).toMatch(/ChatGPT handed back (an earlier picture|no picture)[^;]* for BODY\d; it was asked once more in a new chat/);
+    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+    expect(new Set(data.slots.flatMap((x: { sourceAssetIds: string[] }) => x.sourceAssetIds)).size).toBe(3);
+    // The logo (teal plate) sits in the corner of the featured and the body pictures.
+    for (const x of data.slots) {
+      const a = await client.mediaAsset.findUniqueOrThrow({ where: { id: x.mediaAssetId } });
+      const buf = fs.readFileSync(path.join(process.env.BAS_DATA_DIR!, a.filePath));
+      const { data: px, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      const at = (fx: number, fy: number) => { const i = (Math.round(fy * info.height) * info.width + Math.round(fx * info.width)) * 3; return [px[i], px[i + 1], px[i + 2]]; };
+      expect(near(at(0.92, 0.92), [15, 118, 110], 60), `${x.slot} logo corner`).toBe(true);
+    }
+  });
+
+  it('owner request: the Tigram featured design takes the featured picture (drawn without text) and writes the title; Celebrity keeps its own design', async () => {
+    const prompts: string[] = [];
+    const colors = [await solid(200, 40, 40), await solid(40, 160, 60), await solid(40, 60, 200)];
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
+      if (/Create this image now/.test(prompt)) {
+        prompts.push(prompt);
+        return { text: '', images: [colors[prompts.length - 1] ?? colors[2]] };
+      }
+      return cannedAnswer(stageKey, prompt, language, keyword);
+    };
+    const site = await offlineSite('Tigram Design Blog');
+    await addLogo(site.id);
+    // Celebrity: the two-photo split design. Tigram: its own one-picture design (logo plate top right).
+    const { defaultSiteImageSettings, presetSingle, presetSplit } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings('#0b5fff'), featured: presetSplit('#0b5fff'), tigram: { featured: presetSingle('#0b5fff'), body: null, useFeatured: true } }) } });
+    const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'How to Install WordPress', websiteId: site.id, options: { saveToWordPress: false }, idempotencyKey: 'img:tigram-design-1' }, { source: 'SINGLE' });
+    const t = await makeDriver(client, answer).drive(task.id);
+    const data = await stageData(t.id, 'IMAGES');
+    // The featured picture is asked for without text; the design writes the title.
+    expect(prompts[0]).not.toMatch(/spelled exactly/);
+    expect(prompts[0]).toMatch(/No text, letters, words or numbers anywhere in the picture/);
+    expect(data.notes.join(' ')).not.toMatch(/single-photo preset/);
+    const featured = data.slots.find((x: { slot: string }) => x.slot === 'FEATURED');
+    const a = await client.mediaAsset.findUniqueOrThrow({ where: { id: featured.mediaAssetId } });
+    const { data: px, info } = await sharp(fs.readFileSync(path.join(process.env.BAS_DATA_DIR!, a.filePath))).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const at = (fx: number, fy: number) => { const i = (Math.round(fy * info.height) * info.width + Math.round(fx * info.width)) * 3; return [px[i], px[i + 1], px[i + 2]]; };
+    // Tigram's single design: the red picture across the middle (the Celebrity split design has its accent divider
+    // there), its logo plate in the top right corner (the split design's logo is in the centre), the title band below.
+    expect(near(at(0.5, 0.3), [200, 40, 40], 40)).toBe(true);
+    expect(near(at(0.89, 0.1), [15, 118, 110], 60)).toBe(true);
+    expect(at(0.2, 0.95)[0]).toBeLessThan(120);
+  });
+
   it('lost upload answers are found again by slug (no duplicate media) and unusable alt text is replaced', async () => {
     const wp = await startFakeWordPress({ dropMediaAcks: 2 });
     servers.push(wp);
@@ -176,8 +248,8 @@ describe('Image Studio (IMAGES stage)', () => {
     const colors = [await solid(200, 40, 40), await solid(40, 160, 60), await solid(40, 60, 200)];
     let gen = 0;
     const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
-      if (/3-image plan/.test(prompt)) return `FEATURED: A laptop on a desk | ALT: IMG_2041.jpg\nBODY1: A setup wizard | ALT: Image of setup wizard steps in a browser\nBODY2: The same wizard again | ALT: image of setup wizard steps in a browser`;
-      if (/clean editorial illustration/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
+      if (/Plan 3 images/.test(prompt)) return `FEATURED: A laptop on a desk | ALT: IMG_2041.jpg\nBODY1: A setup wizard | ALT: Image of setup wizard steps in a browser\nBODY2: The same wizard again | ALT: image of setup wizard steps in a browser`;
+      if (/Create this image now/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
       return cannedAnswer(stageKey, prompt, language, keyword);
     };
     const driver = makeDriver(client, answer);
@@ -243,7 +315,8 @@ describe('Image Studio (IMAGES stage)', () => {
 
   it('celebrity article, ChatGPT image search (owner’s earlier tool): gallery pictures and downloaded links, thumbnails skipped, distinct photos per slot', async () => {
     const { updateSettings } = await import('@/lib/settings');
-    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' } });
+    // The humanizer (off by default) gives a prompt after the gallery, to show it stays in the article chat.
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' }, content: { humanizerEnabled: true } });
     try {
       files.set('news-photo.jpg', await solid(30, 140, 200));
       const pictures = [await solid(200, 60, 60), await solid(60, 200, 60), await solid(10, 10, 10, 240, 135)];
@@ -259,11 +332,11 @@ describe('Image Studio (IMAGES stage)', () => {
       await addLogo(site.id);
       // Each new chat reports its own conversation, like ChatGPT does; follow-up prompts report the chat they went to.
       const ARTICLE_CHAT = 'https://chatgpt.com/c/aaaaaaaa-2222-4333-8444-555555555555';
-      const GALLERY_CHAT = 'https://chatgpt.com/c/bbbbbbbb-2222-4333-8444-555555555555';
+      const SIDE_CHAT = 'https://chatgpt.com/c/bbbbbbbb-2222-4333-8444-555555555555';
       const claimed: { stageKey: string; newChat: boolean; conversationUrl: string | null }[] = [];
       const driver = makeDriver(client, answer, {
         onClaim: (p) => void claimed.push({ stageKey: p.stageKey, newChat: p.newChat, conversationUrl: p.conversationUrl }),
-        conversationFor: (p) => (p.stageKey === 'IMAGES' ? GALLERY_CHAT : (p.conversationUrl ?? ARTICLE_CHAT)),
+        conversationFor: (p) => (p.stageKey === 'IMAGES' && p.newChat ? SIDE_CHAT : (p.conversationUrl ?? ARTICLE_CHAT)),
       });
       const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
       const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Tom Kaulitz Heidi Klum', websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'img:celeb-gallery' }, { source: 'SINGLE' });
@@ -274,7 +347,8 @@ describe('Image Studio (IMAGES stage)', () => {
       const notes = data.notes.join(' | ');
       expect(notes).toMatch(/ChatGPT image search: 3 usable photo\(s\)/);
       expect(notes).toMatch(/1 gallery picture\(s\) downloaded from their links/);
-      expect(notes).toMatch(/smaller than 250 px/);
+      expect(notes).toMatch(/4 gallery picture\(s\) received \(3 saved by Automation Chrome, 1 link\(s\)\)/);
+      expect(notes).toMatch(/1 gallery picture\(s\) smaller than 250 px were skipped/);
       expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
       const sources = data.slots.flatMap((s: { sourceAssetIds: string[] }) => s.sourceAssetIds);
       expect(new Set(sources).size).toBe(sources.length);
@@ -283,19 +357,22 @@ describe('Image Studio (IMAGES stage)', () => {
       expect(data.gallery.every((g: { source: string }) => g.source === 'ChatGPT image search')).toBe(true);
       // Commons was not asked (source: ChatGPT gallery only).
       expect(await client.mediaAsset.count({ where: { taskId: t.id, origin: 'WIKIMEDIA' } })).toBe(0);
-      // The image search's own chat never becomes the article's chat: every later prompt stays in the article chat.
+      // Owner request: the photo search and the photo check (on by default) go into the chat the article was written
+      // in, not a new chat each; every later prompt stays there too.
       const gallery = claimed.findIndex((c) => c.stageKey === 'IMAGES');
-      expect(claimed[gallery].newChat).toBe(true);
-      const after = claimed.slice(gallery + 1);
-      expect(after.length).toBeGreaterThan(0);
-      expect(after.every((c) => !c.newChat && c.conversationUrl === ARTICLE_CHAT)).toBe(true);
+      const images = claimed.filter((c) => c.stageKey === 'IMAGES');
+      expect(images).toHaveLength(2);
+      expect(images.every((c) => !c.newChat && c.conversationUrl === ARTICLE_CHAT)).toBe(true);
+      const later = claimed.slice(gallery + 1).filter((c) => c.stageKey !== 'IMAGES');
+      expect(later.length).toBeGreaterThan(0);
+      expect(later.every((c) => !c.newChat && c.conversationUrl === ARTICLE_CHAT)).toBe(true);
       expect(t.conversationUrl).toBe(ARTICLE_CHAT);
     } finally {
-      await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons' }, content: { humanizerEnabled: false } });
     }
   });
 
-  it('owner report: a text-only image search is asked once more in a new chat; with two photos the two-photo featured template uses both', async () => {
+  it('owner report: a text-only image search (asked in the article chat) is asked once more in a new chat; with two photos the two-photo featured template uses both', async () => {
     const { updateSettings } = await import('@/lib/settings');
     const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
     await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' } });
@@ -322,7 +399,7 @@ describe('Image Studio (IMAGES stage)', () => {
       const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Mary Joan Schutz', websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'img:celeb-two' }, { source: 'SINGLE' });
       const t = await driver.drive(task.id);
       expect(searches).toHaveLength(2);
-      expect(searches.every((s) => s.newChat)).toBe(true);
+      expect(searches.map((s) => s.newChat)).toEqual([false, true]);
       expect(searches[0].prompt).toMatch(/archival photos/);
       expect(searches[0].prompt).not.toMatch(/at least 10/);
       const data = await stageData(t.id, 'IMAGES');
@@ -335,6 +412,51 @@ describe('Image Studio (IMAGES stage)', () => {
       expect(notes).toMatch(/featured design took 2, 0 left for the body/);
       // Tools that are not installed are named, never silently skipped.
       expect(notes).toMatch(/Face detector not installed/);
+    } finally {
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
+    }
+  });
+
+  it('owner report: with one photo the two-photo featured design became the built-in single-photo design; ChatGPT is asked for photos once more in a new chat first', async () => {
+    const { updateSettings } = await import('@/lib/settings');
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' } });
+    try {
+      const site = await offlineSite('Celeb One Photo');
+      await addLogo(site.id);
+      const settings = { ...defaultSiteImageSettings('#0b5fff'), featured: { ...presetSplit('#0b5fff'), name: 'Imported' } };
+      await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify(settings) } });
+      const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
+      const run = async (keyword: string, second: Buffer[]) => {
+        const searches: boolean[] = [];
+        let newChat = false;
+        const first = [await solid(200, 60, 60)];
+        const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
+          if (/show them as an image gallery/.test(prompt)) {
+            searches.push(newChat);
+            const images = searches.length === 1 ? first : second;
+            return images.length ? { text: 'Photos.', images } : { text: 'I could not find more photos of this person.' };
+          }
+          return cannedAnswer(stageKey, prompt, language, kw);
+        };
+        const driver = makeDriver(client, answer, { onClaim: (p) => void (newChat = p.newChat) });
+        const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword, websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: `img:one-photo:${keyword}` }, { source: 'SINGLE' });
+        const t = await driver.drive(task.id);
+        const data = await stageData(t.id, 'IMAGES');
+        return { searches, notes: data.notes.join(' | '), featured: data.slots.find((s: { slot: string }) => s.slot === 'FEATURED') };
+      };
+      // The second search brings another photo: the owner's two-photo design takes both.
+      const found = await run('Linda Ripa', [await solid(60, 200, 60)]);
+      expect(found.searches).toEqual([false, true]);
+      expect(found.notes).toMatch(/Only 1 photo\(s\) for the 2-photo featured design: ChatGPT image search once more \(new chat\): 1 usable photo/);
+      expect(found.notes).not.toMatch(/single-photo preset/);
+      expect(found.featured.sourceAssetIds).toHaveLength(2);
+      // Nothing more found: asked once only, then the single-photo design as before (with the note).
+      const none = await run('Dixie Brubaker', []);
+      expect(none.searches).toEqual([false, true]);
+      expect(none.notes).toMatch(/once more \(new chat\): 0 usable photo/);
+      expect(none.notes).toMatch(/single-photo preset was used/);
+      expect(none.featured.sourceAssetIds).toHaveLength(1);
     } finally {
       await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
     }
@@ -516,8 +638,8 @@ describe('Image Template Designer, owner photos and re-runs', () => {
   it('general article: owner uploads fill the slots and nothing is generated for them', async () => {
     const generated: string[] = [];
     const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
-      if (/3-image plan/.test(prompt)) return 'FEATURED: Desk | ALT: A tidy desk with a laptop\nBODY1: Browser | ALT: A browser with a setup wizard\nBODY2: Checklist | ALT: A checklist on a clipboard';
-      if (/clean editorial illustration/.test(prompt)) {
+      if (/Plan 3 images/.test(prompt)) return 'FEATURED: Desk | ALT: A tidy desk with a laptop\nBODY1: Browser | ALT: A browser with a setup wizard\nBODY2: Checklist | ALT: A checklist on a clipboard';
+      if (/Create this image now/.test(prompt)) {
         generated.push(prompt);
         return { text: 'Here is the image.', images: [] };
       }

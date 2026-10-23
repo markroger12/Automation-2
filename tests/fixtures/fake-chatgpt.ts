@@ -32,10 +32,33 @@ export interface FakeChatGptConfig {
   chunkSize?: number;
   challengeClearsAfterMs?: number;
   answers?: string[];
+  /** The page sits in a canvas-classed container (ChatGPT's “Work” layout). */
+  workLayout?: boolean;
+  /** 'unknown': generated pictures carry an address and alt text that match none of the known markers. */
+  imageMarkup?: 'default' | 'unknown';
+  /** A page-wide “streaming” marker stays after the picture is finished (owner report: 600 s “generating”). */
+  staleStreaming?: boolean;
   /** Image-search answers (prompt mentions an “image gallery”): show this many gallery thumbnails with a viewer. */
   galleryCount?: number;
   /** Extra gallery pictures on other hosts (the extension reports these as links). */
   galleryLinks?: string[];
+  /** Only this many thumbnails are on the page, the last one with “+N” (owner report: 3 shown of 10). */
+  galleryShown?: number;
+  /**
+   * 'strip': the viewer keeps every picture in the page, hidden except the one shown, and shows the next one a moment
+   * after “Next” (owner report: only some of ChatGPT's 10 pictures were saved).
+   * 'carousel': every picture stays shown side by side on a track that slides behind a window (the ones beside it are
+   * outside it); 'fade': every picture stacked in one place, all but one faded out; 'lightbox': one picture and Close,
+   * no “Next” (owner report: ChatGPT showed 6 photos, 2 were used).
+   */
+  galleryViewer?: 'single' | 'strip' | 'carousel' | 'fade' | 'lightbox';
+  /** Answers are shown in a writing block with a “Writing” label and Copy/expand buttons (owner report). */
+  writingBlock?: boolean;
+  /**
+   * Image-search answers show these pictures as a grid of captioned cards that the page cannot load (broken-picture
+   * icon with its alt text), while the address itself works (owner report: “Open image in new tab” shows the photo).
+   */
+  galleryBroken?: string[];
 }
 
 const APP = fs.readFileSync(path.join(__dirname, 'fake-chatgpt', 'app.js'), 'utf8');
@@ -55,9 +78,12 @@ export async function installFakeChatGPT(context: BrowserContext, getConfig: () 
   };
   // A news site's picture shown in the gallery: it loads in the page, but the extension may not read it (other host).
   await context.route('https://news.example/**', async (route) => route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor('news_9') }));
+  // A picture host that refuses pictures embedded in another site's page (the card shows a broken-picture icon).
+  await context.route('https://broken.example/**', async (route) => route.fulfill({ status: 403, contentType: 'text/html', body: 'Forbidden' }));
   await context.route('https://chatgpt.com/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
+    if (url.pathname === '/backend-api/files/download') return route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor(url.searchParams.get('f') ?? '') });
     if (url.pathname === '/backend-api/estuary/content') return route.fulfill({ status: 200, contentType: 'image/png', body: await imageFor(url.searchParams.get('id') ?? '', url.searchParams.get('thumb') === '1') });
     if (req.resourceType() !== 'document') return route.fulfill({ status: 404, body: '' });
     const config = JSON.stringify(getConfig()).replace(/</g, '\\u003c');

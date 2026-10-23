@@ -7,9 +7,13 @@ import { parseJson } from '../json';
 import { parseImport } from '../campaigns/parse';
 import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/router';
 import { retryTask } from '../tasks/lifecycle';
+import { overrideQuality } from '../tasks/actions';
+import { deleteTask } from '../tasks/delete';
 import { DEFAULT_SLOT_TIMEZONE, isValidTimeZone, parseSlot, formatSlot, upcomingSlots } from './time';
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
 import { normalizeSearchConsoleProperty } from './search-console';
+import { proofsFor } from '../gsc/proof';
+import { requestIndexingNow, requestProperty } from '../gsc/request-indexing';
 
 /**
  * Per-website publishing workflow: settings (slots in Asia/Karachi by
@@ -121,17 +125,24 @@ export async function addKeywords(websiteId: string, raw: unknown) {
 
 export const keywordActionSchema = z.object({
   keywordIds: z.array(z.string().max(40)).min(1).max(500),
-  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'indexing-requested', 'indexed']),
+  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'force', 'request-indexing', 'indexing-requested', 'indexed', 'delete']),
   writer: z.string().max(40).optional(),
+  /** With “delete”: also delete the keywords' articles from the app (WordPress is never changed). */
+  articles: z.boolean().optional(),
 });
 
-/** Owner actions on queued keywords. Nothing is deleted; INDEXED is only recorded from the owner's own verification. */
+/**
+ * Owner actions on queued keywords. INDEXED is only recorded from the owner's own verification. “request-indexing” has
+ * Automation Chrome request indexing in Search Console now. “delete” removes the keyword rows (and, when asked, their
+ * articles from the app); WordPress is never changed.
+ */
 export async function keywordAction(websiteId: string, raw: unknown) {
   const input = keywordActionSchema.parse(raw);
   const wf = await ensureWorkflow(websiteId);
   const rows = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, id: { in: input.keywordIds } } });
   let changed = 0;
   const notes: string[] = [];
+  const property = input.action === 'request-indexing' && rows.some((k) => k.publishedUrl) ? await requestProperty(websiteId) : null;
   for (const kw of rows) {
     switch (input.action) {
       case 'writer': {
@@ -164,6 +175,11 @@ export async function keywordAction(websiteId: string, raw: unknown) {
         if (kw.status !== 'FAILED') continue;
         if (kw.taskId) {
           const task = await db.articleTask.findUnique({ where: { id: kw.taskId } });
+          // A saved draft with serious problems would stop at once again (owner report): that needs Force continue.
+          if (task?.status === 'COMPLETED' && parseJson<{ publishBlocked?: string[] }>(task.options, {}).publishBlocked?.length) {
+            notes.push(`“${kw.keyword}”: its draft is saved but has serious problems, so Retry would stop again. Use Force continue to publish it at the next free slot anyway.`);
+            continue;
+          }
           if (task && ['FAILED', 'NEEDS_REVIEW', 'CANCELLED'].includes(task.status)) await retryTask(task.id);
         }
         // Back into the queue with a fresh retry budget and the next free slot.
@@ -175,6 +191,48 @@ export async function keywordAction(websiteId: string, raw: unknown) {
           await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'WAITING', retries: 0, lastError: null, scheduledAt: null } });
         }
         break;
+      case 'force': {
+        // Owner request: “Force continue” — the owner accepts the problems the quality gate found (audited, one keyword
+        // at a time) and the article goes on: a saved draft is published at the next free slot like any other; an
+        // article held for review gets “Approve despite review reasons”. Publishing permission is still required.
+        if (kw.status !== 'FAILED' || !kw.taskId) {
+          notes.push(`“${kw.keyword}” is not stopped by a problem; nothing to force.`);
+          continue;
+        }
+        const task = await db.articleTask.findUnique({ where: { id: kw.taskId } });
+        const options = parseJson<Record<string, unknown> & { publishBlocked?: string[] }>(task?.options ?? null, {});
+        if (task?.status === 'COMPLETED' && task.wpPostId && options.publishBlocked?.length) {
+          const { publishBlocked, ...rest } = options;
+          const reason = 'Force continue from the workflow keyword queue';
+          await db.articleTask.update({ where: { id: task.id }, data: { options: JSON.stringify({ ...rest, publishForced: { at: new Date().toISOString(), problems: publishBlocked }, ...(rest.duplicateOverride ? {} : { duplicateOverride: { reason, at: new Date().toISOString() } }) }) } });
+          await db.duplicateMatch.updateMany({ where: { taskId: task.id, status: 'OPEN' }, data: { status: 'OVERRIDDEN' } });
+          await audit('task.force-continue', 'ArticleTask', task.id, { keyword: kw.keyword, wpPostId: task.wpPostId, problems: publishBlocked });
+        } else if (task?.status === 'NEEDS_REVIEW') {
+          await overrideQuality(task.id, { reason: 'Force continue from the workflow keyword queue' });
+        } else {
+          notes.push(`“${kw.keyword}”: its article failed (${(task?.message ?? 'no article').slice(0, 120)}). Use Retry.`);
+          continue;
+        }
+        const at = await reserveSlot({ ...wf, website: await db.website.findUniqueOrThrow({ where: { id: websiteId } }) }, kw.id, new Date(Date.now() + SCHEDULE_LEAD_MS));
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'WRITING', retries: 0, lastError: at ? 'Forced by you: continues despite the problems found.' : 'No free slot found; add slots to the workflow.', scheduledAt: at } });
+        break;
+      }
+      case 'request-indexing': {
+        // Owner request: “Request indexing” on the keyword queue, made by Automation Chrome as the owner does it.
+        if (kw.status === 'INDEXED') {
+          notes.push(`“${kw.keyword}” is already on Google; nothing to request.`);
+          continue;
+        }
+        if (!kw.publishedUrl || !property || !['PUBLISHED', 'INDEXING_REQUESTED'].includes(kw.status)) {
+          notes.push(`“${kw.keyword}” is not published yet.`);
+          continue;
+        }
+        if ((await requestIndexingNow({ keywordId: kw.id, url: kw.publishedUrl, property, websiteId })) === 'running') {
+          notes.push(`“${kw.keyword}”: Automation Chrome is requesting indexing for it right now.`);
+          continue;
+        }
+        break;
+      }
       case 'indexing-requested':
         if (!['PUBLISHED', 'INDEXING_REQUESTED'].includes(kw.status)) {
           notes.push(`“${kw.keyword}” is not published yet.`);
@@ -189,6 +247,18 @@ export async function keywordAction(websiteId: string, raw: unknown) {
         }
         await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'INDEXED', indexingStatus: `Verified as indexed by you on ${new Date().toISOString().slice(0, 10)}.` } });
         break;
+      case 'delete': {
+        const task = kw.taskId ? await db.articleTask.findUnique({ where: { id: kw.taskId }, select: { id: true } }) : null;
+        if (task && input.articles) {
+          const r = await deleteTask(task.id);
+          if (r.status === 'deleting') notes.push(`“${kw.keyword}”: its article is running and is deleted as soon as it stops.`);
+        } else if (task && kw.status === 'WRITING') {
+          notes.push(`“${kw.keyword}”: its article keeps running as a normal article (not in the workflow any more).`);
+        }
+        await db.slotReservation.deleteMany({ where: { workflowKeywordId: kw.id } });
+        await db.workflowKeyword.deleteMany({ where: { id: kw.id } });
+        break;
+      }
     }
     changed++;
   }
@@ -201,12 +271,17 @@ export async function workflowView(websiteId: string) {
   const keywords = workflow ? await db.workflowKeyword.findMany({ where: { workflowId: workflow.id }, orderBy: [{ position: 'asc' }] }) : [];
   const tasks = keywords.some((k) => k.taskId) ? await db.articleTask.findMany({ where: { id: { in: keywords.map((k) => k.taskId).filter((x): x is string => Boolean(x)) } }, select: { id: true, status: true, wpPostId: true, wpEditUrl: true } }) : [];
   const byId = new Map(tasks.map((t) => [t.id, t]));
+  // Screenshots of Search Console's “Indexing requested” (proof of the request, owner request).
+  const proofs = await proofsFor(keywords.filter((k) => k.publishedUrl).map((k) => k.id));
+  // Google's own URL Inspection link per post (from the URL Inspection API), when the request has one.
+  const requests = await db.queueJob.findMany({ where: { queue: 'gsc', idempotencyKey: { in: keywords.filter((k) => k.publishedUrl).map((k) => `gsc-index:${k.id}`) } }, select: { idempotencyKey: true, payload: true } });
+  const inspectLinks = new Map(requests.map((r) => [r.idempotencyKey.slice('gsc-index:'.length), parseJson<{ inspectLink?: string | null }>(r.payload, {}).inspectLink ?? null]));
   const nextSlots = workflow ? upcomingSlots(slotRules(workflow), new Date(), 7).slice(0, 8) : [];
   return {
     website: { id: site.id, name: site.name, timezone: site.timezone, canPublish: site.canPublish && Boolean(site.canPublishAcknowledgedAt), publicUrl: site.publicUrl },
     workflow: workflow ? { ...workflow, slots: parseJson<string[]>(workflow.slots, []), weekdays: parseJson<number[]>(workflow.weekdays, []) } : null,
     nextSlots,
-    keywords: keywords.map((k) => ({ ...k, secondaryKeywords: parseJson<string[]>(k.secondaryKeywords, []), task: k.taskId ? (byId.get(k.taskId) ?? null) : null })),
+    keywords: keywords.map((k) => ({ ...k, secondaryKeywords: parseJson<string[]>(k.secondaryKeywords, []), task: k.taskId ? (byId.get(k.taskId) ?? null) : null, proofId: proofs.get(k.id) ?? null, inspectLink: inspectLinks.get(k.id) ?? null })),
   };
 }
 

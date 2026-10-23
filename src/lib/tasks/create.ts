@@ -67,7 +67,9 @@ export async function createArticleTask(raw: unknown, ctx: CreateContext, client
 
   let category = input.categoryId ? site.categories.find((c) => c.id === input.categoryId) : undefined;
   if (input.categoryId && !category) throw new AppError(400, 'VALIDATION', 'That category does not belong to the selected website.', { categoryId: ['Not a synchronized category of this site'] });
-  if (!category && site.defaultCategoryId) category = site.categories.find((c) => c.id === site.defaultCategoryId);
+  // Tigram without a chosen category: its CATEGORY stage chooses one (with the default as the fallback). Celebrity
+  // articles need one from the start: the website's default, which their CATEGORY stage replaces for workflow articles.
+  if (!category && site.defaultCategoryId && input.moduleKey !== 'tigram-writer') category = site.categories.find((c) => c.id === site.defaultCategoryId);
   if (!category && input.moduleKey === 'celebrity-writer') {
     throw new AppError(
       400,

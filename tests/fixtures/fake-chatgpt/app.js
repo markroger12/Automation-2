@@ -31,6 +31,12 @@
       localStorage.setItem('fake:sends', String(v));
     },
   };
+  // Owner report (FINAL_ARTICLE after LONG_ARTICLE): the page stops working after an answer, until it is reloaded.
+  window.__fakeStick = (kind, persists) => {
+    window.__stuck = kind;
+    if (persists) localStorage.setItem('fake:stuck', kind);
+    render();
+  };
   window.__fakeStats = () => ({ sends: S.sends, convs: S.convs, lastPrompt: localStorage.getItem('fake:lastPrompt'), lastFiles: localStorage.getItem('fake:lastFiles') });
 
   const std = C.variant === 'standard';
@@ -131,16 +137,25 @@
         if (t.error) return `<div data-testid="conversation-turn-${i}"><div role="alert" class="text-token-text-error">${esc(t.error)}</div></div>`;
         const tool = t.tool ? `<div data-testid="tool-call-block">Searching the web for sources…</div><details><summary>Thought for 3s</summary><div class="markdown">Planning: I will search first.</div></details>` : '';
         const isLast = i === turns.length - 1;
-        const img = t.image ? (isLast && window.__generating ? '<div class="image-placeholder">Creating image…</div>' : `<img alt="Generated image" src="${t.image}" width="1024" height="576">`) : '';
+        // imageMarkup 'unknown': the picture's address and alt text match none of the known generated-image markers.
+        const imgTag = C.imageMarkup === 'unknown' ? `<img alt="" src="${t.image ? t.image.replace('/backend-api/estuary/content?id=', '/backend-api/files/download?f=') : ''}">` : `<img alt="Generated image" src="${t.image}" width="1024" height="576">`;
+        const img = t.image ? (isLast && window.__generating ? '<div class="image-placeholder">Creating image…</div>' : imgTag) : '';
         const doneStreaming = !(isLast && window.__generating);
         const gallery =
           t.gallery && doneStreaming
-            ? `<div class="image-gallery">${Array.from({ length: t.gallery }, (_, k) => `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`).join('')}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
+            ? `<div class="image-gallery">${Array.from({ length: Math.min(t.gallery, C.galleryShown || t.gallery) }, (_, k) => `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`).join('')}${C.galleryShown && t.gallery > C.galleryShown ? `<span class="more">${t.gallery}</span>` : ''}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
             : '';
-        const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>${gallery}`;
+        // galleryBroken: captioned cards whose pictures the page cannot load (a broken-picture icon with its alt text).
+        const cards =
+          t.galleryBroken && t.galleryBroken.length && doneStreaming
+            ? `<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">${t.galleryBroken.map((u, k) => `<div><div style="width:470px;height:280px;display:flex;align-items:center;justify-content:center;background:#eee;border-radius:12px"><img src="${esc(u)}" alt="Photo ${k + 1} of the person"></div><div>${k + 1}. Photo ${k + 1}</div></div>`).join('')}</div>`
+            : '';
+        const content = `${tool}${img}<div class="${std ? 'markdown prose' : 'prose'}">${md(t.text || '')}</div>${gallery}${cards}`;
         if (C.turnMarkup === 'article') return `<article data-testid="conversation-turn-${i}" data-turn="assistant"><h6 class="sr-only">ChatGPT said:</h6><div data-message-author-role="assistant">${content}</div></article>`;
         if (C.turnMarkup === 'units') {
-          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${md(t.text || '')}</div>${gallery}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
+          // writingBlock: the answer inside ChatGPT's writing block, under its “Writing” label (owner report).
+          const answerHtml = C.writingBlock ? `<div data-writing-block="true"><div class="wb-header"><span>Writing</span><button aria-label="Copy">⧉</button><button aria-label="Expand">⤢</button></div>${md(t.text || '')}</div>` : md(t.text || '');
+          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${answerHtml}</div>${gallery}${cards}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
         }
         return std
           ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="assistant">${content}</div></div>`
@@ -148,13 +163,16 @@
       })
       .join('');
     const generating = Boolean(window.__generating);
+    // Stuck page (set by a test with __fakeStick): 'composer' hides the composer, 'send' leaves a Stop button where
+    // Send should be. A reload clears it unless it was made to persist.
+    const stuck = window.__stuck || localStorage.getItem('fake:stuck');
     const composer =
       C.variant === 'broken'
         ? '<div class="nothing-here"></div>'
         : std
           ? `<div id="prompt-textarea" class="ProseMirror" contenteditable="true"></div>`
           : `<textarea placeholder="Message ChatGPT" rows="3"></textarea>`;
-    const button = generating
+    const button = generating || stuck === 'send'
       ? std
         ? `<button data-testid="stop-button" aria-label="Stop streaming">■</button>`
         : `<button aria-label="Stop streaming">■</button>`
@@ -169,9 +187,22 @@
     const dlg = window.__dlg;
     const dialog =
       dlg && dlg.count
-        ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+        ? C.galleryViewer === 'strip'
+          ? `<div role="dialog" class="viewer">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" alt="Large photo ${i + 1}"${i === dlg.shown ? '' : ' style="display:none"'}>`).join('')}<button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+          : C.galleryViewer === 'carousel'
+            ? `<div role="dialog" class="viewer"><div style="width:800px;height:450px;overflow:hidden"><div style="display:flex;width:${dlg.count * 800}px;transform:translateX(-${dlg.shown * 800}px)">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" style="flex:none" alt="Large photo ${i + 1}">`).join('')}</div></div><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+            : C.galleryViewer === 'fade'
+              ? `<div role="dialog" class="viewer"><div style="position:relative;width:800px;height:450px">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" style="position:absolute;left:0;top:0;opacity:${i === dlg.shown ? 1 : 0}" alt="Large photo ${i + 1}">`).join('')}</div><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+              : C.galleryViewer === 'lightbox'
+              ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Close">×</button></div>`
+              : `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
         : '';
-    root.innerHTML = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer">${chips}${files}${composer}${button}</form></main>${dialog}`;
+    // staleStreaming: a page-wide “streaming” marker that stays after the picture is finished (owner report).
+    const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
+    // workLayout: the conversation shown in a “Work”/canvas layout — the whole page sits in a canvas-classed container
+    // (suspected for the owner's “Chat composer not found” after the long article).
+    const page = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer"${stuck === 'composer' ? ' style="display:none"' : ''}>${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
+    root.innerHTML = C.workLayout ? `<div class="work-canvas-layout bg-token-canvas">${page}</div>` : page;
     const ed = document.querySelector('#prompt-textarea, textarea');
     if (ed && draft && !generating) {
       if (ed.tagName === 'TEXTAREA') ed.value = draft;
@@ -193,13 +224,23 @@
     const thumb = t.closest('.gal-thumb');
     if (thumb) {
       const imgs = document.querySelectorAll('.gal-thumb');
-      window.__dlg = { k: Number(thumb.getAttribute('data-k')), count: imgs.length };
+      const k = Number(thumb.getAttribute('data-k'));
+      window.__dlg = { k, shown: k, count: C.galleryShown ? C.galleryCount : imgs.length };
       window.__galleryOpened = (window.__galleryOpened || 0) + 1;
       render();
       return;
     }
     if (t.closest('[role="dialog"] button[aria-label="Next"]') && window.__dlg) {
       window.__dlg = { ...window.__dlg, k: Math.min(window.__dlg.count - 1, window.__dlg.k + 1) };
+      // 'strip' and 'carousel': the picture shown changes a moment after the click (a slide), the old one stays
+      // visible meanwhile.
+      if (C.galleryViewer === 'strip' || C.galleryViewer === 'carousel' || C.galleryViewer === 'fade') {
+        setTimeout(() => {
+          if (!window.__dlg) return;
+          window.__dlg = { ...window.__dlg, shown: window.__dlg.k };
+          render();
+        }, 700);
+      } else window.__dlg = { ...window.__dlg, shown: window.__dlg.k };
       render();
       return;
     }
@@ -312,9 +353,9 @@
       image = `/backend-api/estuary/content?id=file_${S.sends}&sig=test`;
       full = full.slice(6).trim();
     }
-    const galleryAnswer = C.galleryCount && /image gallery/i.test(text);
+    const galleryAnswer = (C.galleryCount || C.galleryBroken) && /image gallery/i.test(text);
     if (galleryAnswer) full = 'Here are recent photos.';
-    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0, image, gallery: galleryAnswer ? C.galleryCount : 0, galleryLinks: galleryAnswer ? C.galleryLinks || [] : [] });
+    turns.push({ role: 'assistant', text: '', tool: C.mode === 'tool-preamble', target: full, pos: 0, image, gallery: galleryAnswer ? C.galleryCount || 0 : 0, galleryLinks: galleryAnswer ? C.galleryLinks || [] : [], galleryBroken: galleryAnswer ? C.galleryBroken || [] : [] });
     save(id, turns);
     window.__generating = true;
     render();

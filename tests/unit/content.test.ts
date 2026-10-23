@@ -227,3 +227,32 @@ describe('text utilities', () => {
     expect(parseSecondaryKeywords('b, a\n B \n c;a')).toEqual(['b', 'a', 'c']);
   });
 });
+
+describe('owner report: “Writing” under the title, the title repeated, the Quick Bio before the introduction', () => {
+  const title = 'Wer ist Anika Bissel? Alles über Manuel Neuers Ehefrau';
+  // The FINAL_ARTICLE answer as the page gave it: the writing block's label, then the title, then the article.
+  const answer = `Writing\n\n# ${title}\n\nAnika Bissel ist als Ehefrau des deutschen Fußballtorwarts Manuel Neuer bekannt.\n\n## Wer ist Anika Bissel?\n\nAnika Bissel wurde am 11. Juni 2000 in Erlangen geboren.\n\n## Fazit\n\nSie hat eine eigene Laufbahn.`;
+  const quickBioHtml = '<table><tr><th>Merkmal</th><th>Angaben</th></tr><tr><td>Geburtsort</td><td>Erlangen</td></tr></table>';
+  const order = (html: string) => [...html.matchAll(/<(h2|p)[^>]*>(.*?)<\/\1>/g)].map((m) => `${m[1]}:${m[2].replace(/<[^>]+>/g, '').slice(0, 20)}`);
+
+  it('the article text loses the label and the title; the Quick Bio follows the introduction', () => {
+    const md = cleanModelMarkdown(answer, { title });
+    expect(md).not.toMatch(/^Writing$/m);
+    expect(md).not.toContain(title);
+    const html = assembleArticle({ bodyHtml: markdownToHtml(md), language: 'de', moduleKey: 'celebrity-writer', quickBioHtml, quickBioName: 'Anika Neuer', title }).html;
+    expect(order(html).slice(0, 3)).toEqual(['p:Anika Bissel ist als', 'h2:Kurzbiografie von An', 'h2:Wer ist Anika Bissel']);
+  });
+
+  it('a body saved before the fix is cleaned when it is assembled (label removed, repeated title dropped)', () => {
+    const saved = `<p>Writing</p><h2>${title}</h2><p>Anika Bissel ist als Ehefrau des deutschen Fußballtorwarts Manuel Neuer bekannt.</p><h2>Wer ist Anika Bissel?</h2><p>Geboren in Erlangen.</p><h2>Fazit</h2><p>Ende.</p>`;
+    const html = assembleArticle({ bodyHtml: saved, language: 'de', moduleKey: 'celebrity-writer', quickBioHtml, quickBioName: 'Anika Neuer', title }).html;
+    expect(html).not.toMatch(/>Writing</);
+    expect(order(html).slice(0, 3)).toEqual(['p:Anika Bissel ist als', 'h2:Kurzbiografie von An', 'h2:Wer ist Anika Bissel']);
+  });
+
+  it('real text with the word stays: only a line that is just the label goes', () => {
+    const md = cleanModelMarkdown('Writing is his second career.\n\n## Writing\n\nHe writes books.', { title: 'Someone' });
+    expect(md).toContain('Writing is his second career.');
+    expect(md).toContain('## Writing');
+  });
+});

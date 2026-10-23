@@ -20,11 +20,15 @@ let create: typeof import('@/lib/tasks/create');
 const MP_SRC = process.env.BAS_TEST_MEDIAPIPE_DIR;
 const PORTRAIT = path.resolve(__dirname, '..', 'fixtures', 'images', 'portrait-public-domain.jpg');
 
-const plain = (r: number, g: number, b: number, w: number, h: number) =>
-  sharp({ create: { width: w, height: h, channels: 3, background: { r, g, b } } })
-    .composite([{ input: Buffer.from(`<svg width="${w}" height="${h}"><rect x="${w / 5}" y="${h / 4}" width="${w / 3}" height="${h / 3}" fill="#222"/><rect x="${w / 2}" y="${h / 2}" width="${w / 4}" height="${h / 5}" fill="#eee"/></svg>`) }])
+// Different layouts per colour, so perceptual hashes see different pictures (not near-duplicates).
+const plain = (r: number, g: number, b: number, w: number, h: number) => {
+  const k = (r * 7 + g * 3 + b) % 7;
+  const stripes = Array.from({ length: 3 + k }, (_, i) => `<rect x="${(i * w) / (3 + k)}" y="${((i + k) % 3) * (h / 4)}" width="${w / (6 + k)}" height="${h / 3}" fill="${i % 2 ? '#eee' : '#222'}"/>`).join('');
+  return sharp({ create: { width: w, height: h, channels: 3, background: { r, g, b } } })
+    .composite([{ input: Buffer.from(`<svg width="${w}" height="${h}">${stripes}<circle cx="${w * (0.2 + k / 10)}" cy="${h / 2}" r="${h / 6}" fill="#f1c27d"/></svg>`) }])
     .jpeg()
     .toBuffer();
+};
 
 async function site(name: string): Promise<Website> {
   const websites = await import('@/lib/websites');
@@ -35,10 +39,14 @@ async function site(name: string): Promise<Website> {
 
 const stageData = async (taskId: string, key: string) => JSON.parse((await client.articleStage.findFirstOrThrow({ where: { taskId, key } })).outputJson ?? 'null');
 
-async function runCeleb(keyword: string, pictures: Buffer[]) {
+async function runCeleb(keyword: string, pictures: Buffer[], photoCheck?: string, twoPhotoFeatured = false) {
   const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer =>
-    /show them as an image gallery/.test(prompt) ? { text: 'Photos.', images: pictures } : cannedAnswer(stageKey, prompt, language, kw);
+    /show them as an image gallery/.test(prompt) ? { text: 'Photos.', images: pictures } : photoCheck && /photos from an image search, numbered 1 to/.test(prompt) ? photoCheck : cannedAnswer(stageKey, prompt, language, kw);
   const s = await site(`Tools ${keyword}`);
+  if (twoPhotoFeatured) {
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: s.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings('#0b5fff'), featured: presetSplit('#0b5fff') }) } });
+  }
   const cat = await client.category.findFirstOrThrow({ where: { websiteId: s.id } });
   const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword, websiteId: s.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: `tools:${keyword}` }, { source: 'SINGLE' });
   const t = await makeDriver(client, answer).drive(task.id);
@@ -74,12 +82,13 @@ describe('image tools from the earlier tool', () => {
     const small = await plain(200, 120, 60, 420, 300);
     // Without the tool: named, never silent.
     let r = await runCeleb('Small Photo Person', [small]);
-    expect(r.data.notes.join(' | ')).toMatch(/Upscayl is not installed/);
+    expect(r.data.notes.join(' | ')).toMatch(/A 420×300 photo is stretched 3\.6×, but Upscayl \(remacri-4x\) is not installed/);
     // A fake upscayl-bin with the same arguments as the real one (-i in -o out -s 4 -m models -n remacri-4x -f png).
     const tool = path.join(dataDir, 'tools', 'upscayl');
     fs.mkdirSync(path.join(tool, 'models'), { recursive: true });
     fs.writeFileSync(path.join(tool, 'models', 'remacri-4x.param'), 'fake');
     fs.writeFileSync(path.join(tool, 'models', 'remacri-4x.bin'), 'fake');
+    // As the earlier tool: the zip may unpack one folder below data/tools/upscayl — the tool is found there too.
     const calls = path.join(tool, 'calls.log');
     const sharpPath = require.resolve('sharp');
     fs.writeFileSync(
@@ -93,9 +102,96 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
       { mode: 0o755 },
     );
     r = await runCeleb('Small Photo Again', [small]);
-    expect(fs.readFileSync(calls, 'utf8')).toMatch(/-s 4 .*-n remacri-4x -f png/);
-    expect(r.data.notes.join(' | ')).toMatch(/A small photo \(420×300\) was enlarged with Upscayl/);
+    expect(fs.readFileSync(calls, 'utf8')).toMatch(/-n remacri-4x -s 4 -m .* -f png/);
+    expect(r.data.notes.join(' | ')).toMatch(/A 420×300 photo was enlarged 4× with Upscayl \(remacri-4x\) in \d+s \(its place stretched it 3\.6×\)/);
     expect(r.data.slots.find((s: { slot: string }) => s.slot === 'FEATURED')).toBeTruthy();
+  });
+
+  it('soft photos go last (sharpness against the gallery, as in the earlier tool)', async () => {
+    const sharpA = await plain(200, 40, 40, 1600, 1000);
+    const sharpB = await plain(40, 160, 60, 1600, 1000);
+    const blurred = await sharp(await plain(40, 60, 200, 1600, 1000)).blur(18).jpeg().toBuffer();
+    const { data } = await runCeleb('Soft Photo Person', [blurred, sharpA, sharpB]);
+    expect(data.notes.join(' | ')).toMatch(/Photos ordered: 3 different, 1 soft \(used last\)/);
+    const sources = await Promise.all(data.slots.map((s: { sourceAssetIds: string[] }) => client.mediaAsset.findUniqueOrThrow({ where: { id: s.sourceAssetIds[0] } })));
+    // The blurred one (blue) is the last photo used: BODY2.
+    expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+    const last = await sharp(fs.readFileSync(path.join(dataDir, sources[2].filePath))).stats();
+    expect(last.channels[2].mean).toBeGreaterThan(last.channels[0].mean);
+  });
+
+  it('photo check (on by default): watermarked photos go last, a collage is left out, alt text is “Name – what it shows”', async () => {
+    const pics = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000)];
+    const check = '1: watermark=yes | collage=no | alt=standing at a press wall\n2: watermark=no | collage=yes | alt=two photos side by side\n3: watermark=no | collage=no | alt=smiling on a red carpet';
+    const { data } = await runCeleb('jane checker', pics, check);
+    const notes = data.notes.join(' | ');
+    expect(notes).toMatch(/Photo check: 3 of 3 described, 1 with a watermark or site name \(used last\), 1 collage\(s\) of other sites \(left out\)/);
+    expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1']);
+    // The name is the Quick Bio's full name (the scripted answers describe Tom Kaulitz), then what the photo shows.
+    expect(data.slots[0].alt).toBe('Tom Kaulitz – smiling on a red carpet');
+    expect(data.slots[1].alt).toBe('Tom Kaulitz – standing at a press wall');
+  });
+
+  it('owner report: a designed thumbnail of another site never becomes half of the two-photo featured image', async () => {
+    // Gallery order: a clean photo, another site's designed thumbnail (a circle drawn around one person), a clean photo.
+    const pics = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000)];
+    const sourceOf = async (data: { slots: { slot: string; sourceAssetIds: string[] }[] }, slot: string) => {
+      const ids = data.slots.find((x) => x.slot === slot)?.sourceAssetIds ?? [];
+      return Promise.all(ids.map(async (id) => (await sharp(fs.readFileSync(path.join(dataDir, (await client.mediaAsset.findUniqueOrThrow({ where: { id } })).filePath))).stats()).channels.map((c) => Math.round(c.mean))));
+    };
+    const green = (m: number[]) => m[1] > m[0] && m[1] > m[2];
+    // The answer as ChatGPT may write it: bold numbers, “Photo 2”, the collage named only in the description.
+    const check = '**1:** watermark=no | collage=no | alt=smiling at a dinner party\nPhoto 2: watermark=no | alt=promotional thumbnail, two men side by side with a circle\n3: watermark=no | collage=no | alt=standing in front of a brick wall';
+    const { data } = await runCeleb('collage person', pics, check, true);
+    const featured = await sourceOf(data, 'FEATURED');
+    expect(featured).toHaveLength(2);
+    expect(featured.some(green)).toBe(false);
+    expect(data.notes.join(' | ')).toMatch(/1 collage\(s\) of other sites \(left out\)/);
+    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED']);
+
+    // Only collages found: the featured image takes one (single-photo design) and says so; nothing else uses them.
+    const only = await runCeleb('only collages', [pics[1], await plain(120, 200, 90, 1600, 1000)], '1: watermark=no | collage=yes | alt=two photos side by side\n2: watermark=no | collage=yes | alt=a photo grid', true);
+    expect(only.data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED']);
+    expect(await sourceOf(only.data, 'FEATURED')).toHaveLength(1);
+    expect(only.data.notes.join(' | ')).toMatch(/Every photo found is a collage of another site; the featured image uses one of them/);
+  });
+
+  it('owner report: after “Regenerate images” the photos collected before are used again (before: only the new search, and no body images)', async () => {
+    // The search also saved a small thumbnail (left out as smaller than 250 px).
+    const first = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000), await plain(190, 150, 30, 1600, 1000), await plain(120, 40, 160, 1600, 1000), await plain(20, 20, 20, 240, 135)];
+    let pictures = first;
+    let searches = 0;
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
+      if (!/show them as an image gallery/.test(prompt)) return cannedAnswer(stageKey, prompt, language, kw);
+      searches++;
+      return { text: 'Photos.', images: pictures };
+    };
+    const s = await site('Tools regenerate');
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: s.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings('#0b5fff'), featured: presetSplit('#0b5fff') }) } });
+    const cat = await client.category.findFirstOrThrow({ where: { websiteId: s.id } });
+    const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'regenerate person', websiteId: s.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'tools:regenerate person' }, { source: 'SINGLE' });
+    await makeDriver(client, answer).drive(task.id);
+    expect((await stageData(task.id, 'IMAGES')).slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+    expect(searches).toBe(1);
+    // The owner regenerates; a new search would bring back only one picture.
+    pictures = [await plain(90, 200, 200, 1600, 1000)];
+    const { regenerateStage } = await import('@/lib/tasks/actions');
+    await regenerateStage(task.id, 'IMAGES');
+    await makeDriver(client, answer).drive(task.id);
+    const data = await stageData(task.id, 'IMAGES');
+    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+    expect(searches).toBe(1); // enough photos were collected before: no new search
+    expect(data.notes.join(' | ')).toMatch(/5 photo\(s\) collected before for this article are used again/);
+    // The thumbnail the first search left out stays out.
+    expect(data.gallery).toHaveLength(5);
+    // A photo the owner removed is not used again.
+    const rejected = data.gallery[0].id;
+    await client.mediaAsset.update({ where: { id: rejected }, data: { status: 'REJECTED' } });
+    await regenerateStage(task.id, 'IMAGES');
+    await makeDriver(client, answer).drive(task.id);
+    const again = await stageData(task.id, 'IMAGES');
+    expect(again.slots.flatMap((x: { sourceAssetIds: string[] }) => x.sourceAssetIds)).not.toContain(rejected);
   });
 
   it.skipIf(!MP_SRC)('real MediaPipe: finds the face in a portrait; photos with a face come first and the crop centres on it', async () => {
@@ -110,7 +206,7 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
     // The gallery shows a photo without a face first; the portrait becomes the featured photo.
     const { data } = await runCeleb('Abraham Lincoln', [await plain(30, 90, 160, 1600, 1067), portrait]);
     const notes = data.notes.join(' | ');
-    expect(notes).toMatch(/Face detector: 1 of 2 photo\(s\) show a face/);
+    expect(notes).toMatch(/Photos ordered: 2 different, 1 with a face/);
     const featured = data.slots.find((s: { slot: string }) => s.slot === 'FEATURED');
     const source = await client.mediaAsset.findUniqueOrThrow({ where: { id: featured.sourceAssetIds[0] } });
     expect([source.width, source.height]).toEqual([360, 463]);

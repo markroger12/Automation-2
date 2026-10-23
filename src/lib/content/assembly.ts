@@ -1,6 +1,6 @@
 import { load, type CheerioAPI } from 'cheerio';
 import { sanitizeArticleHtml } from '../html/sanitize';
-import { dedupeBlocks } from './markdown';
+import { dedupeBlocks, sameTitle, WRITING_LABEL_RE } from './markdown';
 
 export interface FaqItem {
   question: string;
@@ -24,6 +24,8 @@ export interface AssemblyInput {
   images?: AssemblyImage[];
   /** Wrap every link's text in <strong> (Settings → Content → Bold links). */
   boldLinks?: boolean;
+  /** The post title: a body heading that repeats it is removed (WordPress shows the title already). */
+  title?: string | null;
 }
 
 export interface AssemblyResult {
@@ -78,6 +80,13 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
   const $ = load(`<body>${dedup.html}</body>`);
   // Never keep an internal-link line from an earlier assembly; it is re-added once at the end.
   $('p[data-bas-internal-link]').remove();
+  // Owner report: “Writing” (the label of ChatGPT's writing block) stood under the title, the title was repeated as
+  // the first H2, and so the Quick Bio landed before the introduction. Drafts saved before the fix are cleaned here too.
+  $('p, div').filter((_, el) => WRITING_LABEL_RE.test($(el).text().trim()) && !$(el).find('p, h2, h3, table, ul, ol').length).remove();
+  if (input.title) {
+    const first = $('body > h1, body > h2').first();
+    if (first.length && sameTitle(first.text(), input.title)) first.remove();
+  }
   const { intro, sections } = splitSections($);
   const removedSections: string[] = [];
   const isCelebrity = input.moduleKey === 'celebrity-writer';

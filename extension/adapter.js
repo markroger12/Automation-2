@@ -18,6 +18,7 @@
       '#prompt-textarea[contenteditable="true"]',
       'div[contenteditable="true"]#prompt-textarea',
       'div.ProseMirror[contenteditable="true"]',
+      '[contenteditable="true"][role="textbox"]',
       'textarea#prompt-textarea',
       'form textarea[placeholder]',
       'main textarea',
@@ -139,11 +140,56 @@
     });
   }
 
+  const PROMPT_PLACEHOLDER = /ask chatgpt|ask anything|message chatgpt|nachricht an chatgpt|frag chatgpt|frage chatgpt/i;
+
+  /** The form around a textbox when it is the chat's composer form (it holds the send, submit or voice button). */
+  function composerFormOf(el) {
+    const form = el.closest('form');
+    if (!form) return null;
+    const button = form.querySelector([...SELECTORS.sendButton, ...SELECTORS.stopButton, 'button[type="submit"]', 'button[aria-label*="voice" i]', 'button[aria-label*="dictat" i]', 'button[data-testid*="composer"]'].join(','));
+    return button ? form : null;
+  }
+
+  function placeholderOf(el) {
+    const inner = el.querySelector && el.querySelector('[data-placeholder]');
+    return `${el.getAttribute('aria-label') || ''} ${el.getAttribute('placeholder') || ''} ${el.getAttribute('data-placeholder') || ''} ${inner ? inner.getAttribute('data-placeholder') : ''}`;
+  }
+
+  /**
+   * The chat composer. Owner report (FINAL_ARTICLE, “Chat composer not found” for hours): in ChatGPT's “Work”
+   * layout the whole page can sit in a canvas-styled container, and the canvas exclusion (meant for document editors)
+   * then refused the real composer. A textbox in the composer form (with the send/voice button) is always the
+   * composer; a writing block never is.
+   */
   function findComposer() {
-    for (const el of qsAll(SELECTORS.composer)) {
-      if (isVisible(el) && !insideExcluded(el)) return el;
+    const candidates = qsAll(SELECTORS.composer).filter((el) => isVisible(el));
+    const inForm = candidates.find((el) => composerFormOf(el) && !el.closest('[data-writing-block], .writing-block'));
+    if (inForm) return inForm;
+    for (const el of candidates) if (!insideExcluded(el)) return el;
+    // Last resort: a visible textbox whose placeholder says it is the chat prompt (“Ask ChatGPT”).
+    for (const el of document.querySelectorAll('[contenteditable="true"], textarea')) {
+      if (isVisible(el) && PROMPT_PLACEHOLDER.test(placeholderOf(el)) && !el.closest('[data-writing-block], .writing-block')) return el;
     }
     return null;
+  }
+
+  /** What the page offers as text boxes, for the “composer not found” message (no text content). */
+  function composerDiagnostics() {
+    const boxes = Array.from(document.querySelectorAll('[contenteditable="true"], textarea')).slice(0, 5);
+    if (!boxes.length) return 'no editable text box on the page';
+    return boxes
+      .map((el) => {
+        const excluded = SELECTORS.composerExclusions.find((sel) => {
+          try {
+            return Boolean(el.closest(sel));
+          } catch (e) {
+            return false;
+          }
+        });
+        const ph = placeholderOf(el).replace(/\s+/g, ' ').trim().slice(0, 30);
+        return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : ''}${isVisible(el) ? '' : ' hidden'}${el.closest('form') ? ' in form' : ''}${composerFormOf(el) ? ' (composer form)' : ''}${excluded ? ` excluded by ${excluded}` : ''}${ph ? ` “${ph}”` : ''}`;
+      })
+      .join('; ');
   }
 
   function findButtonByText(patterns) {
@@ -357,15 +403,69 @@
       const src = img.currentSrc || img.src || '';
       if (!/^(https?:|blob:)/.test(src)) return false;
       if (userEl && (userEl.contains(img) || !(userEl.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING))) return false;
-      if (img.closest('form, nav, aside, [data-testid*="composer"]')) return false;
-      if (/avatar|favicon|logo|icon/i.test(`${img.alt || ''} ${src} ${img.className || ''}`)) return false;
+      if (img.closest('form, nav, aside, [role="dialog"], [data-testid*="composer"]')) return false;
       const r = img.getBoundingClientRect();
-      return r.width >= 60 && r.height >= 60;
+      // Avatars, site icons and logos are small; a large picture is a photo even when its caption says “style icon”.
+      if ((r.width < 120 || r.height < 120) && /avatar|favicon|logo|icon/i.test(`${img.alt || ''} ${src} ${img.className || ''}`)) return false;
+      if (r.width >= 60 && r.height >= 60) return true;
+      // Owner report: a picture the page could not load shows as a small broken-picture icon with its alt text, while
+      // its address works (“Open image in new tab”). It is still a gallery picture: the app downloads it from there.
+      return brokenPicture(img) && (img.alt || '').trim().length >= 3 && r.width > 0;
     });
+  }
+
+  function brokenPicture(img) {
+    return img.complete && img.naturalWidth === 0 && /^https?:/i.test(img.currentSrc || img.src || '');
   }
 
   function galleryDialog() {
     return qs(['[role="dialog"]']);
+  }
+
+  /**
+   * How much of an element is really on screen: the part inside the window and inside every parent that clips it,
+   * times how opaque it is (a fading viewer stacks its pictures and shows one).
+   */
+  function shownArea(el) {
+    const r = el.getBoundingClientRect();
+    let left = Math.max(r.left, 0);
+    let top = Math.max(r.top, 0);
+    let right = Math.min(r.right, innerWidth);
+    let bottom = Math.min(r.bottom, innerHeight);
+    let opacity = 1;
+    for (let p = el; p && p !== document.documentElement; p = p.parentElement) {
+      const style = getComputedStyle(p);
+      opacity *= Number(style.opacity) || 0;
+      if (p !== el && (style.overflowX !== 'visible' || style.overflowY !== 'visible')) {
+        const q = p.getBoundingClientRect();
+        left = Math.max(left, q.left);
+        top = Math.max(top, q.top);
+        right = Math.min(right, q.right);
+        bottom = Math.min(bottom, q.bottom);
+      }
+      if (right <= left || bottom <= top || opacity < 0.1) return 0;
+    }
+    return (right - left) * (bottom - top) * opacity;
+  }
+
+  /**
+   * The picture the viewer shows now: visible, loaded, the largest on screen. Owner report (3 thumbnails, “+10”): the
+   * viewer keeps its other pictures in the page, hidden; taking the largest file there gave the same picture each time.
+   * Owner report (ChatGPT showed about 6 photos, 2 were used): a viewer that slides its pictures side by side keeps the
+   * others beside the window, so only the part really on screen counts.
+   */
+  function shownPicture(dialog) {
+    let best = null;
+    let bestArea = 0;
+    for (const img of dialog.querySelectorAll('img')) {
+      if (!img.complete || (img.naturalWidth || 0) < 200 || !isVisible(img)) continue;
+      const area = shownArea(img);
+      if (area > bestArea) {
+        best = img;
+        bestArea = area;
+      }
+    }
+    return best;
   }
 
   function galleryNextButton(dialog) {
@@ -438,9 +538,25 @@
     return parts.join('; ');
   }
 
-  /** Assistant turn(s) that come after the given user turn in document order. */
+  /** The next user turn after this one (where this prompt's answer ends), or null. */
+  function nextUserAfter(userEl) {
+    return userMessages().find((u) => u !== userEl && !u.contains(userEl) && !userEl.contains(u) && userEl.compareDocumentPosition(u) & Node.DOCUMENT_POSITION_FOLLOWING) || null;
+  }
+
+  /**
+   * Is the element part of this prompt's answer: after the user turn and before the next one? Owner report: a
+   * recovered image job took a later prompt's answer (another article's humanizer text) as its own, because
+   * “the last answer after the prompt” was used.
+   */
+  function inAnswerOf(userEl, el) {
+    if (!(userEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) || userEl.contains(el)) return false;
+    const next = nextUserAfter(userEl);
+    return !next || (Boolean(el.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING) && !el.contains(next));
+  }
+
+  /** Assistant turn(s) that answer the given user turn (after it, before the next user turn). */
   function assistantAfter(userEl) {
-    return assistantMessages().filter((a) => userEl.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return assistantMessages().filter((a) => inAnswerOf(userEl, a));
   }
 
   /** The final user-facing answer element of an assistant turn (skips reasoning/tool blocks). */
@@ -451,29 +567,39 @@
     return null;
   }
 
-  /** Generic fallback: the page's own visible conversation representation (last turn after the user turn). */
-  /** Generated images in the answer(s) after a user turn, de-duplicated by URL. */
+  /**
+   * Pictures ChatGPT created in the answer to this user turn, one per address. As in the owner's earlier tool: any
+   * picture in that answer counts when it has loaded at 700×350 or more (icons, avatars and previews are smaller),
+   * besides the known generated-image addresses — the page's image markup changes.
+   */
   function generatedImagesAfter(userEl) {
-    const scopes = assistantAfter(userEl);
-    if (!scopes.length) {
-      const generic = genericAnswerAfter(userEl);
-      if (generic) scopes.push(generic);
+    const scope = document.querySelector('main') || document.body;
+    const known = new Set(qsAll(SELECTORS.generatedImage, scope));
+    const users = userMessages();
+    const found = new Map();
+    for (const img of scope.querySelectorAll('img')) {
+      if (!inAnswerOf(userEl, img) || img.closest('form') || users.some((u) => u.contains(img))) continue;
+      const src = img.currentSrc || img.src;
+      if (!src || src.startsWith('data:image/svg')) continue;
+      const big = img.complete && img.naturalWidth >= 700 && img.naturalHeight >= 350;
+      if (!known.has(img) && !big) continue;
+      const prev = found.get(src);
+      if (!prev || img.naturalWidth > prev.naturalWidth) found.set(src, img);
     }
-    const seen = new Set();
-    const out = [];
-    for (const scope of scopes) {
-      for (const img of qsAll(SELECTORS.generatedImage, scope)) {
-        const src = img.currentSrc || img.src;
-        if (!src || seen.has(src)) continue;
-        seen.add(src);
-        out.push(img);
-      }
-    }
-    return out;
+    return [...found.values()];
+  }
+
+  /** ChatGPT is still drawing a picture for this prompt: a composer Stop button, or “Creating image” in its answer. */
+  function imageInProgress(userEl) {
+    if (document.querySelector('button[data-testid="stop-button"]')) return true;
+    const form = (findComposer() && findComposer().closest('form')) || null;
+    if (form && Array.from(form.querySelectorAll('button')).some((b) => isVisible(b) && /\bstop/i.test(`${b.getAttribute('data-testid') || ''} ${b.getAttribute('aria-label') || ''}`))) return true;
+    const turns = qsAll(SELECTORS.turn).filter((t) => inAnswerOf(userEl, t));
+    return turns.some((t) => /creating image|generating image|bild wird erstellt|image is being (created|generated)/i.test(t.innerText || ''));
   }
 
   function genericAnswerAfter(userEl) {
-    const turns = qsAll(SELECTORS.turn).filter((t) => userEl.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING && !t.contains(userEl));
+    const turns = qsAll(SELECTORS.turn).filter((t) => inAnswerOf(userEl, t));
     const last = turns[turns.length - 1];
     return last || null;
   }
@@ -525,6 +651,11 @@
     return [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...body.map((r) => `| ${r.join(' | ')} |`)].join('\n');
   }
 
+  /** The “Writing” label ChatGPT shows above a writing block (owner report: it stood under every article's title). */
+  function writingLabel(el) {
+    return /^(?:writing|schreiben)$/i.test((el.textContent || '').trim()) && !el.querySelector('p, h1, h2, h3, li, table');
+  }
+
   function blockMd(root, depth) {
     const parts = [];
     for (const child of root.childNodes) {
@@ -558,6 +689,7 @@
       else if (tag === 'pre') parts.push('```\n' + el.textContent.replace(/\n$/, '') + '\n```');
       else if (tag === 'blockquote') parts.push(blockMd(el, depth).split('\n').map((l) => `> ${l}`).join('\n'));
       else if (tag === 'hr') parts.push('---');
+      else if (writingLabel(el)) continue;
       else if (tag === 'div' || tag === 'section' || tag === 'span' || tag === 'article') {
         const inner = blockMd(el, depth);
         if (inner.trim()) parts.push(inner);
@@ -664,6 +796,7 @@
         composerFound: Boolean(composer),
         composerKind: composer ? (composer.tagName === 'TEXTAREA' ? 'textarea' : 'contenteditable') : null,
         composerLength: composer ? composerText(composer).length : 0,
+        textBoxes: composerDiagnostics(),
         sendVisible: Boolean(send),
         sendEnabled: Boolean(send && !send.disabled && send.getAttribute('aria-disabled') !== 'true'),
         stopVisible: Boolean(findStopButton()),
@@ -702,7 +835,9 @@
     turnKey,
     isPictureHost,
     galleryThumbs,
+    brokenPicture,
     galleryDialog,
+    shownPicture,
     galleryNextButton,
     closeGalleryDialog,
     promptMismatchReport,
@@ -711,6 +846,8 @@
     finalAnswerElement,
     genericAnswerAfter,
     generatedImagesAfter,
+    composerDiagnostics,
+    imageInProgress,
     toMarkdown,
     composerText,
     composerMismatch,

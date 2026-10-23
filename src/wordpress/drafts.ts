@@ -44,6 +44,11 @@ export interface DraftInput {
     adoptPostId?: number | null;
     /** Owner confirmed that a missing/trashed draft should be created again. */
     recreate?: boolean;
+    /**
+     * The post is scheduled (“future”) by this app's workflow and not live yet: its content may be updated (owner report:
+     * Regenerate images stopped at “already future”). No status is ever sent, so it stays scheduled for its slot.
+     */
+    updateScheduled?: boolean;
     timeoutMs?: number;
   };
 }
@@ -183,7 +188,7 @@ export async function saveDraft(client: WpClient, input: DraftInput, persist: (d
     postId = created.id;
     action = 'created';
   } else {
-    if (BLOCKED_REMOTE.includes(post.status)) {
+    if (BLOCKED_REMOTE.includes(post.status) && !(post.status === 'future' && input.options.updateScheduled)) {
       throw new NeedsReviewError(
         `WordPress post #${post.id} is already “${post.status}”. The app does not change live or scheduled posts in this step.`,
         [`Post #${post.id} is ${post.status}; content was not overwritten.`],
@@ -223,7 +228,8 @@ export async function saveDraft(client: WpClient, input: DraftInput, persist: (d
   const saved = await client.getPost(postId!);
   if (!saved) throw new TransientError(`Draft #${postId} could not be read back after saving.`);
   const problems: string[] = [];
-  if (BLOCKED_REMOTE.includes(saved.status)) problems.push(`status is “${saved.status}”, expected draft`);
+  const scheduledOk = saved.status === 'future' && input.options.updateScheduled === true;
+  if (BLOCKED_REMOTE.includes(saved.status) && !scheduledOk) problems.push(`status is “${saved.status}”, expected draft`);
   if (!['draft', 'pending', 'auto-draft'].includes(saved.status) && !BLOCKED_REMOTE.includes(saved.status)) problems.push(`unexpected status “${saved.status}”`);
   if ((saved.title.raw ?? '').trim() !== input.title.trim()) problems.push('title differs');
   const storedContent = saved.content.raw ?? '';

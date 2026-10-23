@@ -53,7 +53,7 @@ export async function runMigrations(): Promise<void> {
     env: { ...process.env, DATABASE_URL: `file:${dbFile}` },
     stdio: 'inherit',
   });
-  if (result.status !== 0) throw new Error('prisma migrate deploy failed (see output above). Your data was not reset; a backup is in data/backups/.');
+  if (result.status !== 0) throw new Error(`prisma migrate deploy failed (see output above). Your data was not reset; a backup is in ${dataPaths.backups()}.`);
   const client = new PrismaClient({ datasources: { db: { url } } });
   try {
     await client.$queryRawUnsafe('PRAGMA journal_mode = WAL;');

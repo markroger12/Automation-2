@@ -139,7 +139,9 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     const driver = makeDriver(client, answer);
     const task = await celebTask(site, 'Tom Kaulitz Heidi Klum', 'rm-never');
     const t = await driver.drive(task.id);
-    expect(t.status).toBe('NEEDS_REVIEW');
+    // Review holds are off by default: the verified draft completes and the reasons are notes on the article page.
+    expect(t.status).toBe('COMPLETED');
+    expect(t.message).toMatch(/note\(s\) on the article page/);
     expect(t.rankMathScore).toBeNull();
     expect(t.reviewReasons).toMatch(/Rank Math showed 0 \/ 100 for the whole check/);
     expect(t.reviewReasons).not.toMatch(/below the target/);
@@ -155,7 +157,7 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     const before = seoCorrections.length;
     const task = await celebTask(site, 'Sydney Sweeney Glen Powell', 'rm-cap');
     const t = await driver.drive(task.id);
-    expect(t.status).toBe('NEEDS_REVIEW');
+    expect(t.status).toBe('COMPLETED'); // with the reasons as notes (review holds off by default)
     expect(t.rankMathScore).toBe(60);
     expect(t.reviewReasons).toMatch(/Rank Math score 60 is below the target 75 after \d correction round/);
     const report = await stageData(task.id, 'RANKMATH');

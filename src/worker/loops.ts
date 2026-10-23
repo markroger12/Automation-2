@@ -31,7 +31,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'workflow-scheduler', intervalMs: 60_000, run: async () => void (await schedulerTick()) });
   // Content refresh: one read-only evaluation per website and day (enqueues only).
   registerLoop({ name: 'refresh-scheduler', intervalMs: 3600_000, run: async () => void (await scheduleDailyEvaluations()) });
-  // Search Console (when connected): live data every 2 h, one website per tick; sitemap resubmit and index proof.
+  // Search Console: “Request indexing” queued for Automation Chrome after a publish; with the key, live data every 2 h
+  // (one website per tick) and Google's index proof.
   registerLoop({
     name: 'search-console',
     intervalMs: 30_000,

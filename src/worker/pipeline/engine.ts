@@ -254,6 +254,9 @@ export async function markCancelled(taskId: string) {
   await db.articleTask.update({ where: { id: taskId }, data: { status: 'CANCELLED', message: 'Cancelled by the owner. Completed content is preserved.', pausedFor: null } });
   await db.queueJob.updateMany({ where: { taskId, status: 'WAITING' }, data: { status: 'CANCELLED', finishedAt: new Date(), errorCode: 'CANCELLED' } });
   await log({ category: 'task', taskId, message: 'Task cancelled; completed stage outputs were kept.' });
+  // Deleted by the owner while it was running: removed now that it stopped.
+  const { deleteIfRequested } = await import('@/lib/tasks/delete');
+  await deleteIfRequested(taskId);
 }
 
 async function handleError(

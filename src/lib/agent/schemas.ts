@@ -33,6 +33,15 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
     tabId: id,
     openConversationUrls: z.array(z.string().max(500)).max(10).default([]),
   }),
+  // Search Console “Request indexing” in Automation Chrome (owner request).
+  z.object({ action: z.literal('gsc-claim'), installId: id }),
+  z.object({
+    action: z.literal('gsc-result'),
+    installId: id,
+    jobId: id,
+    outcome: z.enum(['REQUESTED', 'QUOTA', 'NOT_SIGNED_IN', 'NO_ACCESS', 'HUMAN_CHECK', 'ERROR']),
+    message: z.string().max(1000).optional().nullable(),
+  }),
   z.object({
     action: z.literal('progress'),
     installId: id,
@@ -61,6 +70,8 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
       .array(z.object({ url: z.string().max(2000).regex(/^https?:\/\//), width: z.number().int().min(0).max(50_000).optional(), height: z.number().int().min(0).max(50_000).optional() }))
       .max(20)
       .optional(),
+    /** What the extension saw in the gallery (how many pictures, opened large, saved, links), for the task log. */
+    galleryReport: z.string().max(500).optional(),
   }),
   z.object({
     action: z.literal('fail'),

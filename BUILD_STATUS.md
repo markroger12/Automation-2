@@ -1632,7 +1632,7 @@ The owner created a Google Cloud service account (no billing needed). Previously
 - **The existing analysis works on it:** trends, declining pages, published articles without impressions, and Content Refresh evidence. The 1,000-row export cap no longer applies to live data.
 - **Page:** a live badge in the text, the last sync (or its error), and a “Last hours (live)” table.
 
-**Indexing after a workflow publish** (`indexingTick`)
+**Indexing after a workflow publish** (`indexingTick`) — *replaced on 2026-10-22: the request is now made in Search Console's URL Inspection by Automation Chrome, as the owner does it; see “Request indexing as the owner does it” below. The proof part is unchanged.*
 - **Sitemap resubmit:** 35 s after a verified publish, if the workflow has “Request indexing after publishing” on, the sitemaps Search Console knows for the property are resubmitted (`sitemaps.submit`). If there are none, `<site>/sitemap_index.xml` is submitted.
   - The keyword becomes INDEXING_REQUESTED, with the note “a request is not proof of indexing”.
   - Google's “Request indexing” button has no API.
@@ -1733,4 +1733,1310 @@ integration: extension 28/28, images 9/9, image-tools 3/3 (real MediaPipe with B
              (one wordpress-drafts test timed out once while running in parallel with the extension file; it passed alone and in the file rerun)
 npm run build                       # compiled; postbuild recorded the commit; preflight --build then said "up to date"
 npx tsx scripts/preflight.ts        # on an empty data folder: all tables, settings, prompts, face detector
+```
+
+## Owner requests (2026-10-21): delete, approved duplicates, review off, images from automation-old
+
+**Delete articles and campaigns** (owner report: queued and completed articles could not be deleted; there was no delete at all)
+- `src/lib/tasks/delete.ts`:
+  - the article's report (stages, prompts, answers, logs) is written to `data/backups/deleted-articles/<id>-<slug>.json`;
+  - its waiting queue jobs are removed; its campaign row becomes CANCELLED; its workflow keyword becomes SKIPPED and its slot is released;
+  - the task row is deleted (stages, responses and reports cascade). WordPress is not touched.
+- **A running article** (an ACTIVE job) gets `deleteWhenStopped`. It is cancelled and deleted when `markCancelled` runs.
+- **Campaign delete:** `deleteCampaign(id, withArticles)`.
+- **UI:**
+  - queue/history: a row bin icon and “Delete selected”, with a confirmation;
+  - article page: Delete;
+  - campaign page: Delete, with an “also delete its articles” checkbox.
+- **API:**
+  - `DELETE /api/tasks/[id]`;
+  - bulk action `delete`;
+  - `DELETE /api/campaigns/[id]` with body `{ articles }`.
+
+**An approved duplicate keyword continues** (owner report)
+- **Cause:**
+  - the pre-check's reasons read “Possible duplicate on this website: …”;
+  - “Approve selected” and the article page only recognised “Duplicate keyword …”, so approval ran the plain review override;
+  - that override reset only the quality gate, so the pre-check held the article again.
+- **Fix:** `heldForDuplicate()` recognises both texts, and a FAILED pre-check stage. “Approve despite review reasons” on a duplicate hold also allows the duplicate.
+
+**Review system off by default** (owner decision): `workflow.holdForReview`, default false.
+- **Finalize:** a verified draft with review reasons is COMPLETED (“Verified WordPress draft #N. K note(s) on the article page.”).
+- **Notes:** the reasons are kept and shown as Notes on the article page.
+- **Quality-gate hard stop:** the draft is still saved, and `options.publishBlocked` records the problems. The workflow scheduler never publishes such a draft: its keyword becomes FAILED with the reason.
+- **Turned on:** the previous behaviour.
+- **Data migration** `2026-10-21-review-reasons-become-notes`: NEEDS_REVIEW tasks with a verified draft (VERIFIED_COMPLETE verified) become COMPLETED. A backup is written first. Tasks without a draft are unchanged.
+- **Override migration key list:** the 2026-10-14 override-unpin migration keeps its original key list, so the new key does not change what it recognises.
+
+**Images: the concepts of the owner's earlier tool** (`markroger12/automation-old`, uploaded by the owner; not the GitHub `Automation` repository, which is older)
+- **Celebrity** (`images/choose.ts`, `similar.ts`, `faces.ts`, `enhance.ts`, `review.ts`):
+  - up to 10 gallery photos;
+  - a cropped copy (fingerprint of the area around the main faces, ≤ 6 bits with one face, ≤ 12 with several) counts once;
+  - soft = sharpness below 0.4 × the gallery's median, with 3+ photos;
+  - ordering: uploads first, then a face before no face, sharp before soft, biggest face first;
+  - photo check: watermark last, collage last and never a body image, alt text “Name – description”;
+  - Upscayl by the photo's place: stretched > 2× → enlarged 4×; a soft photo is sharpened from a quarter-size input. The tool is found in `data/tools/upscayl` or one folder below; it runs with the tool folder as cwd.
+- **Renderer** (`src/images/render.ts`):
+  - the earlier tool's face crop: centred across, a little above the middle with room over the heads;
+  - a photo much taller than its place is shown whole on a blurred copy of itself.
+- **Tigram:**
+  - image plan v2 and generation prompt v2 (the earlier tool's texts: the featured picture shows the short title, the body pictures are flat illustrations without text);
+  - `featuredImageTitle()`; the earlier tool's default descriptions for missing plan lines;
+  - a missing or repeated picture is asked once more in a new chat (identical files are stored once, so a repeat arrives as no picture);
+  - the featured picture gets the picture-with-logo design.
+- **Logo on every picture:** without a body template, the logo goes in a corner.
+- **Not changed:** the earlier tool's own Image Search Prompt is “Search On google and give me any random colors pic high quality 5 to 10 pic simple pic random color.” This app keeps its prompt for photos of the person. The owner can paste the old one in the Prompt Manager.
+
+**Tests** (each new behaviour has a test; the duplicate and review ones fail on the previous code)
+- `tests/unit/owner-delete-review.test.ts` (8): review off on the real engine, duplicate approval both ways, finalize notes, data migration, delete of queued/completed/running articles, campaign delete.
+- `tests/unit/images.test.ts` (+3): old plan format, featured title, tall photo shown whole.
+- `tests/integration/images.test.ts` (+1): title in the featured prompt, a repeat asked again, the logo in the corner of all three pictures.
+- `tests/integration/image-tools.test.ts` (+2):
+  - soft photo last;
+  - photo check ordering, collage never body, alt text;
+  - real MediaPipe face test (with `BAS_TEST_MEDIAPIPE_DIR`);
+  - fake Upscayl with the earlier tool's arguments.
+- **Updated tests:** two Tigram e2e lists (three image prompts now follow the default plan), and image test matchers for the new prompt texts.
+
+**Not verified here:** the real ChatGPT image generation with the v2 prompts; the real Upscayl on Windows; deleting from the owner's real queue.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 304 tests pass
+integration: images 10/10, image-tools 5/5 (real MediaPipe with BAS_TEST_MEDIAPIPE_DIR), wordpress-drafts 10/10 (two
+             Rank Math tests now expect COMPLETED with notes), links 6/6, workflow-publish 6/6, content-refresh 5/5,
+             migration-upgrade 1/1
+npx next build                      # compiled
+```
+
+## Owner request: bulk category in Bulk Campaigns
+- **New campaign → Preview:** when rows are selected, the bar has a **Category…** dropdown. It lists the categories of the website the selected rows are on, and sets that category on every selected row (the same preview correction as the per-row dropdown). If the rows are on several websites, the bar says to select one website at a time.
+- **Campaign page:** the same dropdown for rows that are not queued yet. It uses the existing `category` row action, and `getCampaign` now returns the categories of the rows' websites.
+- **Verified in Chromium against `next dev` (scratch database):**
+  - preview: three celebrity rows were all set to “Biography”;
+  - campaign page: a NEEDS_CATEGORY row became READY with its category, and “1 row(s) updated.” was shown;
+  - no console errors on either page.
+- **Commands:** `npx tsc --noEmit` (0 errors); `npx vitest run` (44 files, 304 tests pass).
+
+## Owner report: Tigram pictures not made (pulsamento); Humanizer per website
+
+The report showed three separate problems.
+
+**1. The featured picture was drawn but never collected.**
+- ChatGPT showed the picture, yet the job reported “generating (0 chars so far)” for 600 s and then “No complete answer”.
+- Two things in extension 3.2.2 could cause this:
+  - the page-wide check `[data-testid*="streaming"]` / `aria-label*="Stop"` stayed true;
+  - pictures were only searched by the known address or alt patterns.
+- The real page markup was not available. Both were reproduced on the fake page (`imageMarkup: 'unknown'`, `staleStreaming: true`), where the old code timed out.
+
+**2. A recovered job took another article's answer.**
+- After the timeout, a recovery attached a later prompt's answer from the same chat (another article's humanizer text, “Cy Kass …”) as the featured picture's answer.
+- **Cause:** “the last answer after the prompt” was used.
+- Reproduced on the fake page: the old code returned the “Cy Kass” text.
+
+**3. Three pictures were sent at once into three new chats.**
+- These ran in background tabs. Two prompts became uncertain (“not visible in this conversation”).
+
+**Fixes**
+- **Extension 3.2.3 — answer boundaries:** an answer and its pictures are taken only between the prompt and the next user turn (`inAnswerOf`).
+- **Extension 3.2.3 — finding pictures,** as in `automation-old`:
+  - any picture in that answer counts when it has loaded at 700×350 or more, as well as the known addresses;
+  - drawing is detected by the composer's Stop button or “Creating image”, not by page-wide markers;
+  - pictures must stay unchanged for 6 s;
+  - a hidden ChatGPT tab is brought to the front while a picture is drawn (new `come-to-front` message).
+- **App:** the Tigram pictures are made one after another in the article's chat, as the earlier tool did. Only a second try goes to a new chat.
+
+**Humanizer per website** (owner request)
+- **Website form:** a new “Humanizer” option (Inherit / On / Off). The override key already existed but was not in the form.
+- **Default off:** the global default is now off.
+- **Data migration** `2026-10-21-humanizer-off-by-default`: turns a saved global “on” off once. Websites set to On keep it.
+
+**Tests**
+- Extension: 2 new owner-report tests. Both fail on the old adapter/content (with the version string matching) and pass now; the existing image-answer test still passes.
+- `owner-delete-review`: +1 test (humanizer default, migration, a website switching it on).
+- Humanizer and e2e tests now switch the humanizer on in their setup.
+
+**Not verified here:** the real ChatGPT image page with 3.2.3.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+integration: extension 30/30, images 10/10, image-tools 5/5, wordpress-drafts 10/10, links 6/6,
+             workflow-publish 6/6, content-refresh 5/5, migration-upgrade 1/1
+npx next build                      # compiled
+```
+
+## Owner report: FINAL_ARTICLE stops with “Chat composer not found”, and Retry stops the same way (malaak compton rock; extension 3.2.4)
+
+**What the report showed**
+- FINAL_ARTICLE failed with “Chat composer not found” and later “the composer did not become ready within 60 seconds”.
+- Every Retry did run, but stopped at the same step within a minute, so it looked as if Retry did nothing.
+- The screenshots show ChatGPT open in the “Work” layout with the usual “Ask ChatGPT” box.
+
+**Likely cause (inferred; the real page markup was not available)**
+- The extension refuses text boxes inside canvas or document editors (`[class*="canvas"]` and similar), so it never types into a writing block.
+- If the Work layout wraps the whole page in a canvas-styled container, that rule also refuses the real composer, and no composer is found.
+- Reproduced on the fake page with a new `workLayout` option (the page inside `<div class="work-canvas-layout bg-token-canvas">`). The committed 3.2.3 adapter timed out there; the prompt was never sent.
+
+**Fix — extension 3.2.4**
+- A text box inside the chat's composer form (the form holding the send, stop or voice button) is taken as the composer, even inside a canvas-styled container. A writing block is still never used.
+- If none is found, the earlier rule applies, then a visible text box whose placeholder is the chat prompt (“Ask ChatGPT”).
+- `[contenteditable="true"][role="textbox"]` was added to the composer selectors.
+- When no composer is found, the error now lists the page's text boxes (tag, role, visible or hidden, in the composer form or not, which exclusion refused it, and the first 30 characters of the placeholder). It never includes the text typed in them.
+- The app expects extension 3.2.4 (`src/lib/agent/version.ts`).
+
+**Tests**
+- New extension test: “the chat composer inside a canvas-classed Work layout is still found (prompt sent once)”. It fails (timeout) on the 3.2.3 adapter and passes now.
+- The alternate-DOM, markdown-link, `](` space and missing-DOM-marker tests still pass.
+
+**Not verified here:** the real ChatGPT Work layout. The fix rests on the report and the screenshots. If the error comes back, its new “text boxes on the page” part shows what the page offers.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                    # 10 files, 80 pass, 1 skipped (real MediaPipe: MP_SRC not set)
+                                    # extension 31/31
+```
+
+### Second report: “still the same error” with 3.2.4 (extension 3.2.5)
+
+**What the first report already showed, read again**
+- TITLES, RESEARCH and LONG_ARTICLE worked in the same chat. About 20 s after LONG_ARTICLE, FINAL_ARTICLE's first try failed with **“Send button not available”**: the composer was found and the prompt typed, but there was no usable Send button.
+- The next tries failed with “Chat composer not found” or “did not become ready”. The composer was there at one moment and gone the next.
+- So the ChatGPT page itself had stopped working, whatever the markup.
+
+**Why every Retry failed the same way**
+- The extension marks a tab “ready” when its page loads, not when the composer works.
+- A retry in the same conversation therefore ran on the same stuck page without loading it again. Each retry failed within a minute, and no retry could ever succeed.
+- This was reproduced on the fake page. A new test helper (`__fakeStick`) makes the page stop working after an answer: either the composer is hidden, or a Stop button stays where Send should be. A reload clears it.
+- With 3.2.4, the next prompt failed three times with the owner's exact messages (“composer did not become ready within 8 seconds …”, “Send button not available.”). The page was never reloaded.
+
+**Fix — extension 3.2.5**
+- **Reload during the job.** When the composer is missing, never becomes ready, or has no usable Send button, the job reloads the page once and runs again on the fresh page. These errors all come before Send, so nothing has been sent. The prompt is typed afresh, and a prompt the job typed is cleared first.
+- **If it still fails,** the job stops with “… The ChatGPT page was reloaded once and it still did not work.” and the list of text boxes on the page.
+- **Next attempt.** The tab is marked, so the next attempt on it starts from a freshly loaded page, even in the same conversation. The same happens after “Tab could not start the job”.
+- **Checkpoints.** A step-only checkpoint (such as the new “reloading”) no longer erases a recorded send time. The send time is the evidence that stops a resend after a reload.
+- **Article report.** It now has `chatgptPageSnapshots`: for each failed ChatGPT job, what the extension saw on the page. That covers composer found, Send or Stop visible, generating, page URL, layout markers and the list of text boxes. Page text is never included.
+
+**Tests**
+- 3 new extension tests:
+  - stuck without a composer: reloaded, sent once;
+  - stuck without a Send button: reloaded, sent once;
+  - stuck even after the reload: stops with the reason and the text-box list, never sends; the next attempt reloads and succeeds.
+- The first two fail on 3.2.4, which retries three times on the stuck page.
+- With the background reload switched off, the third test times out on its second part. That proves the next attempt's reload is what makes it work.
+- `article-report` unit test: the page snapshot of a failed job is in the report.
+
+**Not verified here**
+- The real ChatGPT page. It is not known *why* the owner's page stopped working. A reload is what a person would do, and it is what the fix does.
+- If the page fails again right after the reload, the new report's `chatgptPageSnapshots` and the error's text-box list will show what the page offered.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                    # 10 files, 83 pass, 1 skipped (real MediaPipe: MP_SRC not set); extension 34/34
+stuck-page tests on 3.2.4           # 2 failed: three retries on the stuck page with the owner's messages
+stuck-page retry test, background reload switched off   # failed (timed out), as expected
+stuck-page, missing-DOM and handshake tests on the final 3.2.5 files   # 5 passed
+next build                          # compiled
+```
+
+## Owner report: celebrity gallery pictures shown as broken-picture icons (extension 3.2.6)
+
+**Reported by the owner** (screenshots):
+- A celebrity image search sometimes answered with a grid of captioned cards (“1. Andre Rock portrait”, “2. Andre with Chris Rock” …). Each card showed only a broken-picture icon.
+- Right-click → “Open image in new tab” showed the photo. So the address works, but the ChatGPT page could not show it.
+- This happens only for celebrity photos.
+
+**Cause**
+- The extension takes gallery pictures from images of at least 60×60 px on the page.
+- A picture the page cannot load is drawn as a small icon with its alt text, about 20 px high. So it never counted.
+- After waiting 90 s the job reported “ChatGPT showed no picture gallery”, and the article got none of those photos.
+- **Reproduced on the fake page** with a new `galleryBroken` option: captioned cards whose pictures the page cannot load, from a host that refuses them (HTTP 403 inside the page). The 3.2.5 extension reported no picture at all.
+
+**Fix — extension 3.2.6**
+- **Broken pictures count.** A picture the page failed to load still counts as a gallery picture when it has an address and a caption (alt text). This applies after the prompt only, never to avatars, icons, logos or the composer.
+- **Sent as a link.** Such a picture cannot be read in the page, so the extension reports its address as a link. The app downloads it with its own safe fetcher, which works like “Open image in new tab”. That path already existed for pictures on other hosts and is covered by the `images` integration test (“downloaded links”).
+- **Viewer.** The picture viewer is opened only from a picture the page shows. A broken card may be a link that opens another tab.
+
+**Tests:** new extension test “gallery pictures the page cannot show (broken-picture icons) are reported as links”. It failed on 3.2.5 (no links, after the 90 s wait) and passes now. The existing image-search test still passes.
+
+**Not verified here:** the real ChatGPT page with this answer. Which host refused the pictures, and why, is not known; the fake uses HTTP 403.
+
+**Commands run**
+```
+new broken-picture test on 3.2.5    # failed: expected 4 links, received []
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 305 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 35/35
+```
+The app's code did not change in this step, only the expected extension version. The `images` integration test (10/10, including the downloaded gallery links) passed in the run before it.
+
+## Owner report: another site's designed thumbnail became half of a featured image (photo check on by default)
+
+**Reported by the owner** (screenshot, Techeflux):
+- The two-photo featured image showed, on its right, another site's designed thumbnail: a photo with a green circle drawn around one man, and a second man cut in.
+- “The earlier tool asked ChatGPT which picture is a collage and which is not.”
+
+**Cause**
+- The photo check (ChatGPT looks at the gallery photos and says watermark / collage / what is shown) had been ported, but it was **off by default**. The earlier tool had it on (`celebrityPhotoReview: z.boolean().default(true)` in `automation-old`). So it never ran.
+- Its prompt only said “a collage made from multiple images”. The earlier tool also names “a designed thumbnail with shapes, borders or boxes around photos”.
+- Even with the check on, the featured image could take a collage when the photos without one did not fill all its places.
+- **Reproduced:** with the previous code, the new integration test puts the “collage” photo into the two-photo featured image.
+
+**Fix**
+- **On by default.**
+  - The photo check is on by default.
+  - Data migration `2026-10-21-celebrity-photo-check-on` turns a saved “off” on once. It does the same for unfinished celebrity articles, whose settings were fixed when they started. Finished articles keep the settings they ran with.
+  - **Regenerate Images** uses today's switch.
+- **Prompt v2.** It is the earlier tool's wording, plus “a photo inside another photo, or circles, arrows, shapes, borders or boxes drawn around or over people”. A prompt saved unchanged as v1 is upgraded; a customised prompt is kept.
+- **Answer parser.** It reads answers as the earlier tool did: bold numbers, “Photo 2”, any field order, ja/nein. A description that calls the picture a collage (“side by side”, “photo grid”, “montage” …) counts as one.
+- **Collages are never used while there is a single photo.**
+  - With one usable photo, the two-photo design falls back to the single-photo design.
+  - With only collages, the featured image takes one, and the notes say so (“Upload photos on the Images tab to replace it”).
+  - Body images never use a collage.
+- **A failed check never stops the images.** As in the earlier tool, the notes say “Photo check skipped (…)”.
+
+**Tests**
+- New integration test: a gallery with a designed thumbnail. The two-photo featured image uses the two plain photos and never the thumbnail. With only collages, the featured image takes one, with the note. The first part fails on the previous code, which used the thumbnail.
+- Unit test: the migration (global and unfinished articles on; finished ones kept), and Regenerate Images refreshing the switch.
+- Unit test: the earlier tool's answer formats. It fails on the previous strict parser.
+- The existing photo-check test now runs with the default. The ChatGPT-gallery test allows the photo check's own new chat; the article chat stays the same.
+
+**Not verified here:** ChatGPT's real answers to the v2 photo check.
+
+**Commands run**
+```
+new collage test on the previous pipeline   # failed: the “collage” photo was in the featured image
+new parser test on the previous parser      # failed: “Photo 2: watermark=ja | alt=… side by side …” not read
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 44 files, 307 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                    # 10 files, 85 pass, 1 skipped (real MediaPipe: MP_SRC not set)
+images integration test after the Regenerate Images change   # 10/10
+next build                          # compiled
+```
+
+## Owner reports (2026-10-21, evening): delete in the keyword queue; deleted articles counted as duplicates; “Writing” under the title; the Quick Bio before the introduction; 3 of 10 gallery photos (extension 3.2.7)
+
+### 1. Delete in the workflow keyword queue
+- **Asked for:** the queue (Workflow → Keyword queue) had Retry/Skip/Restore, but no Delete. Rows like “The article was deleted by you.” or “The post was changed to trash in WordPress” could not be removed.
+- **Delete button:** the selection bar has **Delete** with a confirmation. It removes the keywords and their slot reservations.
+- **Articles:** when a selected keyword has an article, a checkbox offers to delete the articles from the app too. It uses the same delete as the article queue, so a report backup is written first and a running article is deleted when it stops. Without it, the article stays; a running one continues as a normal article.
+- **WordPress:** never changed.
+
+### 2. A deleted article must not count as a duplicate when it is written again
+- **Cause:** deleting an article removed the task, but its WordPress post stayed in the website's post index (used for internal links). Bulk Campaigns therefore marked the keyword **“Already published: …”** (EXISTING_POST → DUPLICATE), and the duplicate pre-check warned about it. Other articles' duplicate findings that pointed at the deleted article also stayed.
+- **Fix:**
+  - On delete, the article's post is remembered (setting `deleted-article-posts`). The campaign preview and the duplicate pre-check skip it. Its keyword is cleared in the post index.
+  - The post stays in the index for internal links while it is on the website. WordPress is not changed.
+  - Duplicate findings of other articles that pointed at the deleted one are removed with it.
+- **Note:** if the old post is still published, writing the keyword again creates a second post. Trash the old one in WordPress if it is not wanted.
+
+### 3. “Writing” under the title, the title repeated, the Quick Bio before the introduction
+- **What happened:**
+  - Every article showed “Writing” under its title.
+  - Some showed the Quick Bio right after the title, then the title again as a heading, then the introduction.
+- **Cause:**
+  - ChatGPT now shows long answers in a **writing block** (owner's screenshot: a card labelled “Writing” with Copy and expand buttons). The extension took the label as the answer's first line.
+  - With “Writing” as the first line, the cleaner did not recognise the following title line, so the title stayed in the body as an H2.
+  - The assembly then took “Writing” as the introduction and put the Quick Bio after it.
+- **Fix:**
+  - **App:** `cleanModelMarkdown` drops a line that is only “Writing”/“Schreiben” before looking for the title. The title is compared loosely (case, punctuation).
+  - **Assembly:** it drops such a paragraph, and a first heading that repeats the post title, so articles saved before the fix are cleaned when they are assembled again (for example by Regenerate). A line with real text (“Writing is his second career.”) stays.
+  - **Extension 3.2.7:** it skips the writing block's label when it reads an answer.
+- **Already-saved drafts in WordPress are not changed by this.** Regenerating the article's text or images re-assembles it, or remove the line in WordPress.
+
+### 4. Only some of ChatGPT's 10 gallery photos were saved (Lola Simone Rock)
+- **What happened:**
+  - The answer showed 3 thumbnails with “+10”, and a viewer with a Next arrow.
+  - The extension saved 10 pictures, but only 6 were different (exact copies are stored once), so 4 of ChatGPT's photos were missed.
+  - The article itself uses 3 images (featured, body 1, body 2) by design.
+- **Likely cause:**
+  - The viewer keeps its other pictures in the page, hidden.
+  - At each step the extension took the largest *file* in the viewer, not the picture it showed, and read it before a sliding viewer had changed. So it got the same pictures again.
+  - Reproduced on the fake page (`galleryShown: 3`, `galleryViewer: 'strip'`): 3.2.6 saved 1 large picture of 10.
+- **Fix — extension 3.2.7:**
+  - each step takes the picture the viewer shows (visible, loaded, largest on screen);
+  - it waits up to 6 s for a different picture after Next;
+  - it stops when nothing new comes or the viewer comes back to a picture already taken.
+
+### Tests
+- **Unit:**
+  - keyword Delete, with and without articles; slot reservation removed;
+  - a deleted article's keyword is no longer a duplicate (campaign preview READY), and its duplicate findings are removed. Both fail on the previous code.
+  - the Anika Bissel answer (“Writing”, title, article) cleans and assembles with the Quick Bio after the introduction;
+  - a body saved before the fix is cleaned at assembly. Both fail on the previous code.
+- **Extension (fake page):**
+  - an answer in a writing block is saved without “Writing”. It fails on the 3.2.6 adapter.
+  - 3 thumbnails with “+10”: all 10 large pictures are saved. 3.2.6 saved 1.
+
+**Not verified here:** the real ChatGPT writing block and gallery viewer markup. The fixes rest on the screenshots.
+
+### 5. Search Console: a website added as a URL-prefix property
+- **Reported by the owner** (screenshots):
+  - Easy Vibs is in Search Console as **https://easyvibs.co.uk/** (URL prefix);
+  - the app asked for **sc-domain:easyvibs.co.uk**, and Google refused: “User does not have sufficient permission for site 'sc-domain:easyvibs.co.uk'”.
+- **Fix:**
+  - **Detection.** The service account's own list of properties (`GET /webmasters/v3/sites`) decides which property to use.
+    - The configured property is kept when the account can use it.
+    - Otherwise the first usable property of the same website is used: the domain property, then the URL prefix of the website address, then its www / non-www and http variants. An unverified entry or another website's property never stands in.
+  - **Saved and logged.** A detected property is saved on the website and logged (“Search Console property https://… detected (…; sc-domain:… is not shared with it)”). The page then shows the property in use.
+  - **Where it applies:** sync, the indexing checks and **Test connection**. Test connection now also says which properties the account can use.
+  - **When nothing matches,** the error names the properties the account can use and how to add it in Search Console.
+- **Tests (fake Google):**
+  - only `https://easyvibs.example/` shared while `sc-domain:easyvibs.example` is set: the sync works on the URL-prefix property and saves it. On the previous code it fails with the owner's message.
+  - the rules for picking (configured first, domain, address, www/http; unverified and other sites never);
+  - a website without any shared property gets the new message.
+- **Not verified here:** the owner's real Search Console account.
+
+### Commands run
+```
+new tests on the previous code       # keyword delete, deleted-article duplicate, Writing/title (2), writing block,
+                                     # 10-picture viewer (1 of 10 saved), URL-prefix property: all failed as expected
+npx tsc --noEmit                     # 0 errors
+npx vitest run                       # 44 files, 314 tests pass
+npx vitest run --config vitest.integration.config.ts
+                                     # 10 files, 87 pass, 1 skipped (real MediaPipe: MP_SRC not set); extension 37/37
+next build                           # compiled
+```
+The integration run started before the Search Console change. That change touches no code the integration tests run; its own tests are unit tests (`search-console-live`, 9/9).
+The keyword Delete button and its dialog were not clicked in a browser here (typecheck and build only).
+
+## Owner requests (2026-10-22): Celebrity and Tigram image templates, a circle photo place, a search box and a clearer menu
+
+### Celebrity and Tigram image templates
+- **Image Template** has two template sets, **Celebrity image template** and **Tigram image template**. Each has a featured and a body design.
+- The Tigram set is saved as `imageSettings.tigram`. Until it is changed it is the Celebrity designs (“Same as Celebrity until you change it”). Saved settings without it read as before.
+- **Tigram featured design (on by default):**
+  - ChatGPT is asked for the featured picture **without text**. The plan's sentences about written title text are dropped, and “No text, letters, words or numbers anywhere in the picture (the title is added later on top of it)” is added.
+  - The picture goes into the Tigram featured design, whose title layer writes the title.
+  - Switched off, the earlier behaviour returns: ChatGPT writes the short title on the picture, which gets the body design (logo).
+- **Copy from Celebrity / Copy from Tigram** copies the other set's featured and body designs. Undo goes back; *Save templates* keeps it.
+- A Tigram featured design with two picture places falls back to the single-photo preset with a note, because a Tigram article has one featured picture.
+
+### Circle photo place
+- Photo places (and fixed photos) have **Shape** (Rectangle / Circle) and a **Border** (colour, width).
+- A circle cuts the photo to a circle, with the ring drawn inside the place. The editing canvas shows the same.
+- **Toolbar:** *Circle photo slot* adds a square circle place with an accent ring.
+- **Preset:** *Photo with circle photo* (owner's example): main photo across the canvas, the second photo in a circle with an accent ring, and the logo top left.
+
+### Search box and clearer menu
+- **Search box** above Overview (Ctrl+K or “/”):
+  - it filters the menu pages, case- and accent-insensitive; a section that matches keeps its pages;
+  - Enter opens the first page;
+  - “Articles: …” opens Article History filtered by the words.
+- **Menu headings:** Articles, Websites, Content tools, Growth & publishing, System, in the same order as before. Sub-pages sit on a guide line under their page.
+
+### Tests
+- **Renderer:** a circle place shows the second photo inside, the main photo in the box's corner outside the circle, and the accent ring at the edge; the preset uses slot 2 for the circle.
+- **Template sets:** old settings read as before, and editing Tigram leaves Celebrity unchanged; the plan's title-text sentences are removed.
+- **Pipeline (integration):** the Tigram featured design takes the featured picture (asked for without text) while Celebrity keeps its split design. The “title on the picture” behaviour is tested with the switch off.
+- **Sidebar search:** filtering rules.
+- **Chromium (`next dev`, scratch database):** clicked through Tigram tab, circle preset, circle slot (Shape = circle), Copy enabled, Save, and sidebar search “plag” then Enter opens Plagiarism Evidence. No console errors. The new menu was checked in dark and light themes.
+
+### Commands run
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 45 files, 321 tests pass
+npx vitest run --config vitest.integration.config.ts   # 10 files, 88 pass, 1 skipped (real MediaPipe)
+next build                          # compiled
+```
+The integration run started before the menu headings were added. They change only the sidebar markup; it was checked in Chromium.
+
+## Owner requests (2026-10-22, later): request indexing as the owner does it; photos in the article's chat; optional variables in the Tigram image plan (extension 3.3.0)
+
+### 1. Request indexing as the owner does it (URL Inspection → Request indexing), not by resubmitting the sitemap
+The owner: “I first inspect the URL, then click Request indexing.” Google has no API for that button: the URL Inspection API only reads the status, and the Indexing API is not used. So **Automation Chrome clicks it**, with the Google account the owner signs in there.
+- **Queue** (`src/lib/gsc/request-indexing.ts`, new queue `gsc`): about 35 s after a verified publish, with the workflow switch on, one request per keyword is queued (idempotent: `gsc-index:<keywordId>`). The keyword shows “Waiting for Automation Chrome to request indexing…”. It does not need the service-account key. Without a property the website's URL is used as a URL-prefix property, as the workflow page's link does.
+- **Extension 3.3.0:**
+  - `background.js` sees waiting requests in the `hello` answer and claims one (`gsc-claim`, 8-min lease). It opens `https://search.google.com/search-console/inspect?resource_id=<property>&id=<url>` in a background tab, and closes the tab afterwards.
+  - The new content script `gsc.js` waits for the inspection result (≤ 90 s) and clicks **REQUEST INDEXING**. It then waits (≤ 4 min) while Google tests the live URL, and reports what Google said (`gsc-result`).
+  - It reads English and German Search Console. It only reads the page text and clicks that one button.
+  - While Google works, `gsc.js` sends a small “alive” message every 10 s, so Chrome does not stop the extension background in the middle. If Chrome restarted it anyway, the restarted background still reports the answer it receives (with the job id) and closes the tab.
+  - A report is accepted only from the extension that holds the job (ACTIVE, `lockedBy`). A late or repeated report changes nothing.
+  - Google's sign-in page and Search Console's start page for signed-out visitors (`/search-console/about`) both count as “not signed in”.
+  - **New host permission:** `https://search.google.com/*`.
+- **Outcomes:**
+
+  | Outcome | What happens |
+  | --- | --- |
+  | Indexing requested | The keyword becomes INDEXING_REQUESTED with Google's sentence and “a request is not proof of indexing”. |
+  | Daily limit (“Quota exceeded”) | Asked again in 20 h. |
+  | Google sign-in page | “Sign in to Google (Search Console) in Automation Chrome”; asked again in 1 h. |
+  | A Google check (reCAPTCHA) | Left to the owner; asked again in 1 h. |
+  | No access / URL not in property | Failed, with what to do. |
+  | Other errors | Retried hourly, failed after 4 tries with “request it yourself in Search Console”. |
+
+  - Google's checks and sign-in are reported, never handled.
+  - A request still waiting stays visible next to Google's index status (“· Request indexing: …”).
+  - A late report never moves an INDEXED keyword back.
+  - A request for a URL Google already shows as indexed, or for a deleted keyword, is cancelled instead of opened.
+- **Proof unchanged:** INDEXED only from Google's URL Inspection API verdict PASS (needs the key). The sitemap code was removed (`listSitemaps`/`submitSitemap`).
+- **Chrome autostart:** waiting `gsc` requests count as work, so Automation Chrome is opened for them like for ChatGPT work.
+- **Workflow switch help text** describes the new flow.
+
+### 2. Celebrity photo search and photo check in the article's chat
+- The owner: a new ChatGPT chat was opened for the photo search, and another one for the collage check. They want the prompts in the chat where the article was written.
+- Now `IMAGE_SEARCH` (first try) and `PHOTO_CHECK` are sent to the article's conversation (`newChat: false`). Stages run one after another, so nothing else is in that chat at the same time. The gallery is read only from the answer to its own prompt (turn-scoped, unchanged).
+- Only when that search answers with text only is it asked **once more in a new chat**, as before.
+- The Tigram image prompts already used the article's chat (only a repeat goes to a new chat).
+
+### 3. Tigram image plan: `{{keyword}}` and `{{image_title}}` optional
+- Both are now `required: false` in the shipped definition.
+- The seed updates the variable list of existing prompt rows, without touching the owner's prompt text. An own image-plan prompt without them saves without “Required variable … is not used” warnings.
+
+### Tests
+- **Unit** (`search-console-live.test.ts`, fake Google):
+  - the request is queued at 36 s; there is no sitemap call; the payload is right;
+  - a second tick does not queue it again; a claim is leased;
+  - REQUESTED → INDEXING_REQUESTED → INDEXED by URL Inspection;
+  - signed out → retried in 1 h, with the note next to Google's answer;
+  - a late REQUESTED never moves INDEXED back; an already-indexed URL is cancelled;
+  - quota → +20 h; no access → failed; an unknown job is refused;
+  - without a key the request is still queued; without a property the website URL is used.
+- **Extension (Playwright Chromium with the real extension, fake Search Console** `tests/fixtures/fake-search-console.ts`):
+  - the URL Inspection page opens with the right `resource_id`/`id`, REQUEST INDEXING is clicked once, the keyword becomes INDEXING_REQUESTED, and the tab is closed;
+  - daily limit, a Google sign-in redirect and Search Console's signed-out start page are reported and scheduled again.
+- **Images (integration):**
+  - the photo search and photo check are claimed in the article's chat (`newChat` false, the article's conversation URL);
+  - a text-only search is asked again in a new chat (`[false, true]`).
+  - These two failed on the previous `images.ts` (checked by swapping it back).
+- **Prompts:** IMAGE_PLAN variables optional after seeding over a row marked required; an own prompt without them saves with no warnings. This failed on the previous defaults.
+- **Permission test:** the narrow host list now includes `https://search.google.com/*`; still no blanket permission.
+
+### Commands run
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 45 files, 324 tests pass
+npx vitest run --config vitest.integration.config.ts   # 10 files, 90 pass, 1 skipped (real MediaPipe); extension 39/39
+next build                          # compiled
+```
+- **Final code:** the full integration run started before the last extension changes (report only from the job's holder, “alive” messages, Search Console's start page as signed out). After them, tsc, the unit suite and the two Search Console extension tests were run again: all pass.
+- **Checked by swapping the previous code back:**
+  - without the start-page rule, the start-page case times out;
+  - the image-chat tests and the prompt test also fail on the previous code.
+
+### Not verified here
+- The “background restarted while Google answered” path: Playwright keeps the extension background attached, so Chrome never stops it in tests.
+- The real Search Console page: its button and dialog texts are matched in English and German from Google's wording, but they were not seen live here.
+- Google's real daily limit.
+- The owner's signed-in Google account in Automation Chrome.
+- Live ChatGPT with the photo search in a long article chat.
+
+## Owner report (2026-10-22): a draft stopped by the duplicate check could not be continued (“malaak compton-rock”); “Force continue”
+
+**Report:** the keyword queue showed “failed” with “Draft #1344 saved but not published: 12 % of the wording (longest identical run 68 words, 5 identical paragraph(s)) repeats ‘Who Is Malaak Compton-Rock? All About Chris Rock's Ex-Wife’ on Techeflux … Fix the draft, then publish it yourself or retry here.” Then: “add an option, force continue”.
+
+**Why it was stuck:**
+- The article is COMPLETED with a verified draft and `publishBlocked` (a hard stop while review holds are off).
+- Retry only retried FAILED, NEEDS_REVIEW or CANCELLED articles, so it put the keyword back to WRITING. The next scheduler tick found the same block and set it to FAILED again.
+- Editing the draft in WordPress does not clear the block either.
+- **Reproduced on the previous code:** Retry answered “1 updated”, and the next tick set FAILED with the same message.
+
+**Fix:**
+- **Force continue** on the keyword queue's selection bar (`keywordAction` action `force`):
+  - a dialog lists every selected stopped keyword with its problems;
+  - **a saved draft with `publishBlocked`:** the block is lifted, and the problems are kept as `publishForced {at, problems}` on the article;
+  - **a duplicate finding** gets the existing duplicate override (reason “Force continue from the workflow keyword queue”), and its open Duplicate Review matches become OVERRIDDEN;
+  - `task.force-continue` is audited;
+  - the keyword goes back with the next free slot, and the scheduler treats the draft like any verified draft: READY, then scheduled for its slot.
+  - **An article held for review** (review holds on) gets “Approve despite review reasons” with the same reason.
+  - **An article that failed for another reason** (e.g. the composer) is not forced: “Use Retry”.
+  - **A keyword that is not stopped** is left alone.
+- Publishing still needs the website's publishing permission (acknowledgement); nothing else about publishing changed.
+- **Retry** on such a keyword now changes nothing and says to use Force continue.
+- **The keyword message** now says: “Publish it yourself in WordPress, or select it and use Force continue to publish it at the next free slot anyway.”
+
+**Not changed:** the duplicate check itself. The draft really repeats about 12 % of the other article's wording, including 5 whole paragraphs; Force continue is the owner's decision to publish it anyway.
+
+**Tests** (`tests/unit/workflow-force-continue.test.ts`, failing on the previous code):
+- **Stopped draft:**
+  - Retry changes nothing and gives the note;
+  - Force continue lifts the block, records the problems, overrides the duplicate match, writes the audit row and reserves a slot;
+  - the next scheduler tick makes it READY.
+- **Not forced:** a waiting keyword and a technically failed article.
+- **Held for review:** the article is re-queued with the quality override.
+- **Chromium (`next dev`, scratch database):** select the stopped keyword → Force continue → the dialog lists the duplicate problem → confirm. The API answered `changed: 1`, the row shows “writing … Forced by you”, and there were no console errors. Checked on a warm and on a freshly started server.
+  - A first try reported 200 but changed nothing, with no audit row. That script closed the browser about 3 s after the click, while the route was still compiling, so the request never reached the handler. Both later runs waited for the response.
+
+**Found while running the suite:** `workflow-scheduler.test.ts` (“write-ahead horizon …”) had begun to fail on the unchanged code as well (checked with `git stash`).
+- **Cause:** its calendar check looked for FREE slots in a fixed window (2026-10-20 to 10-23). `calendar()` counts free slots from the real clock, because a past slot is never free, so after 10:00 UTC on 2026-10-22 that window had none.
+- **Fix:** the test now looks for free slots in the coming three days. The reserved-slot check keeps the fixed window. The app is unchanged.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 46 files, 327 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 6 pass
+next build                          # compiled
+```
+**Not verified here:** the owner's real keyword, draft #1344, and its publication in WordPress.
+
+## Owner requests (2026-10-22): more fonts (“like Helvetica”), an editor that stays in view, pickers in the app's look
+
+**Requests:**
+- “Add more good fonts to the image text, like Helvetica.”
+- “When I edit a text, the live preview / editor goes up and the text stays below; make it user friendly.”
+- With a screenshot of Chrome's colour popup: “fix the UI of all menus of this type, calendar etc.”
+
+### Fonts
+- **Choices:** 20 free fonts are added to the 4 system fonts, grouped in the font list. Each name is shown in its own font (Chrome's customizable select).
+  - Arimo has the same letter widths as Helvetica/Arial; Helvetica itself is not free to ship.
+  - The others: Inter, Roboto, Open Sans, Montserrat, Poppins, Lato, Raleway, Nunito, Oswald, Bebas Neue, Anton, Archivo Black, Barlow Condensed, Playfair Display, Merriweather, Lora, DM Serif Display, Dancing Script and Pacifico.
+- **Files:** `public/fonts/<font>/` holds the Fontsource 5.3.0 packages' Latin WOFF files (English and German letters) for weights 400/600/700/800 where they exist, plus each LICENSE.txt (SIL OFL 1.1). 1.8 MB in all.
+- **Why the renderer draws them from the files:** before, text was SVG text, so it depended on the fonts installed on the computer, and Helvetica, for example, is not on Windows.
+  - Now text in a bundled font is turned into shapes from the font file (new dependency `opentype.js` 1.3.4, published 2021, pinned; types `@types/opentype.js` 1.3.8). The picture is the same on every computer.
+  - Lines are broken by the real letter widths instead of an estimate.
+  - A text with a letter the font does not have (e.g. Chinese) is drawn with system fonts as before, never with boxes.
+  - The 4 system fonts render exactly as before.
+- **Missing weights:** a weight the font lacks uses the nearest one, in the picture and on the canvas. The weight list says so, and the browser never fakes a bold.
+- **Designer canvas:** the same files are loaded with @font-face (served from `/fonts`; the CSP already allows `font-src 'self'`).
+
+### Editor layout
+- **Sticky editor:** on wide screens (≥ 1280 px) the toolbar, canvas and preview controls stay in view while the right-hand panels scroll. Fit-zoom sizes the canvas to the window.
+- **Right-hand panels:** the selected layer comes first, then Layers, then Template. For a text layer, its Text, Font and Weight come before position and size.
+- **Edit / Real output** switch above the canvas: Real output shows the production renderer's picture at the same size.
+- **Preview controls:** the preview title, photo slots and **Check final size** sit in one row under the canvas.
+
+### Pickers in the app's look
+- **Colour:** new `src/components/color-picker.tsx` replaces both browser colour popups in the designer (layer colours and the accent).
+  - Saturation/brightness area and hue bar, with mouse and keyboard (arrows, Shift ×10);
+  - hex and R G B fields;
+  - the screen eyedropper in Chrome;
+  - swatches with the template's accent;
+  - opens above or to the left near a window edge; Escape closes it.
+  - The designer's arrow-key nudge and Delete ignore keys typed inside such popups.
+- **Time:** new `src/components/time-picker.tsx` for Workflow → Publishing slots (hour, minute and AM/PM columns, every minute). It replaces typing “3:30 PM”.
+- **Dates:** date fields already use the app's own calendar (`DatePicker`). No `<input type="date">` or `type="color"` is left in the app.
+
+### Checked
+- **Unit tests** (`images.test.ts`):
+  - every bundled weight loads and has its license, and nearest weights are right;
+  - the schema accepts the new fonts and refuses unknown ones;
+  - real-width line breaking (“iiiiiiii iiiiiiii” fits on one line where “WWWWWWWW WWWWWWWW” needs two), with an ellipsis when cut;
+  - rendered ink: Montserrat > 1000 px wide, Bebas Neue under 75 % of it;
+  - Chinese letters fall back to system fonts.
+- **A rendered sample sheet** of all 24 fonts with German letters, checked by eye.
+- **Chromium against `next dev`** (scratch database, dark theme):
+  - 24 fonts in 5 groups; Montserrat chosen;
+  - after scrolling the page 900 px, the canvas stays at the top of the window;
+  - the colour picker opens, an area click and Shift+→ on the hue set `#cc4429` on the field;
+  - Real output shows the renderer's Montserrat text;
+  - the slot picker gives “4:45 PM”;
+  - no console errors.
+- **`scripts/a11y-audit.ts`:** 58/58 pages (dark and light) with no serious or critical violations, the designer and Workflow included. The pickers were closed during the audit.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 46 files, 329 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 16 pass, 1 skipped
+next build                          # compiled
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # 58 ok
+```
+
+**Not verified here:** the owner's Windows PC and Chrome; the font list's per-font preview needs Chrome's customizable select (Chrome 135+), and other browsers show plain names.
+
+## Owner report (2026-10-22): “published today, but the calendar shows it tomorrow” (malaak compton-rock)
+
+**Report:** the Publishing Calendar showed “malaak compton-rock — published (verified)” on Friday 23 October, 5:00 PM, although it was published on the 22nd. The owner asked for a way to correct it.
+
+**Cause:**
+- The owner published the stopped draft in WordPress (the old keyword message said “publish it yourself”).
+- Force continue then gave the keyword the next free slot, Friday 5:00 PM.
+- When the scheduler came to schedule it, WordPress already showed the post as published. `scheduleKeywordPost` recorded PUBLISHED with the real publish time (`publishedAt`), but kept `scheduledAt` (the slot the calendar shows) and the slot's reservation.
+- `verifyKeywordPublished` had the same gap.
+- **Reproduced first:** an integration test on the fake WordPress, with the post published 2 h ago and the slot tomorrow. On the previous code `scheduledAt` stayed on tomorrow's slot.
+
+**Fix:**
+- **One place records a publication** (`markPublished` in `src/wordpress/schedule.ts`). When WordPress's publish time differs from the slot by a minute or more:
+  - the keyword's calendar time becomes the real publish time;
+  - the reserved slot is released, so another article can use it;
+  - a log line says so.
+- A post published at its slot is unchanged.
+- **Data migration `2026-10-22-published-at-real-time`:** published, indexing-requested and indexed keywords recorded before this get the same correction once. It runs with the next `npm run start:all`, and a backup is written to `data/backups/migrations/` first.
+- No button is needed: it corrects itself.
+
+**Tests:**
+- `workflow-publish.test.ts`, new: published by the owner before its slot → PUBLISHED at the real time, the reservation is gone, the calendar entry is at the real time, and no publish permit was used.
+- `workflow-force-continue.test.ts`, new: the migration moves the off-slot keyword and frees its slot, keeps the on-slot one with its reservation, runs only once, and writes a backup.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 46 files, 330 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts tests/integration/migration-upgrade.test.ts   # 8 pass
+next build                          # compiled
+```
+**Not verified here:** the owner's database; the migration runs there at the next start.
+
+## Owner report (2026-10-22): “how do I know indexing was requested? I never signed in to Search Console in Automation Chrome”
+
+**Report:** four published keywords showed “Sign in to Google (Search Console) in Automation Chrome, then the request is made automatically. Asked again …”. The extension had found Google's sign-in page, as designed, but the owner had no way to see the state at a glance, or to sign in from the app.
+
+**Added:**
+- **“Indexing in Search Console” panel** on the Workflow page (when the switch is on or posts are published) and on the Automation Chrome page (`src/components/indexing-panel.tsx`, `GET /api/search-console/indexing`). It shows:
+  - whether Automation Chrome is signed in to Google, judged from the last answer: a request or the daily limit means signed in, Google's sign-in page means not;
+  - how many requests were made and how many wait;
+  - what they wait for (sign-in, daily limit, Google check);
+  - the last answer, with its URL and time.
+- **Sign in to Google in Automation Chrome:** a new control job `chrome.google-signin` opens Google's sign-in page in Automation Chrome, continuing to Search Console (a new window when it is already running).
+  - The owner types the password themselves; the app never sees it.
+  - Automation Chrome is a normal Chrome without automation flags, so Google allows the sign-in, as it does for ChatGPT.
+- **Request now:** the requests that waited for the sign-in, a check or an error are made now instead of within the hour. The daily limit still waits.
+- **After the first successful request**, requests that waited for the sign-in are made next, without pressing anything.
+- **How the owner knows:** the keyword changes from “published” to “indexing requested”, with Google's sentence and the time. The panel counts it.
+
+**Tests** (`tests/unit/indexing-signin.test.ts`):
+- **Signed out:**
+  - the overview reports two waiting for sign-in and one for the daily limit;
+  - “Request now” makes the two due and leaves the daily limit;
+  - a successful request brings the rest forward, and the overview then says signed in.
+- **Sign-in button:** it enqueues one `chrome.google-signin` control job (no duplicate while one waits); an unknown action is refused; the worker has the handler; the sign-in URL is fixed.
+- **Chromium (`next dev`, scratch database):**
+  - both panels show “Google not signed in”, 2 waiting, and the last answer;
+  - the sign-in button queued the job;
+  - Request now answered `count: 2`;
+  - no console errors.
+- **`scripts/a11y-audit.ts`:** 58/58, no serious or critical violations.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 332 tests pass
+next build                          # compiled
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # 58 ok
+```
+**Not verified here:** Google's real sign-in page in the owner's Automation Chrome.
+
+## Owner request (2026-10-22): a screenshot as proof that indexing was requested (extension 3.4.0)
+
+**Request:** with a screenshot of Search Console's green “Indexing requested” dialog: “after the indexing request, show a screenshot like this as proof, so I know.”
+
+**Why not a plain screen capture:**
+- `chrome.tabs.captureVisibleTab` needs either access to every website (`<all_urls>`) or a click on the extension at that moment. It also fails when the window is minimized (the owner keeps Automation Chrome minimized), and the requests run in a background tab.
+- This project keeps the extension's website access narrow, so the screen capture was not used.
+
+**How it works:**
+- **Extension:** the new `pageCapture` permission lets the extension save the page itself as it stands: an MHTML copy of the page with its styles and pictures. It works in a background tab and a minimized window.
+  - After Search Console answers “Indexing requested” (or the daily limit), the extension waits for the dialog to finish opening and saves the copy.
+  - It uploads the copy before reporting the result, because the dashboard takes it only while the request is still open. A copy that cannot be saved never stops the request.
+  - Chrome keeps the copy in a temporary file that it sometimes drops before it can be read (“A requested file or directory could not be found”): about half of the runs at first. A fresh copy is now taken, up to three times; after that, 6 of 6 runs passed.
+- **Dashboard** (`POST /api/extension/gsc-proof`, `src/lib/gsc/proof.ts`):
+  - **Who may upload:** only the extension holding that request (ACTIVE, `lockedBy`), with the connection key, from localhost.
+  - **What is accepted:** only an MHTML file (its MIME header) of at most 15 MB, stored in `data/uploads/gsc-proof` with mode 600.
+  - **Rendering:** a `gsc.proof` control job makes the worker open the copy in a headless browser with scripts off and every network request blocked, and take a 1366×900 PNG.
+  - **Storage:** the PNG is stored with the article (media role `INDEXING_PROOF`, the post URL as its source), and the copy is deleted.
+- **Where the owner sees it:**
+  - **Search Console screenshot** link on the keyword in the keyword queue;
+  - the latest screenshot (thumbnail) in the Indexing in Search Console panel.
+- **What it proves:** the screenshot shows what Search Console showed after the click. Whether the page is indexed still comes only from Google's URL Inspection.
+
+**Tests:**
+- **Extension, real extension in Chromium with the fake Search Console:**
+  - after the request, the page copy was saved and uploaded (it contains “Indexing requested”);
+  - the worker made a 1366×900 PNG stored as `INDEXING_PROOF` with the post URL;
+  - the copy was deleted;
+  - the keyword queue links the screenshot.
+  - The fake page has no styles, so its screenshot is plain text; a styled page renders with its styles, as checked separately.
+- **Permission test:** the narrow host list is unchanged. The permissions add `pageCapture`, with the reason written in the test.
+
+**Not verified here:**
+- The real Search Console page saved and rendered.
+  - Its styles are in the copy only if Chrome had loaded them.
+  - A page that only draws with scripts would look different offline.
+- Chrome's permission prompt for `pageCapture` on the owner's PC: an unpacked extension normally gets it on reload.
+- **Unit test** (`indexing-signin.test.ts`): the upload is refused before the extension takes the request, refused for another extension, refused for a file that is not a page copy, and refused with a wrong key. Accepted, the copy is stored and a `gsc.proof` job is queued.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 332 tests pass (before the upload unit test); then indexing-signin + extension-version: 5 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 39/39
+next build                          # compiled
+```
+
+
+## Owner report (2026-10-22): the tool's URL Inspection link opens Google's “404. That's an error” (extension 3.4.1)
+
+**Report:**
+- A screenshot of Google's 404 at `search-console/inspect?resource_id=sc-domain%3Atecheflux.com&id=https%3A%2F%2Ftecheflux.com%2Fandre-rock%2F`, next to the working property page `search-console?resource_id=sc-domain:techeflux.com`.
+- The owner asked: “make the tool inspect the URL in Search Console”, with a video of how they do it by hand.
+
+**Cause:**
+- The `id` of a URL Inspection link is a token Google makes (in the owner's video: `id=SOXOcM6XHI3ojqg9m4ZYAhA`), not the post's URL. Google answers 404 for a link with the URL there, so the request could never be made.
+- Also, the extension's Search Console script was only allowed on `search-console/*`, so it never ran on the property's own page `search-console?resource_id=…`.
+
+**Now, as in the owner's video:**
+1. Automation Chrome opens the property's Search Console page (`search-console?resource_id=<property>`).
+2. It types the post's URL into **“Inspect any URL in …”** and presses Enter.
+3. When the result shows that URL, it clicks **REQUEST INDEXING**, waits for “Testing if live URL can be indexed”, and reports what Google answered (“Indexing requested”, the daily limit, …). The proof screenshot is saved as before.
+
+**Safety:**
+- Before clicking, the result must show the article's URL. Otherwise nothing is requested, and the keyword says so.
+- **Fallback:** if the box is not found or nothing loads, the tab opens Google's own inspection link instead. That link (`inspectionResultLink`) comes from the URL Inspection API when the Search Console key is set; it is fetched when the request is queued.
+- A 404 page sends the tab back to the property page once. Over four page changes in one request end it as an error.
+- The extension's site access is unchanged (`https://search.google.com/*`); only the content script's page pattern is now `https://search.google.com/search-console*`.
+- **What changed in the app:** the keyword queue link now opens Google's inspection link when the app has one (“inspect in Search Console”), otherwise the property's Search Console page (“open Search Console”). It never builds a link with the post's URL again.
+
+**Tests:**
+- **Reproduced first.** The fake Search Console now answers like Google: 404 for an inspection link whose `id` is not one of its tokens. It has a property page with the “Inspect any URL in …” box. With the old code the request timed out on that 404.
+- **Extension, real extension in Chromium:**
+  - **Normal path:** the property page opened, the URL was typed once, REQUEST INDEXING was clicked once, INDEXING_REQUESTED was recorded, the proof was saved, and the tab was closed.
+  - **New test, no box on the page:** Google's inspection link from the API is opened instead; nothing is typed, there is one click, and INDEXING_REQUESTED is recorded.
+  - **Daily limit and signed out:** still reported and asked again later.
+- **Unit:** a claimed request carries the property page, plus Google's link as the fallback, and the queued request keeps that link. The scheduler test uses the new property-page link.
+
+**Not verified here:**
+- The real Search Console page.
+- Whether Google's real “Inspect any URL” box accepts the typed URL and the synthetic Enter. If it does not, the fallback link is used when the Search Console key is set; otherwise the keyword shows “The ‘Inspect any URL’ box was not found…” or “did not load within 90 seconds after typing the URL”.
+- The box is found by its label (“Inspect any URL in …”, German “URL … prüfen/untersuchen”). Other UI languages are not recognised.
+
+**Commands run**
+```
+npx vitest run                      # 47 files, 333 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console"   # 3/3 (typing 8.5 s, fallback 51 s, limit/sign-out 9 s)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/workflow-publish.test.ts   # 2 files, 47/47 (extension 40, publish 7)
+npx tsc --noEmit                    # 0 errors
+next build                          # compiled
+```
+
+## Owner request (2026-10-22): a “Request indexing” option on the keyword queue
+
+**Request:** with a screenshot of the keyword queue's selection bar: “add a request indexing option here”.
+
+**What it does:**
+- **Request indexing** (new, on the selection bar): Automation Chrome makes the Search Console request now for the selected published keywords, as described in the 3.4.1 section above.
+  - It also works when the workflow switch “Request indexing after publishing” was off.
+  - It works when an earlier request was answered (requested, daily limit, error). That request is asked again, so there is still one request per keyword.
+  - A request Automation Chrome is making right now is left alone.
+  - An indexed keyword is left out (“already on Google”), and an unpublished one too.
+  - The keyword shows “Waiting for Automation Chrome to request indexing … (asked by you …)”, and the Indexing in Search Console panel updates at once (it refreshed only every 15 s).
+  - The action is audited like the other keyword actions.
+- **Labels:** the two existing buttons only record what the owner did by hand, so they are now **Mark requested** and **Mark indexed**, with a tooltip. They were “Indexing requested” and “Verified indexed”, next to which a “Request indexing” button would be confusing. Their behaviour is unchanged.
+- **Found while testing:** a request made a second time got no proof screenshot. The render job's key was the request's id, so the second one was taken as a repeat. The key now also carries the run's start time.
+
+**Also in the owner's screenshot: “Index status not checked: fetch failed”.**
+- That is all Node says when Google's API cannot be reached from the PC. The error behind it is now named, e.g. “Google could not be reached from this computer (ECONNREFUSED); asked again in an hour.”
+- The message used to replace what happened to the indexing request. Now the request's state stays after it: waiting and why, being made now, or “Indexing requested in Search Console at …”.
+- A request asked again for a keyword already marked as requested also stays visible next to Google's answer. Before, this showed only for published keywords.
+
+**Tests (reproduced first):**
+- **`indexing-signin.test.ts`, new test:** the action was refused (“Invalid option”) before.
+  - It requests two published keywords: one requested before, one never queued.
+  - It leaves out the indexed and the unpublished ones, with notes.
+  - It shows the status, leaves a running request alone, and a second proof screenshot is queued.
+  - With the old proof key, the test fails (1 proof instead of 2).
+- **`search-console-live.test.ts`, new test:** with Google's API unreachable (a closed port), the status read “Index status not checked: fetch failed” before. Now it names ECONNREFUSED and keeps the request's state.
+- **Chromium smoke (scratch database, dev server):**
+  - three keywords like the owner's selected (two published with “fetch failed”, one indexed);
+  - the bar shows Request indexing, Mark requested and Mark indexed;
+  - the toast says 2 requested, and that “Jordan Rock” is already on Google;
+  - both rows show “Waiting for Automation Chrome …”;
+  - the panel went from no waiting request to “1 waiting” 0.46 s after the click; no console errors.
+
+**Not verified here:**
+- The request itself on the real Search Console page (as for 3.4.1 above).
+- The real network error behind the owner's “fetch failed”: it is on the owner's PC; the new message will name it.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 335 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console"   # 2/2 (request with proof; limit/sign-out)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "404"              # 1/1 (fallback link)
+next build                          # compiled
+```
+
+## Owner report (2026-10-22): faces cut in half in a group photo (“Michael Joseph Consuelos”, featured image)
+
+**Report:** a screenshot of a two-photo featured image (WordPress media #1362). In the left photo, four people stand side by side, and the faces at both edges are cut in half.
+
+**Cause:**
+- **The crop:** it centred on the area around all main faces, the earlier tool's rule. When that area was wider than the place, the faces at both edges were cut through. The left half of the split design is 952×1080, so it keeps only about 58 % of a 3:2 photo's width.
+- **The choice of photos:** it never looked at whether a photo fits its place. Photos are ordered by the biggest face, so a group photo often comes first and lands in the narrow half.
+
+**Fix (face locations only, never who it is):**
+- **Crop** (`cropBox`, `src/images/render.ts`):
+  - When the main faces fit, the crop is as before.
+  - Otherwise its edges are placed between faces, padded for hair and ears, never on one. It keeps as many whole faces as fit: the bigger ones first, then those nearest the middle of the group, centred when that cuts no other face.
+  - If no whole face can be kept, it centres on the biggest face.
+- **Choice of photos** (`photosForPlaces`, `fitsPlace`):
+  - Each place takes, of the photos just as good as the next one, one whose main faces fit it whole. “Just as good” means the same photo-check flag and the same rank (face, soft).
+  - A wide group photo then moves on to the 16:9 body image, where it fits.
+  - A worse photo (soft, watermarked, no face) is never taken over a better one just because it fits, and the owner's uploads keep their places.
+  - The Images tab notes how many photos were placed this way.
+- **What is stored:** the measured face boxes and the photo's shape are kept with the stage's photo facts.
+  - A stage result saved before this change has no face boxes, so it crops as before.
+  - **Regenerate images** measures again (the stage state is cleared), so it uses the new crop.
+
+**Tests (reproduced first):**
+- **Unit, `images.test.ts`:**
+  - **reproduction:** a 3:2 photo with four faces side by side in the split design's left place. Before, the edge faces showed 8 % and 7 % (cut). Now each face shows whole or not at all, and at least two show whole;
+  - the crop window never runs through a padded face, the 16:9 place keeps everyone, and focus without face boxes crops as before;
+  - **choice:** the featured halves take the pair and the single photo, the group photo goes to the body place, and a worse photo is not preferred because it fits.
+
+**Not verified here:** the owner's photos with the real face detector. The real MediaPipe test needs `BAS_TEST_MEDIAPIPE_DIR`; the boxes here are given, not detected.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run tests/unit/images.test.ts   # 26/26
+npx vitest run                      # 47 files, 338 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 16 pass, 1 skipped (real MediaPipe)
+next build                          # compiled
+```
+
+## Owner report (2026-10-23): after “Regenerate images” — a stop at “already future”, only one photo used, crops still wrong; and a pen tool
+
+**Report, with four screenshots:**
+- The WordPress step stopped: “WordPress post #1367 is already ‘future’. The app does not change live or scheduled posts in this step.”
+- Two featured images were still wrong after regenerating:
+  - Linda Ripa: a close-up of two faces, one cut;
+  - Michael Joseph Consuelos: a selfie of three, two faces cut.
+- Omikaye Phifer: “ChatGPT gave so many images and only one was used”. The Images tab listed nine collected photos, but there were no body images.
+- The owner asked to try a Google tool or another idea, and to test with 12–15 real people's photos.
+- Later: “add a pen tool to the image editor, to make custom photo slots and custom elements, easy like Illustrator”.
+
+### 1. Regenerate on a post the workflow scheduled
+- **Cause:** the draft step refuses every post that is “future”, “publish” or “private”. After a regenerate, the article ran the draft step again on a post the workflow itself had scheduled.
+- **Now:** the post may be updated when a workflow keyword of this article is SCHEDULED and the website still allows publishing.
+  - The client never sends a status, so the post stays scheduled for its slot and nothing is published early.
+  - Edits made in WordPress are still never overwritten, as before.
+  - The draft step's read-back and the final check accept “future” in this case only.
+- **Still left alone:** a post scheduled by anyone else, or already live.
+- **Test (`workflow-publish`, reproduced first):**
+  - before: NEEDS_REVIEW with the owner's message;
+  - now: the title change reaches the scheduled post, which stays “future” with the same date, and the only publish permit is the scheduling itself;
+  - a post scheduled outside the workflow still stops, unchanged.
+
+### 2. Regenerate used only the new search's photos
+- **Cause:** a regenerate clears the stage state, so the gallery was collected again. The new search brought back two photos, the featured design took both, and the body images had none.
+- **Now:**
+  - the photos collected for the article before (not removed with *Don't use*) are used again, after your uploads;
+  - a new search runs only when there are fewer than four;
+  - the Images tab says so.
+- **Test (`image-tools`, reproduced first):** after a regenerate whose search would return one picture, all three images are made from the earlier five photos with no new search. A photo marked *Don't use* is not used again.
+
+### 3. Crops: a face or a person is never cut
+- **No search engine:**
+  - Google Images is not scraped: the project's rule, and Google's terms.
+  - Cloud “crop hint” services would send every photo out and need a paid key.
+  - The fix stays local and offline.
+- **Tested on 17 real photos.** They are free-licence photos of real people from Wikimedia Commons (credits in the scratch folder; not committed): Comic-Con and conference panels, red carpets, families, a selfie of four, a B/W group, portraits.
+  - The real MediaPipe detector ran on them in Chromium here.
+  - Each was rendered into the split design's 952×1080 half and a 16:9 body image, and looked at.
+- **Found and fixed:**
+  - **The crop rule:** keeping only some of the people (the previous fix) left half bodies at the edges, as in the owner's Linda Ripa image. Now, when the main faces do not all fit a place, the photo is shown whole on a blurred copy of itself, as the earlier tool does for tall photos. Framing “Center” or “Top” still crops. Photo choice already prefers photos that fit.
+  - **False faces:** in tiles, BlazeFace found “faces” on a jacket, a man's back, a logo and a poster, and an oversized box over a turned head. They all scored 0.53–0.59, while the real small faces scored 0.6–0.89. Tile detections now need 0.6 (the whole picture keeps 0.5). The oversized box had made the four real panel faces “background”, so the crop cut them.
+  - **Missed faces:** a panel guest with glasses, and most of the B/W group, were cut because their faces were never found. A person detector now runs too: MediaPipe EfficientDet-Lite0, people only, score ≥ 0.5, installed by `tools:install` and preflight.
+    - A person whose face was not found gets a head box at the top of their body box: a seventh of a standing person's height, about a third of a seated one's.
+    - Only people at least 40 % as tall as the tallest count.
+    - The head box counts like a face for fitting and centring.
+    - A single portrait (a person as wide as the photo) is unaffected, because the found face is what counts.
+- **Result on the 17 photos:**
+  - in the narrow half, no face or person is cut through;
+  - groups of four or more and the B/W group are shown whole;
+  - the Comic-Con panel keeps its four seated guests whole;
+  - portraits are cropped as before.
+  - One panel host turned to the microphone is found by neither detector, and is left out of that crop entirely rather than cut.
+- **Unit tests:**
+  - the whole-photo rule, with every face whole, and the crop as before without face boxes;
+  - `cropBox` for the 16:9 and narrow places, and a fitting pair cropped around both;
+  - `headsOfPeople`: seated, standing, background, and a portrait with its face.
+
+### 4. Pen tool (Image Template designer)
+- **Data:**
+  - pen points are stored as fractions of the layer box, with cubic-curve handles, so resizing the box keeps the shape;
+  - a photo place can have shape “path”;
+  - a new `path` layer draws a filled shape or an open line;
+  - the template schema validates both.
+- **Drawing:**
+  - **Pen shape** (key P) and **Pen photo slot** in the toolbar, with a hint bar, **Finish** and **Cancel**;
+  - click for a corner, click and drag for a curve (mirrored handles);
+  - click the first point to close; Enter or a double click finishes; Backspace or Ctrl+Z removes the last point; Esc cancels.
+- **Editing a selected pen layer:**
+  - drag a square to move a point, drag a round handle to bend the curve (Alt: one side only);
+  - double-click a point: corner ↔ curve; double-click the line: add a point, splitting the curve so the shape stays; Alt-click a point: remove it;
+  - each drag is one undo step, and the layer box follows the drawn line, curves included.
+- **Properties:** fill, border and “Closed shape”. *Use as photo slot* turns a closed shape into a photo place; a photo place offers Shape “Pen shape”.
+- **Renderer:**
+  - the photo is cut to the shape, with its border inside it;
+  - a pen shape's border is drawn whole, half outside its box;
+  - the designer shows the same (CSS clip-path for photos, SVG for shapes).
+- **Tests:**
+  - **unit:** geometry (curve bounds, back to the canvas), schema, point insert/toggle, and renderer pixels (photo inside the triangle, background outside, a 40 px border above an 8 px-tall line);
+  - **Chromium smoke on a scratch database:**
+    - drew a photo slot with one curve: 4 points and 2 handles shown;
+    - dragged a point: X and width followed;
+    - drew a shape with Enter, checked the Real output from the production renderer, and saved;
+    - no console errors;
+    - clicked coordinates landed exactly (300, 200, 400 × 400).
+
+**Not verified here:**
+- The owner's own photos and post #1367.
+- The person model download on the owner's PC: `npm run start:all` installs it; if it fails, crops use faces only.
+- How fast detection runs on the owner's PC: here, about 2–3 s per photo for both models.
+- Touch or pen-tablet input in the designer (mouse only).
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run tests/unit/images.test.ts   # 30/30
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 8/8
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "Regenerate images"   # 1/1
+real-photo harness (scratch): 17 Commons photos, real MediaPipe face + person detection, contact sheets checked by eye
+Chromium smoke of the pen tool (scratch database, dev server)
+npx vitest run                      # 47 files, 342 tests pass (final head)
+BAS_TEST_MEDIAPIPE_DIR=<scratch mediapipe> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 3 files, 26/26 (the real-MediaPipe test ran: not skipped)
+next build                          # compiled
+```
+
+## Owner report (2026-10-23): ChatGPT showed about 6 photos, the article got 2 (extension 3.4.2)
+The Images tab listed only `upload:gallery-1` and `upload:gallery-5`, while ChatGPT's gallery showed about six photos (one a broken-picture icon, two the same winter photo, one a collage).
+
+**Cause (reproduced in the fake ChatGPT before the fix):**
+- **Viewer read wrongly.** The extension took “the largest picture in the viewer”, measured without looking at where it was.
+  - A viewer that slides its pictures side by side keeps the others just beside its window.
+  - A viewer that fades keeps them all stacked with opacity 0.
+  - In both, every picture counted as fully shown, so the first one won at every step. The loop then stopped after one large picture.
+  - Tests with the old adapter: carousel saved 1 of 6 large pictures, fade 1 of 4.
+- **Viewer without “Next”.** It gave one large picture (lightbox test: 1 of 5).
+- **Thumbnails only.** The rest of the photos were then only the small thumbnails, and the app leaves those out (smaller than 250 px). That fits the numbering: pictures 2–4 were dropped.
+- **Regenerate reused thumbnails.** “Regenerate images” reused *every* gallery picture saved before, including those small thumbnails (test: “6 photo(s) collected before”, a 240×135 thumbnail among the photos).
+
+**Fix:**
+- **Extension 3.4.2:**
+  - `shownPicture` counts only the part of each picture really on screen: inside the window and every clipping parent, times its opacity.
+  - When the viewer did not go through all its pictures (no “Next”, or a picture that stopped changing), each gallery photo is opened by itself, as a person would, and its large picture is saved.
+  - A viewer that ended by itself (“Next” turned off, or back to the first picture) is not opened again.
+  - That pass never clicks a picture that links to another site (it would open a tab), and it stops after two pictures that open no viewer.
+  - Large pictures are never left out for a caption word such as “style icon”; the avatar/logo/icon words now apply only to pictures under 120 px.
+  - Pictures inside the viewer are not counted as gallery thumbnails.
+- **Task log:** the extension reports what it saw, and the task log shows it with the answer. It reads like “Gallery: 6 picture(s) in the gallery (0 not shown by the page), 6 opened large, … saved, … reported as link(s).” (the carousel test).
+- **App:**
+  - The Images tab notes say how many pictures came in (saved by Automation Chrome / links), how many were skipped as small, and how many as near-duplicates of a larger copy. These notes come before the notes about each link.
+  - Regenerate reuses only earlier gallery photos of at least 250 px on both sides.
+
+**Tests:**
+- **Extension integration (fake ChatGPT):** new viewers `carousel` (6), `fade` (4) and `lightbox` (5). Each saves every large picture, all different, and the task log carries the report. The earlier gallery tests (4 + link opens the viewer once, “+10”, broken pictures) still pass.
+- **Integration:**
+  - The ChatGPT image-search pipeline test checks the new “4 gallery picture(s) received (3 saved by Automation Chrome, 1 link(s))” note.
+  - The regenerate test has a thumbnail in the first search, and it is not reused (5 photos, not 6).
+
+**Not verified here:**
+- The real ChatGPT viewer. Its markup was not available, so the fix covers the three viewer kinds above.
+- After the owner updates and reloads the extension (3.4.2), the next image search's task log line shows what the real page gave.
+- Two tiles of the same photo still count once, and another site's collage is still kept out of the body images by the photo check. This is unchanged and intended.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "viewer: the large picture"   # before: carousel 1/6, lightbox 1/5 (fail); after: 3/3
+old adapter.js with the new tests: carousel 1 of 6, fade 1 of 4 (fail), restored
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "Regenerate images"   # before: “6 photo(s) collected before” (fail); after: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 342 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 17 passed, 1 skipped (real MediaPipe, no BAS_TEST_MEDIAPIPE_DIR)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 43/43
+(after the last change: the link/no-viewer guard) the 6 gallery tests of extension.test.ts   # 6/6; npx tsc --noEmit   # 0 errors
+next build                          # compiled (final head)
+```
+Merged into `claude/desktop-app` as well (typecheck 0 errors there), so the Windows installer carries it.
+
+## Owner request (2026-10-23): a two-photo featured image shows at most 2 people per photo
+“If the featured image has 2 photos, each photo should have at most 2 people. If there is no photo with 2, then 3; if none with 3, then 4, then 5 … If the featured image has 1 photo, any number of people.”
+
+**What changed:**
+- **New `chooseFeatured`** (`src/worker/pipelines/images.ts`) picks the featured photos.
+  - **Two or more photo places:** each place takes the best photo with at most 2 people. When there are no more such photos, the limit goes up one person at a time (3, then 4 …), place by place.
+  - **Inside that limit, nothing else changes:** photos keep the existing order (face, size, sharpness, watermark last), and a place still takes an equally good photo whose people fit it whole.
+- **Single-photo featured design:** works as before, with any number of people.
+- **Left alone:**
+  - Your uploads keep their places.
+  - Photos whose people are unknown (no face detector) are not moved.
+  - The photos not picked keep their order for the body images.
+- **What counts as people:** the main faces plus the people whose face was not found (head boxes from the person detector). The same counts are already used for the crops.
+- **Images tab notes:**
+  - when a photo with more than 2 people had to be used;
+  - how many photos with more people went to the body images instead.
+
+**Tests:**
+- **Unit, 5 new:**
+  - two places take the photos with 1 and 2 people, and the rest keep their order;
+  - the limit goes up to 3 when only one photo with 2 exists, and to 4 when there is none with 2 or 3;
+  - one place takes the first photo, with no limit;
+  - uploads and unknown counts stay in place;
+  - the fit rule still applies within the limit.
+- **Real photos (scratch, 13 Commons photos, real face and person detectors):**
+  - counted 4, 2, 1, 2, 7, 4, 4, 1, 1, 4, 0, 5, 1 people;
+  - in file order, the two-photo design picked the ones with 2 and 1, and skipped the first photo (4 people);
+  - with only group photos left, it picked the two with 4.
+  - Two photos counted lower than a viewer might expect. Both were checked by eye:
+    - 08 shows one woman in front, and the people behind her are small, so they don't count;
+    - 13 is a graduation cap toss with faces turned up, where the detectors found 1 person.
+
+**Not verified here:**
+- The owner's own articles.
+- **Crowds whose faces are turned away can count low,** as photo 13 did. Such a photo can then pass as “at most 2 people”.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 347 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 17 passed, 1 skipped
+BAS_TEST_MEDIAPIPE_DIR=<scratch> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "real MediaPipe"   # 1/1
+scratch harness: 13 real photos, people counts and featured picks (above)
+```
+
+## Owner request (2026-10-23): the desktop app without a “port system” (shared parts, extension 3.4.3)
+The owner sent a screenshot of the desktop app's “Port 3000 is already in use. Is npm run start:all still running?” and asked to remove the port system. These are the parts the desktop app (markroger12/Automation-2#3) needs from the tool itself.
+
+- **`GET /api/instance`** (new, loopback only like every route) answers which tool this is and a fingerprint of its data folder. That is a SHA-256 of the folder's path, 16 hex digits; the path itself is never shown.
+  - The desktop app checks the ports 3000–3010 with it.
+  - When the tool already runs on the same data folder (e.g. `npm run start:all`), the window shows that one instead of starting a second copy.
+  - Otherwise the dashboard starts on the first free port.
+- **Extension 3.4.3:** when the saved dashboard address answers nothing, or answers but does not know the connection key (another data folder), the extension looks on 127.0.0.1 ports 3000–3010.
+  - It keeps the first one whose dashboard accepts its key, then saves that address.
+  - It looks at most once every 15 s.
+  - The next tick sends a full hello again.
+- **Start-up steps in the desktop app (`BAS_DESKTOP=1`):**
+  - no `.env` is written into the installation folder;
+  - no “Node.js 26+ required” warning (the app runs the tool on its own Node.js);
+  - messages without `npm run …`;
+  - the migration error names the real backup folder.
+
+**Tests:**
+- **Integration (extension), reproduced first:**
+  - The dashboard moved to another free port in 3000–3010, and the saved address answers nothing.
+  - The old 3.4.2 code, with only its version number changed, timed out (“Timed out waiting for ChatGPT response”).
+  - 3.4.3 completes the job on the new port and saves that address.
+- **Unit:** the data-folder fingerprint is the same with a trailing slash, different for another folder, and the answer never contains a path.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 48 files, 348 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "moved to another local port"   # old background.js: fail (timeout); new: pass
+```
+
+## Owner report (2026-10-23): Search Console's tab closed before the request finished, no screenshot (extension 3.4.4)
+The owner sent:
+- a keyword row stuck at “Automation Chrome is requesting indexing … 12:10:46Z”;
+- the indexing panel's “Google showed a check (‘I'm not a robot’) … human check for techeflux.com/michael-consuelos/ · 5:11 pm”;
+- a screen recording.
+
+In the recording, Automation Chrome:
+- typed the URL;
+- Search Console showed “Retrieving data from Google Index”, then the result;
+- REQUEST INDEXING was clicked, and the “Testing if live URL can be indexed” dialog was running;
+- about 15 s later the tab closed.
+
+No check was ever on screen.
+
+**Cause:**
+- `gsc.js` counted any reCAPTCHA frame on the page (`iframe[src*="recaptcha"]`) as a check.
+- Google's pages load an invisible reCAPTCHA: a hidden badge (`size=invisible`) and a challenge frame kept off screen.
+- So the request was reported as HUMAN_CHECK during the live test and the tab was closed.
+- The screenshot is made only for an answered request, so there was none.
+- **Reproduced first:** with the fake Search Console carrying an invisible reCAPTCHA as Google loads it, 3.4.3 reported HUMAN_CHECK within 7 s.
+
+**Fix (extension 3.4.4):**
+- **What counts as a check:**
+  - a reCAPTCHA frame that is shown: not `size=invisible`, visible, on screen and at least 60 × 60 px;
+  - or Google's “unusual traffic” form.
+- **A check Google really shows:**
+  - the tab and its window come to the front, with a notification “Search Console wants a check”;
+  - the request waits until the owner completes it, up to Settings → Advanced → human-check pause (10 min by default, as for ChatGPT);
+  - then it goes on: live test, Google's answer, screenshot;
+  - when Google's answer appears while a check seems to be there, it is taken.
+- **Not completed in time:** HUMAN_CHECK, with “… it was not completed within 10 min”. The keyword and panel say to press “Request now” and complete the check in the window that comes to the front.
+- **Background timer:** 6 min plus twice the pause (before: a fixed 6 min).
+
+**Tests (integration, the real extension in Chromium):**
+- **Invisible reCAPTCHA on the page:** INDEXING_REQUESTED and a screenshot (before: HUMAN_CHECK).
+- **A shown check that the owner completes after 3 s:** the live test goes on, INDEXING_REQUESTED and a screenshot (before: HUMAN_CHECK at once).
+- **A shown check never completed:** HUMAN_CHECK only after the pause (6 s in tests), with “not completed within 6 s”.
+- **The earlier Search Console tests:** typing path, inspection link, daily limit and signed out still pass.
+
+**Not verified here:**
+- The real Search Console with 3.4.4 (it needs the owner's signed-in account).
+- How the real “I'm not a robot” challenge is laid out. The rule is a reCAPTCHA frame shown on screen.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "invisible reCAPTCHA|really shows waits"   # 3.4.3: 2 failed (HUMAN_CHECK); 3.4.4: 2 passed
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console|indexing is requested|inspection link|daily limit|reCAPTCHA|really shows"   # 5/5
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 48 files, 348 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 46/46
+```
+
+## Owner report (2026-10-23): indexing works, but only after the owner opens Automation Chrome (extension 3.4.5)
+“Indexing happens, but I have to open Automation Chrome myself; make it open Chrome for indexing if it is closed.”
+
+**What was already there:** the worker opens Automation Chrome when an indexing request is due and Chrome is not running (`currentWork` counts due and running Search Console requests).
+
+**What was missing, the closed-windows case:**
+- With all its windows closed, Chrome can keep running in the background (Windows: “Continue running background apps when Google Chrome is closed”).
+- The worker then saw “already running” and opened nothing.
+- The extension, still connected, claimed the request, but `chrome.tabs.create` needs a window, so the request never started.
+- For ChatGPT prompts, the worker already opened a window in such a Chrome (“stalled prompt”). For indexing requests it did not.
+- **Reproduced first:**
+  - **extension:** the real extension in Chromium with every window closed; the request never finished (“Timed out waiting for indexing outcome”);
+  - **worker (unit):** the old `chrome-autostart.ts` failed the new tests.
+
+**Fix:**
+- **Extension 3.4.5:** when Chrome has no normal window, the Search Console tab is opened in a new, unfocused window. The Search Console tab is closed after the request, as before.
+- **Worker:** a due indexing request nobody picks up for 90 s, while none is being made, is “stuck” like a prompt. A window is opened in the running Chrome, once per request, with the same cooldown and a line in Logs (“A Search Console indexing request waited 90 s+ … a ChatGPT window was opened in it”). A request waiting behind one being made does not count.
+- **README:** says the worker opens Chrome for due indexing requests too, and that Logs says why when it did not.
+
+**Tests:**
+- **Integration:** Automation Chrome running with no window open → the request completes (INDEXING_REQUESTED) and its tab is closed.
+- **Unit:**
+  - with the real database: a due request waiting 2 minutes is stuck; with another request running, it is not;
+  - the tick with Chrome running: a window is opened once for that request, and the log line is written.
+
+**Not verified here:**
+- The owner's Windows Chrome in background mode.
+- If Chrome still does not open, check Settings → Browser (“open Automation Chrome by itself”) and Logs: the reason is written there once.
+
+**Commands run**
+```
+npx vitest run tests/unit/chrome-autostart.test.ts   # old chrome-autostart.ts: 3 failed; new: 10/10
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "no window open"   # 3.4.4: timed out; 3.4.5: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 48 files, 350 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 47/47
+```
+
+## Owner report (2026-10-23): articles queued by the workflow get no category chosen
+
+**Cause:**
+- A workflow keyword has no category of its own. Every workflow article took the website's default category, which a category sync sets to “Uncategorized” (or the first category).
+- Tigram's CATEGORY stage (ChatGPT chooses one existing category) runs only when the task has no category. The default looked like the owner's choice, so the stage was skipped: in the workflow, and in Single Article / Bulk when the category was left to the writer (“Let the CATEGORY stage choose”, “chosen by the writer”).
+- Celebrity had no category stage at all.
+- **Reproduced first:** the new `tests/unit/category-choice.test.ts` failed 7/7 on the old code.
+
+**Fix (owner decision: ChatGPT chooses):**
+- **One CATEGORY stage for both writers** (`src/worker/pipelines/category.ts`):
+  - ChatGPT chooses one of the website's synced categories; “Uncategorized” is offered only when there is no other;
+  - with one category left it is taken without a prompt;
+  - an answer naming no existing category keeps the website's default, with a warning.
+- **When it runs:**
+  - for a task without a category, and for every workflow task (also those queued before this fix, which carry the default as a placeholder);
+  - never once the WordPress draft exists (`wpPostId`): the saved post keeps its category, which the draft checks compare.
+- **Celebrity:** a CATEGORY stage after QUICK_BIO, with its own prompt (Prompt Manager: “Celebrity — Category”, seeded at start). A category chosen in Single Article or a Bulk row skips it. Celebrity tasks still get the website default at creation, so the pre-check is unchanged.
+- **Tigram:** without a chosen category the task no longer takes the website default at creation, in Single Article and Bulk too. The CATEGORY stage chooses, with the default as the fallback.
+
+**Tests:**
+- **New `tests/unit/category-choice.test.ts` (7):**
+  - workflow Celebrity: one category prompt, without “Uncategorized”, result “Celebrities”;
+  - workflow Tigram on a website whose default is “Uncategorized”: the stage runs;
+  - Single Article Tigram left to the stage: no default at creation, the stage runs;
+  - an owner-chosen category: no prompt, the stage is skipped;
+  - no matching answer: the default is kept, with a note;
+  - an existing draft: no prompt, the category is unchanged;
+  - Bulk preview: a Tigram row without a category stays empty, a Celebrity row takes the default.
+- **`prompt-seed.test.ts`:** 16 shipped prompts instead of 15.
+
+**Not verified here:**
+- The owner's own websites and their category names (German installs: “Unkategorisiert”/“Ohne Kategorie” are treated as “Uncategorized”, “Allgemein” is not).
+
+**Commands run**
+```
+npx vitest run tests/unit/category-choice.test.ts   # old code: 7 failed; new: 7/7
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 357 tests: 356 pass, prompt-seed failed on the old count of 15
+npx vitest run tests/unit/prompt-seed.test.ts   # after the update to 16: 3/3
+npx vitest run --config vitest.integration.config.ts tests/integration/migration-upgrade.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 20/20
+```
+
+## Owner report (2026-10-23): “sometimes the tool uses the default template by itself”
+
+**Cause:**
+- The owner's screenshot (“Who Is Linda Ripa? All About Kelly Ripa's Sister”) shows the built-in single-photo design (`presetSingle`: title band, accent bar, corner logo).
+- That design replaces the owner's two-photo featured design when the article has only one usable photo. The image search had run once, and a search that found one photo was not repeated.
+- **Reproduced first:** a new integration test with one photo from the first search; the old code searched once only (`[false]`, expected `[false, true]`).
+
+**Fix (owner decision: search again first):**
+- When the featured design has more photo places than the usable photos (collages not counted), ChatGPT is asked for photos once more, in a new chat (`IMAGE_SEARCH`, part `gallery-more`). This happens once per run, unless the photo source is Commons only or the gallery already holds 10.
+- The new photos join the ones found before, and the selection runs again. The photo check is asked again for the bigger set (part `check-2`), so an answer for the old set is never reused.
+- Only when that brings nothing more is the single-photo design used, with the note as before.
+- The Images tab says “Only N photo(s) for the M-photo featured design: ChatGPT image search once more (new chat): K usable photo(s).”
+
+**Tests:**
+- **`tests/integration/images.test.ts`, new:**
+  - another photo found: two searches (article chat, then a new chat), the two-photo design takes both, no single-photo note;
+  - nothing found: two searches only, then the single-photo design with its note.
+
+**Not verified here:**
+- Real ChatGPT answers. A person with very few photos online still gets the single-photo design.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "once more in a new chat first"   # old code: failed ([false]); new: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 357 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 18 pass, 1 failed: "general article" stopped at the fake WordPress login (60 s timeout, before any image step)
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "general article: plan"   # re-run alone: pass
+```
+
+## Owner request (2026-10-23): “the browser inside the app” — dashboard side (extension 3.4.6)
+
+The desktop app (markroger12/Automation-2#3) gets its own ChatGPT tab, in which the extension's ChatGPT scripts run. Google and Search Console stay in Automation Chrome: Google refuses sign-ins in a browser built into another app, and the app is never disguised as Chrome. This branch has the dashboard's part, which changes nothing without the desktop app.
+
+**Dashboard (`src/lib/agent/desktop.ts`, `handler.ts`):**
+- **The app's key:** the desktop app makes a key at each start and gives it to its dashboard server in `BAS_DESKTOP_AGENT_KEY` (never stored). The agent endpoints accept it as well as the connection key.
+- **Bound to its install id:**
+  - the app's key works only with install id `desktop-app`, and that id only with the app's key;
+  - so the extension can never act as the app, nor the app as the extension (403);
+  - without the env variable (npm run start:all), nobody can use the id (401).
+- **While the app's ChatGPT tab is connected** (a hello within 75 s, not paused):
+  - prompts go to it only, and the extension's claims get `reason: 'in-app'`;
+  - the extension's hello says `chatgptInApp: true`;
+  - the app is never given a Search Console request (`gsc-claim` → `not-here`);
+  - a paused hello (the owner switched ChatGPT back to Automation Chrome) ends this at once; 75 s without a hello (app closed) ends it too.
+- **Log:** the first hello writes “The desktop app's ChatGPT tab connected (scripts v…)”.
+
+**Extension 3.4.6:**
+- with `chatgptInApp` it opens no ChatGPT tab, claims nothing and polls at the idle rate. The badge is “APP”, and the popup says that ChatGPT runs in the desktop app;
+- Search Console requests run as before.
+
+**Worker (`chrome-autostart.ts`):**
+- **While the app runs ChatGPT:** queued articles and prompts no longer open Automation Chrome. A due indexing request opens it as Chrome's own **app window with Search Console** (`--app=https://search.google.com/search-console`; the real Chrome, its profile, no automation flags).
+- **When the window opens:** if Chrome is not running, or for a request stuck 90 s while Chrome runs without a window. Chrome closes again 2 minutes after the requests, as before.
+- **“Extension connected”** now counts Automation Chrome's extension only, not the app's tab.
+
+**Tests:**
+- **`agent.test.ts`, new:**
+  - the app's key with its id (200), with another id (403);
+  - the extension's key with the app's id (403), a wrong key (401);
+  - the extension told `chatgptInApp` and refused (`in-app`), the app given the prompt, `gsc-claim` → `not-here`;
+  - 75 s later or paused, the extension takes ChatGPT again;
+  - no env variable → 401.
+- **`chrome-autostart.test.ts`, new:**
+  - with the app connected, a waiting prompt needs no Chrome;
+  - a due request launches `{ searchConsole: true }`, or `{ allowRunning: true, searchConsole: true }` when it is stuck in a running Chrome;
+  - the launch command has `--app=https://search.google.com/search-console` and the Automation Chrome profile, with no remote-debugging or automation flags.
+- **`extension.test.ts`, new (real extension in Chromium):**
+  - with the app's agent connected: no chatgpt.com tab, no claim, the prompt still WAITING, and the Search Console request completes (INDEXING_REQUESTED);
+  - on 3.4.5's background the test fails (a ChatGPT tab is opened).
+
+**Not verified here:**
+- Chrome's `--app` window with the owner's Google account on Windows (the window is Chrome itself; Google's rule is about embedded browsers and automation).
+
+**Commands run**
+```
+npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts tests/unit/extension-version.test.ts   # 7 + 12 + 2 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "desktop app's own ChatGPT"   # 3.4.5 background: failed (ChatGPT tab opened); 3.4.6: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 360 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 48/48
 ```

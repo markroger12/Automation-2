@@ -26,7 +26,7 @@ export interface WebsiteFormValues {
   active: boolean;
   notes: string;
   settingsOverrides: {
-    content: { maxArticleWordCount?: number; faqCount?: number; quickBioRows?: number };
+    content: { maxArticleWordCount?: number; faqCount?: number; quickBioRows?: number; humanizerEnabled?: boolean };
     seo: { articleImages?: boolean; imagesRequired?: boolean; externalLinks?: boolean; internalLinks?: boolean; rankMathTargetScore?: number; reviewThreshold?: number; rankMathMode?: 'required' | 'if-installed' | 'off' };
     workflow: { manualTitleApproval?: boolean; manualArticleApproval?: boolean };
   };
@@ -212,6 +212,7 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
           </Field>
           {(
             [
+              ['content', 'humanizerEnabled', 'Humanizer'],
               ['seo', 'articleImages', 'Article images'],
               ['seo', 'imagesRequired', 'Missing images → review'],
               ['seo', 'externalLinks', 'External links'],

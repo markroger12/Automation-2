@@ -71,9 +71,12 @@ interface Connection {
   email?: string;
   project?: string | null;
   properties?: { siteUrl: string; permissionLevel: string }[];
+  /** With a website: the property in use (detected from the list when the configured one is not shared). */
+  property?: string | null;
+  detectedFrom?: string | null;
 }
 
-/** Live Search Console data through the owner's service account (Google's official API; read data, resubmit sitemaps). */
+/** Live Search Console data through the owner's service account (Google's official API; read-only data and URL Inspection proof). */
 function LiveConnection({ websiteId, property, liveSync, onSynced }: { websiteId: string; property: string; liveSync: Data['liveSync']; onSynced: () => Promise<void> }) {
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -106,10 +109,18 @@ function LiveConnection({ websiteId, property, liveSync, onSynced }: { websiteId
     });
   const test = () =>
     run('test', async () => {
-      const r = await api<Connection>('/api/search-console?test=1');
+      const r = await api<Connection>(`/api/search-console?test=1&websiteId=${encodeURIComponent(websiteId)}`);
       setConn(r);
-      const match = r.properties?.find((p) => p.siteUrl === property);
-      toast(match ? 'success' : 'error', match ? `Connected: ${property} (${match.permissionLevel.replace('SITE_', '').toLowerCase().replace('_', ' ')}).` : `${r.email} cannot see ${property}. Add it in Search Console → Settings → Users and permissions (Full).`);
+      const used = r.property ?? property;
+      const match = r.properties?.find((p) => p.siteUrl === used);
+      const seen = r.properties?.length ? ` It can use: ${r.properties.map((p) => p.siteUrl).join(', ')}.` : '';
+      toast(
+        match ? 'success' : 'error',
+        match
+          ? `Connected: ${used} (${match.permissionLevel.replace('SITE_', '').toLowerCase().replace('_', ' ')})${r.detectedFrom !== undefined && r.detectedFrom !== null && r.detectedFrom !== used ? ` — detected instead of ${r.detectedFrom}` : ''}.`
+          : `${r.email} cannot see ${used}.${seen} Add it in Search Console → Settings → Users and permissions (Full).`,
+      );
+      if (used !== property) await onSynced();
     });
   const sync = () =>
     run('sync', async () => {

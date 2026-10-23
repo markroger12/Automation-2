@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AppWindow,
@@ -30,11 +30,12 @@ import {
   ScrollText,
   Settings,
   Sparkles,
+  Search,
   Wand2,
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { NAV_ITEMS, SOON_ROUTES, type NavItem } from './nav-config';
+import { NAV_ITEMS, NAV_SECTIONS, SOON_ROUTES, filterNav, type NavItem } from './nav-config';
 import { cx } from './ui';
 import { ThemeToggle } from './client';
 
@@ -84,7 +85,7 @@ function NavLink({ item, pathname, depth, onNavigate }: { item: NavItem; pathnam
       aria-current={active ? 'page' : undefined}
       className={cx(
         'group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition',
-        depth > 0 && 'ml-4 py-1 text-[13px]',
+        depth > 0 && 'py-1 text-[13px]',
         active ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200' : 'text-muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]',
       )}
     >
@@ -101,8 +102,31 @@ function NavLink({ item, pathname, depth, onNavigate }: { item: NavItem; pathnam
 
 export function Sidebar() {
   const pathname = usePathname() ?? '/';
+  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const close = () => {
+    setOpen(false);
+    setQuery('');
+  };
+  // Owner request: a search box above Overview — it filters the menu, and finds articles by keyword.
+  const items = filterNav(NAV_ITEMS, query);
+  const firstPage = items[0] ? (items[0].children?.length && items[0].children.length < (NAV_ITEMS.find((n) => n.href === items[0].href)?.children?.length ?? 0) ? items[0].children[0] : items[0]) : null;
+  const articlesHref = `/history?q=${encodeURIComponent(query.trim())}`;
+  // Ctrl+K (or “/” outside a text field) jumps to the search box.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable);
+      if ((e.key === 'k' && (e.ctrlKey || e.metaKey)) || (e.key === '/' && !typing)) {
+        e.preventDefault();
+        setOpen(true);
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   return (
     <>
       <div className="surface border-app sticky top-0 z-30 flex items-center gap-3 border-b px-4 py-2.5 lg:hidden">
@@ -131,15 +155,55 @@ export function Sidebar() {
             <X className="h-5 w-5" />
           </button>
         </div>
+        <div className="px-3 pt-1">
+          <label className="surface-2 flex items-center gap-2 rounded-lg px-2.5 py-1.5">
+            <Search className="text-muted h-4 w-4 shrink-0" aria-hidden />
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setQuery('');
+                if (e.key === 'Enter' && query.trim()) {
+                  e.preventDefault();
+                  router.push(firstPage ? firstPage.href : articlesHref);
+                  close();
+                }
+              }}
+              placeholder="Search pages and articles"
+              aria-label="Search pages and articles (Ctrl+K)"
+              title="Ctrl+K"
+              className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
+            />
+          </label>
+        </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
-          {NAV_ITEMS.map((item) => (
-            <div key={item.href}>
-              <NavLink item={item} pathname={pathname} depth={0} onNavigate={close} />
-              {item.children?.map((child) => (
-                <NavLink key={child.href} item={child} pathname={pathname} depth={1} onNavigate={close} />
-              ))}
-            </div>
-          ))}
+          {query.trim() && !items.length ? <p className="text-muted px-2.5 py-1 text-xs">No page matches.</p> : null}
+          {query.trim().length >= 2 ? (
+            <Link href={articlesHref} onClick={close} className="text-muted flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm hover:bg-[var(--surface-2)] hover:text-[var(--text)]">
+              <Search className="h-4 w-4 shrink-0" aria-hidden />
+              <span className="truncate">Articles: “{query.trim()}”</span>
+            </Link>
+          ) : null}
+          {items.map((item, i) => {
+            // A heading where a new part of the menu starts (Articles, Websites, Content tools, …).
+            const section = NAV_SECTIONS[item.href] ?? null;
+            const heading = section && (i === 0 || NAV_SECTIONS[items[i - 1].href] !== section) ? section : null;
+            return (
+              <div key={item.href}>
+                {heading ? <p className="text-muted px-2.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider">{heading}</p> : null}
+                <NavLink item={item} pathname={pathname} depth={0} onNavigate={close} />
+                {item.children?.length ? (
+                  <div className="border-app mb-1 ml-[18px] space-y-0.5 border-l pl-2">
+                    {item.children.map((child) => (
+                      <NavLink key={child.href} item={child} pathname={pathname} depth={1} onNavigate={close} />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </nav>
         <div className="border-app flex items-center justify-between border-t px-4 py-2.5">
           <span className="text-muted text-[11px]">Private · runs on this PC only</span>

@@ -156,6 +156,41 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
     expect(only.data.notes.join(' | ')).toMatch(/Every photo found is a collage of another site; the featured image uses one of them/);
   });
 
+  it('owner report: after “Regenerate images” the photos collected before are used again (before: only the new search, and no body images)', async () => {
+    const first = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000), await plain(190, 150, 30, 1600, 1000), await plain(120, 40, 160, 1600, 1000)];
+    let pictures = first;
+    let searches = 0;
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
+      if (!/show them as an image gallery/.test(prompt)) return cannedAnswer(stageKey, prompt, language, kw);
+      searches++;
+      return { text: 'Photos.', images: pictures };
+    };
+    const s = await site('Tools regenerate');
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    await client.website.update({ where: { id: s.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings('#0b5fff'), featured: presetSplit('#0b5fff') }) } });
+    const cat = await client.category.findFirstOrThrow({ where: { websiteId: s.id } });
+    const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'regenerate person', websiteId: s.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'tools:regenerate person' }, { source: 'SINGLE' });
+    await makeDriver(client, answer).drive(task.id);
+    expect((await stageData(task.id, 'IMAGES')).slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+    expect(searches).toBe(1);
+    // The owner regenerates; a new search would bring back only one picture.
+    pictures = [await plain(90, 200, 200, 1600, 1000)];
+    const { regenerateStage } = await import('@/lib/tasks/actions');
+    await regenerateStage(task.id, 'IMAGES');
+    await makeDriver(client, answer).drive(task.id);
+    const data = await stageData(task.id, 'IMAGES');
+    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+    expect(searches).toBe(1); // enough photos were collected before: no new search
+    expect(data.notes.join(' | ')).toMatch(/5 photo\(s\) collected before for this article are used again/);
+    // A photo the owner removed is not used again.
+    const rejected = data.gallery[0].id;
+    await client.mediaAsset.update({ where: { id: rejected }, data: { status: 'REJECTED' } });
+    await regenerateStage(task.id, 'IMAGES');
+    await makeDriver(client, answer).drive(task.id);
+    const again = await stageData(task.id, 'IMAGES');
+    expect(again.slots.flatMap((x: { sourceAssetIds: string[] }) => x.sourceAssetIds)).not.toContain(rejected);
+  });
+
   it.skipIf(!MP_SRC)('real MediaPipe: finds the face in a portrait; photos with a face come first and the crop centres on it', async () => {
     const target = path.join(dataDir, 'tools', 'mediapipe');
     fs.cpSync(MP_SRC!, target, { recursive: true });

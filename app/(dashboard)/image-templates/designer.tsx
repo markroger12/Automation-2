@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -18,6 +18,7 @@ import {
   LockOpen,
   Magnet,
   Maximize,
+  PenTool,
   Redo2,
   RefreshCw,
   Save,
@@ -40,6 +41,8 @@ import { FONT_CHOICES, FONT_GROUPS, fontChoice, fontFaceCss, nearestWeight } fro
 import {
   CANVAS,
   importForeignTemplate,
+  layerSchema,
+  penPathD,
   presetBodyCornerLogo,
   presetSingle,
   presetPhotoCircle,
@@ -51,19 +54,26 @@ import {
   type EmbeddedPicture,
   type ImageTemplate,
   type Layer,
+  type PenPoint,
   type SiteImageSettings,
   type TemplateSet,
   type WriterTemplates,
 } from '@/lib/image-template';
 import {
   anchorRotatedResize,
+  canvasPoints,
   clampToCanvas,
   commit,
   commitFrom,
+  cornerPoint,
   createLayer,
   duplicateLayer,
   initHistory,
+  insertPoint,
+  nearestOnPath,
   newLayerId,
+  penGeometry,
+  penLayer,
   redo,
   reorderLayer,
   replacePresent,
@@ -73,8 +83,10 @@ import {
   snapMove,
   snapResize,
   toLocal,
+  toggleSmooth,
   undo,
   updateLayer,
+  type CanvasPoint,
   type Guide,
   type Handle,
   type History,
@@ -91,6 +103,10 @@ type Data = {
   output: { size: string; maxBytes: number };
 };
 type Which = 'featured' | 'body';
+
+/** The SVG path of pen points in canvas pixels (the pen tool's own lines on the canvas). */
+const canvasD = (pts: CanvasPoint[], closed: boolean) => penPathD(pts, closed, 1, 1);
+const PEN_HELP = 'Click to add corner points, or click and drag for a curve. Click the first point to close the shape. Enter or a double click finishes; Backspace removes the last point; Esc cancels.';
 
 /** @font-face rules for the bundled fonts (the renderer draws the same files). */
 const FONT_FACES = fontFaceCss();
@@ -187,6 +203,11 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   const [photoIds, setPhotoIds] = useState<[string, string]>(['', '']);
   const [importOpen, setImportOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<Asset | null>(null);
+  /** Pen tool (owner request: an Illustrator-like pen for custom photo places and shapes); points in canvas pixels. */
+  const [pen, setPen] = useState<{ as: 'shape' | 'photo'; points: CanvasPoint[]; hover: { x: number; y: number } | null } | null>(null);
+  const penDrag = useRef<number | null>(null);
+  const pointDrag = useRef<{ id: string; kind: 'anchor' | 'in' | 'out'; index: number; before: SiteImageSettings; pts: CanvasPoint[]; moved: boolean } | null>(null);
+  useEffect(() => setPen(null), [set, which, canvasView, siteId]);
 
   const load = useCallback(async (id: string) => {
     setLoadError(null);
@@ -362,6 +383,107 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
     setSelected(copy.id);
   };
   const order = (id: string, move: 'up' | 'down' | 'front' | 'back') => changeTemplate((t) => ({ ...t, layers: reorderLayer(t.layers, id, move) }));
+  /** A change shown while dragging; the drag's end makes it one undo step. */
+  const livePatch = (id: string, patch: Partial<Layer>) =>
+    setHist((h) => {
+      if (!h) return h;
+      const v = templateSet(h.present, set);
+      return replacePresent(h, withTemplateSet(h.present, set, { ...v, [which]: updateLayer(v[which]!, id, patch) }));
+    });
+
+  // ---- pen tool: draw a new shape or photo place
+  const startPen = (as: 'shape' | 'photo') => {
+    setSelected(null);
+    setCanvasView('edit');
+    setPen((p) => (p?.as === as ? null : { as, points: [], hover: null }));
+  };
+  function finishPen(closeIt: boolean) {
+    if (!pen || !template) return;
+    // A double click adds its point twice: repeats are dropped.
+    const pts = pen.points.filter((p, i, a) => i === 0 || Math.hypot(p.x - a[i - 1].x, p.y - a[i - 1].y) > 2);
+    const closed = pen.as === 'photo' || closeIt;
+    if (pts.length < (closed ? 3 : 2)) return toast('error', closed ? 'Add at least 3 points for a closed shape.' : 'Add at least 2 points.');
+    if (template.layers.length >= 40) return toast('error', 'A template can have at most 40 layers.');
+    const layer = penLayer(pts, pen.as, { closed, slot: template.layers.some((l) => l.type === 'photo' && l.slot === 0) ? 1 : 0 });
+    changeTemplate((t) => ({ ...t, layers: [...t.layers, layer] }));
+    setSelected(layer.id);
+    setPen(null);
+  }
+  function penDown(e: ReactPointerEvent<SVGSVGElement>) {
+    if (!pen || e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const p = pointer(e);
+    const first = pen.points[0];
+    if (first && pen.points.length >= 3 && Math.hypot(p.x - first.x, p.y - first.y) * scale <= 10) return finishPen(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    penDrag.current = pen.points.length;
+    setPen({ ...pen, points: [...pen.points, cornerPoint(round(p.x), round(p.y))] });
+  }
+  function penMove(e: ReactPointerEvent<SVGSVGElement>) {
+    if (!pen) return;
+    e.stopPropagation();
+    const p = pointer(e);
+    const i = penDrag.current;
+    if (i === null || !pen.points[i]) return setPen({ ...pen, hover: p });
+    const a = pen.points[i];
+    const ox = p.x - a.x;
+    const oy = p.y - a.y;
+    if (Math.hypot(ox, oy) * scale < 3) return;
+    // Dragging pulls out the point's curve handles, mirrored, as in Illustrator.
+    const points = pen.points.slice();
+    points[i] = { ...a, ox: round(ox), oy: round(oy), ix: round(-ox), iy: round(-oy) };
+    setPen({ ...pen, points, hover: null });
+  }
+
+  // ---- pen tool: edit the points of the selected pen shape or pen photo place
+  const editable =
+    selectedLayer && !pen && !selectedLayer.locked && !selectedLayer.rotation && selectedLayer.visible && (selectedLayer.type === 'path' || ((selectedLayer.type === 'photo' || selectedLayer.type === 'fixed-photo') && selectedLayer.shape === 'path' && selectedLayer.points?.length)) ? selectedLayer : null;
+  const closedOf = (l: Layer) => (l.type === 'path' ? l.closed : true);
+  function pointDown(e: ReactPointerEvent<SVGElement>, kind: 'anchor' | 'in' | 'out', index: number) {
+    if (!editable || !hist || e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const pts = canvasPoints(editable);
+    const closed = closedOf(editable);
+    if (kind === 'anchor' && e.altKey) {
+      if (pts.length <= (closed ? 3 : 2)) return toast('error', `This shape needs at least ${closed ? 3 : 2} points.`);
+      pts.splice(index, 1);
+      return patchLayer(editable.id, { ...penGeometry(pts, closed) });
+    }
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointDrag.current = { id: editable.id, kind, index, before: hist.present, pts, moved: false };
+  }
+  function pointMove(e: ReactPointerEvent<SVGSVGElement>) {
+    const d = pointDrag.current;
+    if (!d || !editable) return;
+    e.stopPropagation();
+    const p = pointer(e);
+    const pts = d.pts.map((q) => ({ ...q }));
+    const a = pts[d.index];
+    if (d.kind === 'anchor') pts[d.index] = { ...a, x: round(p.x), y: round(p.y) };
+    else {
+      const hx = round(p.x - a.x);
+      const hy = round(p.y - a.y);
+      // Alt: this handle alone (a sharp turn); otherwise the opposite handle mirrors it.
+      pts[d.index] = d.kind === 'out' ? { ...a, ox: hx, oy: hy, ...(e.altKey ? {} : { ix: -hx, iy: -hy }) } : { ...a, ix: hx, iy: hy, ...(e.altKey ? {} : { ox: -hx, oy: -hy }) };
+    }
+    d.moved = true;
+    livePatch(d.id, penGeometry(pts, closedOf(editable)));
+  }
+  function pointUp() {
+    const d = pointDrag.current;
+    pointDrag.current = null;
+    if (d?.moved) setHist((h) => (h ? commitFrom(h, d.before) : h));
+  }
+  function addPointAt(e: ReactMouseEvent<SVGPathElement>) {
+    if (!editable) return;
+    e.stopPropagation();
+    const pts = canvasPoints(editable);
+    const closed = closedOf(editable);
+    const hit = nearestOnPath(pts, closed, pointer(e), 14 / scale);
+    if (hit) patchLayer(editable.id, { ...penGeometry(insertPoint(pts, closed, hit.index, hit.t), closed) });
+  }
 
   // ---- keyboard: nudge, delete, undo/redo, duplicate
   useEffect(() => {
@@ -369,6 +491,19 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
       const el = e.target as HTMLElement | null;
       if (el && (el.closest('input, textarea, select, [contenteditable="true"]') || el.closest('dialog[open], [role="dialog"]'))) return;
       const mod = e.ctrlKey || e.metaKey;
+      if (pen) {
+        if (e.key === 'Escape') setPen(null);
+        else if (e.key === 'Enter') finishPen(pen.as === 'photo' || pen.points.length >= 3);
+        else if (e.key === 'Backspace' || e.key === 'Delete' || (mod && e.key.toLowerCase() === 'z')) setPen({ ...pen, points: pen.points.slice(0, -1) });
+        else return;
+        e.preventDefault();
+        return;
+      }
+      if (!mod && !e.altKey && e.key.toLowerCase() === 'p' && template) {
+        e.preventDefault();
+        startPen('shape');
+        return;
+      }
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         setHist((h) => (h ? (e.shiftKey ? redo(h) : undo(h)) : h));
@@ -689,6 +824,12 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                 <Button size="sm" variant="ghost" onClick={() => addLayer('svg')}>
                   <Shapes className="h-4 w-4" /> SVG
                 </Button>
+                <Button size="sm" variant={pen?.as === 'shape' ? 'secondary' : 'ghost'} aria-pressed={pen?.as === 'shape'} title={`Pen (P): draw your own shape. ${PEN_HELP}`} onClick={() => startPen('shape')}>
+                  <PenTool className="h-4 w-4" /> Pen shape
+                </Button>
+                <Button size="sm" variant={pen?.as === 'photo' ? 'secondary' : 'ghost'} aria-pressed={pen?.as === 'photo'} title={`Pen: draw your own photo place (the photo is cut to it). ${PEN_HELP}`} onClick={() => startPen('photo')}>
+                  <PenTool className="h-4 w-4" /> Pen photo slot
+                </Button>
                 <span className="border-app mx-1 h-6 border-l" />
                 <Button size="sm" variant="ghost" aria-label="Zoom out" onClick={() => setZoom(Math.max(0.1, round(scale * 0.8)))}>
                   <ZoomOut className="h-4 w-4" />
@@ -714,6 +855,20 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                   ))}
                 </div>
               </div>
+              {pen ? (
+                <div className="border-app flex flex-wrap items-center gap-2 border-t bg-indigo-50 px-3 py-2 text-xs text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100" role="status">
+                  <PenTool className="h-4 w-4 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <strong>{pen.as === 'photo' ? 'Pen photo slot' : 'Pen shape'}:</strong> {PEN_HELP} ({pen.points.length} point{pen.points.length === 1 ? '' : 's'})
+                  </span>
+                  <Button size="sm" variant="primary" disabled={pen.points.length < 2} onClick={() => finishPen(pen.as === 'photo' || pen.points.length >= 3)}>Finish</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setPen(null)}>Cancel</Button>
+                </div>
+              ) : editable ? (
+                <div className="border-app text-muted border-t px-3 py-2 text-xs" role="note">
+                  Points: drag a square to move it, drag a round handle to bend the curve (Alt: one side only). Double-click a square: corner ↔ curve. Double-click the line: add a point. Alt-click a square: remove it.
+                </div>
+              ) : null}
             </Card>
 
             {/* Canvas */}
@@ -772,6 +927,75 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                     ) : null}
                   </div>
                 ) : null}
+                {editable
+                  ? (() => {
+                      const pts = canvasPoints(editable);
+                      const closed = closedOf(editable);
+                      const r = 6 / scale;
+                      const line = { stroke: '#6366f1', strokeWidth: 1.5 / scale };
+                      return (
+                        <svg className="pointer-events-none absolute inset-0" width={CANVAS.width * scale} height={CANVAS.height * scale} viewBox={`0 0 ${CANVAS.width} ${CANVAS.height}`} onPointerMove={pointMove} onPointerUp={pointUp} onPointerCancel={pointUp} aria-hidden>
+                          <path d={canvasD(pts, closed)} fill="none" {...line} />
+                          <path d={canvasD(pts, closed)} fill="none" stroke="transparent" strokeWidth={14 / scale} className="pointer-events-auto cursor-copy" onDoubleClick={addPointAt} />
+                          {pts.map((q, i) => (
+                            <g key={i}>
+                              {q.ix || q.iy ? (
+                                <>
+                                  <line x1={q.x} y1={q.y} x2={q.x + q.ix} y2={q.y + q.iy} {...line} />
+                                  <circle data-pen-handle={`in-${i}`} cx={q.x + q.ix} cy={q.y + q.iy} r={r * 0.8} fill="#6366f1" className="pointer-events-auto cursor-pointer" onPointerDown={(e) => pointDown(e, 'in', i)} />
+                                </>
+                              ) : null}
+                              {q.ox || q.oy ? (
+                                <>
+                                  <line x1={q.x} y1={q.y} x2={q.x + q.ox} y2={q.y + q.oy} {...line} />
+                                  <circle data-pen-handle={`out-${i}`} cx={q.x + q.ox} cy={q.y + q.oy} r={r * 0.8} fill="#6366f1" className="pointer-events-auto cursor-pointer" onPointerDown={(e) => pointDown(e, 'out', i)} />
+                                </>
+                              ) : null}
+                              <rect
+                                data-pen-point={i}
+                                x={q.x - r}
+                                y={q.y - r}
+                                width={2 * r}
+                                height={2 * r}
+                                fill="#fff"
+                                {...line}
+                                className="pointer-events-auto cursor-move"
+                                onPointerDown={(e) => pointDown(e, 'anchor', i)}
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  patchLayer(editable.id, { ...penGeometry(toggleSmooth(pts, closed, i), closed) });
+                                }}
+                              />
+                            </g>
+                          ))}
+                        </svg>
+                      );
+                    })()
+                  : null}
+                {pen ? (
+                  <svg
+                    data-pen-canvas="1"
+                    className="absolute inset-0 cursor-crosshair"
+                    width={CANVAS.width * scale}
+                    height={CANVAS.height * scale}
+                    viewBox={`0 0 ${CANVAS.width} ${CANVAS.height}`}
+                    onPointerDown={penDown}
+                    onPointerMove={penMove}
+                    onPointerUp={() => (penDrag.current = null)}
+                    onPointerCancel={() => (penDrag.current = null)}
+                    onDoubleClick={() => finishPen(pen.as === 'photo' || pen.points.length >= 3)}
+                    aria-label={`Pen tool: ${PEN_HELP}`}
+                  >
+                    {pen.points.length ? <path d={canvasD(pen.points, false)} fill={pen.as === 'photo' ? 'rgba(99,102,241,0.18)' : 'none'} stroke="#6366f1" strokeWidth={2 / scale} /> : null}
+                    {pen.hover && pen.points.length ? <line x1={pen.points[pen.points.length - 1].x} y1={pen.points[pen.points.length - 1].y} x2={pen.hover.x} y2={pen.hover.y} stroke="#6366f1" strokeWidth={1.5 / scale} strokeDasharray={`${6 / scale} ${4 / scale}`} /> : null}
+                    {pen.points.map((q, i) => (
+                      <g key={i}>
+                        {q.ox || q.oy ? <line x1={q.x + q.ix} y1={q.y + q.iy} x2={q.x + q.ox} y2={q.y + q.oy} stroke="#6366f1" strokeWidth={1 / scale} /> : null}
+                        <rect x={q.x - (i === 0 ? 8 : 5) / scale} y={q.y - (i === 0 ? 8 : 5) / scale} width={(i === 0 ? 16 : 10) / scale} height={(i === 0 ? 16 : 10) / scale} fill={i === 0 ? '#eef2ff' : '#fff'} stroke="#6366f1" strokeWidth={1.5 / scale} />
+                      </g>
+                    ))}
+                  </svg>
+                ) : null}
               </div>
             </div>
             {/* Preview data and the final check, under the canvas so they stay in view too. */}
@@ -823,7 +1047,16 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                   </div>
                 }
               >
-                <LayerProperties layer={selectedLayer} accent={template.accent} fixedPhotos={fixedPhotos} onPatch={(patch, key) => patchLayer(selectedLayer.id, patch, key ? `${selectedLayer.id}:${key}` : null)} />
+                <LayerProperties
+                  layer={selectedLayer}
+                  accent={template.accent}
+                  fixedPhotos={fixedPhotos}
+                  onPatch={(patch, key) => patchLayer(selectedLayer.id, patch, key ? `${selectedLayer.id}:${key}` : null)}
+                  onReplace={(layer) => {
+                    changeTemplate((t) => ({ ...t, layers: t.layers.map((x) => (x.id === selectedLayer.id ? layer : x)) }));
+                    setSelected(layer.id);
+                  }}
+                />
               </Card>
             ) : (
               <Card>
@@ -1018,8 +1251,26 @@ function PreviewControls({ data, photoIds, setPhotoIds, title, setTitle, hideTit
 }
 
 /** A photo place's shape and border on the editing canvas (the production renderer draws the same). */
-function frameStyle(l: { radius: number; shape: 'rect' | 'circle'; stroke: string | null; strokeWidth: number }, scale: number, accent: string): CSSProperties {
+function frameStyle(l: { radius: number; shape: 'rect' | 'circle' | 'path'; points?: PenPoint[]; stroke: string | null; strokeWidth: number; width: number; height: number }, scale: number, accent: string): CSSProperties {
+  // A pen-drawn place: the photo is cut to the drawn shape (its border is drawn by PenBorder).
+  if (l.shape === 'path' && l.points?.length) return { clipPath: `path('${penPathD(l.points, true, l.width * scale, l.height * scale)}')` };
   return { borderRadius: l.shape === 'circle' ? '50%' : l.radius * scale, border: l.stroke && l.strokeWidth ? `${l.strokeWidth * scale}px solid ${resolve(l.stroke, accent)}` : undefined, boxSizing: 'border-box' };
+}
+
+/** The border of a pen-drawn photo place, inside the shape (as the renderer draws it). */
+function PenBorder({ l, accent }: { l: { id: string; shape: string; points?: PenPoint[]; stroke: string | null; strokeWidth: number; width: number; height: number }; accent: string }) {
+  if (l.shape !== 'path' || !l.points?.length || !l.stroke || !l.strokeWidth) return null;
+  const d = penPathD(l.points, true, l.width, l.height);
+  return (
+    <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${l.width} ${l.height}`} preserveAspectRatio="none" aria-hidden>
+      <defs>
+        <clipPath id={`pen-${l.id}`}>
+          <path d={d} />
+        </clipPath>
+      </defs>
+      <path d={d} fill="none" stroke={resolve(l.stroke, accent)} strokeWidth={l.strokeWidth * 2} strokeLinejoin="round" clipPath={`url(#pen-${l.id})`} />
+    </svg>
+  );
 }
 
 function LayerVisual({ layer: l, template, scale, vars, photoUrl, logoUrl }: { layer: Layer; template: ImageTemplate; scale: number; vars: Record<string, string>; photoUrl: (slot: number) => string | null; logoUrl: string | null }) {
@@ -1028,16 +1279,28 @@ function LayerVisual({ layer: l, template, scale, vars, photoUrl, logoUrl }: { l
     case 'photo': {
       const url = photoUrl(l.slot);
       const frame = frameStyle(l, scale, accent);
-      return url ? (
-        <img src={url} alt="" draggable={false} className="h-full w-full object-cover" style={{ ...frame, objectPosition: l.focus === 'top' ? 'top' : 'center' }} />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center text-white/80" style={{ ...frame, background: l.slot ? 'linear-gradient(135deg,#f97316,#7c2d12)' : 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', fontSize: Math.max(10, 48 * scale) }}>
-          Photo {l.slot + 1}
-        </div>
+      return (
+        <>
+          {url ? (
+            <img src={url} alt="" draggable={false} className="h-full w-full object-cover" style={{ ...frame, objectPosition: l.focus === 'top' ? 'top' : 'center' }} />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-white/80" style={{ ...frame, background: l.slot ? 'linear-gradient(135deg,#f97316,#7c2d12)' : 'linear-gradient(135deg,#0ea5e9,#1e3a8a)', fontSize: Math.max(10, 48 * scale) }}>
+              Photo {l.slot + 1}
+            </div>
+          )}
+          <PenBorder l={l} accent={accent} />
+        </>
       );
     }
     case 'fixed-photo':
-      return l.assetId ? <img src={`/api/media/${l.assetId}`} alt="" draggable={false} className="h-full w-full object-cover" style={frameStyle(l, scale, accent)} /> : <div className="h-full w-full bg-slate-400/60" />;
+      return l.assetId ? (
+        <>
+          <img src={`/api/media/${l.assetId}`} alt="" draggable={false} className="h-full w-full object-cover" style={frameStyle(l, scale, accent)} />
+          <PenBorder l={l} accent={accent} />
+        </>
+      ) : (
+        <div className="h-full w-full bg-slate-400/60" />
+      );
     case 'logo':
       return (
         <div className="flex h-full w-full items-center justify-center" style={l.plate ? { background: resolve(l.plateColor, accent), borderRadius: l.plateRadius * scale, padding: l.platePadding * scale } : undefined}>
@@ -1076,6 +1339,12 @@ function LayerVisual({ layer: l, template, scale, vars, photoUrl, logoUrl }: { l
       return <div className="h-full w-full" style={{ background: resolve(l.fill, accent), borderRadius: l.radius * scale, border: l.stroke && l.strokeWidth ? `${l.strokeWidth * scale}px solid ${resolve(l.stroke, accent)}` : undefined, boxSizing: 'border-box' }} />;
     case 'circle':
       return <div className="h-full w-full rounded-[50%]" style={{ background: resolve(l.fill, accent), border: l.stroke && l.strokeWidth ? `${l.strokeWidth * scale}px solid ${resolve(l.stroke, accent)}` : undefined, boxSizing: 'border-box' }} />;
+    case 'path':
+      return (
+        <svg className="h-full w-full" viewBox={`0 0 ${l.width} ${l.height}`} preserveAspectRatio="none" style={{ overflow: 'visible' }} aria-hidden>
+          <path d={penPathD(l.points, l.closed, l.width, l.height)} fill={l.closed ? resolve(l.fill, accent) : 'none'} stroke={l.stroke && l.strokeWidth ? resolve(l.stroke, accent) : 'none'} strokeWidth={l.strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
+        </svg>
+      );
     case 'svg': {
       const safe = sanitizeSvg(l.svg);
       return safe ? <img src={svgUrl(safe)} alt="" draggable={false} className={cx('h-full w-full', /^<svg[^>]*preserveAspectRatio="none"/.test(safe) ? 'object-fill' : 'object-contain')} /> : <div className="h-full w-full border border-dashed border-rose-400" />;
@@ -1139,7 +1408,7 @@ function ColorField({ id, label, value, accent, onChange, nullable }: { id: stri
   );
 }
 
-function LayerProperties({ layer: l, accent, fixedPhotos, onPatch }: { layer: Layer; accent: string; fixedPhotos: Asset[]; onPatch: (patch: Record<string, unknown>, key?: string) => void }) {
+function LayerProperties({ layer: l, accent, fixedPhotos, onPatch, onReplace }: { layer: Layer; accent: string; fixedPhotos: Asset[]; onPatch: (patch: Record<string, unknown>, key?: string) => void; onReplace: (layer: Layer) => void }) {
   const id = (k: string) => `lp-${l.id}-${k}`;
   const num = (k: string, label: string, value: number, min: number, max: number, step = 1) => <NumberField id={id(k)} label={label} value={value} min={min} max={max} step={step} onChange={(v) => onPatch({ [k]: v }, k)} />;
   const [svgText, setSvgText] = useState(l.type === 'svg' ? l.svg : '');
@@ -1236,6 +1505,7 @@ function LayerProperties({ layer: l, accent, fixedPhotos, onPatch }: { layer: La
             <Select id={id('shape')} value={l.shape} onChange={(e) => onPatch({ shape: e.target.value })} className="px-2 py-1.5">
               <option value="rect">Rectangle</option>
               <option value="circle">Circle</option>
+              {l.points?.length ? <option value="path">Pen shape</option> : null}
             </Select>
           </Field>
           {l.shape === 'rect' ? num('radius', 'Corner radius', l.radius, 0, 540) : <span />}
@@ -1270,6 +1540,31 @@ function LayerProperties({ layer: l, accent, fixedPhotos, onPatch }: { layer: La
               {num('platePadding', 'Padding', l.platePadding, 0, 200)}
               {num('plateRadius', 'Plate radius', l.plateRadius, 0, 540)}
             </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {l.type === 'path' ? (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            {l.closed ? <ColorField id={id('fill')} label="Fill" value={l.fill} accent={accent} onChange={(v) => onPatch({ fill: v ?? 'transparent' }, 'fill')} /> : null}
+            <ColorField id={id('stroke')} label="Border" value={l.stroke} accent={accent} nullable onChange={(v) => onPatch({ stroke: v }, 'stroke')} />
+            {num('strokeWidth', 'Border width', l.strokeWidth, 0, 100)}
+            <div className="flex items-end pb-2">
+              <Checkbox label="Closed shape" checked={l.closed} onChange={(e) => onPatch({ closed: e.target.checked, ...(!e.target.checked && !l.strokeWidth ? { stroke: l.stroke ?? 'accent', strokeWidth: 8 } : {}) })} />
+            </div>
+          </div>
+          {l.closed && l.points.length >= 3 ? (
+            <Button
+              size="sm"
+              onClick={() =>
+                onReplace(
+                  layerSchema.parse({ id: newLayerId('photo'), name: l.name ? `${l.name} (photo)` : 'Pen photo', type: 'photo', slot: 0, x: l.x, y: l.y, width: l.width, height: l.height, rotation: l.rotation, opacity: l.opacity, shape: 'path', points: l.points, stroke: l.stroke, strokeWidth: l.strokeWidth }),
+                )
+              }
+            >
+              <ImageIcon className="h-4 w-4" /> Use as photo slot
+            </Button>
           ) : null}
         </div>
       ) : null}

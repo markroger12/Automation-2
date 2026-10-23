@@ -27,11 +27,22 @@ const base = {
 };
 
 /**
+ * A point drawn with the pen tool (owner request: an Illustrator-like pen for custom photo places and shapes): its
+ * place in fractions of the layer box (0–1), and its two curve handles as offsets from it in the same units (0, 0 =
+ * a corner). Fractions keep the shape when the box is resized.
+ */
+const penPoint = z.object({ x: num(-1, 2), y: num(-1, 2), ix: num(-4, 4).default(0), iy: num(-4, 4).default(0), ox: num(-4, 4).default(0), oy: num(-4, 4).default(0) });
+export type PenPoint = z.output<typeof penPoint>;
+const penPoints = z.array(penPoint).min(2).max(200);
+
+/**
  * A photo place's frame (owner request: a circle photo place with a coloured ring, as in a two-person featured image).
  * 'circle' cuts the photo to the circle (an ellipse in a non-square box); the border is drawn inside the place.
+ * 'path' cuts it to a shape drawn with the pen tool (`points`, always closed).
  */
 const photoFrame = {
-  shape: z.enum(['rect', 'circle']).default('rect'),
+  shape: z.enum(['rect', 'circle', 'path']).default('rect'),
+  points: penPoints.optional(),
   stroke: color.nullable().default(null),
   strokeWidth: num(0, 100).default(0),
 };
@@ -58,9 +69,27 @@ export const layerSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('rect'), fill: color.default('accent'), stroke: color.nullable().default(null), strokeWidth: num(0, 100).default(0), radius: num(0, 540).default(0) }),
   z.object({ ...base, type: z.literal('circle'), fill: color.default('accent'), stroke: color.nullable().default(null), strokeWidth: num(0, 100).default(0) }),
   z.object({ ...base, type: z.literal('svg'), svg: z.string().max(50_000) }),
+  // A shape drawn with the pen tool: closed (filled) or open (a line).
+  z.object({ ...base, type: z.literal('path'), points: penPoints, closed: z.boolean().default(true), fill: color.default('accent'), stroke: color.nullable().default(null), strokeWidth: num(0, 100).default(0) }),
 ]);
 export type Layer = z.output<typeof layerSchema>;
 export type LayerInput = z.input<typeof layerSchema>;
+
+/**
+ * The SVG path of pen points in a box of w×h pixels: straight lines between corners, cubic curves where a point has
+ * handles. Used by the renderer and the designer alike.
+ */
+export function penPathD(points: PenPoint[], closed: boolean, w: number, h: number): string {
+  if (!points.length) return '';
+  const f = (n: number) => Math.round(n * 100) / 100;
+  const P = (x: number, y: number) => `${f(x * w)} ${f(y * h)}`;
+  let d = `M${P(points[0].x, points[0].y)}`;
+  const seg = (a: PenPoint, b: PenPoint) =>
+    a.ox || a.oy || b.ix || b.iy ? ` C${P(a.x + a.ox, a.y + a.oy)} ${P(b.x + b.ix, b.y + b.iy)} ${P(b.x, b.y)}` : ` L${P(b.x, b.y)}`;
+  for (let i = 1; i < points.length; i++) d += seg(points[i - 1], points[i]);
+  if (closed && points.length > 2) d += `${seg(points[points.length - 1], points[0])} Z`;
+  return d;
+}
 
 export const templateSchema = z.object({
   version: z.literal(1).default(1),

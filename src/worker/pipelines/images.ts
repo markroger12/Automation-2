@@ -14,7 +14,7 @@ import { hammingDistance, storeRendered } from '@/images/store';
 import { collectCommonsGallery } from '@/images/sources/wikimedia';
 import { collectChatGPTGallery } from '@/images/sources/chatgpt-gallery';
 import { loadTemplateAssets } from '@/images/site-templates';
-import { detectFaces, faceToolAvailable, mainFaceArea, mainFaces } from '@/images/faces';
+import { detectSubjects, faceToolAvailable, headsOfPeople, mainFaceArea, mainFaces } from '@/images/faces';
 import { enhancePhoto } from '@/images/upscale';
 import { faceFingerprint, fingerprintDistance, pictureSharpness, SAME_FACES_BITS, SOFT_SHARE } from '@/images/measure';
 import type { StageManifest } from '@/modules/types';
@@ -374,10 +374,10 @@ async function measurePhotos(ctx: PipelineContext, photos: MediaAsset[], notes: 
   if (todo.length) {
     await ctx.progress(`Measuring ${todo.length} photo(s)${faceTool ? ' and finding faces' : ''}…`);
     const bufs = await Promise.all(todo.map((p) => readAsset(p)));
-    let boxes: Awaited<ReturnType<typeof detectFaces>> = null;
+    let boxes: Awaited<ReturnType<typeof detectSubjects>> = null;
     if (faceTool) {
       try {
-        boxes = await detectFaces(bufs);
+        boxes = await detectSubjects(bufs);
       } catch (error) {
         notes.push(`Face detection failed; photos were ordered and cropped without it (${(error as Error).message.slice(0, 120)}).`);
       }
@@ -385,16 +385,19 @@ async function measurePhotos(ctx: PipelineContext, photos: MediaAsset[], notes: 
     faceTool = faceTool && boxes !== null;
     for (const [i, p] of todo.entries()) {
       const meta = await sharp(bufs[i]).rotate().metadata();
-      const found = boxes?.[i] ?? [];
+      const found = boxes?.[i]?.faces ?? [];
       const main = mainFaces(found);
-      const area = mainFaceArea(found, meta.width ?? 0, meta.height ?? 0);
+      // People whose face was not found count for the crop too (where they stand, never who they are).
+      const heads = headsOfPeople(boxes?.[i]?.people ?? [], found);
       const W = meta.width ?? 0;
       const H = meta.height ?? 0;
+      const subjects = [...main, ...heads];
+      const area = heads.length && W && H ? { left: Math.max(0, Math.min(...subjects.map((f) => f.x)) / W), right: Math.min(1, Math.max(...subjects.map((f) => f.x + f.w)) / W), top: Math.max(0, Math.min(...subjects.map((f) => f.y)) / H), bottom: Math.min(1, Math.max(...subjects.map((f) => f.y + f.h)) / H) } : mainFaceArea(found, W, H);
       facts[p.id] = {
         n: main.length,
         h: main.length ? Math.max(...main.map((f) => f.h)) : 0,
         area,
-        faces: W && H ? main.map((f) => ({ left: f.x / W, right: (f.x + f.w) / W, top: f.y / H, bottom: (f.y + f.h) / H })) : undefined,
+        faces: W && H ? subjects.map((f) => ({ left: f.x / W, right: (f.x + f.w) / W, top: f.y / H, bottom: (f.y + f.h) / H })) : undefined,
         aspect: W && H ? W / H : undefined,
         faceprint: area ? await faceFingerprint(bufs[i], area).catch(() => undefined) : undefined,
         sharpness: await pictureSharpness(bufs[i]).catch(() => 0),
@@ -432,6 +435,16 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     const uploads = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'UPLOAD', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' } });
     const ids = uploads.map((u) => u.id);
     const galleryNotes: string[] = state.emptySearches ? [...((state.searchNotes as string[] | undefined) ?? [])] : [];
+    // Owner report (Regenerate images used only the new search's two photos, and no body image was made): the photos
+    // collected for this article before are used again, unless removed on the Images tab; a new search only when they
+    // are not enough.
+    if (!state.emptySearches) {
+      const earlier = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' }, take: 10 });
+      if (earlier.length) {
+        ids.push(...earlier.map((e) => e.id));
+        galleryNotes.push(`${earlier.length} photo(s) collected before for this article are used again (“Don't use” on the Images tab leaves one out).`);
+      }
+    }
     const source = ctx.config.celebrityPhotoSource ?? 'chatgpt';
     const timeoutMs = settings.advanced.linkCheckTimeoutSec * 1000 * 2;
     if (ids.length < 4 && source !== 'commons') {

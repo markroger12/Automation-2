@@ -8,10 +8,12 @@ import { dataPaths } from '../lib/paths';
 /**
  * Face LOCATIONS (never identities) with MediaPipe BlazeFace, as in the owner's earlier tool: the model runs in a
  * headless browser from local files in data/tools/mediapipe (`npm run tools:install`). Missing files → null, and
- * crops fall back to the attention crop. Nothing is sent anywhere.
+ * crops fall back to the attention crop. Nothing is sent anywhere. With the optional EfficientDet model, people are
+ * found too (where they stand, never who they are), so a person whose face was not found is not cut either.
  */
 export const mediapipeDir = () => path.join(dataPaths.tools(), 'mediapipe');
 const FILES = ['vision_bundle.mjs', 'wasm/vision_wasm_internal.js', 'wasm/vision_wasm_internal.wasm', 'blaze_face_short_range.tflite'];
+export const PERSON_MODEL = 'efficientdet_lite0.tflite';
 
 export interface FaceBox {
   x: number;
@@ -25,25 +27,39 @@ export function faceToolAvailable(): boolean {
   return FILES.every((f) => fs.existsSync(path.join(mediapipeDir(), f)));
 }
 
+export function personModelAvailable(): boolean {
+  return fs.existsSync(path.join(mediapipeDir(), PERSON_MODEL));
+}
+
 const HOST = 'https://bas-tools.local';
 const TYPES: Record<string, string> = { '.mjs': 'text/javascript', '.js': 'text/javascript', '.wasm': 'application/wasm', '.tflite': 'application/octet-stream' };
 
-// The whole picture, then overlapping 2×2 and 3×3 tiles (small faces in group photos); overlapping boxes merged.
+// The whole picture, then overlapping 2×2 and 3×3 tiles (small faces in group photos); overlapping boxes merged. In
+// tiles only a confident detection counts: on real photos, tiles found “faces” on a jacket, a back or a logo, and an
+// oversized box over a turned head, all scored 0.53–0.59, while real small faces scored 0.6–0.89.
 const PAGE = `<!doctype html><html><body><script type="module">
-import { FaceDetector, FilesetResolver } from '${HOST}/vision_bundle.mjs';
+import { FaceDetector, FilesetResolver, ObjectDetector } from '${HOST}/vision_bundle.mjs';
 const fileset = await FilesetResolver.forVisionTasks('${HOST}/wasm');
 const detector = await FaceDetector.createFromOptions(fileset, { baseOptions: { modelAssetPath: '${HOST}/blaze_face_short_range.tflite', delegate: 'CPU' }, runningMode: 'IMAGE', minDetectionConfidence: 0.5 });
 function iou(a, b) { const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y), x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h); const i = Math.max(0, x2 - x1) * Math.max(0, y2 - y1); return i / (a.w * a.h + b.w * b.h - i); }
+// People (optional model): where people stand, so one whose face was not found (turned away, small, in profile) counts.
+let people = null;
+try { people = await ObjectDetector.createFromOptions(fileset, { baseOptions: { modelAssetPath: '${HOST}/${PERSON_MODEL}', delegate: 'CPU' }, runningMode: 'IMAGE', scoreThreshold: 0.5, categoryAllowlist: ['person'], maxResults: 20 }); } catch { people = null; }
+window.detectPeople = async (src) => {
+  if (!people) return null;
+  const img = new Image(); img.src = src; await img.decode();
+  return people.detect(img).detections.map((d) => ({ x: d.boundingBox.originX, y: d.boundingBox.originY, w: d.boundingBox.width, h: d.boundingBox.height, score: d.categories[0]?.score ?? 0 }));
+};
 window.detectFaces = async (src) => {
   const img = new Image(); img.src = src; await img.decode();
   const W = img.naturalWidth, H = img.naturalHeight, boxes = [];
-  const run = (sx, sy, sw, sh) => {
+  const run = (min, sx, sy, sw, sh) => {
     const c = document.createElement('canvas'); c.width = Math.round(sw); c.height = Math.round(sh);
     c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
-    for (const d of detector.detect(c).detections) { const b = d.boundingBox; boxes.push({ x: sx + b.originX, y: sy + b.originY, w: b.width, h: b.height, score: d.categories[0]?.score ?? 0 }); }
+    for (const d of detector.detect(c).detections) { const b = d.boundingBox; const score = d.categories[0]?.score ?? 0; if (score >= min) boxes.push({ x: sx + b.originX, y: sy + b.originY, w: b.width, h: b.height, score }); }
   };
-  run(0, 0, W, H);
-  for (const n of [2, 3]) { const tw = W / n * 1.2, th = H / n * 1.2; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) run(Math.min(W - tw, i * W / n), Math.min(H - th, j * H / n), Math.min(tw, W), Math.min(th, H)); }
+  run(0.5, 0, 0, W, H);
+  for (const n of [2, 3]) { const tw = W / n * 1.2, th = H / n * 1.2; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) run(0.6, Math.min(W - tw, i * W / n), Math.min(H - th, j * H / n), Math.min(tw, W), Math.min(th, H)); }
   boxes.sort((a, b) => b.score - a.score);
   const keep = []; for (const b of boxes) if (b.w > 8 && keep.every((k) => iou(k, b) < 0.3 && !(b.x >= k.x && b.y >= k.y && b.x + b.w <= k.x + k.w && b.y + b.h <= k.y + k.h))) keep.push(b);
   return keep;
@@ -51,8 +67,15 @@ window.detectFaces = async (src) => {
 window.ready = true;
 </script></body></html>`;
 
+type DetectorPage = { detectFaces: (src: string) => Promise<FaceBox[]>; detectPeople: (src: string) => Promise<FaceBox[] | null> };
+
 /** Face boxes per picture (source pixels), or null when the detector is not installed or could not start. */
 export async function detectFaces(images: Buffer[]): Promise<FaceBox[][] | null> {
+  return (await detectSubjects(images))?.map((s) => s.faces) ?? null;
+}
+
+/** Faces and (with the person model) people per picture, in source pixels; null without the face detector. */
+export async function detectSubjects(images: Buffer[]): Promise<{ faces: FaceBox[]; people: FaceBox[] }[] | null> {
   if (!faceToolAvailable() || !images.length) return null;
   const dir = mediapipeDir();
   const browser = await chromium.launch({ ...browserLaunchBase(), headless: true });
@@ -67,17 +90,20 @@ export async function detectFaces(images: Buffer[]): Promise<FaceBox[][] | null>
     });
     await page.goto(`${HOST}/detect.html`);
     await page.waitForFunction(() => (window as unknown as { ready?: boolean }).ready === true, null, { timeout: 60_000 });
-    const out: FaceBox[][] = [];
+    const out: { faces: FaceBox[]; people: FaceBox[] }[] = [];
     for (const buf of images) {
       try {
         const meta = await sharp(buf).rotate().metadata();
         const w = meta.width ?? 1;
         const scale = Math.min(1, 1600 / Math.max(w, meta.height ?? 1));
         const small = await sharp(buf).rotate().resize(Math.round(w * scale)).jpeg({ quality: 85 }).toBuffer();
-        const boxes = await page.evaluate((src: string) => (window as unknown as { detectFaces: (s: string) => Promise<FaceBox[]> }).detectFaces(src), `data:image/jpeg;base64,${small.toString('base64')}`);
-        out.push(boxes.map((b) => ({ x: b.x / scale, y: b.y / scale, w: b.w / scale, h: b.h / scale, score: b.score })));
+        const src = `data:image/jpeg;base64,${small.toString('base64')}`;
+        const boxes = await page.evaluate((s: string) => (window as unknown as DetectorPage).detectFaces(s), src);
+        const persons = await page.evaluate((s: string) => (window as unknown as DetectorPage).detectPeople(s), src).catch(() => null);
+        const back = (b: FaceBox) => ({ x: b.x / scale, y: b.y / scale, w: b.w / scale, h: b.h / scale, score: b.score });
+        out.push({ faces: boxes.map(back), people: (persons ?? []).map(back) });
       } catch {
-        out.push([]);
+        out.push({ faces: [], people: [] });
       }
     }
     return out;
@@ -117,4 +143,20 @@ export function mainFaceArea(faces: FaceBox[], width: number, height: number): {
     top: clamp(Math.min(...main.map((f) => f.y)) / height),
     bottom: clamp(Math.max(...main.map((f) => f.y + f.h)) / height),
   };
+}
+
+/**
+ * People whose face was not found (turned away, too small, in profile): the head end of their box stands in for the
+ * face, so the crop keeps them whole too. Only people at least 40 % as tall as the tallest one (not the background).
+ */
+export function headsOfPeople(people: FaceBox[], faces: FaceBox[]): FaceBox[] {
+  const tallest = Math.max(0, ...people.map((p) => p.h));
+  return people
+    .filter((p) => p.h >= tallest * 0.4)
+    .filter((p) => !faces.some((f) => f.x + f.w / 2 >= p.x && f.x + f.w / 2 <= p.x + p.w && f.y + f.h / 2 >= p.y && f.y + f.h / 2 <= p.y + p.h * 0.6))
+    .map((p) => {
+      // A standing person's head is about a seventh of their height; a seated or half-shown one's is larger.
+      const size = p.h / p.w > 1.8 ? p.h * 0.14 : Math.min(p.w * 0.5, p.h * 0.35);
+      return { x: p.x + (p.w - size) / 2, y: p.y, w: size, h: size, score: p.score };
+    });
 }

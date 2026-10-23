@@ -8,13 +8,15 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 
-import { mediapipeDir } from '../src/images/faces';
+import { mediapipeDir, PERSON_MODEL } from '../src/images/faces';
 import { upscaylDir } from '../src/images/upscale';
 
 const MP_DIR = mediapipeDir();
 const UP_DIR = upscaylDir();
 const MP_VERSION = process.env.MEDIAPIPE_VERSION || '0.10.21';
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+// People (where they stand, never who): EfficientDet-Lite0, 7 MB, version 1 of the float16 model.
+const PERSON_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite';
 
 /** Minimal tar reader (ustar + pax path records). */
 function* tarEntries(buf: Buffer): Generator<{ name: string; data: Buffer }> {
@@ -69,6 +71,15 @@ export async function installMediapipe() {
       console.log('BlazeFace model downloaded.');
     } catch (err) {
       console.warn(`Could not download the face model (${(err as Error).message}). Download it by hand:\n  ${MODEL_URL}\n  → ${model}`);
+    }
+  }
+  const people = path.join(MP_DIR, PERSON_MODEL);
+  if (!fs.existsSync(people)) {
+    try {
+      fs.writeFileSync(people, await download(PERSON_MODEL_URL));
+      console.log('Person model downloaded (so people whose face is not found are not cut either).');
+    } catch (err) {
+      console.warn(`Could not download the person model (${(err as Error).message}); crops use faces only. By hand:\n  ${PERSON_MODEL_URL}\n  → ${people}`);
     }
   }
 }

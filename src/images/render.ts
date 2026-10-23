@@ -1,5 +1,5 @@
 import sharp, { type OverlayOptions } from 'sharp';
-import { CANVAS, sanitizeSvg, type ImageTemplate, type Layer } from '@/lib/image-template';
+import { CANVAS, penPathD, sanitizeSvg, type ImageTemplate, type Layer, type PenPoint } from '@/lib/image-template';
 import { fontChoice } from '@/lib/fonts';
 import { covers, linesPath, loadFont, wrapMeasured } from './fonts';
 
@@ -73,9 +73,16 @@ function svgBuffer(w: number, h: number, inner: string): Buffer {
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w)}" height="${Math.round(h)}" viewBox="0 0 ${Math.round(w)} ${Math.round(h)}">${inner}</svg>`);
 }
 
-/** A photo cut to its place's shape (rounded rectangle or circle) with the border drawn inside it. */
-async function framed(buf: Buffer, w: number, h: number, l: { radius: number; shape: 'rect' | 'circle'; stroke: string | null; strokeWidth: number }, accent: string): Promise<Buffer> {
+/** A photo cut to its place's shape (rounded rectangle, circle or a pen-drawn shape) with the border drawn inside it. */
+async function framed(buf: Buffer, w: number, h: number, l: { radius: number; shape: 'rect' | 'circle' | 'path'; points?: PenPoint[]; stroke: string | null; strokeWidth: number }, accent: string): Promise<Buffer> {
   const sw = l.stroke ? Math.min(l.strokeWidth, Math.min(w, h) / 2) : 0;
+  if (l.shape === 'path' && l.points?.length) {
+    const d = penPathD(l.points, true, w, h);
+    const parts: OverlayOptions[] = [{ input: svgBuffer(w, h, `<path d="${d}" fill="#fff"/>`), blend: 'dest-in' }];
+    // The border along the outline, inside the place (its outer half would fall outside the cut photo).
+    if (sw) parts.push({ input: svgBuffer(w, h, `<defs><clipPath id="c"><path d="${d}"/></clipPath></defs><path d="${d}" fill="none" stroke="${esc(resolveColor(l.stroke!, accent))}" stroke-width="${sw * 2}" stroke-linejoin="round" clip-path="url(#c)"/>`) });
+    return sharp(buf).ensureAlpha().composite(parts).png().toBuffer();
+  }
   if (l.shape === 'circle') {
     const mask = svgBuffer(w, h, `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="#fff"/>`);
     const parts: OverlayOptions[] = [{ input: mask, blend: 'dest-in' }];
@@ -96,58 +103,40 @@ async function rounded(buf: Buffer, w: number, h: number, radius: number): Promi
 
 /**
  * Where a photo is cut for its place (cover crop) around the faces — face LOCATIONS only. The earlier tool's rule:
- * the main faces centred across, a little above the middle with room over the heads. Owner report (a group photo in
- * a narrow place had the faces at both edges cut in half): when the faces are wider than the place, it keeps as many
- * whole faces as fit — the bigger ones, then the middle ones first — and its edges never run through a face.
+ * the main faces centred across, a little above the middle with room over the heads. Owner reports (group photos in
+ * the narrow half of the featured design: faces at both edges cut in half; keeping only some of the people left half
+ * bodies at the edges): when the main faces do not all fit the place, there is no good crop — null, and the photo is
+ * shown whole instead.
  */
-export function cropBox(sw: number, sh: number, w: number, h: number, focus: NonNullable<PhotoFocus>): { rw: number; rh: number; left: number; top: number } {
+export function cropBox(sw: number, sh: number, w: number, h: number, focus: NonNullable<PhotoFocus>): { rw: number; rh: number; left: number; top: number } | null {
   const scale = Math.max(w / sw, h / sh);
   const rw = Math.ceil(sw * scale);
   const rh = Math.ceil(sh * scale);
-  let area = focus.area;
-  let left: number | null = null;
+  const area = focus.area;
   if (area && focus.faces?.length) {
-    // Hair and ears reach a little past the detected face.
-    const boxes = focus.faces.map((f) => ({ l: Math.max(0, (f.left - (f.right - f.left) * 0.2) * rw), r: Math.min(rw, (f.right + (f.right - f.left) * 0.2) * rw), f }));
-    const all = { l: Math.min(...boxes.map((b) => b.l)), r: Math.max(...boxes.map((b) => b.r)) };
-    if (all.r - all.l > w) {
-      const middle = (all.l + all.r) / 2;
-      const clamp = (x: number) => Math.min(Math.max(0, Math.round(x)), rw - w);
-      const judge = (x: number) => {
-        const inside = boxes.filter((b) => b.l >= x && b.r <= x + w);
-        const cut = boxes.some((b) => b.r > x && b.l < x + w && !(b.l >= x && b.r <= x + w));
-        const size = inside.reduce((n, b) => n + (b.f.bottom - b.f.top), 0);
-        const centre = inside.length ? (Math.min(...inside.map((b) => b.l)) + Math.max(...inside.map((b) => b.r))) / 2 : x + w / 2;
-        return { x, inside, cut, size, off: Math.abs(centre - middle) };
-      };
-      const options = boxes
-        .flatMap((b) => [b.l, b.r - w])
-        .map((x) => judge(clamp(x)))
-        .filter((o) => !o.cut && o.inside.length)
-        .sort((a, b) => b.inside.length - a.inside.length || b.size - a.size || a.off - b.off);
-      const best = options[0];
-      if (best) {
-        // Centre the kept faces when that cuts no other face.
-        const kept = { l: Math.min(...best.inside.map((b) => b.l)), r: Math.max(...best.inside.map((b) => b.r)) };
-        const centred = judge(clamp((kept.l + kept.r) / 2 - w / 2));
-        left = !centred.cut && centred.inside.length === best.inside.length ? centred.x : best.x;
-        area = { left: Math.min(...best.inside.map((b) => b.f.left)), right: Math.max(...best.inside.map((b) => b.f.right)), top: Math.min(...best.inside.map((b) => b.f.top)), bottom: Math.max(...best.inside.map((b) => b.f.bottom)) };
-      } else {
-        // Faces too close together to keep any whole: the biggest one in the middle.
-        const big = [...focus.faces].sort((a, b) => b.bottom - b.top - (a.bottom - a.top))[0];
-        area = big;
-      }
-    }
+    // Hair and ears reach a little past the detected face (as fitsPlace counts them).
+    const pad = (f: { left: number; right: number }) => (f.right - f.left) * 0.2;
+    const across = (Math.max(...focus.faces.map((f) => f.right + pad(f))) - Math.min(...focus.faces.map((f) => f.left - pad(f)))) * rw;
+    const down = (Math.max(...focus.faces.map((f) => f.bottom)) - Math.min(...focus.faces.map((f) => f.top))) * rh * 1.4;
+    if (across > w || down > h) return null;
   }
+  let left: number;
   let top: number;
   if (area) {
-    left ??= ((area.left + area.right) / 2) * rw - w / 2;
+    left = ((area.left + area.right) / 2) * rw - w / 2;
     top = Math.min(((area.top + area.bottom) / 2) * rh - h * 0.4, area.top * rh - h * 0.08);
   } else {
     left = focus.x * rw - w / 2;
     top = focus.y * rh - h / 2;
   }
   return { rw, rh, left: Math.min(Math.max(0, Math.round(left)), rw - w), top: Math.min(Math.max(0, Math.round(top)), rh - h) };
+}
+
+/** The whole picture on a blurred, darkened copy of itself (nothing of it is cut). */
+async function wholeOnBlur(upright: Buffer, w: number, h: number): Promise<Buffer> {
+  const backdrop = await sharp(upright).resize(w, h, { fit: 'cover' }).blur(Math.max(8, Math.round(Math.min(w, h) / 30))).modulate({ brightness: 0.8 }).png().toBuffer();
+  const whole = await sharp(upright).resize(w, h, { fit: 'inside' }).png().toBuffer();
+  return sharp(backdrop).composite([{ input: whole, gravity: 'centre' }]).png().toBuffer();
 }
 
 async function photoTile(src: Buffer, w: number, h: number, focus: PhotoFocus, mode: 'auto' | 'center' | 'top'): Promise<Buffer> {
@@ -157,14 +146,15 @@ async function photoTile(src: Buffer, w: number, h: number, focus: PhotoFocus, m
   const sh = meta.height ?? h;
   // As in the owner's earlier tool: a picture much taller than its place would lose the face when cropped, so it is
   // shown whole on a blurred copy of itself.
-  if (mode === 'auto' && sw / sh < (w / h) * 0.8) {
-    const backdrop = await sharp(upright).resize(w, h, { fit: 'cover' }).blur(Math.max(8, Math.round(Math.min(w, h) / 30))).modulate({ brightness: 0.8 }).png().toBuffer();
-    const whole = await sharp(upright).resize(w, h, { fit: 'inside' }).png().toBuffer();
-    return sharp(backdrop).composite([{ input: whole, gravity: 'centre' }]).png().toBuffer();
-  }
+  if (mode === 'auto' && sw / sh < (w / h) * 0.8) return wholeOnBlur(upright, w, h);
   if (focus) {
-    const { rw, rh, left, top } = cropBox(sw, sh, w, h, focus);
-    return sharp(upright).resize(rw, rh).extract({ left, top, width: w, height: h }).png().toBuffer();
+    const box = cropBox(sw, sh, w, h, focus);
+    // Faces that do not all fit the place: the whole photo (no face or person cut), unless a crop mode was chosen.
+    if (!box) {
+      if (mode === 'auto') return wholeOnBlur(upright, w, h);
+      return sharp(upright).resize(w, h, { fit: 'cover', position: mode === 'top' ? 'north' : 'centre' }).png().toBuffer();
+    }
+    return sharp(upright).resize(box.rw, box.rh).extract({ left: box.left, top: box.top, width: w, height: h }).png().toBuffer();
   }
   const position = mode === 'top' ? 'north' : mode === 'center' ? 'centre' : sharp.strategy.attention;
   return sharp(upright).resize(w, h, { fit: 'cover', position }).png().toBuffer();
@@ -235,6 +225,14 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
       const sw = layer.stroke ? layer.strokeWidth : 0;
       return sharp(svgBuffer(w, h, `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${Math.max(0, w / 2 - sw / 2)}" ry="${Math.max(0, h / 2 - sw / 2)}" fill="${esc(resolveColor(layer.fill, accent))}"${sw ? ` stroke="${esc(resolveColor(layer.stroke, accent))}" stroke-width="${sw}"` : ''}/>`)).png().toBuffer();
     }
+    case 'path': {
+      // A shape drawn with the pen tool. Its border is centred on the line, so the picture reaches past the box by half
+      // of it (placed back by `layerMargin`).
+      const m = layerMargin(layer);
+      const d = penPathD(layer.points, layer.closed, w, h);
+      const stroke = layer.stroke && layer.strokeWidth ? ` stroke="${esc(resolveColor(layer.stroke, accent))}" stroke-width="${layer.strokeWidth}" stroke-linejoin="round" stroke-linecap="round"` : '';
+      return sharp(svgBuffer(w + 2 * m, h + 2 * m, `<path transform="translate(${m} ${m})" d="${d}" fill="${layer.closed ? esc(resolveColor(layer.fill, accent)) : 'none'}"${stroke}/>`)).png().toBuffer();
+    }
     case 'svg': {
       const safe = sanitizeSvg(layer.svg);
       if (!safe) return null;
@@ -245,10 +243,16 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
   }
 }
 
+/** How far a layer's picture reaches past its box on each side (a pen shape's border, centred on its line). */
+function layerMargin(layer: Layer): number {
+  return layer.type === 'path' && layer.stroke && layer.strokeWidth ? Math.ceil(layer.strokeWidth / 2) + 1 : 0;
+}
+
 async function placeRotated(buf: Buffer, layer: Layer): Promise<{ input: Buffer; left: number; top: number } | null> {
   let img = buf;
-  let left = Math.round(layer.x);
-  let top = Math.round(layer.y);
+  const margin = layerMargin(layer);
+  let left = Math.round(layer.x) - margin;
+  let top = Math.round(layer.y) - margin;
   if (layer.opacity < 1) {
     const meta = await sharp(img).metadata();
     const mask = svgBuffer(meta.width ?? 1, meta.height ?? 1, `<rect width="100%" height="100%" fill="#fff" fill-opacity="${layer.opacity}"/>`);

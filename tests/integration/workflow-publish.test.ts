@@ -154,6 +154,39 @@ describe('approved publishing path', () => {
     expect(await client.auditLog.count({ where: { action: 'publish.permit', details: { contains: 'Speed Up' } } })).toBe(0); // nothing was published by the tool
   });
 
+  it('owner report: “Regenerate images” on a post the workflow scheduled updates it and keeps it scheduled (before: “already future”, stopped)', async () => {
+    const { regenerateStage } = await import('@/lib/tasks/actions');
+    await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date() } });
+    const t = await draftTask('How to Add a WordPress Logo', 'pub:regen-1');
+    const slot = new Date(Date.now() + 5 * 3_600_000);
+    const kw = await readyKeyword('How to Add a WordPress Logo', t.id, slot);
+    expect(await schedule.scheduleKeywordPost(kw.id)).toMatchObject({ scheduled: true });
+    const dateBefore = wp.posts.get(t.wpPostId!)!.date_gmt;
+    // The owner regenerates; the article changes (here its title), so the scheduled post must be updated.
+    await regenerateStage(t.id, 'IMAGES');
+    await client.articleTask.update({ where: { id: t.id }, data: { selectedTitle: 'How to Add a Logo in WordPress' } });
+    const after = await makeDriver(client).drive(t.id);
+    expect(after.status, `${after.message} ${after.reviewReasons}`).toBe('COMPLETED');
+    const post = wp.posts.get(t.wpPostId!)!;
+    expect(post.title).toBe('How to Add a Logo in WordPress');
+    // Still scheduled for its slot: no status was sent, nothing published early.
+    expect(post.status).toBe('future');
+    expect(post.date_gmt).toBe(dateBefore);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('SCHEDULED');
+    expect(await client.auditLog.count({ where: { action: 'publish.permit', details: { contains: 'Add a WordPress Logo' } } })).toBe(1); // only the scheduling itself
+
+    // A post scheduled in WordPress by someone else (no workflow keyword scheduled it) is still left alone.
+    const other = await draftTask('How to Add a WordPress Favicon', 'pub:regen-2');
+    Object.assign(wp.posts.get(other.wpPostId!)!, { status: 'future', date_gmt: new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 19) });
+    const titleBefore = wp.posts.get(other.wpPostId!)!.title;
+    await regenerateStage(other.id, 'IMAGES');
+    await client.articleTask.update({ where: { id: other.id }, data: { selectedTitle: 'How to Add a Favicon in WordPress' } });
+    const stopped = await makeDriver(client).drive(other.id);
+    expect(stopped.status).toBe('NEEDS_REVIEW');
+    expect(stopped.message).toMatch(/already “future”/);
+    expect(wp.posts.get(other.wpPostId!)!.title).toBe(titleBefore);
+  });
+
   it('a slot too close to schedule safely moves to the next free slot instead of publishing early', async () => {
     const t = await draftTask('How to Back Up WordPress', 'pub:draft-2');
     const kw = await readyKeyword('How to Back Up WordPress', t.id, new Date(Date.now() + 60_000));

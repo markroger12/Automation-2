@@ -16,7 +16,7 @@ import { loadEnv } from '../src/lib/env';
 import { runMigrations } from './migrate';
 import { runSeed } from './seed';
 import { installMediapipe } from './install-tools';
-import { faceToolAvailable } from '../src/images/faces';
+import { faceToolAvailable, personModelAvailable } from '../src/images/faces';
 
 const root = projectRoot();
 const marker = path.join(root, '.next', 'bas-build-source.txt');
@@ -53,8 +53,8 @@ async function main() {
   await runMigrations();
   await runSeed();
   // The face detector from the earlier tool (free, ~20 MB); without internet the images just skip face positions.
-  if (!faceToolAvailable()) {
-    console.log('▸ Installing the face detector for photo crops (once)…');
+  if (!faceToolAvailable() || !personModelAvailable()) {
+    console.log(faceToolAvailable() ? '▸ Installing the person detector for photo crops (once)…' : '▸ Installing the face detector for photo crops (once)…');
     await installMediapipe().catch((error) => console.warn(`  ⚠ Face detector not installed now (${(error as Error).message}); run npm run tools:install later.`));
   }
   if (!args.includes('--build')) return;

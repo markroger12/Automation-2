@@ -2593,3 +2593,107 @@ npx vitest run                      # 47 files, 338 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 16 pass, 1 skipped (real MediaPipe)
 next build                          # compiled
 ```
+
+## Owner report (2026-10-23): after “Regenerate images” — a stop at “already future”, only one photo used, crops still wrong; and a pen tool
+
+**Report, with four screenshots:**
+- The WordPress step stopped: “WordPress post #1367 is already ‘future’. The app does not change live or scheduled posts in this step.”
+- Two featured images were still wrong after regenerating:
+  - Linda Ripa: a close-up of two faces, one cut;
+  - Michael Joseph Consuelos: a selfie of three, two faces cut.
+- Omikaye Phifer: “ChatGPT gave so many images and only one was used”. The Images tab listed nine collected photos, but there were no body images.
+- The owner asked to try a Google tool or another idea, and to test with 12–15 real people's photos.
+- Later: “add a pen tool to the image editor, to make custom photo slots and custom elements, easy like Illustrator”.
+
+### 1. Regenerate on a post the workflow scheduled
+- **Cause:** the draft step refuses every post that is “future”, “publish” or “private”. After a regenerate, the article ran the draft step again on a post the workflow itself had scheduled.
+- **Now:** the post may be updated when a workflow keyword of this article is SCHEDULED and the website still allows publishing.
+  - The client never sends a status, so the post stays scheduled for its slot and nothing is published early.
+  - Edits made in WordPress are still never overwritten, as before.
+  - The draft step's read-back and the final check accept “future” in this case only.
+- **Still left alone:** a post scheduled by anyone else, or already live.
+- **Test (`workflow-publish`, reproduced first):**
+  - before: NEEDS_REVIEW with the owner's message;
+  - now: the title change reaches the scheduled post, which stays “future” with the same date, and the only publish permit is the scheduling itself;
+  - a post scheduled outside the workflow still stops, unchanged.
+
+### 2. Regenerate used only the new search's photos
+- **Cause:** a regenerate clears the stage state, so the gallery was collected again. The new search brought back two photos, the featured design took both, and the body images had none.
+- **Now:**
+  - the photos collected for the article before (not removed with *Don't use*) are used again, after your uploads;
+  - a new search runs only when there are fewer than four;
+  - the Images tab says so.
+- **Test (`image-tools`, reproduced first):** after a regenerate whose search would return one picture, all three images are made from the earlier five photos with no new search. A photo marked *Don't use* is not used again.
+
+### 3. Crops: a face or a person is never cut
+- **No search engine:**
+  - Google Images is not scraped: the project's rule, and Google's terms.
+  - Cloud “crop hint” services would send every photo out and need a paid key.
+  - The fix stays local and offline.
+- **Tested on 17 real photos.** They are free-licence photos of real people from Wikimedia Commons (credits in the scratch folder; not committed): Comic-Con and conference panels, red carpets, families, a selfie of four, a B/W group, portraits.
+  - The real MediaPipe detector ran on them in Chromium here.
+  - Each was rendered into the split design's 952×1080 half and a 16:9 body image, and looked at.
+- **Found and fixed:**
+  - **The crop rule:** keeping only some of the people (the previous fix) left half bodies at the edges, as in the owner's Linda Ripa image. Now, when the main faces do not all fit a place, the photo is shown whole on a blurred copy of itself, as the earlier tool does for tall photos. Framing “Center” or “Top” still crops. Photo choice already prefers photos that fit.
+  - **False faces:** in tiles, BlazeFace found “faces” on a jacket, a man's back, a logo and a poster, and an oversized box over a turned head. They all scored 0.53–0.59, while the real small faces scored 0.6–0.89. Tile detections now need 0.6 (the whole picture keeps 0.5). The oversized box had made the four real panel faces “background”, so the crop cut them.
+  - **Missed faces:** a panel guest with glasses, and most of the B/W group, were cut because their faces were never found. A person detector now runs too: MediaPipe EfficientDet-Lite0, people only, score ≥ 0.5, installed by `tools:install` and preflight.
+    - A person whose face was not found gets a head box at the top of their body box: a seventh of a standing person's height, about a third of a seated one's.
+    - Only people at least 40 % as tall as the tallest count.
+    - The head box counts like a face for fitting and centring.
+    - A single portrait (a person as wide as the photo) is unaffected, because the found face is what counts.
+- **Result on the 17 photos:**
+  - in the narrow half, no face or person is cut through;
+  - groups of four or more and the B/W group are shown whole;
+  - the Comic-Con panel keeps its four seated guests whole;
+  - portraits are cropped as before.
+  - One panel host turned to the microphone is found by neither detector, and is left out of that crop entirely rather than cut.
+- **Unit tests:**
+  - the whole-photo rule, with every face whole, and the crop as before without face boxes;
+  - `cropBox` for the 16:9 and narrow places, and a fitting pair cropped around both;
+  - `headsOfPeople`: seated, standing, background, and a portrait with its face.
+
+### 4. Pen tool (Image Template designer)
+- **Data:**
+  - pen points are stored as fractions of the layer box, with cubic-curve handles, so resizing the box keeps the shape;
+  - a photo place can have shape “path”;
+  - a new `path` layer draws a filled shape or an open line;
+  - the template schema validates both.
+- **Drawing:**
+  - **Pen shape** (key P) and **Pen photo slot** in the toolbar, with a hint bar, **Finish** and **Cancel**;
+  - click for a corner, click and drag for a curve (mirrored handles);
+  - click the first point to close; Enter or a double click finishes; Backspace or Ctrl+Z removes the last point; Esc cancels.
+- **Editing a selected pen layer:**
+  - drag a square to move a point, drag a round handle to bend the curve (Alt: one side only);
+  - double-click a point: corner ↔ curve; double-click the line: add a point, splitting the curve so the shape stays; Alt-click a point: remove it;
+  - each drag is one undo step, and the layer box follows the drawn line, curves included.
+- **Properties:** fill, border and “Closed shape”. *Use as photo slot* turns a closed shape into a photo place; a photo place offers Shape “Pen shape”.
+- **Renderer:**
+  - the photo is cut to the shape, with its border inside it;
+  - a pen shape's border is drawn whole, half outside its box;
+  - the designer shows the same (CSS clip-path for photos, SVG for shapes).
+- **Tests:**
+  - **unit:** geometry (curve bounds, back to the canvas), schema, point insert/toggle, and renderer pixels (photo inside the triangle, background outside, a 40 px border above an 8 px-tall line);
+  - **Chromium smoke on a scratch database:**
+    - drew a photo slot with one curve: 4 points and 2 handles shown;
+    - dragged a point: X and width followed;
+    - drew a shape with Enter, checked the Real output from the production renderer, and saved;
+    - no console errors;
+    - clicked coordinates landed exactly (300, 200, 400 × 400).
+
+**Not verified here:**
+- The owner's own photos and post #1367.
+- The person model download on the owner's PC: `npm run start:all` installs it; if it fails, crops use faces only.
+- How fast detection runs on the owner's PC: here, about 2–3 s per photo for both models.
+- Touch or pen-tablet input in the designer (mouse only).
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run tests/unit/images.test.ts   # 30/30
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 8/8
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "Regenerate images"   # 1/1
+real-photo harness (scratch): 17 Commons photos, real MediaPipe face + person detection, contact sheets checked by eye
+Chromium smoke of the pen tool (scratch database, dev server)
+npx vitest run                      # 47 files, 342 tests pass (final head)
+BAS_TEST_MEDIAPIPE_DIR=<scratch mediapipe> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 3 files, 26/26 (the real-MediaPipe test ran: not skipped)
+```

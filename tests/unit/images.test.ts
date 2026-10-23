@@ -435,10 +435,10 @@ describe('owner report: in a group photo the faces at both edges were cut in hal
   const fr = (f: { x: number }) => ({ left: f.x / 1500, right: (f.x + 140) / 1500, top: 0.3, bottom: 0.45 });
   const focus = { x: 0.5, y: 0.375, area: { left: 180 / 1500, right: 1320 / 1500, top: 0.3, bottom: 0.45 }, faces: FACES.map(fr) };
 
-  /** How much of each face shows in the left place (1 = whole, 0 = not there). */
-  async function shown(png: Buffer) {
+  /** How much of each face shows in the left place (1 = whole, 0 = not there), at the scale the photo is shown. */
+  async function shown(png: Buffer, scale: number) {
     const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-    const full = 140 * 150 * (1080 / 1000) ** 2;
+    const full = 140 * 150 * scale ** 2;
     return FACES.map((f) => {
       let n = 0;
       for (let y = 0; y < 1080; y++)
@@ -450,32 +450,30 @@ describe('owner report: in a group photo the faces at both edges were cut in hal
     });
   }
 
-  it('no face is cut by the edge of its place: as many whole faces as fit, the others left out', async () => {
+  it('faces too wide for the place: the whole photo is shown on a blurred copy, every face whole (before: both edge faces cut)', async () => {
     const t = presetSplit('#0066ff');
     t.layers = t.layers.filter((l) => l.type === 'photo');
-    const png = await renderCanvas({ template: t, photos: [await group(), await photo(10, 10, 10)], focus: [focus as never, null] });
-    const parts = await shown(png);
-    for (const p of parts) expect(p < 0.03 || p > 0.95, `face shares in the place: ${parts.join(', ')}`).toBe(true);
-    expect(parts.filter((p) => p > 0.95).length).toBeGreaterThanOrEqual(2);
+    const png = await renderCanvas({ template: t, photos: [await group(), await photo(10, 10, 10)], focus: [focus, null] });
+    // Shown whole across the place's width: 1500 → 952 px.
+    const parts = await shown(png, 952 / 1500);
+    for (const p of parts) expect(p, `face shares in the place: ${parts.join(', ')}`).toBeGreaterThan(0.9);
+    // Without face positions (older stage results, no detector) the crop is as before: a cover crop, no blurred band.
+    const plain = await renderCanvas({ template: t, photos: [await group(), await photo(10, 10, 10)], focus: [{ x: 0.5, y: 0.375, area: focus.area }, null] });
+    const cut = await shown(plain, 1080 / 1000);
+    expect(cut[0]).toBeLessThan(0.5);
   });
 
-  it('the same group photo in a 16:9 place keeps all four faces; a crop without face boxes works as before', async () => {
+  it('crop box: the 16:9 place keeps all four faces; the narrow place has no good crop; without face boxes as before', async () => {
     const { cropBox } = await import('@/images/render');
-    // 16:9: everyone fits, centred on the group as before.
-    const wide = cropBox(1500, 1000, 1920, 1080, focus);
-    expect(wide.left).toBe(0);
-    // A narrow place: the window's edges fall between faces (padded for hair and ears), never on one.
-    const narrow = cropBox(1500, 1000, 952, 1080, focus);
-    const s = narrow.rw / 1500;
-    for (const f of FACES) {
-      const l = (f.x - 28) * s;
-      const r = (f.x + 168) * s;
-      const whole = l >= narrow.left && r <= narrow.left + 952;
-      const out = r <= narrow.left || l >= narrow.left + 952;
-      expect(whole || out, `face at ${f.x}: window ${narrow.left}–${narrow.left + 952}`).toBe(true);
-    }
-    // Stage results saved before this change carry no face boxes: the crop centres on the area, as before.
-    expect(cropBox(1500, 1000, 952, 1080, { ...focus, faces: undefined }).left).toBe(Math.round(0.5 * narrow.rw - 476));
+    expect(cropBox(1500, 1000, 1920, 1080, focus)).toMatchObject({ left: 0 });
+    expect(cropBox(1500, 1000, 952, 1080, focus)).toBeNull();
+    // Two of the faces fit the narrow place: cropped around them, both whole.
+    const pair = { ...focus, faces: [fr(FACES[1]), fr(FACES[2])], area: { left: 530 / 1500, right: 970 / 1500, top: 0.3, bottom: 0.45 } };
+    const box = cropBox(1500, 1000, 952, 1080, pair)!;
+    const s = box.rw / 1500;
+    for (const f of [FACES[1], FACES[2]]) expect((f.x - 28) * s >= box.left && (f.x + 168) * s <= box.left + 952).toBe(true);
+    // Stage results saved before face boxes were stored: centred on the area, as before.
+    expect(cropBox(1500, 1000, 952, 1080, { ...focus, faces: undefined })).toMatchObject({ left: Math.round(0.5 * Math.ceil(1500 * 1.08) - 476) });
   });
 
   it('each place takes, of equally good photos, one whose faces fit it whole; the wide group photo moves to the 16:9 body place', async () => {
@@ -496,5 +494,85 @@ describe('owner report: in a group photo the faces at both edges were cut in hal
     expect(photosForPlaces(featured.rest, [body, body], fits, () => 'face').picked).toEqual(['group']);
     // A worse photo (another tier: soft, watermark, no face) is never taken over a better one just because it fits.
     expect(photosForPlaces(['group', 'pair'], [half], fits, (id) => (id === 'group' ? 'sharp' : 'soft')).picked).toEqual(['group']);
+  });
+});
+
+describe('owner request: a pen tool (like Illustrator) for custom photo places and shapes', () => {
+  it('drawn points become a layer box and fractions; curves count in the box; the template keeps them', async () => {
+    const { canvasPoints, cornerPoint, penBounds, penGeometry, penLayer } = await import('@/lib/template-editor');
+    const tri = [cornerPoint(100, 100), cornerPoint(500, 100), cornerPoint(300, 400)];
+    expect(penGeometry(tri, true)).toMatchObject({ x: 100, y: 100, width: 400, height: 300, points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.5, y: 1 }] });
+    // A curve bulging below its points: the box holds the curve, not just the points.
+    const arc = [{ ...cornerPoint(100, 100), ox: 0, oy: 200 }, { ...cornerPoint(500, 100), ix: 0, iy: 200 }];
+    expect(penBounds(arc, false).height).toBeGreaterThan(140);
+    // Back to the canvas, exactly.
+    const g = penGeometry(arc, false);
+    const back = canvasPoints({ ...g, points: g.points });
+    expect(back[1]).toMatchObject({ x: 500, y: 100, iy: expect.closeTo(200, 1) });
+    // A photo place (always closed) and a shape; both pass the template schema.
+    const photo = penLayer(tri, 'photo', { closed: false, slot: 1 });
+    expect(photo).toMatchObject({ type: 'photo', slot: 1, shape: 'path', x: 100, width: 400 });
+    const line = penLayer(arc, 'shape', { closed: false });
+    expect(line).toMatchObject({ type: 'path', closed: false, fill: 'transparent', stroke: 'accent', strokeWidth: 8 });
+    expect(() => templateSchema.parse({ layers: [photo, line] })).not.toThrow();
+  });
+
+  it('a point added on a curve keeps its shape; double-click turns a corner into a smooth point and back', async () => {
+    const { cornerPoint, insertPoint, nearestOnPath, toggleSmooth } = await import('@/lib/template-editor');
+    const curve = [{ ...cornerPoint(0, 0), ox: 0, oy: 300 }, { ...cornerPoint(600, 0), ix: 0, iy: 300 }];
+    const hit = nearestOnPath(curve, false, { x: 300, y: 225 }, 20)!;
+    expect(hit.index).toBe(0);
+    const three = insertPoint(curve, false, hit.index, hit.t);
+    expect(three).toHaveLength(3);
+    expect(three[1].x).toBeCloseTo(300, 0);
+    expect(three[1].y).toBeCloseTo(225, 0); // the middle of that curve, where it was
+    expect(Math.abs(three[1].ox)).toBeGreaterThan(0);
+    const sq = [cornerPoint(0, 0), cornerPoint(100, 0), cornerPoint(100, 100), cornerPoint(0, 100)];
+    const smooth = toggleSmooth(sq, true, 1);
+    expect(smooth[1].ox).not.toBe(0);
+    expect(toggleSmooth(smooth, true, 1)[1]).toMatchObject({ ix: 0, iy: 0, ox: 0, oy: 0 });
+  });
+
+  it('the renderer cuts the photo to the drawn shape, and draws pen shapes with fill and a border that is not cut off', async () => {
+    const { cornerPoint, penLayer } = await import('@/lib/template-editor');
+    // A triangle photo place over the whole canvas: inside it the (red) photo, outside it the background (navy).
+    const tri = [cornerPoint(0, 0), cornerPoint(1920, 0), cornerPoint(960, 1080)];
+    const place = penLayer(tri, 'photo', { closed: true, slot: 0 });
+    const t = templateSchema.parse({ background: '#000080', layers: [place] });
+    const png = await renderCanvas({ template: t, photos: [await photo(220, 20, 20)] });
+    await expectColor(png, 960, 300, [220, 20, 20]);
+    await expectColor(png, 100, 1000, [0, 0, 128]);
+    await expectColor(png, 1820, 1000, [0, 0, 128]);
+    // A pen line along the top edge of its box: its border is drawn whole (half of it is above the box).
+    const line = penLayer([cornerPoint(200, 500), cornerPoint(1700, 500)], 'shape', { closed: false });
+    const s = templateSchema.parse({ background: '#ffffff', accent: '#00aa00', layers: [{ ...line, strokeWidth: 40 }] });
+    const lp = await renderCanvas({ template: s, photos: [] });
+    await expectColor(lp, 900, 484, [0, 170, 0]); // above the line's centre, outside its (8 px) box
+    await expectColor(lp, 900, 470, [255, 255, 255]);
+  });
+});
+
+describe('people whose face was not found count for the crop (real photos: a panel guest and a B/W group were cut)', () => {
+  it('a person without a found face gets a head box at the top of their box; with a face, or far in the background, none', async () => {
+    const { headsOfPeople } = await import('@/images/faces');
+    const face = { x: 1300, y: 500, w: 80, h: 80, score: 0.9 };
+    // A panel: seated guests (upper bodies), one whose face was not found.
+    const panel = [
+      { x: 1256, y: 485, w: 290, h: 233, score: 0.83 }, // has the face above
+      { x: 511, y: 417, w: 210, h: 241, score: 0.8 }, // face not found (glasses, turned)
+      { x: 1400, y: 300, w: 40, h: 60, score: 0.6 }, // far in the background
+    ];
+    const heads = headsOfPeople(panel, [face]);
+    expect(heads).toHaveLength(1);
+    // Seated (upper body): a head about a third of the box's height, centred at its top.
+    expect(heads[0]).toMatchObject({ y: 417 });
+    expect(heads[0].w).toBeCloseTo(84.35, 1);
+    expect(heads[0].x + heads[0].w / 2).toBeCloseTo(616, 0);
+    // Standing people (tall boxes): about a seventh of the height.
+    const standing = headsOfPeople([{ x: 95, y: 408, w: 351, h: 848, score: 0.7 }, { x: 1200, y: 459, w: 325, h: 823, score: 0.81 }], []);
+    expect(standing).toHaveLength(2);
+    expect(standing[0].w).toBeCloseTo(848 * 0.14, 1);
+    // A single portrait: the person is as wide as the photo, but the found face is what counts (no head box).
+    expect(headsOfPeople([{ x: 62, y: 110, w: 1445, h: 954, score: 0.93 }], [{ x: 220, y: 300, w: 200, h: 200, score: 0.9 }])).toEqual([]);
   });
 });

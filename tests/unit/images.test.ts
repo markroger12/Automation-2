@@ -497,6 +497,49 @@ describe('owner report: in a group photo the faces at both edges were cut in hal
   });
 });
 
+describe('owner request: a two-photo featured image shows at most 2 people per photo (then 3, then 4 …)', () => {
+  const half = { width: 952, height: 1080 };
+  const any = () => true;
+  const same = () => 'face';
+  // Photos named by how many people they show, in the order the pipeline prefers them.
+  const people = (id: string) => Number(/^p(\d+)/.exec(id)?.[1] ?? NaN);
+  const o = { fits: any, tier: same, people: (id: string) => (Number.isNaN(people(id)) ? undefined : people(id)), upload: (id: string) => id.startsWith('upload') };
+
+  it('two places: photos with at most 2 people first; the others keep their order for the body images', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    const r = chooseFeatured(['p4', 'p3', 'p1', 'p5', 'p2', 'p1b'], [half, half], o);
+    expect(r.picked).toEqual(['p1', 'p2']);
+    expect(r.rest).toEqual(['p4', 'p3', 'p5', 'p1b']);
+    expect(r.mostPeople).toBe(2);
+    expect(r.skippedGroups).toBe(3);
+  });
+
+  it('not enough photos with 2 people: the limit goes up one person at a time, place by place', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    // One photo with 2 people, then the best with 3 (not the earlier one with 5).
+    expect(chooseFeatured(['p5', 'p4', 'p2', 'p3'], [half, half], o).picked).toEqual(['p2', 'p3']);
+    // None with 2 or 3: two with 4.
+    expect(chooseFeatured(['p6', 'p4', 'p5', 'p4b'], [half, half], o)).toMatchObject({ picked: ['p4', 'p4b'], mostPeople: 4 });
+  });
+
+  it('one photo in the featured design: any number of people (the first photo, as before)', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    expect(chooseFeatured(['p6', 'p1'], [half], o).picked).toEqual(['p6']);
+  });
+
+  it('your uploads keep their places, and photos without a face count (unknown) are not moved', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    expect(chooseFeatured(['upload-group', 'p4', 'p1'], [half, half], o).picked).toEqual(['upload-group', 'p1']);
+    expect(chooseFeatured(['unknown-a', 'p3', 'unknown-b'], [half, half], o).picked).toEqual(['unknown-a', 'unknown-b']);
+  });
+
+  it('within the limit, the place still takes a photo whose faces fit it whole', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    const fits = (id: string) => id !== 'p2wide';
+    expect(chooseFeatured(['p2wide', 'p1', 'p2', 'p5'], [half, half], { ...o, fits }).picked).toEqual(['p1', 'p2']);
+  });
+});
+
 describe('owner request: a pen tool (like Illustrator) for custom photo places and shapes', () => {
   it('drawn points become a layer box and fractions; curves count in the box; the template keeps them', async () => {
     const { canvasPoints, cornerPoint, penBounds, penGeometry, penLayer } = await import('@/lib/template-editor');

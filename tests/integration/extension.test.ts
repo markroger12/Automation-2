@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { setupTestDb } from '../helpers/test-db';
@@ -7,7 +8,7 @@ import { startAgentServer } from '../helpers/agent-server';
 import { launchWithExtension, waitFor } from '../helpers/extension';
 import type { FakeChatGptConfig } from '../fixtures/fake-chatgpt';
 
-declare const chrome: { tabs: { remove: (id: number) => Promise<void> } };
+declare const chrome: { tabs: { remove: (id: number) => Promise<void> }; storage: { local: { get: (k: string) => Promise<Record<string, unknown>> } } };
 
 /**
  * Loads the ACTUAL unpacked extension into Chromium against a FAKE ChatGPT
@@ -111,10 +112,38 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.2');
+    expect(ext?.version).toBe('3.4.3');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
+  // Owner request (desktop app): no “port 3000 is already in use”. The dashboard may start on another port from 3000 to
+  // 3010; the extension finds it there by itself and keeps the address.
+  it('owner request: the dashboard moved to another local port: the extension finds it, keeps it, and the job completes', async () => {
+    const free = async (port: number) =>
+      new Promise<boolean>((resolve) => {
+        const probe = net.createServer().once('error', () => resolve(false));
+        probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+      });
+    const ports: number[] = [];
+    for (let p = 3000; p <= 3010 && ports.length < 2; p++) if (await free(p)) ports.push(p);
+    expect(ports).toHaveLength(2);
+    const [gone, moved] = ports;
+    const elsewhere = await startAgentServer(moved);
+    try {
+      fake = { variant: 'standard', mode: 'normal' };
+      // The saved address answers nothing (the dashboard was started on another port).
+      browser = await launchWithExtension({ serverOrigin: `http://127.0.0.1:${gone}`, key, config: () => fake });
+      const req = await request('Prompt after the dashboard moved to another port');
+      const done = await responseDone(req.responseId, 90_000);
+      expect(done.status).toBe('COMPLETED');
+      expect(elsewhere.requests.some((r) => r.action === 'claim')).toBe(true);
+      const saved = await browser.sw.evaluate(() => chrome.storage.local.get('serverOrigin'));
+      expect(saved.serverOrigin).toBe(`http://127.0.0.1:${moved}`);
+    } finally {
+      await elsewhere.close();
+    }
+  });
+
   it('works with an alternate DOM (no data-testids, textarea composer, article turns)', async () => {
     fake = { variant: 'alternate', mode: 'normal' };
     browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });

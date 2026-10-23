@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.4.2';
+const EXTENSION_VERSION = '3.4.3';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -110,10 +110,20 @@ async function setManagedTabIds(ids) {
 async function api(action, body, path) {
   if (!cfg || !cfg.key) throw Object.assign(new Error('Not paired: paste the connection key in the extension popup.'), { status: 401 });
   if (!isLocalOrigin(cfg.serverOrigin)) throw Object.assign(new Error('The dashboard address must be localhost.'), { status: 400 });
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30_000);
   try {
-    const res = await fetch(cfg.serverOrigin + (path || '/api/extension/agent'), {
+    return await apiAt(cfg.serverOrigin, action, body, path);
+  } catch (e) {
+    // Nothing answers there, or a dashboard that does not know this key (another data folder): look for ours.
+    if ((e.status === undefined || e.status === 401) && (await findDashboard())) return apiAt(cfg.serverOrigin, action, body, path);
+    throw e;
+  }
+}
+
+async function apiAt(origin, action, body, path, timeoutMs = 30_000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(origin + (path || '/api/extension/agent'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.key },
       body: JSON.stringify(Object.assign({ action, installId: cfg.installId }, body || {})),
@@ -126,6 +136,34 @@ async function api(action, body, path) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Owner request (desktop app): no fixed port. The dashboard starts on the first free port from 3000 to 3010; when it
+ * does not answer at the saved address, the extension asks those ports on this computer and keeps the one whose
+ * dashboard knows this connection key. At most once every 15 s.
+ */
+const DASHBOARD_PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
+let lastSearchAt = 0;
+async function findDashboard() {
+  if (Date.now() - lastSearchAt < 15_000) return false;
+  lastSearchAt = Date.now();
+  const current = new URL(cfg.serverOrigin);
+  for (const port of DASHBOARD_PORTS) {
+    if (String(port) === (current.port || '80')) continue;
+    const origin = `http://127.0.0.1:${port}`;
+    try {
+      await apiAt(origin, 'hello', { version: EXTENSION_VERSION, protocol: 1, capabilities: CAPABILITIES }, null, 2000);
+    } catch (e) {
+      continue;
+    }
+    cfg.serverOrigin = origin;
+    await chrome.storage.local.set({ serverOrigin: origin });
+    // The next tick tells this dashboard about the open tabs again.
+    lastHelloAt = 0;
+    return true;
+  }
+  return false;
 }
 
 /** Persistent outbox for completions/failures (retried until the dashboard answers). */

@@ -2699,6 +2699,54 @@ BAS_TEST_MEDIAPIPE_DIR=<scratch mediapipe> npx vitest run --config vitest.integr
 next build                          # compiled
 ```
 
+## Owner request (2026-10-23): the tool as a Windows program (.exe), on its own branch
+
+**Request:**
+- “start the .exe work”, on another branch, without ending the Node.js tool;
+- it need not use Chrome (“you can build your own browser”);
+- the way it works may change, but every feature stays, and it should not take long.
+
+**Branch:** `claude/desktop-app`, on top of `claude/confident-brown-pwlrz6`. The Node.js tool (`npm run start:all`) is unchanged and keeps working.
+
+**What the app is** (`desktop/`, Electron 44.7.0 for the window only):
+- **Startup:** one window with the dashboard; the server (`next start`) and the worker run hidden on a bundled Node.js 26.11.1 (Windows build, SHA-256 checked against nodejs.org). The migration and settings steps (preflight, with a backup first) run at every start, and a start-up page shows each step.
+- **Data folder:** chosen at the first start, either the one `npm run start:all` uses or a new one. The `.env` next to it is read too. Both cannot run at once: if port 3000 is busy, the app says so and offers Retry.
+- **Tray:** closing the window keeps the app there, so the workflow keeps running. The tray offers Open, Automation Chrome, the data folder, the log, Start with Windows, Keep running, Another data folder, and Quit.
+- **Quit:** stops the worker over its IPC channel (Windows has no signals for child processes), then the server. A worker change makes this safe: it stops as on Ctrl+C, and also when the app's channel closes.
+- **Window security:**
+  - sandboxed and context-isolated, with no Node access;
+  - only `localhost:3000` is shown; every other address opens in the default browser;
+  - no permissions except copying text;
+  - the dashboard's own Host, Origin and CSRF checks still apply.
+- **Browser for ChatGPT and Search Console:** still Automation Chrome with the extension.
+  - An embedded browser would hit Google's block on sign-ins in embedded browsers, and could only pass it by pretending to be Chrome, which this project does not do.
+  - Porting the extension would change working features.
+  - So every feature stays as it is, as the owner asked.
+- **Installer** (`electron-builder` 26.17.0, NSIS):
+  - per user, no administrator, desktop and Start-menu shortcuts;
+  - the data folder is never inside the installation and never deleted;
+  - not code-signed, so SmartScreen may warn.
+- **Build:** `.github/workflows/desktop.yml` builds it on `windows-latest` (npm ci, build, typecheck, `desktop/prepare.mjs`, `electron-builder --win nsis`) and uploads the installer as the artifact `Blog-Automation-Studio-Setup`.
+
+**Found while testing:** electron-builder silently leaves `node_modules` out of a folder copied as `extraResources`, so the first packaged app failed at the migration step (`prisma/build/index.js` missing). `node_modules` is now listed as its own resource.
+
+**Tested here (Linux, the same code packaged with `--linux` and `electron-builder --dir`, under Xvfb with Playwright's Electron driver):**
+- the start-up page showed, then the dashboard opened 12 s after launch on a new data folder (migrations, settings), with the Overview page and the worker online;
+- the worker held its lock while running;
+- Quit took under 1 s: the log shows “Worker stopped (desktop app)” and the lock was released.
+
+**Not verified here:**
+- **The Windows installer itself:** it is built by the workflow on GitHub's Windows runner. Its first run is the check of the Windows build.
+- The app on the owner's PC: SmartScreen, the tray, Start with Windows, the owner's data folder, Automation Chrome launched from it.
+- Unit tests on Windows: the workflow runs the typecheck only; tests run on Linux as before.
+
+**Commands run**
+```
+cd desktop && npm install                      # electron 44.7.0, electron-builder 26.17.0 (allowScripts: electron only)
+node desktop/prepare.mjs --linux               # bundle: app 757 MB, runtime 144 MB; SHA-256 checked
+npx electron-builder --dir --linux             # desktop/dist/linux-unpacked
+xvfb-run node <smoke>                          # start, Overview, worker online, Quit with a safe worker stop
+
 ## Owner report (2026-10-23): ChatGPT showed about 6 photos, the article got 2 (extension 3.4.2)
 The Images tab listed only `upload:gallery-1` and `upload:gallery-5`, while ChatGPT's gallery showed about six photos (one a broken-picture icon, two the same winter photo, one a collage).
 
@@ -2749,6 +2797,26 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 next build                          # compiled (final head)
 ```
 Merged into `claude/desktop-app` as well (typecheck 0 errors there), so the Windows installer carries it.
+
+## Owner report (2026-10-23): the installed app stopped at “The data could not be prepared”
+The owner installed the Windows app (to `C:\New folder\Blog Automation Studio`) with the data folder `F:\claude\Automation-2\data`. The app stopped with “prisma migrate deploy failed”, and the log showed `Cannot find module 'fast-check'` (required by `prisma → @prisma/config → effect`).
+
+**Cause:**
+- `desktop/prepare.mjs` copied `node_modules` minus a hand-written list of “test tools”, and `fast-check` was on that list. The Prisma CLI loads it for every migration.
+- The Linux check passed only because the bundle sat inside the repository: Node.js found `fast-check` in the repository's own `node_modules`, which an installed app does not have.
+- **Reproduced here:** the old bundle, copied outside the repository, fails with the owner's exact error.
+
+**Fix (desktop 3.0.1):**
+- **`prepare.mjs`:** the bundle's `node_modules` now holds exactly what the tool loads. That is found as Node.js finds it: the tool's dependencies plus the Prisma CLI (migrations) and tsx (the worker and the start-up steps), and everything those depend on, which on this machine came to 111 packages. Packages for other systems are left out, and a needed package that is not installed stops the build.
+- **New `desktop/check-bundle.mjs`:** copies the bundle to a new temporary folder outside the repository and runs it there with its own Node.js:
+  - the start-up steps on a new data folder;
+  - then the dashboard server and the worker;
+  - it fails unless the dashboard answers HTTP 200 and the worker runs.
+- **Windows workflow:** runs this check before it builds the installer.
+
+**Tests:**
+- `check-bundle.mjs` on the old bundle: “Cannot find module 'fast-check'”, exit 1.
+- On the new bundle: migrations and settings ✓, dashboard HTTP 200 and worker running ✓, exit 0.
 
 ## Owner request (2026-10-23): a two-photo featured image shows at most 2 people per photo
 “If the featured image has 2 photos, each photo should have at most 2 people. If there is no photo with 2, then 3; if none with 3, then 4, then 5 … If the featured image has 1 photo, any number of people.”
@@ -2825,6 +2893,61 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 48 files, 348 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "moved to another local port"   # old background.js: fail (timeout); new: pass
 ```
+
+## Owner request (2026-10-23): desktop app 3.1.0 — no port errors, nothing to install, lighter
+Owner, after installing: fix “The data could not be prepared” (the desktop 3.0.1 entry above). Also:
+- “make it so the laptop needs no Node.js or anything, like Discord”;
+- “end this port system, since it runs directly in Windows” (with a screenshot of “Port 3000 is already in use”);
+- “make it light”.
+
+**What changed:**
+- **Nothing to install:**
+  - The tool now runs on Electron's built-in Node.js (24.21.0, Electron 44.7.0) instead of a separate Node.js 26.11.1 download.
+  - The whole test suite passes on that Node.js: unit 347/347, and integration 9 files, 54 passed, 1 skipped (real MediaPipe not set).
+  - Desktop runs use no npm wording, and no `.env` is written into the installation.
+- **No port system:**
+  - **Already running:** when the tool already runs on the same data folder (`/api/instance` fingerprint), the window shows that dashboard.
+  - **Free port:** otherwise the dashboard starts on the first free port from 3000 to 3010, and the extension (3.4.3) finds it there.
+  - **No stray copies:**
+    - the dashboard server gets a channel to the app plus `desktop-child-guard.cjs`, and the worker already had one;
+    - both stop by themselves when the app is gone, even after a crash, so no stray copy keeps a port.
+  - The “Port 3000 is already in use” dialog is gone. The only case left is “no free port from 3000 to 3010”.
+- **Lighter:**
+  - **Packages:** `prepare.mjs` takes only what the tool loads at run time. That is the imports of the worker and start-up steps (found with esbuild), the packages the built server requires, plus Next.js, React, the Prisma CLI and tsx, with their dependencies.
+  - **Left out:** the icons (compiled into the pages), TypeScript (an optional peer) and Next.js's compiler.
+  - **Next.js settings:** they ship as `next.config.mjs`. Before this, without its compiler, `next start` tried to install packages by itself; `check-bundle.mjs` now fails if anything is installed while the app runs.
+  - **Other trims:** source maps, Electron locales other than English, and maximum installer compression.
+  - **Sizes on Linux:**
+    - the bundle: 520 MB (before: `node_modules` alone 707 MB, plus Node.js);
+    - the packaged app: 793 MB (before: 1.2 GB).
+- **Installer:** one click like Discord, for this Windows user only, and it starts the app.
+- **Windows workflow:**
+  - `check-bundle.mjs` runs on Electron's Node.js;
+  - then the installer is installed silently;
+  - then the app is started once with `--smoke-test` on a new data folder. It must report “dashboard answers; worker running; data folder matches”.
+
+**Tests (Linux, the packaged app outside the repository, Xvfb):**
+1. **New data folder:** passed on port 3000. Quitting stopped the worker safely (“Worker stopped (desktop app)”), and no process was left.
+2. **Same data folder already running:** the tool's dashboard ran on 3000 with the same data folder, and the app showed it without starting a second copy.
+3. **Port 3000 held by another data folder's dashboard:** the app started its own on 3001 and passed.
+4. **Crash:**
+   - `kill -9` of the app's main process: its server and worker were gone within 6 s.
+   - The next start on that data folder passed (worker running).
+5. **Extension (3.4.3):** finds a dashboard moved to another port (the shared entry above).
+
+**Windows ([run 39942387564](https://github.com/markroger12/Automation-2/actions/runs/39942387564), windows-latest):**
+- **Bundle check:** on Electron's Node.js, outside the repository: migrations ✓, dashboard HTTP 200, worker running, nothing installed.
+- **Installer:** `Blog-Automation-Studio-Setup-3.1.0.exe` is 220 MB (the artifact zip 230 MB; before: 322 MB). It installed silently to `%LOCALAPPDATA%\Programs\blog-automation-studio-desktop`, which takes 782 MB.
+- **First start of the installed app (`--smoke-test`, new data folder):**
+  - migrations and settings ran, and the face and person detectors were downloaded;
+  - the dashboard came up on port 3000;
+  - the worker started on “Node 24.21.0”;
+  - result: “dashboard http://localhost:3000 answers; worker running; data folder matches”;
+  - Quit stopped the worker safely (“Worker stopped (desktop app)”).
+
+**Not verified here:**
+- The installer on the owner's Windows PC.
+- That the one-click installer replaces the earlier install in `C:\New folder\Blog Automation Studio`. If that copy stays, it can be removed in Windows Settings → Apps; the data folder is never deleted.
 
 ## Owner report (2026-10-23): Search Console's tab closed before the request finished, no screenshot (extension 3.4.4)
 The owner sent:
@@ -3039,4 +3162,76 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 49 files, 360 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 48/48
+```
+
+## Desktop app 3.2.0 (owner request, 2026-10-23): “the browser inside the app”
+
+The owner: “aby bhai app chrome toh jasa phale use ho rha tha vasa hi use ho rha ha mana bola tha browser bhi app ke ander hi ho.” (The app still used Chrome as before; the browser should be inside the app.)
+
+**Research first (owner asked to look up which browsers Google trusts):**
+- Google's sign-in accepts real browsers (Chrome, Edge, Firefox, Safari, Opera).
+- Since 2021 it blocks browsers embedded in another application (Electron, CEF, WebView2) and browsers controlled by automation (“This browser or app may not be secure”).
+- Disguising the app as Chrome would break Google's rules and this project's own rule.
+- **Owner decision:** ChatGPT (email + password) inside the app; Google and Search Console in the real Chrome, opened by the app.
+
+**The window** (`main.cjs`, `shell.html`, `shell-preload.cjs`):
+- **Tab bar:** Dashboard, ChatGPT (with a status dot and text), and Google (Chrome), which opens the Automation Chrome page.
+- **Views:** the dashboard and ChatGPT are two `WebContentsView`s below the bar. Both stay in the window; the one shown is on top, so ChatGPT keeps working behind the dashboard.
+- **Menus:** the start-up status shows in the same page until the dashboard answers. App menu: Dashboard, ChatGPT (Ctrl+Shift+G), and **Run ChatGPT prompts in this app** (the owner's way back to Automation Chrome). Tray: ChatGPT, Automation Chrome.
+
+**The ChatGPT tab** (`chatgpt-tab.cjs`, `chatgpt-preload.cjs`, `content-shim.js`):
+- **Storage:** ChatGPT's own page in a sandboxed, context-isolated view with its own storage (`persist:chatgpt`), apart from the dashboard. The app's normal user agent is used (never disguised).
+- **Scripts:** on every chatgpt.com page, the extension's own `adapter.js` and `content.js` start in a world of their own (1001), as Chrome starts content scripts. `content-shim.js` gives them the part of `chrome.runtime` they use (sendMessage, onMessage, connect) over the preload's channel.
+  - The page's own world never sees the channel or a `chrome.runtime` (tested).
+  - Only the tab's own main frame may use the channel.
+- **Navigation:** the tab stays on chatgpt.com and OpenAI's sign-in. Other links open in the default browser, and pop-ups are refused.
+- **Permissions:** only copying text.
+
+**Its background** (`chatgpt-agent.cjs`, a port of the extension background's ChatGPT part for one tab):
+- **Dashboard API:** hello, claim, progress, complete, fail, release; the outbox is kept on disk (`chatgpt-agent.json` in the app's folder).
+- **Jobs:**
+  - it opens the conversation a job needs and waits for the page's scripts;
+  - it resumes after a page reload with the checkpoint, so a prompt is never sent twice;
+  - attachments come from the dashboard, and pictures are fetched with the tab's own ChatGPT session (ChatGPT's image hosts only).
+- **The owner's part:**
+  - a sign-in page or a check is never automated: the tab is shown, a notification is sent, and the job waits as in Chrome;
+  - a ChatGPT page that never got ready is reloaded at most 5 times, but never OpenAI's sign-in page (the owner may be typing there).
+- **Start and quit:** a job left from an app closed mid-job is released at the next start, and a job in progress is released at Quit. The queue reconciles both before any resend.
+- **The key:** the app makes it at each start and gives it to its own dashboard server (`BAS_DESKTOP_AGENT_KEY`). The dashboard part is in markroger12/Automation-2#2 (prompts go only to the app's tab while it is connected; extension 3.4.6 then leaves ChatGPT alone; the app is never given Search Console).
+- **Attached mode:** when the window only shows a dashboard started by `npm run start:all`, there is no agent and the prompts stay with Automation Chrome.
+
+**Google / Search Console:** the worker opens Automation Chrome only for a due indexing request, as Chrome's own app window with Search Console (`--app=https://search.google.com/search-console`), and closes it 2 minutes after the requests.
+
+**Found while testing:** started from the repository (`npm start` in `desktop/`, not installed), the dashboard server never started: `--require ./desktop-child-guard.cjs` exists only in the installed tool. The guard is now taken from `desktop/child-guard.cjs` there (the smoke test found it).
+
+**Tests:**
+- **`tests/unit/desktop-agent.test.ts` (5, plain Node, fake tab and dashboard):**
+  - never reloads OpenAI's sign-in page, but does reload a stuck ChatGPT page (fails without the fix: 1 reload on the sign-in page);
+  - its own install id; claims only on a ready page;
+  - an answer kept on disk while the dashboard is down and sent later, once;
+  - a leftover job released at start;
+  - paused by the owner: says so at once and claims nothing.
+- **`tests/integration/desktop-chatgpt.test.ts` (4, real Electron 44.7.0 under Xvfb):**
+  - the harness runs the real tab, agent, preload and shim, with the extension's scripts, against the fake ChatGPT app and the dashboard's agent handlers;
+  - one prompt → one saved answer (sent once), with the page's own world seeing no channel;
+  - a reload in the middle of an answer → recovered, sent once;
+  - an image answer → the picture fetched through the tab's session and uploaded (1024 px);
+  - a sign-in page → LOGIN_REQUIRED, no prompt sent, the owner notified and the tab shown.
+- **Smoke test of `main.cjs` (dev mode, Xvfb):** “dashboard http://localhost:3000 answers; worker running; ChatGPT tab connected to the dashboard (scripts v3.4.6); data folder matches”. The installed app's smoke test in the Windows workflow now checks the ChatGPT connection too, and the workflow runs both test files on Windows.
+- **Screenshots (Xvfb, 1500×1000):** the tab bar with the dashboard below it, and “ChatGPT: ready”. In this sandbox chatgpt.com answers its assets with Cloudflare's 403 (curl gets the same), so the real page could not be shown here.
+
+**Not verified here:**
+- The real chatgpt.com in the app: its sign-in by email and password, Cloudflare's checks for this app, its CSP for the scripts' world, and a long article run.
+- Windows notifications and the tab shown while the window is in the tray; pictures ChatGPT draws while the window is hidden.
+- Chrome's `--app` window with the owner's Google account.
+
+**Commands run** (desktop branch, Linux; Electron 44.7.0 under Xvfb)
+```
+npx vitest run tests/unit/desktop-agent.test.ts   # 5/5 (without the sign-in-page rule: the reload test fails)
+npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts   # 4/4
+BAS_DESKTOP_DATA_DIR=… xvfb-run -a desktop/node_modules/electron/dist/electron desktop --smoke-test --smoke-result=… --no-sandbox   # before the guard fix: "the dashboard did not start"; after: passed (ChatGPT tab connected)
+npm run build                       # compiled
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 50 files, 365 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts tests/integration/extension.test.ts   # 52/52
 ```

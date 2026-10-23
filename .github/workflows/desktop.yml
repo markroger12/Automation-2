@@ -1,0 +1,93 @@
+# Builds the Windows installer of the desktop app (owner request: “open the .exe and the app opens; no cmd”).
+# The installer is attached to the run as the artifact “Blog-Automation-Studio-Setup”.
+name: Desktop app (Windows installer)
+
+on:
+  push:
+    branches: [claude/desktop-app]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5.0.0
+
+      - uses: actions/setup-node@v5.0.0
+        with:
+          node-version: 26.11.1
+          cache: npm
+
+      - name: Install the tool
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the dashboard
+        run: npm run build
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Install Electron and electron-builder
+        working-directory: desktop
+        run: |
+          npm ci --no-audit --no-fund
+          # Electron itself (the check below runs the tool on it); does nothing when it is already there.
+          node node_modules/electron/install.js
+
+      # The app's own ChatGPT tab (owner request: the browser inside the app) on Windows: the real tab, its agent and the
+      # extension's ChatGPT scripts against a fake ChatGPT page and the dashboard's agent handlers (no live ChatGPT).
+      - name: Test the ChatGPT tab (Electron, fake ChatGPT page)
+        run: |
+          npx vitest run tests/unit/desktop-agent.test.ts
+          npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts
+
+      - name: Assemble the bundle (the tool and the packages it loads)
+        run: node desktop/prepare.mjs
+
+      # Runs a copy of the bundle outside the repository on the app's built-in Node.js, as the installed app does:
+      # start-up steps on a new data folder, the dashboard and the worker (owner report: a package missing from the
+      # bundle stopped the app).
+      - name: Check the bundle outside the repository
+        run: node desktop/check-bundle.mjs
+
+      - name: Build the installer
+        working-directory: desktop
+        run: npm run dist:win
+
+      # The installer as the owner runs it: installed (silently here), then the app started once on a new data folder.
+      - name: Install the app and start it once
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem desktop/dist/*.exe | Select-Object -First 1
+          Write-Host "Installer: $($setup.Name), $([math]::Round($setup.Length / 1MB)) MB"
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          Get-Process -Name 'Blog Automation Studio' -ErrorAction SilentlyContinue | Stop-Process -Force
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'Blog Automation Studio.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'The app was not installed.' }
+          $installed = (Get-ChildItem $exe.DirectoryName -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          Write-Host "Installed: $($exe.DirectoryName), $([math]::Round($installed / 1MB)) MB"
+          $env:BAS_DESKTOP_DATA_DIR = Join-Path $env:RUNNER_TEMP 'bas-smoke-data'
+          $result = Join-Path $env:RUNNER_TEMP 'bas-smoke.json'
+          $app = Start-Process -FilePath $exe.FullName -ArgumentList '--smoke-test', "--smoke-result=$result" -PassThru
+          if (-not $app.WaitForExit(300000)) { $app.Kill(); throw 'The app did not finish its first start in 5 minutes.' }
+          $log = Join-Path $env:BAS_DESKTOP_DATA_DIR 'logs\desktop.log'
+          if (Test-Path $log) { Get-Content $log -Tail 60 }
+          if (-not (Test-Path $result)) { throw 'The app wrote no result.' }
+          $r = Get-Content $result -Raw | ConvertFrom-Json
+          Write-Host "Result: $($r.summary)"
+          if (-not $r.ok) { exit 1 }
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: Blog-Automation-Studio-Setup
+          path: desktop/dist/*.exe
+          retention-days: 30
+          if-no-files-found: error

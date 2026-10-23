@@ -117,6 +117,14 @@ export async function startWorker(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGBREAK', () => void shutdown('SIGBREAK'));
+  // The desktop app (Windows has no signals for child processes) asks over its IPC channel; if the app itself goes
+  // away, the channel closes and the worker stops the same safe way.
+  if (process.send) {
+    process.on('message', (m: unknown) => {
+      if ((m as { type?: string } | null)?.type === 'shutdown') void shutdown('desktop app');
+    });
+    process.on('disconnect', () => void shutdown('desktop app closed'));
+  }
   process.on('uncaughtException', (error) => {
     console.error('Uncaught exception in worker:', error);
     void log({ level: 'error', category: 'worker', message: `Uncaught exception: ${errorMessage(error)}` }).finally(() => shutdown('uncaught exception', 1));

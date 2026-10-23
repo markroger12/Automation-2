@@ -2957,3 +2957,33 @@ npx vitest run                      # 49 files, 357 tests: 356 pass, prompt-seed
 npx vitest run tests/unit/prompt-seed.test.ts   # after the update to 16: 3/3
 npx vitest run --config vitest.integration.config.ts tests/integration/migration-upgrade.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 20/20
 ```
+
+## Owner report (2026-10-23): “sometimes the tool uses the default template by itself”
+
+**Cause:**
+- The owner's screenshot (“Who Is Linda Ripa? All About Kelly Ripa's Sister”) shows the built-in single-photo design (`presetSingle`: title band, accent bar, corner logo).
+- That design replaces the owner's two-photo featured design when the article has only one usable photo. The image search had run once, and a search that found one photo was not repeated.
+- **Reproduced first:** a new integration test with one photo from the first search; the old code searched once only (`[false]`, expected `[false, true]`).
+
+**Fix (owner decision: search again first):**
+- When the featured design has more photo places than the usable photos (collages not counted), ChatGPT is asked for photos once more, in a new chat (`IMAGE_SEARCH`, part `gallery-more`). This happens once per run, unless the photo source is Commons only or the gallery already holds 10.
+- The new photos join the ones found before, and the selection runs again. The photo check is asked again for the bigger set (part `check-2`), so an answer for the old set is never reused.
+- Only when that brings nothing more is the single-photo design used, with the note as before.
+- The Images tab says “Only N photo(s) for the M-photo featured design: ChatGPT image search once more (new chat): K usable photo(s).”
+
+**Tests:**
+- **`tests/integration/images.test.ts`, new:**
+  - another photo found: two searches (article chat, then a new chat), the two-photo design takes both, no single-photo note;
+  - nothing found: two searches only, then the single-photo design with its note.
+
+**Not verified here:**
+- Real ChatGPT answers. A person with very few photos online still gets the single-photo design.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "once more in a new chat first"   # old code: failed ([false]); new: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 357 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 18 pass, 1 failed: "general article" stopped at the fake WordPress login (60 s timeout, before any image step)
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "general article: plan"   # re-run alone: pass
+```

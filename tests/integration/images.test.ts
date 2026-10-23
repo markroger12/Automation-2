@@ -417,6 +417,51 @@ describe('Image Studio (IMAGES stage)', () => {
     }
   });
 
+  it('owner report: with one photo the two-photo featured design became the built-in single-photo design; ChatGPT is asked for photos once more in a new chat first', async () => {
+    const { updateSettings } = await import('@/lib/settings');
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt' } });
+    try {
+      const site = await offlineSite('Celeb One Photo');
+      await addLogo(site.id);
+      const settings = { ...defaultSiteImageSettings('#0b5fff'), featured: { ...presetSplit('#0b5fff'), name: 'Imported' } };
+      await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify(settings) } });
+      const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
+      const run = async (keyword: string, second: Buffer[]) => {
+        const searches: boolean[] = [];
+        let newChat = false;
+        const first = [await solid(200, 60, 60)];
+        const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
+          if (/show them as an image gallery/.test(prompt)) {
+            searches.push(newChat);
+            const images = searches.length === 1 ? first : second;
+            return images.length ? { text: 'Photos.', images } : { text: 'I could not find more photos of this person.' };
+          }
+          return cannedAnswer(stageKey, prompt, language, kw);
+        };
+        const driver = makeDriver(client, answer, { onClaim: (p) => void (newChat = p.newChat) });
+        const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword, websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: `img:one-photo:${keyword}` }, { source: 'SINGLE' });
+        const t = await driver.drive(task.id);
+        const data = await stageData(t.id, 'IMAGES');
+        return { searches, notes: data.notes.join(' | '), featured: data.slots.find((s: { slot: string }) => s.slot === 'FEATURED') };
+      };
+      // The second search brings another photo: the owner's two-photo design takes both.
+      const found = await run('Linda Ripa', [await solid(60, 200, 60)]);
+      expect(found.searches).toEqual([false, true]);
+      expect(found.notes).toMatch(/Only 1 photo\(s\) for the 2-photo featured design: ChatGPT image search once more \(new chat\): 1 usable photo/);
+      expect(found.notes).not.toMatch(/single-photo preset/);
+      expect(found.featured.sourceAssetIds).toHaveLength(2);
+      // Nothing more found: asked once only, then the single-photo design as before (with the note).
+      const none = await run('Dixie Brubaker', []);
+      expect(none.searches).toEqual([false, true]);
+      expect(none.notes).toMatch(/once more \(new chat\): 0 usable photo/);
+      expect(none.notes).toMatch(/single-photo preset was used/);
+      expect(none.featured.sourceAssetIds).toHaveLength(1);
+    } finally {
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
+    }
+  });
+
   it('degrades safely: no photos → text-only with a note, or review when images are required', async () => {
     commonsPages = [];
     const site = await offlineSite('No Photos');

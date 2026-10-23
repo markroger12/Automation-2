@@ -2794,3 +2794,34 @@ npx vitest run --config vitest.integration.config.ts tests/integration/image-too
 BAS_TEST_MEDIAPIPE_DIR=<scratch> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "real MediaPipe"   # 1/1
 scratch harness: 13 real photos, people counts and featured picks (above)
 ```
+
+## Owner request (2026-10-23): the desktop app without a “port system” (shared parts, extension 3.4.3)
+The owner sent a screenshot of the desktop app's “Port 3000 is already in use. Is npm run start:all still running?” and asked to remove the port system. These are the parts the desktop app (markroger12/Automation-2#3) needs from the tool itself.
+
+- **`GET /api/instance`** (new, loopback only like every route) answers which tool this is and a fingerprint of its data folder. That is a SHA-256 of the folder's path, 16 hex digits; the path itself is never shown.
+  - The desktop app checks the ports 3000–3010 with it.
+  - When the tool already runs on the same data folder (e.g. `npm run start:all`), the window shows that one instead of starting a second copy.
+  - Otherwise the dashboard starts on the first free port.
+- **Extension 3.4.3:** when the saved dashboard address answers nothing, or answers but does not know the connection key (another data folder), the extension looks on 127.0.0.1 ports 3000–3010.
+  - It keeps the first one whose dashboard accepts its key, then saves that address.
+  - It looks at most once every 15 s.
+  - The next tick sends a full hello again.
+- **Start-up steps in the desktop app (`BAS_DESKTOP=1`):**
+  - no `.env` is written into the installation folder;
+  - no “Node.js 26+ required” warning (the app runs the tool on its own Node.js);
+  - messages without `npm run …`;
+  - the migration error names the real backup folder.
+
+**Tests:**
+- **Integration (extension), reproduced first:**
+  - The dashboard moved to another free port in 3000–3010, and the saved address answers nothing.
+  - The old 3.4.2 code, with only its version number changed, timed out (“Timed out waiting for ChatGPT response”).
+  - 3.4.3 completes the job on the new port and saves that address.
+- **Unit:** the data-folder fingerprint is the same with a trailing slash, different for another folder, and the answer never contains a path.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 48 files, 348 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "moved to another local port"   # old background.js: fail (timeout); new: pass
+```

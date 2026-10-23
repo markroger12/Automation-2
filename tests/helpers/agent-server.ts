@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
  * Minimal Node HTTP server that serves the SAME agent handlers as the Next.js
  * routes (/api/extension/agent, /upload, /gsc-proof, /media/:id) against the test DB.
  */
-export async function startAgentServer(): Promise<{ origin: string; close: () => Promise<void>; requests: { action: string }[] }> {
+export async function startAgentServer(listenPort = 0): Promise<{ origin: string; close: () => Promise<void>; requests: { action: string }[] }> {
   const { handleAgentRequest } = await import('@/lib/agent/handler');
   const { handleUpload, handleMediaDownload } = await import('@/lib/agent/files');
   const { handleGscProof } = await import('@/lib/gsc/proof');
@@ -40,7 +40,7 @@ export async function startAgentServer(): Promise<{ origin: string; close: () =>
       res.end(String(error));
     }
   });
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  await new Promise<void>((r) => server.listen(listenPort, '127.0.0.1', r));
   const { port } = server.address() as AddressInfo;
   return { origin: `http://127.0.0.1:${port}`, requests, close: () => new Promise((r) => server.close(() => r())) };
 }

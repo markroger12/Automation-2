@@ -2749,3 +2749,48 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 next build                          # compiled (final head)
 ```
 Merged into `claude/desktop-app` as well (typecheck 0 errors there), so the Windows installer carries it.
+
+## Owner request (2026-10-23): a two-photo featured image shows at most 2 people per photo
+“If the featured image has 2 photos, each photo should have at most 2 people. If there is no photo with 2, then 3; if none with 3, then 4, then 5 … If the featured image has 1 photo, any number of people.”
+
+**What changed:**
+- **New `chooseFeatured`** (`src/worker/pipelines/images.ts`) picks the featured photos.
+  - **Two or more photo places:** each place takes the best photo with at most 2 people. When there are no more such photos, the limit goes up one person at a time (3, then 4 …), place by place.
+  - **Inside that limit, nothing else changes:** photos keep the existing order (face, size, sharpness, watermark last), and a place still takes an equally good photo whose people fit it whole.
+- **Single-photo featured design:** works as before, with any number of people.
+- **Left alone:**
+  - Your uploads keep their places.
+  - Photos whose people are unknown (no face detector) are not moved.
+  - The photos not picked keep their order for the body images.
+- **What counts as people:** the main faces plus the people whose face was not found (head boxes from the person detector). The same counts are already used for the crops.
+- **Images tab notes:**
+  - when a photo with more than 2 people had to be used;
+  - how many photos with more people went to the body images instead.
+
+**Tests:**
+- **Unit, 5 new:**
+  - two places take the photos with 1 and 2 people, and the rest keep their order;
+  - the limit goes up to 3 when only one photo with 2 exists, and to 4 when there is none with 2 or 3;
+  - one place takes the first photo, with no limit;
+  - uploads and unknown counts stay in place;
+  - the fit rule still applies within the limit.
+- **Real photos (scratch, 13 Commons photos, real face and person detectors):**
+  - counted 4, 2, 1, 2, 7, 4, 4, 1, 1, 4, 0, 5, 1 people;
+  - in file order, the two-photo design picked the ones with 2 and 1, and skipped the first photo (4 people);
+  - with only group photos left, it picked the two with 4.
+  - Two photos counted lower than a viewer might expect. Both were checked by eye:
+    - 08 shows one woman in front, and the people behind her are small, so they don't count;
+    - 13 is a graduation cap toss with faces turned up, where the detectors found 1 person.
+
+**Not verified here:**
+- The owner's own articles.
+- **Crowds whose faces are turned away can count low,** as photo 13 did. Such a photo can then pass as “at most 2 people”.
+
+**Commands run**
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 347 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 17 passed, 1 skipped
+BAS_TEST_MEDIAPIPE_DIR=<scratch> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "real MediaPipe"   # 1/1
+scratch harness: 13 real photos, people counts and featured picks (above)
+```

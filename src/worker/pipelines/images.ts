@@ -352,6 +352,32 @@ export function photosForPlaces<T>(photos: T[], places: { width: number; height:
   return { picked, rest, moved };
 }
 
+/**
+ * Owner request: in a featured design with two or more photos, each photo shows at most 2 people; when there are not
+ * enough such photos, the limit goes up one person at a time (3, then 4 …), place by place. A single-photo featured
+ * design takes any number. People = the main faces plus the people whose face was not found; unknown (no detector)
+ * counts as fitting. Your uploads keep their places. The photos not picked keep their order for the body images.
+ */
+export function chooseFeatured<T>(
+  photos: T[],
+  places: { width: number; height: number }[],
+  o: { fits: (photo: T, place: { width: number; height: number }) => boolean; tier: (photo: T) => string; people: (photo: T) => number | undefined; upload: (photo: T) => boolean },
+): { picked: T[]; rest: T[]; moved: number; mostPeople: number; skippedGroups: number } {
+  if (places.length < 2) {
+    const r = photosForPlaces(photos, places, o.fits, o.tier);
+    return { ...r, mostPeople: 0, skippedGroups: 0 };
+  }
+  const limit = (p: T) => (o.upload(p) ? 0 : Math.max(2, o.people(p) ?? 0));
+  const ordered = photos.map((p, i) => ({ p, i })).sort((a, b) => limit(a.p) - limit(b.p) || a.i - b.i).map((x) => x.p);
+  const r = photosForPlaces(ordered, places, o.fits, o.tier);
+  const picked = new Set(r.picked);
+  const mostPeople = Math.max(0, ...r.picked.filter((p) => !o.upload(p)).map((p) => o.people(p) ?? 0));
+  // Photos with more people than the featured photos, skipped although they came first.
+  const firstPicked = Math.max(...r.picked.map((p) => photos.indexOf(p)));
+  const skippedGroups = photos.slice(0, firstPicked).filter((p) => !picked.has(p) && (o.people(p) ?? 0) > Math.max(2, mostPeople)).length;
+  return { picked: r.picked, rest: photos.filter((p) => !picked.has(p)), moved: r.moved, mostPeople, skippedGroups };
+}
+
 interface CelebState extends Record<string, unknown> {
   galleryIds?: string[];
   galleryNotes?: string[];
@@ -561,9 +587,12 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const tier = (a: MediaAsset) => `${flag.get(a.id) ?? 0}:${rank(a)}`;
   const fits = (a: MediaAsset, place: { width: number; height: number }) => a.origin === 'UPLOADED' || fitsPlace(facts[a.id], place);
   const featuredSlots = Array.from({ length: featuredNeeds }, (_, i) => featuredPlaces[i] ?? featuredPlaces[0] ?? { width: CANVAS.width, height: CANVAS.height });
-  const forFeatured = single.length ? photosForPlaces(single, featuredSlots, fits, tier) : { picked: usable.slice(0, 1), rest: [], moved: 0 };
+  const people = (a: MediaAsset) => facts[a.id]?.faces?.length;
+  const forFeatured = single.length ? chooseFeatured(single, featuredSlots, { fits, tier, people, upload: (a) => a.origin === 'UPLOADED' }) : { picked: usable.slice(0, 1), rest: [], moved: 0, mostPeople: 0, skippedGroups: 0 };
   const featuredPhotos = forFeatured.picked;
   if (!single.length && featuredPhotos.length) notes.push('Every photo found is a collage of another site; the featured image uses one of them. Upload photos on the Images tab to replace it.');
+  if (featuredSlots.length >= 2 && forFeatured.mostPeople > 2) notes.push(`Not enough photos with at most 2 people for the ${featuredSlots.length}-photo featured design; it uses one with ${forFeatured.mostPeople} people.`);
+  if (forFeatured.skippedGroups) notes.push(`The ${featuredSlots.length}-photo featured design uses photos with at most ${Math.max(2, forFeatured.mostPeople)} people; ${forFeatured.skippedGroups} photo(s) with more people went to the body images.`);
   const forBody = photosForPlaces(forFeatured.rest, [bodyPlace, bodyPlace], fits, tier);
   const rest = [...forBody.picked, ...forBody.rest];
   if (forFeatured.moved + forBody.moved) notes.push(`${forFeatured.moved + forBody.moved} photo(s) chosen for a place their faces fit whole; a group photo too wide for its place was used further down.`);

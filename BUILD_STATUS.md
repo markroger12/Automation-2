@@ -3224,3 +3224,14 @@ The owner: “aby bhai app chrome toh jasa phale use ho rha tha vasa hi use ho r
 - The real chatgpt.com in the app: its sign-in by email and password, Cloudflare's checks for this app, its CSP for the scripts' world, and a long article run.
 - Windows notifications and the tab shown while the window is in the tray; pictures ChatGPT draws while the window is hidden.
 - Chrome's `--app` window with the owner's Google account.
+
+**Commands run** (desktop branch, Linux; Electron 44.7.0 under Xvfb)
+```
+npx vitest run tests/unit/desktop-agent.test.ts   # 5/5 (without the sign-in-page rule: the reload test fails)
+npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts   # 4/4
+BAS_DESKTOP_DATA_DIR=… xvfb-run -a desktop/node_modules/electron/dist/electron desktop --smoke-test --smoke-result=… --no-sandbox   # before the guard fix: "the dashboard did not start"; after: passed (ChatGPT tab connected)
+npm run build                       # compiled
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 50 files, 365 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts tests/integration/extension.test.ts   # 52/52
+```

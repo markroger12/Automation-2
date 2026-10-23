@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.3');
+    expect(ext?.version).toBe('3.4.4');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -441,6 +441,46 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const { workflowView } = await import('@/lib/workflow/service');
     expect((await workflowView(siteId)).keywords.find((k) => k.id === kw.id)?.proofId).toBe(asset.id);
   }, 150_000);
+
+  // Owner report (Michael Consuelos): about a minute after it opened, the tab closed with “Google showed a check (I'm
+  // not a robot)” although none was on screen, and no screenshot was saved. Google's pages load an invisible reCAPTCHA,
+  // and any reCAPTCHA frame on the page counted as a check.
+  const indexingOutcome = (id: string) =>
+    waitFor(async () => {
+      await browser!.tick().catch(() => {});
+      const j = await client.queueJob.findUniqueOrThrow({ where: { id } });
+      return j.status === 'COMPLETED' || (j.status === 'WAITING' && j.errorCode) ? j : null;
+    }, 120_000, 'indexing outcome', 1000);
+
+  it('owner report: Google’s invisible reCAPTCHA is not a check: indexing is requested and its screenshot saved', async () => {
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode: 'ok', recaptcha: 'invisible' }) });
+    const { kw, job } = await publishedForIndexing('Invisible Check Person');
+    const done = await indexingOutcome(job.id);
+    expect(done.errorCode).toBeNull();
+    expect(done.status).toBe('COMPLETED');
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('INDEXING_REQUESTED');
+    expect(await client.queueJob.count({ where: { queue: 'control', kind: 'gsc.proof', relatedId: kw.id } })).toBe(1);
+  }, 200_000);
+
+  it('owner report: a check Google really shows waits for the owner (tab in front); completed, the request goes on; else HUMAN_CHECK after the pause', async () => {
+    let sc: { mode: 'ok'; recaptcha: 'challenge'; challengeMs?: number } = { mode: 'ok', recaptcha: 'challenge', challengeMs: 3000 };
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => sc });
+    // The owner completes the check after 3 s: the live test goes on and Google's answer is saved, with the screenshot.
+    const solved = await publishedForIndexing('Checked Person');
+    const done = await indexingOutcome(solved.job.id);
+    expect(done.errorCode).toBeNull();
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: solved.kw.id } })).status).toBe('INDEXING_REQUESTED');
+    expect(await client.queueJob.count({ where: { queue: 'control', kind: 'gsc.proof', relatedId: solved.kw.id } })).toBe(1);
+    // Never completed: reported only after the human-check pause (0.1 min in these tests), and the keyword says so.
+    sc = { mode: 'ok', recaptcha: 'challenge' };
+    const open = await publishedForIndexing('Unchecked Person');
+    const check = await indexingOutcome(open.job.id);
+    expect(check.errorCode).toBe('HUMAN_CHECK');
+    expect(check.error).toMatch(/not completed within 6 s/);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: open.kw.id } })).indexingStatus).toMatch(/Google showed a check/);
+  }, 240_000);
 
   it('owner report (404): without the “Inspect any URL” box, Google’s own inspection link (URL Inspection API) is opened instead', async () => {
     fake = { variant: 'standard', mode: 'normal' };

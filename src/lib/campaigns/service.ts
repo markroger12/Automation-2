@@ -99,7 +99,8 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
       const wanted = o.categoryId !== undefined ? o.categoryId : null;
       category = wanted ? site.categories.find((c) => c.id === wanted) : r.category ? site.categories.find((c) => c.name.toLowerCase() === r.category!.toLowerCase()) : undefined;
       if (r.category && !category && !wanted) issues.push({ kind: 'CATEGORY', message: `Category “${r.category}” is not synchronized for ${site.name}.` });
-      if (!category && site.defaultCategoryId) category = site.categories.find((c) => c.id === site.defaultCategoryId);
+      // A Tigram row without a category is left to the writer's CATEGORY stage (“chosen by the writer”).
+      if (!category && site.defaultCategoryId && decision.writer !== 'tigram-writer') category = site.categories.find((c) => c.id === site.defaultCategoryId);
     }
     let status: RowStatus = 'READY';
     if (issues.some((i) => i.kind === 'ERROR')) status = 'INVALID';

@@ -386,6 +386,8 @@ interface CelebState extends Record<string, unknown> {
   /** Per photo (asset id): main faces, the biggest face's height (px), the area around them, its fingerprint, sharpness. */
   facts?: Record<string, PhotoFacts>;
   faceTool?: boolean;
+  /** Asked for photos once more because the featured design has more places than photos (owner decision). */
+  moreSearched?: boolean;
 }
 
 /**
@@ -553,7 +555,7 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     let res: Awaited<ReturnType<PipelineContext['askChatGPT']>> | null = null;
     try {
       // In the article's chat too (owner request), right after the photo search.
-      res = await ctx.askChatGPT('PHOTO_CHECK', { photo_count: String(sample.length) }, { part: 'check', attachments: sample.map((a, i) => ({ mediaAssetId: a.id, name: `photo-${i + 1}.webp`, mime: a.mime ?? 'image/webp' })) });
+      res = await ctx.askChatGPT('PHOTO_CHECK', { photo_count: String(sample.length) }, { part: state.moreSearched ? 'check-2' : 'check', attachments: sample.map((a, i) => ({ mediaAssetId: a.id, name: `photo-${i + 1}.webp`, mime: a.mime ?? 'image/webp' })) });
     } catch (error) {
       if (!(error instanceof TransientError || error instanceof UncertainSideEffectError)) throw error;
       notes.push(`Photo check skipped (${(error as Error).message.slice(0, 160)}); collages could not be recognised, the photos were used in their order.`);
@@ -579,6 +581,17 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const siteSettings = templateSet(parseSiteImageSettings(site.imageSettings), 'celebrity');
   const featuredNeeds = Math.max(1, templatePhotoSlots(siteSettings.featured));
   const single = usable.filter((a) => !collages.has(a.id));
+  // Owner report: with one photo, the two-photo featured design became the built-in single-photo design. Owner
+  // decision: before that, ChatGPT is asked for photos once more, in a new chat (the photos found so far stay).
+  if (featuredNeeds >= 2 && single.length < featuredNeeds && !state.moreSearched && (ctx.config.celebrityPhotoSource ?? 'chatgpt') !== 'commons' && galleryIds.length < 10) {
+    const res = await ctx.askChatGPT('IMAGE_SEARCH', { person_name: name }, { part: 'gallery-more', newChat: true, expectGallery: true });
+    if (res.status === 'waiting') return waiting(`Waiting for ChatGPT: more photos of ${name} for the ${featuredNeeds}-photo featured design`);
+    await ctx.progress(`Saving gallery photos of ${name}…`);
+    const g = await collectChatGPTGallery({ uploadedIds: res.images.map((i) => i.mediaAssetId), links: res.imageLinks, taskId: ctx.taskId, websiteId: ctx.task.websiteId, responseId: res.responseId, max: 10 - galleryIds.length, timeoutMs: settings.advanced.linkCheckTimeoutSec * 1000 * 2 });
+    const galleryNotes = [...(ctx.privateState<CelebState>().galleryNotes ?? []), `Only ${single.length} photo(s) for the ${featuredNeeds}-photo featured design: ChatGPT image search once more (new chat): ${g.assets.length} usable photo(s).`, ...g.notes.slice(0, 6)];
+    await ctx.setPrivateState({ galleryIds: [...galleryIds, ...g.assets.map((a) => a.id)], galleryNotes, moreSearched: true });
+    return celebrityImages(ctx);
+  }
   const featuredPlaces = placeSizes(siteSettings.featured);
   const bodyPlace = placeSizes(siteSettings.body)[0] ?? { width: CANVAS.width, height: CANVAS.height };
   // Owner report (a group photo in the narrow half of the featured design had the faces at both edges cut): each place

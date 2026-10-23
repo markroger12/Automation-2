@@ -3038,3 +3038,126 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 48 files, 350 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 47/47
 ```
+
+## Owner report (2026-10-23): articles queued by the workflow get no category chosen
+
+**Cause:**
+- A workflow keyword has no category of its own. Every workflow article took the website's default category, which a category sync sets to “Uncategorized” (or the first category).
+- Tigram's CATEGORY stage (ChatGPT chooses one existing category) runs only when the task has no category. The default looked like the owner's choice, so the stage was skipped: in the workflow, and in Single Article / Bulk when the category was left to the writer (“Let the CATEGORY stage choose”, “chosen by the writer”).
+- Celebrity had no category stage at all.
+- **Reproduced first:** the new `tests/unit/category-choice.test.ts` failed 7/7 on the old code.
+
+**Fix (owner decision: ChatGPT chooses):**
+- **One CATEGORY stage for both writers** (`src/worker/pipelines/category.ts`):
+  - ChatGPT chooses one of the website's synced categories; “Uncategorized” is offered only when there is no other;
+  - with one category left it is taken without a prompt;
+  - an answer naming no existing category keeps the website's default, with a warning.
+- **When it runs:**
+  - for a task without a category, and for every workflow task (also those queued before this fix, which carry the default as a placeholder);
+  - never once the WordPress draft exists (`wpPostId`): the saved post keeps its category, which the draft checks compare.
+- **Celebrity:** a CATEGORY stage after QUICK_BIO, with its own prompt (Prompt Manager: “Celebrity — Category”, seeded at start). A category chosen in Single Article or a Bulk row skips it. Celebrity tasks still get the website default at creation, so the pre-check is unchanged.
+- **Tigram:** without a chosen category the task no longer takes the website default at creation, in Single Article and Bulk too. The CATEGORY stage chooses, with the default as the fallback.
+
+**Tests:**
+- **New `tests/unit/category-choice.test.ts` (7):**
+  - workflow Celebrity: one category prompt, without “Uncategorized”, result “Celebrities”;
+  - workflow Tigram on a website whose default is “Uncategorized”: the stage runs;
+  - Single Article Tigram left to the stage: no default at creation, the stage runs;
+  - an owner-chosen category: no prompt, the stage is skipped;
+  - no matching answer: the default is kept, with a note;
+  - an existing draft: no prompt, the category is unchanged;
+  - Bulk preview: a Tigram row without a category stays empty, a Celebrity row takes the default.
+- **`prompt-seed.test.ts`:** 16 shipped prompts instead of 15.
+
+**Not verified here:**
+- The owner's own websites and their category names (German installs: “Unkategorisiert”/“Ohne Kategorie” are treated as “Uncategorized”, “Allgemein” is not).
+
+**Commands run**
+```
+npx vitest run tests/unit/category-choice.test.ts   # old code: 7 failed; new: 7/7
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 357 tests: 356 pass, prompt-seed failed on the old count of 15
+npx vitest run tests/unit/prompt-seed.test.ts   # after the update to 16: 3/3
+npx vitest run --config vitest.integration.config.ts tests/integration/migration-upgrade.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 20/20
+```
+
+## Owner report (2026-10-23): “sometimes the tool uses the default template by itself”
+
+**Cause:**
+- The owner's screenshot (“Who Is Linda Ripa? All About Kelly Ripa's Sister”) shows the built-in single-photo design (`presetSingle`: title band, accent bar, corner logo).
+- That design replaces the owner's two-photo featured design when the article has only one usable photo. The image search had run once, and a search that found one photo was not repeated.
+- **Reproduced first:** a new integration test with one photo from the first search; the old code searched once only (`[false]`, expected `[false, true]`).
+
+**Fix (owner decision: search again first):**
+- When the featured design has more photo places than the usable photos (collages not counted), ChatGPT is asked for photos once more, in a new chat (`IMAGE_SEARCH`, part `gallery-more`). This happens once per run, unless the photo source is Commons only or the gallery already holds 10.
+- The new photos join the ones found before, and the selection runs again. The photo check is asked again for the bigger set (part `check-2`), so an answer for the old set is never reused.
+- Only when that brings nothing more is the single-photo design used, with the note as before.
+- The Images tab says “Only N photo(s) for the M-photo featured design: ChatGPT image search once more (new chat): K usable photo(s).”
+
+**Tests:**
+- **`tests/integration/images.test.ts`, new:**
+  - another photo found: two searches (article chat, then a new chat), the two-photo design takes both, no single-photo note;
+  - nothing found: two searches only, then the single-photo design with its note.
+
+**Not verified here:**
+- Real ChatGPT answers. A person with very few photos online still gets the single-photo design.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "once more in a new chat first"   # old code: failed ([false]); new: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 357 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 18 pass, 1 failed: "general article" stopped at the fake WordPress login (60 s timeout, before any image step)
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "general article: plan"   # re-run alone: pass
+```
+
+## Owner request (2026-10-23): “the browser inside the app” — dashboard side (extension 3.4.6)
+
+The desktop app (markroger12/Automation-2#3) gets its own ChatGPT tab, in which the extension's ChatGPT scripts run. Google and Search Console stay in Automation Chrome: Google refuses sign-ins in a browser built into another app, and the app is never disguised as Chrome. This branch has the dashboard's part, which changes nothing without the desktop app.
+
+**Dashboard (`src/lib/agent/desktop.ts`, `handler.ts`):**
+- **The app's key:** the desktop app makes a key at each start and gives it to its dashboard server in `BAS_DESKTOP_AGENT_KEY` (never stored). The agent endpoints accept it as well as the connection key.
+- **Bound to its install id:**
+  - the app's key works only with install id `desktop-app`, and that id only with the app's key;
+  - so the extension can never act as the app, nor the app as the extension (403);
+  - without the env variable (npm run start:all), nobody can use the id (401).
+- **While the app's ChatGPT tab is connected** (a hello within 75 s, not paused):
+  - prompts go to it only, and the extension's claims get `reason: 'in-app'`;
+  - the extension's hello says `chatgptInApp: true`;
+  - the app is never given a Search Console request (`gsc-claim` → `not-here`);
+  - a paused hello (the owner switched ChatGPT back to Automation Chrome) ends this at once; 75 s without a hello (app closed) ends it too.
+- **Log:** the first hello writes “The desktop app's ChatGPT tab connected (scripts v…)”.
+
+**Extension 3.4.6:**
+- with `chatgptInApp` it opens no ChatGPT tab, claims nothing and polls at the idle rate. The badge is “APP”, and the popup says that ChatGPT runs in the desktop app;
+- Search Console requests run as before.
+
+**Worker (`chrome-autostart.ts`):**
+- **While the app runs ChatGPT:** queued articles and prompts no longer open Automation Chrome. A due indexing request opens it as Chrome's own **app window with Search Console** (`--app=https://search.google.com/search-console`; the real Chrome, its profile, no automation flags).
+- **When the window opens:** if Chrome is not running, or for a request stuck 90 s while Chrome runs without a window. Chrome closes again 2 minutes after the requests, as before.
+- **“Extension connected”** now counts Automation Chrome's extension only, not the app's tab.
+
+**Tests:**
+- **`agent.test.ts`, new:**
+  - the app's key with its id (200), with another id (403);
+  - the extension's key with the app's id (403), a wrong key (401);
+  - the extension told `chatgptInApp` and refused (`in-app`), the app given the prompt, `gsc-claim` → `not-here`;
+  - 75 s later or paused, the extension takes ChatGPT again;
+  - no env variable → 401.
+- **`chrome-autostart.test.ts`, new:**
+  - with the app connected, a waiting prompt needs no Chrome;
+  - a due request launches `{ searchConsole: true }`, or `{ allowRunning: true, searchConsole: true }` when it is stuck in a running Chrome;
+  - the launch command has `--app=https://search.google.com/search-console` and the Automation Chrome profile, with no remote-debugging or automation flags.
+- **`extension.test.ts`, new (real extension in Chromium):**
+  - with the app's agent connected: no chatgpt.com tab, no claim, the prompt still WAITING, and the Search Console request completes (INDEXING_REQUESTED);
+  - on 3.4.5's background the test fails (a ChatGPT tab is opened).
+
+**Not verified here:**
+- Chrome's `--app` window with the owner's Google account on Windows (the window is Chrome itself; Google's rule is about embedded browsers and automation).
+
+**Commands run**
+```
+npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts tests/unit/extension-version.test.ts   # 7 + 12 + 2 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "desktop app's own ChatGPT"   # 3.4.5 background: failed (ChatGPT tab opened); 3.4.6: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 360 tests pass

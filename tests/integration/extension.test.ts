@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.5');
+    expect(ext?.version).toBe('3.4.6');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -498,6 +498,29 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('INDEXING_REQUESTED');
     // Its Search Console tab is closed again (the window then holds the extension's ChatGPT tab, as usual).
     await waitFor(async () => !browser!.context.pages().some((p) => p.url().startsWith('https://search.google.com/')), 15_000, 'Search Console tab closed', 500);
+  }, 200_000);
+
+  it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
+    fake = { variant: 'standard', mode: 'normal' };
+    // The desktop app's agent said hello (kept fresh for the test).
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.6', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    try {
+      const req = await request('A prompt for the desktop app');
+      const seen = server.requests.length;
+      browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode: 'ok' }) });
+      const { kw, job } = await publishedForIndexing('Desktop App Person');
+      const done = await indexingOutcome(job.id);
+      expect(done.status).toBe('COMPLETED');
+      expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('INDEXING_REQUESTED');
+      for (let i = 0; i < 3; i++) await browser.tick().catch(() => {});
+      expect(browser.context.pages().some((p) => p.url().startsWith('https://chatgpt.com/'))).toBe(false);
+      expect((await jobOf(req.responseId)).status).toBe('WAITING');
+      expect(server.requests.slice(seen).some((r) => r.action === 'claim')).toBe(false);
+      const state = (await browser.sw.evaluate(() => (globalThis as unknown as { basState: () => { serverCfg: { chatgptInApp: boolean } } }).basState())) as { serverCfg: { chatgptInApp: boolean } };
+      expect(state.serverCfg.chatgptInApp).toBe(true);
+    } finally {
+      await client.workerStatus.delete({ where: { id: 'extension:desktop-app' } });
+    }
   }, 200_000);
 
   it('owner report (404): without the “Inspect any URL” box, Google’s own inspection link (URL Inspection API) is opened instead', async () => {

@@ -24,6 +24,7 @@ function render(s) {
   }
   if (s.loggedIn === false) lines.push('ChatGPT asks you to sign in — please sign in in a ChatGPT tab.');
   if (s.humanCheck) lines.push('ChatGPT shows a verification check — please complete it yourself.');
+  if (s.chatgptInApp) lines.push('ChatGPT runs in the desktop app; this Chrome does Search Console only.');
   if (s.paused || s.serverPaused) lines.push('New claims are paused' + (s.serverPaused ? ' from the dashboard.' : '.'));
   if (s.backoffUntil && new Date(s.backoffUntil) > new Date()) lines.push('Rate-limit backoff until ' + new Date(s.backoffUntil).toLocaleTimeString() + '.');
   if (s.outbox) lines.push(s.outbox + ' result(s) waiting to reach the dashboard.');

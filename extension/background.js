@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.4.5';
+const EXTENSION_VERSION = '3.4.6';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -30,6 +30,7 @@ let serverCfg = {
   backoffUntil: null,
   claimsPaused: false,
   waitingJobs: 0,
+  chatgptInApp: false,
   warning: null,
 };
 let versionMessage = null;
@@ -501,6 +502,11 @@ async function tick() {
     }
     // Search Console “Request indexing” (owner request): one at a time, in a tab of its own.
     if (!cfg.paused && (serverCfg.gscWaiting || 0) > 0 && !gsc.running) void runGscJob();
+    // The desktop app's own ChatGPT tab runs the prompts (owner request): no ChatGPT tab here, no claims.
+    if (serverCfg.chatgptInApp) {
+      await setBadge('APP', '#0f766e');
+      return;
+    }
     if (cfg.paused || serverCfg.claimsPaused) {
       await setBadge('II', '#6b7280');
       return;
@@ -536,7 +542,7 @@ async function tick() {
 function scheduleNext() {
   if (busyTimer) clearTimeout(busyTimer);
   const busy = Array.from(tabs.values()).some((t) => t.busy);
-  if (busy || (serverCfg.waitingJobs || 0) > 0) busyTimer = setTimeout(() => void tick(), Math.max(1, serverCfg.pollBusySec || 3) * 1000);
+  if (busy || ((serverCfg.waitingJobs || 0) > 0 && !serverCfg.chatgptInApp)) busyTimer = setTimeout(() => void tick(), Math.max(1, serverCfg.pollBusySec || 3) * 1000);
 }
 
 // ---------------- messages from content scripts / popup ----------------
@@ -730,6 +736,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           tabs: managed.map((id) => ({ id, busy: tabState(id).busy, ready: tabState(id).ready, url: tabState(id).url })),
           outbox: outbox.length,
           warning: serverCfg.warning,
+          chatgptInApp: Boolean(serverCfg.chatgptInApp),
           loggedIn: pageLogin,
           humanCheck: pageHumanCheck,
         });

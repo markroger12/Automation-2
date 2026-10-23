@@ -19,7 +19,9 @@ if (!fs.existsSync(source)) {
   process.exit(1);
 }
 const where = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-check-'));
-if (!path.relative(repo, where).startsWith('..')) {
+// Inside means a relative path that does not leave the repository (on Windows another drive gives an absolute one).
+const inRepo = path.relative(repo, where);
+if (!inRepo.startsWith('..') && !path.isAbsolute(inRepo)) {
   console.error(`The check folder ${where} is inside the repository; set TMPDIR/TEMP to a folder outside it.`);
   process.exit(1);
 }

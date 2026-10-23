@@ -2698,3 +2698,51 @@ npx vitest run                      # 47 files, 342 tests pass (final head)
 BAS_TEST_MEDIAPIPE_DIR=<scratch mediapipe> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 3 files, 26/26 (the real-MediaPipe test ran: not skipped)
 next build                          # compiled
 ```
+
+## Owner request (2026-10-23): the tool as a Windows program (.exe), on its own branch
+
+**Request:**
+- “start the .exe work”, on another branch, without ending the Node.js tool;
+- it need not use Chrome (“you can build your own browser”);
+- the way it works may change, but every feature stays, and it should not take long.
+
+**Branch:** `claude/desktop-app`, on top of `claude/confident-brown-pwlrz6`. The Node.js tool (`npm run start:all`) is unchanged and keeps working.
+
+**What the app is** (`desktop/`, Electron 44.7.0 for the window only):
+- **Startup:** one window with the dashboard; the server (`next start`) and the worker run hidden on a bundled Node.js 26.11.1 (Windows build, SHA-256 checked against nodejs.org). The migration and settings steps (preflight, with a backup first) run at every start, and a start-up page shows each step.
+- **Data folder:** chosen at the first start, either the one `npm run start:all` uses or a new one. The `.env` next to it is read too. Both cannot run at once: if port 3000 is busy, the app says so and offers Retry.
+- **Tray:** closing the window keeps the app there, so the workflow keeps running. The tray offers Open, Automation Chrome, the data folder, the log, Start with Windows, Keep running, Another data folder, and Quit.
+- **Quit:** stops the worker over its IPC channel (Windows has no signals for child processes), then the server. A worker change makes this safe: it stops as on Ctrl+C, and also when the app's channel closes.
+- **Window security:**
+  - sandboxed and context-isolated, with no Node access;
+  - only `localhost:3000` is shown; every other address opens in the default browser;
+  - no permissions except copying text;
+  - the dashboard's own Host, Origin and CSRF checks still apply.
+- **Browser for ChatGPT and Search Console:** still Automation Chrome with the extension.
+  - An embedded browser would hit Google's block on sign-ins in embedded browsers, and could only pass it by pretending to be Chrome, which this project does not do.
+  - Porting the extension would change working features.
+  - So every feature stays as it is, as the owner asked.
+- **Installer** (`electron-builder` 26.17.0, NSIS):
+  - per user, no administrator, desktop and Start-menu shortcuts;
+  - the data folder is never inside the installation and never deleted;
+  - not code-signed, so SmartScreen may warn.
+- **Build:** `.github/workflows/desktop.yml` builds it on `windows-latest` (npm ci, build, typecheck, `desktop/prepare.mjs`, `electron-builder --win nsis`) and uploads the installer as the artifact `Blog-Automation-Studio-Setup`.
+
+**Found while testing:** electron-builder silently leaves `node_modules` out of a folder copied as `extraResources`, so the first packaged app failed at the migration step (`prisma/build/index.js` missing). `node_modules` is now listed as its own resource.
+
+**Tested here (Linux, the same code packaged with `--linux` and `electron-builder --dir`, under Xvfb with Playwright's Electron driver):**
+- the start-up page showed, then the dashboard opened 12 s after launch on a new data folder (migrations, settings), with the Overview page and the worker online;
+- the worker held its lock while running;
+- Quit took under 1 s: the log shows “Worker stopped (desktop app)” and the lock was released.
+
+**Not verified here:**
+- **The Windows installer itself:** it is built by the workflow on GitHub's Windows runner. Its first run is the check of the Windows build.
+- The app on the owner's PC: SmartScreen, the tray, Start with Windows, the owner's data folder, Automation Chrome launched from it.
+- Unit tests on Windows: the workflow runs the typecheck only; tests run on Linux as before.
+
+**Commands run**
+```
+cd desktop && npm install                      # electron 44.7.0, electron-builder 26.17.0 (allowScripts: electron only)
+node desktop/prepare.mjs --linux               # bundle: app 757 MB, runtime 144 MB; SHA-256 checked
+npx electron-builder --dir --linux             # desktop/dist/linux-unpacked
+xvfb-run node <smoke>                          # start, Overview, worker online, Quit with a safe worker stop

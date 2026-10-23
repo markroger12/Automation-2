@@ -1,0 +1,23 @@
+{
+  "name": "blog-automation-studio-desktop",
+  "productName": "Blog Automation Studio",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Blog Automation Studio as a desktop app: the dashboard in its own window, the server and the worker in the background.",
+  "author": "Blog Automation Studio",
+  "main": "main.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "prepare-bundle": "node prepare.mjs",
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "electron-builder --dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.17.0"
+  },
+  "allowScripts": {
+    "electron@44.7.0": true
+  }
+}

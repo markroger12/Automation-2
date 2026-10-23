@@ -1,0 +1,42 @@
+# Blog Automation Studio — Windows installer (npm run dist:win in desktop/, after node prepare.mjs).
+appId: local.blogautomationstudio.desktop
+productName: Blog Automation Studio
+copyright: Private tool
+directories:
+  output: dist
+# The window, tray and splash only; the tool itself and its Node.js come in as resources (prepare.mjs).
+files:
+  - main.cjs
+  - splash.html
+  - icon.png
+  - package.json
+extraResources:
+  - from: bundle/app
+    to: app
+  # electron-builder leaves node_modules out of a folder copy; the tool needs its own, so they are named here.
+  - from: bundle/app/node_modules
+    to: app/node_modules
+    filter: ['**/*']
+  - from: bundle/runtime
+    to: runtime
+asar: true
+compression: normal
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: icon.png
+  artifactName: Blog-Automation-Studio-Setup-${version}.${ext}
+nsis:
+  # Installs for this Windows user only (no administrator), into a folder the app may write to.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Blog Automation Studio
+  # The data folder is never inside the installation, and uninstalling never deletes it.
+  deleteAppDataOnUninstall: false
+linux:
+  target: [dir]
+  icon: icon.png

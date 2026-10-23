@@ -1,9 +1,9 @@
 {
   "name": "blog-automation-studio-desktop",
   "productName": "Blog Automation Studio",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
-  "description": "Blog Automation Studio as a desktop app: the dashboard in its own window, the server and the worker in the background.",
+  "description": "Blog Automation Studio as a desktop app: the dashboard and ChatGPT in its own window, the server and the worker in the background.",
   "author": "Blog Automation Studio",
   "main": "main.cjs",
   "type": "commonjs",

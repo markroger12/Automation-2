@@ -3161,3 +3161,64 @@ npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts test
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "desktop app's own ChatGPT"   # 3.4.5 background: failed (ChatGPT tab opened); 3.4.6: pass
 npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 49 files, 360 tests pass
+
+## Desktop app 3.2.0 (owner request, 2026-10-23): “the browser inside the app”
+
+The owner: “aby bhai app chrome toh jasa phale use ho rha tha vasa hi use ho rha ha mana bola tha browser bhi app ke ander hi ho.” (The app still used Chrome as before; the browser should be inside the app.)
+
+**Research first (owner asked to look up which browsers Google trusts):**
+- Google's sign-in accepts real browsers (Chrome, Edge, Firefox, Safari, Opera).
+- Since 2021 it blocks browsers embedded in another application (Electron, CEF, WebView2) and browsers controlled by automation (“This browser or app may not be secure”).
+- Disguising the app as Chrome would break Google's rules and this project's own rule.
+- **Owner decision:** ChatGPT (email + password) inside the app; Google and Search Console in the real Chrome, opened by the app.
+
+**The window** (`main.cjs`, `shell.html`, `shell-preload.cjs`):
+- **Tab bar:** Dashboard, ChatGPT (with a status dot and text), and Google (Chrome), which opens the Automation Chrome page.
+- **Views:** the dashboard and ChatGPT are two `WebContentsView`s below the bar. Both stay in the window; the one shown is on top, so ChatGPT keeps working behind the dashboard.
+- **Menus:** the start-up status shows in the same page until the dashboard answers. App menu: Dashboard, ChatGPT (Ctrl+Shift+G), and **Run ChatGPT prompts in this app** (the owner's way back to Automation Chrome). Tray: ChatGPT, Automation Chrome.
+
+**The ChatGPT tab** (`chatgpt-tab.cjs`, `chatgpt-preload.cjs`, `content-shim.js`):
+- **Storage:** ChatGPT's own page in a sandboxed, context-isolated view with its own storage (`persist:chatgpt`), apart from the dashboard. The app's normal user agent is used (never disguised).
+- **Scripts:** on every chatgpt.com page, the extension's own `adapter.js` and `content.js` start in a world of their own (1001), as Chrome starts content scripts. `content-shim.js` gives them the part of `chrome.runtime` they use (sendMessage, onMessage, connect) over the preload's channel.
+  - The page's own world never sees the channel or a `chrome.runtime` (tested).
+  - Only the tab's own main frame may use the channel.
+- **Navigation:** the tab stays on chatgpt.com and OpenAI's sign-in. Other links open in the default browser, and pop-ups are refused.
+- **Permissions:** only copying text.
+
+**Its background** (`chatgpt-agent.cjs`, a port of the extension background's ChatGPT part for one tab):
+- **Dashboard API:** hello, claim, progress, complete, fail, release; the outbox is kept on disk (`chatgpt-agent.json` in the app's folder).
+- **Jobs:**
+  - it opens the conversation a job needs and waits for the page's scripts;
+  - it resumes after a page reload with the checkpoint, so a prompt is never sent twice;
+  - attachments come from the dashboard, and pictures are fetched with the tab's own ChatGPT session (ChatGPT's image hosts only).
+- **The owner's part:**
+  - a sign-in page or a check is never automated: the tab is shown, a notification is sent, and the job waits as in Chrome;
+  - a ChatGPT page that never got ready is reloaded at most 5 times, but never OpenAI's sign-in page (the owner may be typing there).
+- **Start and quit:** a job left from an app closed mid-job is released at the next start, and a job in progress is released at Quit. The queue reconciles both before any resend.
+- **The key:** the app makes it at each start and gives it to its own dashboard server (`BAS_DESKTOP_AGENT_KEY`). The dashboard part is in markroger12/Automation-2#2 (prompts go only to the app's tab while it is connected; extension 3.4.6 then leaves ChatGPT alone; the app is never given Search Console).
+- **Attached mode:** when the window only shows a dashboard started by `npm run start:all`, there is no agent and the prompts stay with Automation Chrome.
+
+**Google / Search Console:** the worker opens Automation Chrome only for a due indexing request, as Chrome's own app window with Search Console (`--app=https://search.google.com/search-console`), and closes it 2 minutes after the requests.
+
+**Found while testing:** started from the repository (`npm start` in `desktop/`, not installed), the dashboard server never started: `--require ./desktop-child-guard.cjs` exists only in the installed tool. The guard is now taken from `desktop/child-guard.cjs` there (the smoke test found it).
+
+**Tests:**
+- **`tests/unit/desktop-agent.test.ts` (5, plain Node, fake tab and dashboard):**
+  - never reloads OpenAI's sign-in page, but does reload a stuck ChatGPT page (fails without the fix: 1 reload on the sign-in page);
+  - its own install id; claims only on a ready page;
+  - an answer kept on disk while the dashboard is down and sent later, once;
+  - a leftover job released at start;
+  - paused by the owner: says so at once and claims nothing.
+- **`tests/integration/desktop-chatgpt.test.ts` (4, real Electron 44.7.0 under Xvfb):**
+  - the harness runs the real tab, agent, preload and shim, with the extension's scripts, against the fake ChatGPT app and the dashboard's agent handlers;
+  - one prompt → one saved answer (sent once), with the page's own world seeing no channel;
+  - a reload in the middle of an answer → recovered, sent once;
+  - an image answer → the picture fetched through the tab's session and uploaded (1024 px);
+  - a sign-in page → LOGIN_REQUIRED, no prompt sent, the owner notified and the tab shown.
+- **Smoke test of `main.cjs` (dev mode, Xvfb):** “dashboard http://localhost:3000 answers; worker running; ChatGPT tab connected to the dashboard (scripts v3.4.6); data folder matches”. The installed app's smoke test in the Windows workflow now checks the ChatGPT connection too, and the workflow runs both test files on Windows.
+- **Screenshots (Xvfb, 1500×1000):** the tab bar with the dashboard below it, and “ChatGPT: ready”. In this sandbox chatgpt.com answers its assets with Cloudflare's 403 (curl gets the same), so the real page could not be shown here.
+
+**Not verified here:**
+- The real chatgpt.com in the app: its sign-in by email and password, Cloudflare's checks for this app, its CSP for the scripts' world, and a long article run.
+- Windows notifications and the tab shown while the window is in the tray; pictures ChatGPT draws while the window is hidden.
+- Chrome's `--app` window with the owner's Google account.

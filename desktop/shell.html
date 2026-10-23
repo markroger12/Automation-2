@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self'" />
+    <title>Blog Automation Studio</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #f8fafc; --fg: #0f172a; --muted: #475569; --accent: #4f46e5; --card: #ffffff; --border: #e2e8f0; --bar: #ffffff; --ok: #059669; --warn: #b45309; --bad: #b91c1c; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #0b1020; --fg: #e2e8f0; --muted: #94a3b8; --card: #111827; --border: #1f2937; --bar: #0f172a; --ok: #34d399; --warn: #fbbf24; --bad: #f87171; } }
+      html, body { height: 100%; margin: 0; }
+      body { display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, 'Segoe UI', sans-serif; }
+      /* The tab bar: 44 px (main.cjs places the dashboard and ChatGPT below it). */
+      nav { display: flex; align-items: center; gap: 4px; height: 44px; box-sizing: border-box; padding: 0 10px; background: var(--bar); border-bottom: 1px solid var(--border); flex: none; }
+      nav .logo { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-right: 8px; border-radius: 7px; background: var(--accent); color: #fff; font-weight: 800; font-size: 12px; }
+      nav button { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+      nav button:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--fg); }
+      nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      nav button[aria-selected='true'] { border-color: var(--border); background: var(--bg); color: var(--fg); }
+      nav button:disabled { opacity: 0.5; cursor: default; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+      .dot.ok { background: var(--ok); }
+      .dot.warn { background: var(--warn); }
+      .dot.bad { background: var(--bad); }
+      #chatgpt-state { margin-left: auto; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      main { flex: 1; display: grid; place-items: center; }
+      .card { width: min(560px, 90vw); padding: 32px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+      .card .logo { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 800; }
+      h1 { font-size: 20px; margin: 14px 0 4px; }
+      #status { margin: 18px 0 6px; font-weight: 600; }
+      #detail { margin: 0; color: var(--muted); white-space: pre-wrap; font-size: 13px; max-height: 40vh; overflow: auto; }
+      .bar { height: 4px; margin-top: 18px; border-radius: 4px; background: var(--border); overflow: hidden; }
+      .bar::before { content: ''; display: block; width: 35%; height: 100%; background: var(--accent); animation: slide 1.4s ease-in-out infinite; }
+      @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+    </style>
+  </head>
+  <body>
+    <nav role="tablist" aria-label="Blog Automation Studio">
+      <span class="logo" aria-hidden="true">BA</span>
+      <button id="tab-dashboard" role="tab" aria-selected="true" disabled>Dashboard</button>
+      <button id="tab-chatgpt" role="tab" aria-selected="false" disabled><span class="dot" id="chatgpt-dot" aria-hidden="true"></span>ChatGPT</button>
+      <button id="tab-google" title="Google and Search Console open in Automation Chrome (Google refuses sign-ins in a browser built into an app)" disabled>Google (Chrome)</button>
+      <span id="chatgpt-state" aria-live="polite"></span>
+    </nav>
+    <main>
+      <section class="card" role="status" aria-live="polite">
+        <span class="logo" aria-hidden="true">BA</span>
+        <h1>Blog Automation Studio</h1>
+        <p id="status">Starting…</p>
+        <p id="detail"></p>
+        <div class="bar" aria-hidden="true"></div>
+      </section>
+    </main>
+    <script>
+      window.setStatus = (text, detail) => {
+        document.getElementById('status').textContent = text;
+        document.getElementById('detail').textContent = detail || '';
+      };
+      const shell = window.basShell;
+      const tabs = { dashboard: document.getElementById('tab-dashboard'), chatgpt: document.getElementById('tab-chatgpt') };
+      for (const [name, button] of Object.entries(tabs)) button.addEventListener('click', () => shell && shell.select(name));
+      document.getElementById('tab-google').addEventListener('click', () => shell && shell.select('google'));
+      if (shell) {
+        shell.onState((s) => {
+          for (const button of document.querySelectorAll('nav button')) button.disabled = !s.ready;
+          for (const [name, button] of Object.entries(tabs)) button.setAttribute('aria-selected', String(s.tab === name));
+          const dot = document.getElementById('chatgpt-dot');
+          dot.className = `dot ${s.chatgpt.tone || ''}`;
+          document.getElementById('chatgpt-state').textContent = s.chatgpt.text || '';
+        });
+      }
+    </script>
+  </body>
+</html>

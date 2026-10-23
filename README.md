@@ -55,10 +55,18 @@ The same tool as one Windows program, like Discord: no command window, and nothi
   - **Choose my data folder…** uses the one `npm run start:all` uses (for example `F:\claude\Automation-2\data`), with the same websites, articles, settings and Automation Chrome profile.
   - **Start with a new data folder** creates an empty one in the app's own folder.
   - A `.env` next to that data folder (e.g. with `SERPER_API_KEY`) is read too.
-- **Daily use:** the window shows the dashboard. The server and the worker run hidden, on the app's own built-in Node.js. Automation Chrome and the extension work as before.
+- **Daily use:** the window has two tabs at the top, **Dashboard** and **ChatGPT**. The server and the worker run hidden, on the app's own built-in Node.js.
+- **ChatGPT inside the app (3.2.0):**
+  - Open the **ChatGPT** tab once and sign in to ChatGPT with your **email and password**. The sign-in stays in the app, apart from Chrome; “Continue with Google” does not work there, because Google refuses sign-ins in a browser built into an app.
+  - The prompts then run in that tab, with the same ChatGPT scripts as the extension, and the dashboard tab keeps working meanwhile. The dot and the text at the top say whether ChatGPT is ready, needs your sign-in or a check, or is working.
+  - A sign-in page or a human check is never automated: the app shows the ChatGPT tab and a notification, and the job waits for you as in Chrome. Links in answers open in your default browser.
+  - While the app's ChatGPT is connected, Automation Chrome's extension (3.4.6) opens no ChatGPT tab and takes no prompt (badge “APP”).
+  - **Switching back:** if ChatGPT does not work in the app, untick **App → Run ChatGPT prompts in this app**, and Automation Chrome takes the prompts again.
+  - While `npm run start:all` runs and the window only shows it, the prompts stay with Automation Chrome.
+- **Google and Search Console stay in Automation Chrome** (Google refuses sign-ins in a browser built into an app, and the app is never disguised as Chrome). Sign in to Google there once: **Google (Chrome)** at the top opens the Automation Chrome page, whose indexing panel has *Sign in to Google in Automation Chrome*. When an indexing request is due, the worker opens Chrome by itself as a **Search Console window** (Chrome's own app window: no tabs or address bar), and closes it again 2 minutes after the requests.
 - **No port to manage:** the dashboard starts on the first free port from 3000 to 3010, and the extension (3.4.3) finds it there by itself. When the tool already runs on the same data folder (e.g. `npm run start:all`), the window shows that one instead of starting a second copy. If the app is closed in any way, even by a crash, its server and worker stop too.
-- **Closing the window** keeps the app in the tray (by the clock), so the workflow keeps running. The tray menu has:
-  - *Open*, *Automation Chrome*;
+- **Closing the window** keeps the app in the tray (by the clock), so the workflow keeps running; the ChatGPT tab keeps working too. The tray menu has:
+  - *Open*, *ChatGPT*, *Automation Chrome (Google, Search Console)*;
   - *Open the data folder*, *Open the log*;
   - *Start with Windows*;
   - *Keep running when the window is closed*;
@@ -66,7 +74,7 @@ The same tool as one Windows program, like Discord: no command window, and nothi
   - **Quit**, which stops the worker safely, then the server.
 - **Updating:** run the newer installer; your data folder is never touched. Uninstalling never deletes it either.
 - **What is inside:** the built dashboard, the worker, the migrations and settings steps (run at every start, with a backup first), and only the packages those load. Electron 44.7.0 provides the window and, with its built-in Node.js 24.21, runs the tool; the whole test suite passes on that Node.js too. The window's texts are English only.
-- **Building it yourself:** in the repository root run `npm ci` and `npm run build`. In `desktop\` run `npm ci`. Back in the root run `node desktop/prepare.mjs` and `node desktop/check-bundle.mjs`, which runs a copy of the bundle outside the repository, as the installed app does. Then in `desktop\` run `npm run dist:win`. The installer is written to `desktop\dist`. The GitHub workflow also installs it and starts the app once (`--smoke-test`).
+- **Building it yourself:** in the repository root run `npm ci` and `npm run build`. In `desktop\` run `npm ci`. Back in the root run `node desktop/prepare.mjs` and `node desktop/check-bundle.mjs`, which runs a copy of the bundle outside the repository, as the installed app does. Then in `desktop\` run `npm run dist:win`. The installer is written to `desktop\dist`. The GitHub workflow also runs the ChatGPT tab against a fake ChatGPT page (`tests/integration/desktop-chatgpt.test.ts`), installs the app and starts it once (`--smoke-test`, which also checks that the ChatGPT tab reaches the dashboard).
 
 ## First run
 

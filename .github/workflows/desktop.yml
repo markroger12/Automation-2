@@ -42,6 +42,13 @@ jobs:
           # Electron itself (the check below runs the tool on it); does nothing when it is already there.
           node node_modules/electron/install.js
 
+      # The app's own ChatGPT tab (owner request: the browser inside the app) on Windows: the real tab, its agent and the
+      # extension's ChatGPT scripts against a fake ChatGPT page and the dashboard's agent handlers (no live ChatGPT).
+      - name: Test the ChatGPT tab (Electron, fake ChatGPT page)
+        run: |
+          npx vitest run tests/unit/desktop-agent.test.ts
+          npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts
+
       - name: Assemble the bundle (the tool and the packages it loads)
         run: node desktop/prepare.mjs
 

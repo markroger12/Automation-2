@@ -4,11 +4,17 @@ productName: Blog Automation Studio
 copyright: Private tool
 directories:
   output: dist
-# The window, tray and splash only; the tool itself comes in as a resource (prepare.mjs) and runs on this app's own
-# built-in Node.js, so nothing else is installed (owner request: “like Discord”).
+# The window, its tabs (dashboard, ChatGPT) and the tray only; the tool itself comes in as a resource (prepare.mjs) and
+# runs on this app's own built-in Node.js, so nothing else is installed (owner request: “like Discord”). The ChatGPT
+# tab runs the tool's own extension scripts (app/extension).
 files:
   - main.cjs
-  - splash.html
+  - shell.html
+  - shell-preload.cjs
+  - chatgpt-tab.cjs
+  - chatgpt-agent.cjs
+  - chatgpt-preload.cjs
+  - content-shim.js
   - icon.png
   - package.json
 extraResources:

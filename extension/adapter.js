@@ -403,9 +403,10 @@
       const src = img.currentSrc || img.src || '';
       if (!/^(https?:|blob:)/.test(src)) return false;
       if (userEl && (userEl.contains(img) || !(userEl.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING))) return false;
-      if (img.closest('form, nav, aside, [data-testid*="composer"]')) return false;
-      if (/avatar|favicon|logo|icon/i.test(`${img.alt || ''} ${src} ${img.className || ''}`)) return false;
+      if (img.closest('form, nav, aside, [role="dialog"], [data-testid*="composer"]')) return false;
       const r = img.getBoundingClientRect();
+      // Avatars, site icons and logos are small; a large picture is a photo even when its caption says “style icon”.
+      if ((r.width < 120 || r.height < 120) && /avatar|favicon|logo|icon/i.test(`${img.alt || ''} ${src} ${img.className || ''}`)) return false;
       if (r.width >= 60 && r.height >= 60) return true;
       // Owner report: a picture the page could not load shows as a small broken-picture icon with its alt text, while
       // its address works (“Open image in new tab”). It is still a gallery picture: the app downloads it from there.
@@ -422,16 +423,43 @@
   }
 
   /**
+   * How much of an element is really on screen: the part inside the window and inside every parent that clips it,
+   * times how opaque it is (a fading viewer stacks its pictures and shows one).
+   */
+  function shownArea(el) {
+    const r = el.getBoundingClientRect();
+    let left = Math.max(r.left, 0);
+    let top = Math.max(r.top, 0);
+    let right = Math.min(r.right, innerWidth);
+    let bottom = Math.min(r.bottom, innerHeight);
+    let opacity = 1;
+    for (let p = el; p && p !== document.documentElement; p = p.parentElement) {
+      const style = getComputedStyle(p);
+      opacity *= Number(style.opacity) || 0;
+      if (p !== el && (style.overflowX !== 'visible' || style.overflowY !== 'visible')) {
+        const q = p.getBoundingClientRect();
+        left = Math.max(left, q.left);
+        top = Math.max(top, q.top);
+        right = Math.min(right, q.right);
+        bottom = Math.min(bottom, q.bottom);
+      }
+      if (right <= left || bottom <= top || opacity < 0.1) return 0;
+    }
+    return (right - left) * (bottom - top) * opacity;
+  }
+
+  /**
    * The picture the viewer shows now: visible, loaded, the largest on screen. Owner report (3 thumbnails, “+10”): the
    * viewer keeps its other pictures in the page, hidden; taking the largest file there gave the same picture each time.
+   * Owner report (ChatGPT showed about 6 photos, 2 were used): a viewer that slides its pictures side by side keeps the
+   * others beside the window, so only the part really on screen counts.
    */
   function shownPicture(dialog) {
     let best = null;
     let bestArea = 0;
     for (const img of dialog.querySelectorAll('img')) {
       if (!img.complete || (img.naturalWidth || 0) < 200 || !isVisible(img)) continue;
-      const r = img.getBoundingClientRect();
-      const area = Math.min(r.width, innerWidth) * Math.min(r.height, innerHeight);
+      const area = shownArea(img);
       if (area > bestArea) {
         best = img;
         bestArea = area;

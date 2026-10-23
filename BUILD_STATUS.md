@@ -2698,3 +2698,52 @@ npx vitest run                      # 47 files, 342 tests pass (final head)
 BAS_TEST_MEDIAPIPE_DIR=<scratch mediapipe> npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts tests/integration/workflow-publish.test.ts   # 3 files, 26/26 (the real-MediaPipe test ran: not skipped)
 next build                          # compiled
 ```
+
+## Owner report (2026-10-23): ChatGPT showed about 6 photos, the article got 2 (extension 3.4.2)
+The Images tab listed only `upload:gallery-1` and `upload:gallery-5`, while ChatGPT's gallery showed about six photos (one a broken-picture icon, two the same winter photo, one a collage).
+
+**Cause (reproduced in the fake ChatGPT before the fix):**
+- **Viewer read wrongly.** The extension took “the largest picture in the viewer”, measured without looking at where it was.
+  - A viewer that slides its pictures side by side keeps the others just beside its window.
+  - A viewer that fades keeps them all stacked with opacity 0.
+  - In both, every picture counted as fully shown, so the first one won at every step. The loop then stopped after one large picture.
+  - Tests with the old adapter: carousel saved 1 of 6 large pictures, fade 1 of 4.
+- **Viewer without “Next”.** It gave one large picture (lightbox test: 1 of 5).
+- **Thumbnails only.** The rest of the photos were then only the small thumbnails, and the app leaves those out (smaller than 250 px). That fits the numbering: pictures 2–4 were dropped.
+- **Regenerate reused thumbnails.** “Regenerate images” reused *every* gallery picture saved before, including those small thumbnails (test: “6 photo(s) collected before”, a 240×135 thumbnail among the photos).
+
+**Fix:**
+- **Extension 3.4.2:**
+  - `shownPicture` counts only the part of each picture really on screen: inside the window and every clipping parent, times its opacity.
+  - When the viewer did not go through all its pictures (no “Next”, or a picture that stopped changing), each gallery photo is opened by itself, as a person would, and its large picture is saved.
+  - A viewer that ended by itself (“Next” turned off, or back to the first picture) is not opened again.
+  - That pass never clicks a picture that links to another site (it would open a tab), and it stops after two pictures that open no viewer.
+  - Large pictures are never left out for a caption word such as “style icon”; the avatar/logo/icon words now apply only to pictures under 120 px.
+  - Pictures inside the viewer are not counted as gallery thumbnails.
+- **Task log:** the extension reports what it saw, and the task log shows it with the answer. It reads like “Gallery: 6 picture(s) in the gallery (0 not shown by the page), 6 opened large, … saved, … reported as link(s).” (the carousel test).
+- **App:**
+  - The Images tab notes say how many pictures came in (saved by Automation Chrome / links), how many were skipped as small, and how many as near-duplicates of a larger copy. These notes come before the notes about each link.
+  - Regenerate reuses only earlier gallery photos of at least 250 px on both sides.
+
+**Tests:**
+- **Extension integration (fake ChatGPT):** new viewers `carousel` (6), `fade` (4) and `lightbox` (5). Each saves every large picture, all different, and the task log carries the report. The earlier gallery tests (4 + link opens the viewer once, “+10”, broken pictures) still pass.
+- **Integration:**
+  - The ChatGPT image-search pipeline test checks the new “4 gallery picture(s) received (3 saved by Automation Chrome, 1 link(s))” note.
+  - The regenerate test has a thumbnail in the first search, and it is not reused (5 photos, not 6).
+
+**Not verified here:**
+- The real ChatGPT viewer. Its markup was not available, so the fix covers the three viewer kinds above.
+- After the owner updates and reloads the extension (3.4.2), the next image search's task log line shows what the real page gave.
+- Two tiles of the same photo still count once, and another site's collage is still kept out of the body images by the photo check. This is unchanged and intended.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "viewer: the large picture"   # before: carousel 1/6, lightbox 1/5 (fail); after: 3/3
+old adapter.js with the new tests: carousel 1 of 6, fade 1 of 4 (fail), restored
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "Regenerate images"   # before: “6 photo(s) collected before” (fail); after: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 47 files, 342 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 17 passed, 1 skipped (real MediaPipe, no BAS_TEST_MEDIAPIPE_DIR)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 43/43
+(after the last change: the link/no-viewer guard) the 6 gallery tests of extension.test.ts   # 6/6; npx tsc --noEmit   # 0 errors
+```

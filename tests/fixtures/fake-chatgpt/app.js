@@ -189,7 +189,13 @@
       dlg && dlg.count
         ? C.galleryViewer === 'strip'
           ? `<div role="dialog" class="viewer">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" alt="Large photo ${i + 1}"${i === dlg.shown ? '' : ' style="display:none"'}>`).join('')}<button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
-          : `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+          : C.galleryViewer === 'carousel'
+            ? `<div role="dialog" class="viewer"><div style="width:800px;height:450px;overflow:hidden"><div style="display:flex;width:${dlg.count * 800}px;transform:translateX(-${dlg.shown * 800}px)">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" style="flex:none" alt="Large photo ${i + 1}">`).join('')}</div></div><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+            : C.galleryViewer === 'fade'
+              ? `<div role="dialog" class="viewer"><div style="position:relative;width:800px;height:450px">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" style="position:absolute;left:0;top:0;opacity:${i === dlg.shown ? 1 : 0}" alt="Large photo ${i + 1}">`).join('')}</div><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
+              : C.galleryViewer === 'lightbox'
+              ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Close">×</button></div>`
+              : `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
         : '';
     // staleStreaming: a page-wide “streaming” marker that stays after the picture is finished (owner report).
     const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
@@ -226,8 +232,9 @@
     }
     if (t.closest('[role="dialog"] button[aria-label="Next"]') && window.__dlg) {
       window.__dlg = { ...window.__dlg, k: Math.min(window.__dlg.count - 1, window.__dlg.k + 1) };
-      // 'strip': the picture shown changes a moment after the click (a slide), the old one stays visible meanwhile.
-      if (C.galleryViewer === 'strip') {
+      // 'strip' and 'carousel': the picture shown changes a moment after the click (a slide), the old one stays
+      // visible meanwhile.
+      if (C.galleryViewer === 'strip' || C.galleryViewer === 'carousel' || C.galleryViewer === 'fade') {
         setTimeout(() => {
           if (!window.__dlg) return;
           window.__dlg = { ...window.__dlg, shown: window.__dlg.k };

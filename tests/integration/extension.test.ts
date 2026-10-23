@@ -111,7 +111,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.1');
+    expect(ext?.version).toBe('3.4.2');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -488,6 +488,28 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const done = await responseDone(req.responseId, 150_000);
     expect(done.status).toBe('COMPLETED');
     expect(JSON.parse(done.imageLinks ?? '[]').map((l: { url: string }) => l.url)).toEqual(broken);
+    expect((await fakeStats()).sends).toBe(1);
+  }, 200_000);
+
+  // Owner report (ChatGPT showed about 6 photos, the article got 2): a viewer that slides its pictures side by side
+  // showed the first one at every step, and a viewer without “Next” gave one picture; the other photos were only the
+  // small thumbnails, which the app leaves out.
+  it.each([
+    ['carousel', 6],
+    ['fade', 4],
+    ['lightbox', 5],
+  ] as const)('owner report: a %s viewer: the large picture of every gallery photo is saved', async (viewer, count) => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryCount: count, galleryViewer: viewer };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request(`Search the web for real photos of Mira ${viewer} and show them as an image gallery.`, { expectGallery: true });
+    const done = await responseDone(req.responseId, 150_000);
+    expect(done.status).toBe('COMPLETED');
+    const large = (await client.mediaAsset.findMany({ where: { responseId: req.responseId } })).filter((a) => (a.width ?? 0) >= 1000);
+    expect(large).toHaveLength(count);
+    expect(new Set(large.map((a) => a.sha256)).size).toBe(count);
+    // The task log says what the extension saw, for the next owner report.
+    const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'Gallery:' } }, orderBy: { createdAt: 'desc' } });
+    expect(saved?.message).toContain(`${count} picture(s) in the gallery (0 not shown by the page), ${count} opened large`);
     expect((await fakeStats()).sends).toBe(1);
   }, 200_000);
 

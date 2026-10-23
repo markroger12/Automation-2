@@ -143,6 +143,7 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
         elapsedMs: body.elapsedMs,
         images: body.images,
         imageLinks: body.imageLinks,
+        galleryReport: body.galleryReport,
       });
     case 'fail':
       return failChatGPTJob({ jobId: body.jobId, tabId: body.tabId, code: body.code, message: body.message, retryAfterSec: body.retryAfterSec ?? null, uncertain: body.uncertain, diagnostics: body.diagnostics });

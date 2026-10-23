@@ -47,8 +47,11 @@ export interface FakeChatGptConfig {
   /**
    * 'strip': the viewer keeps every picture in the page, hidden except the one shown, and shows the next one a moment
    * after “Next” (owner report: only some of ChatGPT's 10 pictures were saved).
+   * 'carousel': every picture stays shown side by side on a track that slides behind a window (the ones beside it are
+   * outside it); 'fade': every picture stacked in one place, all but one faded out; 'lightbox': one picture and Close,
+   * no “Next” (owner report: ChatGPT showed 6 photos, 2 were used).
    */
-  galleryViewer?: 'single' | 'strip';
+  galleryViewer?: 'single' | 'strip' | 'carousel' | 'fade' | 'lightbox';
   /** Answers are shown in a writing block with a “Writing” label and Copy/expand buttons (owner report). */
   writingBlock?: boolean;
   /**

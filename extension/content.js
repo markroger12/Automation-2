@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.4.1';
+  const EXTENSION_VERSION = '3.4.2';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -323,11 +323,6 @@
     return res && res.ok ? { base64: res.base64, mime: res.mime || 'image/jpeg' } : null;
   }
 
-  /**
-   * Image search (as in the owner's earlier tool): open the picture gallery ChatGPT shows with its answer, step through
-   * it with “Next” like a person and save up to 10 large pictures, plus the thumbnails. Pictures this extension may not
-   * read are reported as links; the app downloads those through its own safe fetcher. Returns { images, imageLinks }.
-   */
   /** The picture the gallery viewer shows, once it differs from `previous` (up to 6 s; then whatever it shows). */
   async function viewerPicture(previous) {
     const deadline = Date.now() + 6000;
@@ -343,8 +338,37 @@
     return shown;
   }
 
+  /** Wait (up to `ms`) for the gallery viewer to open; null if it does not. */
+  async function openedViewer(ms) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const dialog = A.galleryDialog();
+      if (dialog) return dialog;
+      await sleep(200);
+    }
+    return null;
+  }
+
+  /** Close the gallery viewer and wait (up to 3 s) until it is gone. */
+  async function closeViewer() {
+    A.closeGalleryDialog();
+    const deadline = Date.now() + 3000;
+    while (A.galleryDialog() && Date.now() < deadline) await sleep(200);
+    await sleep(300);
+  }
+
+  /**
+   * Image search (as in the owner's earlier tool): open the picture gallery ChatGPT shows with its answer, step through
+   * it with “Next” like a person (or open each picture when the viewer has no “Next”) and save up to 10 large pictures,
+   * plus the thumbnails. Pictures this extension may not read are reported as links; the app downloads those through
+   * its own safe fetcher. Returns { images, imageLinks, note, report }.
+   */
   async function collectGallery(job, userEl, config) {
     const deadline = Date.now() + (config.galleryWaitSec || 90) * 1000;
+    const turn = async () => {
+      if (!userEl || !userEl.isConnected) userEl = (await A.sentPromptTurn(job.promptHash, job.prompt, { priorKeys: null, fallbackIndex: -1 })) || userEl;
+      return userEl;
+    };
     let thumbs = A.galleryThumbs(userEl);
     while (!thumbs.length && Date.now() < deadline) {
       checkCancelled();
@@ -358,10 +382,13 @@
     const seen = new Set();
     const add = (img) => {
       const src = img.currentSrc || img.src;
-      if (!src || seen.has(src) || picked.length >= 10) return;
+      if (!src || seen.has(src) || picked.length >= 10) return false;
       seen.add(src);
       picked.push({ src, width: img.naturalWidth || 0, height: img.naturalHeight || 0 });
+      return true;
     };
+    const openable = thumbs.filter((img) => !A.brokenPicture(img)).length;
+    let large = 0;
     try {
       // Open the viewer from a picture the page shows (a broken one may be a link that opens another tab).
       const opener = thumbs.find((img) => !A.brokenPicture(img));
@@ -371,21 +398,58 @@
       // One picture per step: wait until the viewer shows a different one after “Next” (it may slide), stop when it
       // shows nothing new or comes back to a picture already taken.
       let previous = null;
+      // Whether the viewer went through all its pictures: “Next” turned off at the last one, or it came back round.
+      let walked = false;
       for (let step = 0; step < 12 && picked.length < 10; step++) {
         const img = await viewerPicture(previous);
         if (!img) break;
         const src = img.currentSrc || img.src;
-        if (step > 0 && (src === previous || seen.has(src))) break;
-        add(img);
+        if (step > 0 && (src === previous || seen.has(src))) {
+          walked = src !== previous;
+          break;
+        }
+        if (add(img)) large++;
         previous = src;
         const dialog = A.galleryDialog();
         const next = dialog && A.galleryNextButton(dialog);
+        walked = Boolean(next && next.disabled);
         if (!next || next.disabled) break;
         next.click();
       }
-      A.closeGalleryDialog();
+      await closeViewer();
+      // Owner report (ChatGPT showed about 6 photos, the article got 2): a viewer without “Next”, or one whose picture
+      // stopped changing, gave fewer large pictures than the gallery has; then each picture is opened by itself, as a
+      // person would.
+      if (!walked && large < openable) {
+        // Never a picture that links to another site (it would open a new tab).
+        const opensSite = (img) => {
+          const a = img.closest('a[href]');
+          return Boolean(a && new URL(a.href, location.href).origin !== location.origin);
+        };
+        let last = null;
+        let misses = 0;
+        for (let k = 0; k < openable && picked.length < 10; k++) {
+          checkCancelled();
+          const tile = A.galleryThumbs(await turn()).filter((img) => !A.brokenPicture(img))[k];
+          if (!tile) break;
+          if (opensSite(tile)) continue;
+          progress(`opening gallery picture ${k + 1} of ${openable}`);
+          tile.click();
+          if (!(await openedViewer(3000))) {
+            if (++misses >= 2) break;
+            continue;
+          }
+          const img = await viewerPicture(last);
+          if (img) {
+            last = img.currentSrc || img.src;
+            if (add(img)) large++;
+          }
+          await closeViewer();
+        }
+      }
     } catch (e) {
       /* the thumbnails are enough */
+      if (A.galleryDialog()) A.closeGalleryDialog();
     }
     thumbs.forEach(add);
     const images = [];
@@ -408,7 +472,8 @@
       if (up && up.ok) images.push({ mediaAssetId: up.mediaAssetId });
       else if (/^https?:/i.test(p.src)) imageLinks.push({ url: p.src.slice(0, 1900), width: p.width, height: p.height });
     }
-    return { images, imageLinks: imageLinks.slice(0, 20), note: null };
+    const report = `${thumbs.length} picture(s) in the gallery (${thumbs.length - openable} not shown by the page), ${large} opened large, ${images.length} saved, ${imageLinks.length} reported as link(s).`;
+    return { images, imageLinks: imageLinks.slice(0, 20), note: null, report };
   }
 
   /** Poll (bounded) for a prompt the app recorded as sent; null if it never shows up. */
@@ -474,7 +539,7 @@
         const answer = await waitForAnswer({ job, priorKeys: null, fallbackIndex: existing.index }, config, job.expectImages);
         const gallery = job.expectGallery ? await collectGallery(job, existing.element, config) : null;
         const images = gallery ? gallery.images : job.expectImages ? await uploadImages(job, answer.images) : [];
-        post('complete', { text: answer.text, html: answer.html, images, imageLinks: gallery ? gallery.imageLinks : undefined, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
+        post('complete', { text: answer.text, html: answer.html, images, imageLinks: gallery ? gallery.imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
         return;
       }
       if (evidence) {
@@ -504,7 +569,7 @@
       const images = gallery ? gallery.images : job.expectImages && answer.images.length ? await uploadImages(job, answer.images) : [];
       const imageLinks = gallery ? gallery.imageLinks : [];
       if (!answer.text && !images.length && !imageLinks.length) throw new JobError('ERROR', 'The answer was empty.');
-      post('complete', { text: answer.text || (gallery && gallery.note) || '', html: answer.html, images, imageLinks: gallery ? imageLinks : undefined, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
+      post('complete', { text: answer.text || (gallery && gallery.note) || '', html: answer.html, images, imageLinks: gallery ? imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
     } catch (error) {
       const code = error instanceof JobError ? error.code : 'ERROR';
       const extra = error instanceof JobError ? error.extra : {};

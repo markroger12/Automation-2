@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Blog Automation Studio – ChatGPT Agent",
   "short_name": "BAS Agent",
-  "version": "3.4.4",
+  "version": "3.4.5",
   "description": "Runs article prompts from your local Blog Automation Studio in your signed-in ChatGPT tabs, and requests indexing in your Search Console. Talks only to your localhost dashboard.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "tabs", "notifications", "alarms", "pageCapture"],

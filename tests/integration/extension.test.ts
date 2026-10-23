@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.4');
+    expect(ext?.version).toBe('3.4.5');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -481,6 +481,24 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(check.error).toMatch(/not completed within 6 s/);
     expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: open.kw.id } })).indexingStatus).toMatch(/Google showed a check/);
   }, 240_000);
+
+  // Owner report: indexing worked only after the owner opened Automation Chrome. With its windows closed, Chrome can keep
+  // running in the background (Windows: “Continue running background apps”), and a tab needs a window to open in.
+  it('owner report: Automation Chrome runs with no window open: the extension opens one for the request', async () => {
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode: 'ok' }) });
+    // Every window closed; Chrome and the extension keep running.
+    await browser.sw.evaluate(async () => {
+      const c = (globalThis as unknown as { chrome: { windows: { getAll: () => Promise<{ id: number }[]>; remove: (id: number) => Promise<void> } } }).chrome;
+      for (const w of await c.windows.getAll()) await c.windows.remove(w.id);
+    });
+    const { kw, job } = await publishedForIndexing('No Window Person');
+    const done = await indexingOutcome(job.id);
+    expect(done.status).toBe('COMPLETED');
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('INDEXING_REQUESTED');
+    // Its Search Console tab is closed again (the window then holds the extension's ChatGPT tab, as usual).
+    await waitFor(async () => !browser!.context.pages().some((p) => p.url().startsWith('https://search.google.com/')), 15_000, 'Search Console tab closed', 500);
+  }, 200_000);
 
   it('owner report (404): without the “Inspect any URL” box, Google’s own inspection link (URL Inspection API) is opened instead', async () => {
     fake = { variant: 'standard', mode: 'normal' };

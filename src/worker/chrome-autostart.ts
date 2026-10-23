@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import { db } from '@/lib/db';
 import { RUNNING_STATUSES } from '@/lib/domain';
-import { getExtensionHealth } from '@/lib/health';
 import { inBackoff } from '@/lib/chatgpt/rate';
 import { getSettings } from '@/lib/settings';
 import { log } from '@/lib/log';
 import { dataPaths } from '@/lib/paths';
-import { closeAutomationChrome, isAutomationChromeRunning, launchAutomationChrome } from '@/lib/automation-chrome';
+import { SEARCH_CONSOLE_URL, closeAutomationChrome, isAutomationChromeRunning, launchAutomationChrome } from '@/lib/automation-chrome';
+import { DESKTOP_AGENT_ID, chatgptInApp } from '@/lib/agent/desktop';
 
 /**
  * Automation Chrome (the owner's ChatGPT window with the extension) follows the queue (owner request):
@@ -15,6 +15,9 @@ import { closeAutomationChrome, isAutomationChromeRunning, launchAutomationChrom
  * - the Chrome the worker opened is closed again, normally (never forced), once no queued or running article, no
  *   Humanizer run and no ChatGPT prompt is left for IDLE_CLOSE_MS. A Chrome the owner opened is never closed.
  * The PID of the Chrome it opened is kept in data/chatgpt-chrome-auto.json, so a worker restart still closes it.
+ * While the desktop app's own ChatGPT tab is connected (owner request: the browser inside the app), ChatGPT work needs
+ * no Chrome: it is opened only for Search Console, as an app window with Search Console (Google refuses sign-ins in a
+ * browser built into an app).
  */
 export const COOLDOWN_MS = 3 * 60_000;
 export const IDLE_CLOSE_MS = 2 * 60_000;
@@ -45,6 +48,8 @@ export interface Work {
    * claimed for STALLED_MS while none runs. Chrome runs without a window for it, so a window is opened as for a prompt.
    */
   stalledRequestId?: string | null;
+  /** The desktop app runs ChatGPT: Chrome is opened only for Search Console, as an app window. */
+  chatgptInApp?: boolean;
 }
 
 export interface AutostartDeps {
@@ -53,7 +58,7 @@ export interface AutostartDeps {
   work?: () => Promise<Work>;
   extensionConnected?: () => Promise<boolean>;
   chromeRunning?: () => boolean | null;
-  launch?: (opts?: { allowRunning?: boolean }) => { pid: number | null };
+  launch?: (opts?: { allowRunning?: boolean; searchConsole?: boolean }) => { pid: number | null };
   close?: (pid: number) => Promise<{ closed: boolean; detail: string }>;
   store?: { read: () => AutoChromeState | null; write: (s: AutoChromeState | null) => void };
 }
@@ -74,7 +79,7 @@ const fileStore = {
 };
 
 export async function currentWork(now = new Date()): Promise<Work> {
-  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff, indexing, indexingNow, stalledRequest] = await Promise.all([
+  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff, indexing, indexingNow, stalledRequest, inApp] = await Promise.all([
     db.articleTask.count({ where: { status: 'QUEUED', legacy: false } }),
     db.articleTask.count({ where: { status: { in: RUNNING_STATUSES }, legacy: false } }),
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: now } } }),
@@ -87,7 +92,11 @@ export async function currentWork(now = new Date()): Promise<Work> {
     db.queueJob.count({ where: { queue: 'gsc', OR: [{ status: 'WAITING', runAt: { lte: now } }, { status: 'ACTIVE' }] } }),
     db.queueJob.count({ where: { queue: 'gsc', status: 'ACTIVE' } }),
     db.queueJob.findFirst({ where: { queue: 'gsc', status: 'WAITING', runAt: { lte: new Date(now.getTime() - STALLED_MS) } }, orderBy: { runAt: 'asc' }, select: { id: true } }),
+    chatgptInApp(now),
   ]);
+  if (inApp) {
+    return { needsChrome: indexing > 0, busy: indexing > 0, waitingPrompts: 0, stalledPromptId: null, stalledRequestId: stalledRequest && !indexingNow ? stalledRequest.id : null, chatgptInApp: true };
+  }
   return {
     needsChrome: queued > 0 || waitingPrompts > 0 || indexing > 0,
     busy: queued + running + openPrompts + runs + indexing > 0,
@@ -97,7 +106,7 @@ export async function currentWork(now = new Date()): Promise<Work> {
   };
 }
 
-const defaultLaunch = (opts?: { allowRunning?: boolean }) => launchAutomationChrome(undefined, opts);
+const defaultLaunch = (opts?: { allowRunning?: boolean; searchConsole?: boolean }) => (opts?.searchConsole ? launchAutomationChrome(SEARCH_CONSOLE_URL, { allowRunning: opts.allowRunning, app: true }) : launchAutomationChrome(undefined, opts));
 
 let lastAttempt = 0;
 let windowOpenedFor: string | null = null;
@@ -142,9 +151,11 @@ export async function chromeAutostartTick(deps: AutostartDeps = {}): Promise<Aut
       return settings.open ? 'busy' : 'disabled';
     }
     const connected = await (deps.extensionConnected ?? (async () => {
-      const health = await getExtensionHealth(now);
-      return Boolean(health.lastSeenAt && now.getTime() - health.lastSeenAt.getTime() <= CONNECTED_MS);
+      // Automation Chrome's extension only (the desktop app's ChatGPT tab is an agent too, but not in Chrome).
+      const seen = await db.workerStatus.findFirst({ where: { kind: 'EXTENSION', id: { not: `extension:${DESKTOP_AGENT_ID}` }, lastSeenAt: { gte: new Date(now.getTime() - CONNECTED_MS) } }, select: { id: true } });
+      return Boolean(seen);
     }))();
+    const searchConsole = Boolean(work.chatgptInApp);
     // A prompt nobody claims although Chrome runs (owner report: Retry did not bring Chrome back): the ChatGPT
     // window is gone (closed window, Chrome left running in the background). Opening the profile again opens a
     // window in the running Chrome. Once per stuck prompt, and not within the cooldown.
@@ -154,8 +165,8 @@ export async function chromeAutostartTick(deps: AutostartDeps = {}): Promise<Aut
       lastAttempt = now.getTime();
       windowOpenedFor = stalledId;
       try {
-        (deps.launch ?? defaultLaunch)({ allowRunning: true });
-        await log({ category: 'extension', message: `${work.stalledPromptId ? 'A ChatGPT prompt' : 'A Search Console indexing request'} waited ${Math.round(STALLED_MS / 1000)} s+ without being picked up although Automation Chrome runs${connected ? ' and the extension is connected' : ''}: a ChatGPT window was opened in it.` });
+        (deps.launch ?? defaultLaunch)({ allowRunning: true, searchConsole });
+        await log({ category: 'extension', message: `${work.stalledPromptId ? 'A ChatGPT prompt' : 'A Search Console indexing request'} waited ${Math.round(STALLED_MS / 1000)} s+ without being picked up although Automation Chrome runs${connected ? ' and the extension is connected' : ''}: ${searchConsole ? 'a Search Console window' : 'a ChatGPT window'} was opened in it.` });
         return 'launched';
       } catch (error) {
         await log({ level: 'warn', category: 'extension', message: `A ChatGPT window could not be opened in Automation Chrome: ${(error as Error).message}` });
@@ -171,10 +182,10 @@ export async function chromeAutostartTick(deps: AutostartDeps = {}): Promise<Aut
     if (now.getTime() - lastAttempt < COOLDOWN_MS) return 'cooldown';
     lastAttempt = now.getTime();
     try {
-      const result = (deps.launch ?? defaultLaunch)();
+      const result = (deps.launch ?? defaultLaunch)(searchConsole ? { searchConsole } : undefined);
       store.write({ pid: result.pid, openedAt: now.toISOString(), idleSince: null });
       lastReason = null;
-      await log({ category: 'extension', message: `Automation Chrome opened automatically for queued work (${work.waitingPrompts} ChatGPT prompt(s) waiting; PID ${result.pid ?? '?'}). It closes again when the queue is done.` });
+      await log({ category: 'extension', message: searchConsole ? `Automation Chrome opened automatically for Search Console (ChatGPT runs in the desktop app; PID ${result.pid ?? '?'}). It closes again when the requests are done.` : `Automation Chrome opened automatically for queued work (${work.waitingPrompts} ChatGPT prompt(s) waiting; PID ${result.pid ?? '?'}). It closes again when the queue is done.` });
       return 'launched';
     } catch (error) {
       await log({ level: 'warn', category: 'extension', message: `Automation Chrome could not be opened automatically: ${(error as Error).message}` });

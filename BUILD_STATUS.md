@@ -2987,3 +2987,54 @@ npx vitest run                      # 49 files, 357 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 18 pass, 1 failed: "general article" stopped at the fake WordPress login (60 s timeout, before any image step)
 npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "general article: plan"   # re-run alone: pass
 ```
+
+## Owner request (2026-10-23): “the browser inside the app” — dashboard side (extension 3.4.6)
+
+The desktop app (markroger12/Automation-2#3) gets its own ChatGPT tab, in which the extension's ChatGPT scripts run. Google and Search Console stay in Automation Chrome: Google refuses sign-ins in a browser built into another app, and the app is never disguised as Chrome. This branch has the dashboard's part, which changes nothing without the desktop app.
+
+**Dashboard (`src/lib/agent/desktop.ts`, `handler.ts`):**
+- **The app's key:** the desktop app makes a key at each start and gives it to its dashboard server in `BAS_DESKTOP_AGENT_KEY` (never stored). The agent endpoints accept it as well as the connection key.
+- **Bound to its install id:**
+  - the app's key works only with install id `desktop-app`, and that id only with the app's key;
+  - so the extension can never act as the app, nor the app as the extension (403);
+  - without the env variable (npm run start:all), nobody can use the id (401).
+- **While the app's ChatGPT tab is connected** (a hello within 75 s, not paused):
+  - prompts go to it only, and the extension's claims get `reason: 'in-app'`;
+  - the extension's hello says `chatgptInApp: true`;
+  - the app is never given a Search Console request (`gsc-claim` → `not-here`);
+  - a paused hello (the owner switched ChatGPT back to Automation Chrome) ends this at once; 75 s without a hello (app closed) ends it too.
+- **Log:** the first hello writes “The desktop app's ChatGPT tab connected (scripts v…)”.
+
+**Extension 3.4.6:**
+- with `chatgptInApp` it opens no ChatGPT tab, claims nothing and polls at the idle rate. The badge is “APP”, and the popup says that ChatGPT runs in the desktop app;
+- Search Console requests run as before.
+
+**Worker (`chrome-autostart.ts`):**
+- **While the app runs ChatGPT:** queued articles and prompts no longer open Automation Chrome. A due indexing request opens it as Chrome's own **app window with Search Console** (`--app=https://search.google.com/search-console`; the real Chrome, its profile, no automation flags).
+- **When the window opens:** if Chrome is not running, or for a request stuck 90 s while Chrome runs without a window. Chrome closes again 2 minutes after the requests, as before.
+- **“Extension connected”** now counts Automation Chrome's extension only, not the app's tab.
+
+**Tests:**
+- **`agent.test.ts`, new:**
+  - the app's key with its id (200), with another id (403);
+  - the extension's key with the app's id (403), a wrong key (401);
+  - the extension told `chatgptInApp` and refused (`in-app`), the app given the prompt, `gsc-claim` → `not-here`;
+  - 75 s later or paused, the extension takes ChatGPT again;
+  - no env variable → 401.
+- **`chrome-autostart.test.ts`, new:**
+  - with the app connected, a waiting prompt needs no Chrome;
+  - a due request launches `{ searchConsole: true }`, or `{ allowRunning: true, searchConsole: true }` when it is stuck in a running Chrome;
+  - the launch command has `--app=https://search.google.com/search-console` and the Automation Chrome profile, with no remote-debugging or automation flags.
+- **`extension.test.ts`, new (real extension in Chromium):**
+  - with the app's agent connected: no chatgpt.com tab, no claim, the prompt still WAITING, and the Search Console request completes (INDEXING_REQUESTED);
+  - on 3.4.5's background the test fails (a ChatGPT tab is opened).
+
+**Not verified here:**
+- Chrome's `--app` window with the owner's Google account on Windows (the window is Chrome itself; Google's rule is about embedded browsers and automation).
+
+**Commands run**
+```
+npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts tests/unit/extension-version.test.ts   # 7 + 12 + 2 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "desktop app's own ChatGPT"   # 3.4.5 background: failed (ChatGPT tab opened); 3.4.6: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 360 tests pass

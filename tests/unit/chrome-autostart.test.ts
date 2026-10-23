@@ -175,6 +175,52 @@ describe('owner report: indexing waited until the owner opened Automation Chrome
   });
 });
 
+describe("the desktop app's own ChatGPT tab is connected (owner request: the browser inside the app)", () => {
+  it('ChatGPT work needs no Chrome; a due Search Console request opens it as a Search Console app window', async () => {
+    await client.queueJob.deleteMany({});
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.6', status: 'CONNECTED', lastSeenAt: new Date() }, update: { status: 'CONNECTED', lastSeenAt: new Date() } });
+    try {
+      await client.queueJob.create({ data: { queue: 'chatgpt', kind: 'chatgpt.prompt', idempotencyKey: 'autostart:app-1', payload: '{}', status: 'WAITING', runAt: new Date(Date.now() - 120_000) } });
+      expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: false, waitingPrompts: 0, stalledPromptId: null, stalledRequestId: null, chatgptInApp: true });
+      const gsc = await client.queueJob.create({ data: { queue: 'gsc', kind: 'gsc.request-indexing', idempotencyKey: 'autostart:app-gsc', payload: '{}', status: 'WAITING', runAt: new Date(Date.now() - 120_000) } });
+      const work = await auto.currentWork();
+      expect(work).toMatchObject({ needsChrome: true, busy: true, stalledRequestId: gsc.id, chatgptInApp: true });
+      // The app's agent is not Automation Chrome's extension: Chrome is still opened, as a Search Console window.
+      const opens: unknown[] = [];
+      const h = harness({ work: async () => work, extensionConnected: undefined, launch: (o) => (opens.push(o), { pid: 77 }) });
+      expect(await auto.chromeAutostartTick(h.deps)).toBe('launched');
+      expect(opens).toEqual([{ searchConsole: true }]);
+      expect(await client.log.count({ where: { message: { contains: 'opened automatically for Search Console (ChatGPT runs in the desktop app' } } })).toBe(1);
+      // Running without a window: a Search Console window is opened in it for the stuck request.
+      auto.resetAutostart();
+      const again: unknown[] = [];
+      const r = harness({ work: async () => work, extensionConnected: undefined, launch: (o) => (again.push(o), { pid: null }) });
+      r.setRunning(true);
+      expect(await auto.chromeAutostartTick(r.deps)).toBe('launched');
+      expect(again).toEqual([{ allowRunning: true, searchConsole: true }]);
+    } finally {
+      await client.workerStatus.delete({ where: { id: 'extension:desktop-app' } });
+      await client.queueJob.deleteMany({});
+    }
+  });
+
+  it('the Search Console window is Chrome itself, as an app window (--app), with the Automation Chrome profile', async () => {
+    const { SEARCH_CONSOLE_URL, launchAutomationChrome } = await import('@/lib/automation-chrome');
+    const before = process.env.BROWSER_EXECUTABLE_PATH;
+    // A harmless program in place of Chrome: only the command line is checked.
+    process.env.BROWSER_EXECUTABLE_PATH = process.execPath;
+    try {
+      const { command } = launchAutomationChrome(SEARCH_CONSOLE_URL, { app: true });
+      expect(command).toContain('--app=https://search.google.com/search-console');
+      expect(command).toMatch(/--user-data-dir=\S*chatgpt-chrome/);
+      expect(command).not.toMatch(/remote-debugging|enable-automation|user-agent/);
+    } finally {
+      if (before === undefined) delete process.env.BROWSER_EXECUTABLE_PATH;
+      else process.env.BROWSER_EXECUTABLE_PATH = before;
+    }
+  });
+});
+
 describe('closing the Automation Chrome', () => {
   it('asks only that browser process to close (normal shutdown signal), never another program with a reused PID', async () => {
     const { closeAutomationChrome, isAutomationChromePid } = await import('@/lib/automation-chrome');

@@ -3038,3 +3038,5 @@ npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts test
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "desktop app's own ChatGPT"   # 3.4.5 background: failed (ChatGPT tab opened); 3.4.6: pass
 npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 49 files, 360 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 48/48
+```

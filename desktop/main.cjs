@@ -1,9 +1,12 @@
 'use strict';
 /**
- * Blog Automation Studio as a desktop app (owner request: “open the .exe and the app opens; no cmd”).
+ * Blog Automation Studio as a desktop app (owner requests: “open the .exe and the app opens; no cmd”; “no Node.js or
+ * anything needed on the laptop, like Discord”; “no port system”; “light”).
  *
- * The same tool as `npm run start:all`, on its own Node.js: the dashboard in this window, the server and the worker
- * hidden in the background. Automation Chrome with the extension stays the browser for ChatGPT and Search Console
+ * The same tool as `npm run start:all`, on this app's own built-in Node.js (Electron's, nothing to install): the
+ * dashboard in this window, the server and the worker hidden in the background. The port is chosen by itself: a free
+ * one from 3000 to 3010 (the extension finds it there), or, when the tool already runs on the same data folder (e.g.
+ * `npm run start:all`), the window just shows that one. Automation Chrome with the extension stays the browser for ChatGPT and Search Console
  * (Google refuses sign-ins in embedded browsers, and the app is never disguised as Chrome). Closing the window keeps
  * the app in the tray so the workflow keeps running; Quit stops the worker safely, then the server.
  *
@@ -17,14 +20,20 @@ const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
 
-const PORT = 3000;
-const ORIGIN = `http://localhost:${PORT}`;
+const { createHash } = require('node:crypto');
+
+/** Ports the dashboard may use; the extension looks for it on the same ones. */
+const PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
+let PORT = 3000;
+let ORIGIN = `http://localhost:${PORT}`;
 const TITLE = 'Blog Automation Studio';
 const packaged = app.isPackaged;
 /** The tool itself: next to this file when run from the repository, in the app's resources once installed. */
 const appDir = packaged ? path.join(process.resourcesPath, 'app') : path.resolve(__dirname, '..');
-const nodeExe = packaged ? path.join(process.resourcesPath, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node') : process.env.BAS_NODE || 'node';
 const configFile = () => path.join(app.getPath('userData'), 'desktop.json');
+/** `--smoke-test`: start once on BAS_DESKTOP_DATA_DIR without any dialog, write the result, quit (the Windows build). */
+const smoke = process.argv.includes('--smoke-test');
+const smokeResult = (process.argv.find((a) => a.startsWith('--smoke-result=')) || '').slice('--smoke-result='.length);
 const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
 
 let win = null;
@@ -60,7 +69,7 @@ async function dataFolder() {
     title: TITLE,
     message: 'Which data should the app use?',
     detail:
-      'If you already use Blog Automation Studio with npm run start:all, choose its data folder (for example F:\\claude\\Automation-2\\data). Your websites, articles, settings and the Automation Chrome profile are used as they are. The app and npm run start:all cannot run at the same time.\n\nOr start with a new, empty data folder.',
+      'If you already use Blog Automation Studio with npm run start:all, choose its data folder (for example F:\\claude\\Automation-2\\data). Your websites, articles, settings and the Automation Chrome profile are used as they are; while npm run start:all runs, this window shows it.\n\nOr start with a new, empty data folder.',
     buttons: ['Choose my data folder…', 'Start with a new data folder', 'Quit'],
     defaultId: 0,
     cancelId: 2,
@@ -114,9 +123,11 @@ function openLog(dataDir) {
 }
 
 const recent = [];
+let workerRunning = false;
 function logLine(source, text) {
   for (const line of String(text).split(/\r?\n/)) {
     if (!line.trim()) continue;
+    if (source === 'worker' && /Worker \S+ running/.test(line)) workerRunning = true;
     const entry = `${new Date().toISOString()} [${source}] ${line}`;
     logStream?.write(`${entry}\n`);
     recent.push(`[${source}] ${line}`);
@@ -132,8 +143,9 @@ function status(text, detail = '') {
 
 // ------------------------------------------------------------------ server and worker
 
+/** The tool's processes run on this app's own Node.js (Electron as Node.js), so nothing has to be installed. */
 function spawnNode(name, args, env, ipc = false) {
-  const child = spawn(nodeExe, args, { cwd: appDir, env, windowsHide: true, stdio: ipc ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, args, { cwd: appDir, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, stdio: ipc ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (d) => logLine(name, d));
   child.stderr.on('data', (d) => logLine(name, d));
   child.on('error', (e) => logLine(name, `could not start: ${e.message}`));
@@ -148,16 +160,55 @@ function runToEnd(name, args, env) {
   });
 }
 
-/** Whether something already answers on the dashboard's port (e.g. npm run start:all is still running). */
-function portInUse() {
+/** The data folder's fingerprint, as the dashboard reports it at /api/instance (src/lib/instance.ts). */
+function dataFolderId(dir) {
+  const resolved = process.platform === 'win32' ? dir.toLowerCase() : dir;
+  return createHash('sha256').update(resolved.replace(/[\\/]+$/, '')).digest('hex').slice(0, 16);
+}
+
+/** What answers on a port: this tool's dashboard (with its data folder's fingerprint), or null. */
+function instanceAt(port) {
   return new Promise((resolve) => {
-    const socket = net.connect({ host: '127.0.0.1', port: PORT });
-    socket.once('connect', () => {
-      socket.destroy();
-      resolve(true);
+    const req = http.get({ host: '127.0.0.1', port, path: '/api/instance', headers: { host: `localhost:${port}` }, timeout: 2000 }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => (body += d));
+      res.on('end', () => {
+        try {
+          resolve(res.statusCode === 200 ? JSON.parse(body) : null);
+        } catch {
+          resolve(null);
+        }
+      });
     });
-    socket.once('error', () => resolve(false));
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
   });
+}
+
+function portFree(port) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+  });
+}
+
+/**
+ * Owner request: no “port 3000 is already in use”. When the tool already runs on this data folder (npm run
+ * start:all), the window shows it; otherwise the dashboard starts on the first free port from 3000 to 3010.
+ */
+async function choosePort(dataDir) {
+  const id = dataFolderId(dataDir);
+  for (const port of PORTS) {
+    const info = await instanceAt(port);
+    if (info && info.app === 'blog-automation-studio' && info.dataId === id) return { port, running: true };
+  }
+  for (const port of PORTS) if (await portFree(port)) return { port, running: false };
+  return null;
 }
 
 function dashboardAnswers() {
@@ -351,7 +402,7 @@ function appMenu() {
 // ------------------------------------------------------------------ start
 
 async function start() {
-  const hidden = process.argv.includes('--hidden');
+  const hidden = process.argv.includes('--hidden') || smoke;
   appMenu();
   // Only what the dashboard needs: copying text. No camera, microphone, location or notifications.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write'));
@@ -360,43 +411,66 @@ async function start() {
   const logFile = openLog(dataDir);
   buildTray(dataDir, logFile);
   await createWindow(hidden);
-  logLine('app', `Starting (data: ${dataDir}, tool: ${appDir}, node: ${nodeExe}).`);
+  logLine('app', `Starting (data: ${dataDir}, tool: ${appDir}, built-in Node.js ${process.versions.node}).`);
 
-  while (await portInUse()) {
-    const r = await dialog.showMessageBox({
-      type: 'warning',
-      title: TITLE,
-      message: `Port ${PORT} is already in use.`,
-      detail: 'Is npm run start:all still running? Close its window (Ctrl+C), then click Retry. The app and npm run start:all cannot run at the same time.',
-      buttons: ['Retry', 'Quit'],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    });
-    if (r.response === 1) return quitApp();
+  const chosen = await choosePort(dataDir);
+  if (!chosen) {
+    await fail('No free port for the dashboard.', 'Every port from 3000 to 3010 on this computer is taken by other programs. Close one of them and start the app again.');
+    return;
+  }
+  PORT = chosen.port;
+  ORIGIN = `http://localhost:${PORT}`;
+  if (chosen.running) {
+    // The tool already runs on this data folder (npm run start:all): show it instead of starting a second copy.
+    logLine('app', `Blog Automation Studio already runs on this data folder at ${ORIGIN}; the window shows it.`);
+    if (smoke) return smokeDone(true, `attached to the running dashboard at ${ORIGIN}`);
+    if (win && !win.isDestroyed()) await win.loadURL(ORIGIN);
+    return;
   }
 
-  const env = { ...process.env, ...envFileVars(dataDir), BAS_DATA_DIR: dataDir, BAS_PROJECT_ROOT: appDir, NODE_ENV: 'production', APP_ORIGIN: ORIGIN, BAS_DESKTOP: '1' };
-  delete env.ELECTRON_RUN_AS_NODE;
-  // Children find the bundled Node.js first (the migration step starts it again).
-  env.PATH = `${path.dirname(nodeExe)}${path.delimiter}${env.PATH || env.Path || ''}`;
+  const env = { ...process.env, ...envFileVars(dataDir), BAS_DATA_DIR: dataDir, BAS_PROJECT_ROOT: appDir, NODE_ENV: 'production', APP_ORIGIN: ORIGIN, BAS_DESKTOP: '1', NEXT_TELEMETRY_DISABLED: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1' };
+  delete env.NODE_OPTIONS;
 
   status('Preparing your data…', 'Migrations with a backup first, settings, the face and person detectors (once).');
   const prepared = await runToEnd('setup', ['--import', 'tsx', 'scripts/preflight.ts'], env);
   if (prepared !== 0) {
     status('Preparing failed.', recent.slice(-10).join('\n'));
-    await dialog.showMessageBox({ type: 'error', title: TITLE, message: 'The data could not be prepared.', detail: `Nothing was deleted. Last lines of the log (${logFile}):\n\n${recent.slice(-12).join('\n')}`, buttons: ['Quit'] });
-    return quitApp();
+    await fail('The data could not be prepared.', `Nothing was deleted. Last lines of the log (${logFile}):\n\n${recent.slice(-12).join('\n')}`);
+    return;
   }
   status('Starting the dashboard…');
-  keepRunning('web', () => spawnNode('web', ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], env));
+  // With a channel to this app, so the server stops by itself when the app is gone (desktop-child-guard.cjs).
+  keepRunning('web', () => spawnNode('web', ['--require', './desktop-child-guard.cjs', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], env, true));
   status('Starting the worker…');
   keepRunning('worker', () => spawnNode('worker', ['--import', 'tsx', 'src/worker/index.ts'], env, true));
   if (!(await waitForDashboard(120_000))) {
     status('The dashboard did not start.', recent.slice(-10).join('\n'));
+    if (smoke) smokeDone(false, 'the dashboard did not start');
     return;
   }
+  if (smoke) {
+    const until = Date.now() + 60_000;
+    while (Date.now() < until && !workerRunning) await new Promise((r) => setTimeout(r, 500));
+    const worker = workerRunning;
+    const info = await instanceAt(PORT);
+    const ok = worker && info && info.dataId === dataFolderId(dataDir);
+    return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}`);
+  }
   if (win && !win.isDestroyed()) await win.loadURL(ORIGIN);
+}
+
+/** A stop the owner must see; in the smoke test the result file says it instead. */
+async function fail(message, detail) {
+  if (smoke) return smokeDone(false, `${message} ${detail}`);
+  await dialog.showMessageBox({ type: 'error', title: TITLE, message, detail, buttons: ['Quit'] });
+  quitApp();
+}
+
+function smokeDone(ok, summary) {
+  logLine('app', `Smoke test ${ok ? 'passed' : 'failed'}: ${summary}`);
+  if (smokeResult) fs.writeFileSync(smokeResult, JSON.stringify({ ok, summary, port: PORT, log: recent.slice(-40) }, null, 2));
+  process.exitCode = ok ? 0 : 1;
+  quitApp();
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -414,7 +488,8 @@ if (!app.requestSingleInstanceLock()) {
     stopAll().finally(() => {
       stopped = true;
       logStream?.end();
-      app.quit();
+      if (smoke) app.exit(process.exitCode ?? 0);
+      else app.quit();
     });
   });
   app.on('web-contents-created', (_e, contents) => secureContents(contents));

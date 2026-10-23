@@ -2893,3 +2893,49 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 48 files, 348 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "moved to another local port"   # old background.js: fail (timeout); new: pass
 ```
+
+## Owner request (2026-10-23): desktop app 3.1.0 — no port errors, nothing to install, lighter
+Owner, after installing: fix “The data could not be prepared” (the desktop 3.0.1 entry above). Also:
+- “make it so the laptop needs no Node.js or anything, like Discord”;
+- “end this port system, since it runs directly in Windows” (with a screenshot of “Port 3000 is already in use”);
+- “make it light”.
+
+**What changed:**
+- **Nothing to install:**
+  - The tool now runs on Electron's built-in Node.js (24.21.0, Electron 44.7.0) instead of a separate Node.js 26.11.1 download.
+  - The whole test suite passes on that Node.js: unit 347/347, and integration 9 files, 54 passed, 1 skipped (real MediaPipe not set).
+  - Desktop runs use no npm wording, and no `.env` is written into the installation.
+- **No port system:**
+  - **Already running:** when the tool already runs on the same data folder (`/api/instance` fingerprint), the window shows that dashboard.
+  - **Free port:** otherwise the dashboard starts on the first free port from 3000 to 3010, and the extension (3.4.3) finds it there.
+  - **No stray copies:**
+    - the dashboard server gets a channel to the app plus `desktop-child-guard.cjs`, and the worker already had one;
+    - both stop by themselves when the app is gone, even after a crash, so no stray copy keeps a port.
+  - The “Port 3000 is already in use” dialog is gone. The only case left is “no free port from 3000 to 3010”.
+- **Lighter:**
+  - **Packages:** `prepare.mjs` takes only what the tool loads at run time. That is the imports of the worker and start-up steps (found with esbuild), the packages the built server requires, plus Next.js, React, the Prisma CLI and tsx, with their dependencies.
+  - **Left out:** the icons (compiled into the pages), TypeScript (an optional peer) and Next.js's compiler.
+  - **Next.js settings:** they ship as `next.config.mjs`. Before this, without its compiler, `next start` tried to install packages by itself; `check-bundle.mjs` now fails if anything is installed while the app runs.
+  - **Other trims:** source maps, Electron locales other than English, and maximum installer compression.
+  - **Sizes on Linux:**
+    - the bundle: 520 MB (before: `node_modules` alone 707 MB, plus Node.js);
+    - the packaged app: 793 MB (before: 1.2 GB).
+- **Installer:** one click like Discord, for this Windows user only, and it starts the app.
+- **Windows workflow:**
+  - `check-bundle.mjs` runs on Electron's Node.js;
+  - then the installer is installed silently;
+  - then the app is started once with `--smoke-test` on a new data folder. It must report “dashboard answers; worker running; data folder matches”.
+
+**Tests (Linux, the packaged app outside the repository, Xvfb):**
+1. **New data folder:** passed on port 3000. Quitting stopped the worker safely (“Worker stopped (desktop app)”), and no process was left.
+2. **Same data folder already running:** the tool's dashboard ran on 3000 with the same data folder, and the app showed it without starting a second copy.
+3. **Port 3000 held by another data folder's dashboard:** the app started its own on 3001 and passed.
+4. **Crash:**
+   - `kill -9` of the app's main process: its server and worker were gone within 6 s.
+   - The next start on that data folder passed (worker running).
+5. **Extension (3.4.3):** finds a dashboard moved to another port (the shared entry above).
+
+**Not verified here:**
+- The installer on the owner's Windows PC.
+- That the one-click installer replaces the earlier install in `C:\New folder\Blog Automation Studio`. If that copy stays, it can be removed in Windows Settings → Apps; the data folder is never deleted.
+- The Windows smoke step's first run is the check of the installed app on Windows.

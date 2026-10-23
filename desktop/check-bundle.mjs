@@ -4,8 +4,9 @@
 //
 // A copy of desktop/bundle goes to a new temporary folder outside the repository, so every package must come from the
 // bundle. There it runs the start-up steps on a new data folder (migrations, settings), then the dashboard server and
-// the worker, with the bundle's own Node.js. Exit 0 when the dashboard answers and the worker runs; otherwise the
-// logs and exit 1. The temporary folder is removed afterwards.
+// the worker, on the app's built-in Node.js (Electron's, from desktop/node_modules: run `npm ci` in desktop/ first),
+// started as main.cjs starts them. Exit 0 when the dashboard answers and the worker runs; otherwise the logs and
+// exit 1. The temporary folder is removed afterwards.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -27,15 +28,22 @@ if (!inRepo.startsWith('..') && !path.isAbsolute(inRepo)) {
 }
 const bundle = path.join(where, 'bundle');
 fs.cpSync(source, bundle, { recursive: true, verbatimSymlinks: true });
-const node = path.join(bundle, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node');
+const node = path.join(import.meta.dirname, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
+if (!fs.existsSync(node)) {
+  console.error(`${node} is missing: run npm ci in desktop/ first.`);
+  process.exit(1);
+}
 const app = path.join(bundle, 'app');
 const port = 3123;
-const env = { ...process.env, BAS_DATA_DIR: path.join(where, 'data'), BAS_PROJECT_ROOT: app, NODE_ENV: 'production', BAS_DESKTOP: '1', APP_ORIGIN: `http://localhost:${port}` };
+const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1', NEXT_TELEMETRY_DISABLED: '1', BAS_DATA_DIR: path.join(where, 'data'), BAS_PROJECT_ROOT: app, NODE_ENV: 'production', BAS_DESKTOP: '1', APP_ORIGIN: `http://localhost:${port}` };
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;
-env.PATH = `${path.dirname(node)}${path.delimiter}${env.PATH || env.Path || ''}`;
 
 const logs = { setup: '', web: '', worker: '' };
+// The app must never install anything by itself (Next.js tried to, once, when its compiler was missing).
+// Caches (e.g. node_modules/.cache/jiti, written by the Prisma CLI's config loader) do not count.
+const packageNames = () => new Set(fs.readdirSync(path.join(app, 'node_modules')).filter((n) => !n.startsWith('.')));
+const packagesBefore = packageNames();
 const children = [];
 let failed = null;
 
@@ -61,7 +69,7 @@ if (setup.status !== 0) {
 } else {
   console.log('  ✓ migrations and settings');
   const start = (name, args) => {
-    const child = spawn(node, args, { cwd: app, env, windowsHide: true });
+    const child = spawn(node, args, { cwd: app, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     child.stdout.on('data', (d) => (logs[name] += d));
     child.stderr.on('data', (d) => (logs[name] += d));
     child.on('exit', (code) => {
@@ -69,7 +77,7 @@ if (setup.status !== 0) {
     });
     children.push(child);
   };
-  start('web', ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(port)]);
+  start('web', ['--require', './desktop-child-guard.cjs', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(port)]);
   start('worker', ['--import', 'tsx', 'src/worker/index.ts']);
   const answers = () =>
     new Promise((resolve) => {
@@ -90,8 +98,10 @@ if (setup.status !== 0) {
     if (status === 200 && /Worker \S+ running/.test(logs.worker)) break;
     await new Promise((r) => setTimeout(r, 1000));
   }
+  const installed = [...packageNames()].filter((n) => !packagesBefore.has(n));
+  if (installed.length) failed = `installed while the app ran: ${installed.join(', ')}`;
   if (status === 200 && /Worker \S+ running/.test(logs.worker) && !failed) {
-    console.log('  ✓ the dashboard answers (HTTP 200) and the worker runs');
+    console.log('  ✓ the dashboard answers (HTTP 200) and the worker runs; nothing was installed');
     finish(0);
   } else {
     console.log(`✖ ${failed ?? `dashboard HTTP ${status}, worker ${/Worker \S+ running/.test(logs.worker) ? 'running' : 'not running'}`}`);

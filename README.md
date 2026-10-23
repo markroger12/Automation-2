@@ -48,14 +48,15 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 
 ## Desktop app (Windows installer, optional)
 
-The same tool as one Windows program, so no command window is needed. The Node.js way above keeps working; use one or the other, not both at once (both use port 3000 and the same worker lock).
+The same tool as one Windows program, like Discord: no command window, and nothing else to install (no Node.js, no npm). The Node.js way above keeps working. While `npm run start:all` runs on the same data folder, the app's window just shows it.
 
-- **Install:** download **Blog-Automation-Studio-Setup-….exe**. It is built by GitHub Actions (“Desktop app (Windows installer)” → the latest run → *Artifacts*). Run it: it installs for your Windows user only, without an administrator, and adds a desktop and a Start-menu shortcut. The installer is not code-signed, so Windows SmartScreen may say “unknown publisher”: *More info* → *Run anyway*.
+- **Install:** download **Blog-Automation-Studio-Setup-….exe**. It is built by GitHub Actions (“Desktop app (Windows installer)” → the latest run → *Artifacts*). Run it: it installs with one click for your Windows user only (no administrator), adds a desktop and a Start-menu shortcut, and starts the app. The installer is not code-signed, so Windows SmartScreen may say “unknown publisher”: *More info* → *Run anyway*.
 - **First start:** the app asks for the **data folder**.
   - **Choose my data folder…** uses the one `npm run start:all` uses (for example `F:\claude\Automation-2\data`), with the same websites, articles, settings and Automation Chrome profile.
   - **Start with a new data folder** creates an empty one in the app's own folder.
   - A `.env` next to that data folder (e.g. with `SERPER_API_KEY`) is read too.
-- **Daily use:** the window shows the dashboard. The server and the worker run hidden with their own Node.js. Automation Chrome and the extension work as before: the extension stays in Automation Chrome, and its server address stays `http://localhost:3000`.
+- **Daily use:** the window shows the dashboard. The server and the worker run hidden, on the app's own built-in Node.js. Automation Chrome and the extension work as before.
+- **No port to manage:** the dashboard starts on the first free port from 3000 to 3010, and the extension (3.4.3) finds it there by itself. When the tool already runs on the same data folder (e.g. `npm run start:all`), the window shows that one instead of starting a second copy. If the app is closed in any way, even by a crash, its server and worker stop too.
 - **Closing the window** keeps the app in the tray (by the clock), so the workflow keeps running. The tray menu has:
   - *Open*, *Automation Chrome*;
   - *Open the data folder*, *Open the log*;
@@ -64,8 +65,8 @@ The same tool as one Windows program, so no command window is needed. The Node.j
   - *Use another data folder…*;
   - **Quit**, which stops the worker safely, then the server.
 - **Updating:** run the newer installer; your data folder is never touched. Uninstalling never deletes it either.
-- **What is inside:** the built dashboard, the worker, the migrations and settings steps (run at every start, with a backup first), Node.js 26.11.1 for Windows (checked against nodejs.org's SHA-256 list), and Electron 44.7.0 for the window.
-- **Building it yourself:** in the repository root run `npm ci` and `npm run build`, then `node desktop/prepare.mjs`. Then in `desktop\` run `npm ci` and `npm run dist:win`. The installer is written to `desktop\dist`.
+- **What is inside:** the built dashboard, the worker, the migrations and settings steps (run at every start, with a backup first), and only the packages those load. Electron 44.7.0 provides the window and, with its built-in Node.js 24.21, runs the tool; the whole test suite passes on that Node.js too. The window's texts are English only.
+- **Building it yourself:** in the repository root run `npm ci` and `npm run build`. In `desktop\` run `npm ci`. Back in the root run `node desktop/prepare.mjs` and `node desktop/check-bundle.mjs`, which runs a copy of the bundle outside the repository, as the installed app does. Then in `desktop\` run `npm run dist:win`. The installer is written to `desktop\dist`. The GitHub workflow also installs it and starts the app once (`--smoke-test`).
 
 ## First run
 

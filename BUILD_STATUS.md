@@ -2746,4 +2746,6 @@ npx vitest run                      # 47 files, 342 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 17 passed, 1 skipped (real MediaPipe, no BAS_TEST_MEDIAPIPE_DIR)
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 43/43
 (after the last change: the link/no-viewer guard) the 6 gallery tests of extension.test.ts   # 6/6; npx tsc --noEmit   # 0 errors
+next build                          # compiled (final head)
 ```
+Merged into `claude/desktop-app` as well (typecheck 0 errors there), so the Windows installer carries it.

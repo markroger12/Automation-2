@@ -307,6 +307,7 @@ export async function completeChatGPTJob(
     elapsedMs?: number;
     images?: { mediaAssetId: string }[];
     imageLinks?: { url: string; width?: number; height?: number }[];
+    galleryReport?: string;
   },
   client: Tx = db,
 ): Promise<{ ok: boolean; error?: string }> {
@@ -351,7 +352,7 @@ export async function completeChatGPTJob(
   }
   if (job.taskId) {
     if (conversationUrl && !payload.sideChat) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl } });
-    await log({ category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `ChatGPT answer saved (${text.length} chars${input.recovered ? ', recovered after interruption' : ''}).` }, client);
+    await log({ category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `ChatGPT answer saved (${text.length} chars${input.recovered ? ', recovered after interruption' : ''}).${input.galleryReport ? ` Gallery: ${input.galleryReport.slice(0, 400)}` : ''}` }, client);
   }
   await wakeOwner(job, payload, client);
   const backlog = await client.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING' } });

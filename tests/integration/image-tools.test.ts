@@ -157,7 +157,8 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
   });
 
   it('owner report: after “Regenerate images” the photos collected before are used again (before: only the new search, and no body images)', async () => {
-    const first = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000), await plain(190, 150, 30, 1600, 1000), await plain(120, 40, 160, 1600, 1000)];
+    // The search also saved a small thumbnail (left out as smaller than 250 px).
+    const first = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000), await plain(190, 150, 30, 1600, 1000), await plain(120, 40, 160, 1600, 1000), await plain(20, 20, 20, 240, 135)];
     let pictures = first;
     let searches = 0;
     const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
@@ -182,6 +183,8 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
     expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
     expect(searches).toBe(1); // enough photos were collected before: no new search
     expect(data.notes.join(' | ')).toMatch(/5 photo\(s\) collected before for this article are used again/);
+    // The thumbnail the first search left out stays out.
+    expect(data.gallery).toHaveLength(5);
     // A photo the owner removed is not used again.
     const rejected = data.gallery[0].id;
     await client.mediaAsset.update({ where: { id: rejected }, data: { status: 'REJECTED' } });

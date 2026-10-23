@@ -70,6 +70,8 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
       .array(z.object({ url: z.string().max(2000).regex(/^https?:\/\//), width: z.number().int().min(0).max(50_000).optional(), height: z.number().int().min(0).max(50_000).optional() }))
       .max(20)
       .optional(),
+    /** What the extension saw in the gallery (how many pictures, opened large, saved, links), for the task log. */
+    galleryReport: z.string().max(500).optional(),
   }),
   z.object({
     action: z.literal('fail'),

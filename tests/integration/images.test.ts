@@ -347,7 +347,8 @@ describe('Image Studio (IMAGES stage)', () => {
       const notes = data.notes.join(' | ');
       expect(notes).toMatch(/ChatGPT image search: 3 usable photo\(s\)/);
       expect(notes).toMatch(/1 gallery picture\(s\) downloaded from their links/);
-      expect(notes).toMatch(/smaller than 250 px/);
+      expect(notes).toMatch(/4 gallery picture\(s\) received \(3 saved by Automation Chrome, 1 link\(s\)\)/);
+      expect(notes).toMatch(/1 gallery picture\(s\) smaller than 250 px were skipped/);
       expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
       const sources = data.slots.flatMap((s: { sourceAssetIds: string[] }) => s.sourceAssetIds);
       expect(new Set(sources).size).toBe(sources.length);

@@ -12,7 +12,7 @@ import { outputSize, renderCleanImage, renderTemplate, type PhotoFocus } from '@
 import { normalizeAltText, type AltSlot } from '@/images/alt-text';
 import { hammingDistance, storeRendered } from '@/images/store';
 import { collectCommonsGallery } from '@/images/sources/wikimedia';
-import { collectChatGPTGallery } from '@/images/sources/chatgpt-gallery';
+import { collectChatGPTGallery, GALLERY_MIN_SIDE } from '@/images/sources/chatgpt-gallery';
 import { loadTemplateAssets } from '@/images/site-templates';
 import { detectSubjects, faceToolAvailable, headsOfPeople, mainFaceArea, mainFaces } from '@/images/faces';
 import { enhancePhoto } from '@/images/upscale';
@@ -439,7 +439,8 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     // collected for this article before are used again, unless removed on the Images tab; a new search only when they
     // are not enough.
     if (!state.emptySearches) {
-      const earlier = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' }, take: 10 });
+      // Not the small thumbnails the gallery also saved (the search left them out too).
+      const earlier = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' }, width: { gte: GALLERY_MIN_SIDE }, height: { gte: GALLERY_MIN_SIDE } }, orderBy: { createdAt: 'asc' }, take: 10 });
       if (earlier.length) {
         ids.push(...earlier.map((e) => e.id));
         galleryNotes.push(`${earlier.length} photo(s) collected before for this article are used again (“Don't use” on the Images tab leaves one out).`);

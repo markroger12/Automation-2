@@ -2935,7 +2935,16 @@ Owner, after installing: fix “The data could not be prepared” (the desktop 3
    - The next start on that data folder passed (worker running).
 5. **Extension (3.4.3):** finds a dashboard moved to another port (the shared entry above).
 
+**Windows ([run 39942387564](https://github.com/markroger12/Automation-2/actions/runs/39942387564), windows-latest):**
+- **Bundle check:** on Electron's Node.js, outside the repository: migrations ✓, dashboard HTTP 200, worker running, nothing installed.
+- **Installer:** `Blog-Automation-Studio-Setup-3.1.0.exe` is 220 MB (the artifact zip 230 MB; before: 322 MB). It installed silently to `%LOCALAPPDATA%\Programs\blog-automation-studio-desktop`, which takes 782 MB.
+- **First start of the installed app (`--smoke-test`, new data folder):**
+  - migrations and settings ran, and the face and person detectors were downloaded;
+  - the dashboard came up on port 3000;
+  - the worker started on “Node 24.21.0”;
+  - result: “dashboard http://localhost:3000 answers; worker running; data folder matches”;
+  - Quit stopped the worker safely (“Worker stopped (desktop app)”).
+
 **Not verified here:**
 - The installer on the owner's Windows PC.
 - That the one-click installer replaces the earlier install in `C:\New folder\Blog Automation Studio`. If that copy stays, it can be removed in Windows Settings → Apps; the data folder is never deleted.
-- The Windows smoke step's first run is the check of the installed app on Windows.

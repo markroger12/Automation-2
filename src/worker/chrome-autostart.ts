@@ -40,6 +40,11 @@ export interface Work {
    * Chrome is running without a ChatGPT window (closed window, background Chrome), so a window is opened for it.
    */
   stalledPromptId?: string | null;
+  /**
+   * Owner report (indexing waited until the owner opened Automation Chrome): oldest due Search Console request nobody
+   * claimed for STALLED_MS while none runs. Chrome runs without a window for it, so a window is opened as for a prompt.
+   */
+  stalledRequestId?: string | null;
 }
 
 export interface AutostartDeps {
@@ -69,7 +74,7 @@ const fileStore = {
 };
 
 export async function currentWork(now = new Date()): Promise<Work> {
-  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff, indexing] = await Promise.all([
+  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff, indexing, indexingNow, stalledRequest] = await Promise.all([
     db.articleTask.count({ where: { status: 'QUEUED', legacy: false } }),
     db.articleTask.count({ where: { status: { in: RUNNING_STATUSES }, legacy: false } }),
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: now } } }),
@@ -80,12 +85,15 @@ export async function currentWork(now = new Date()): Promise<Work> {
     inBackoff(db, now),
     // Search Console “Request indexing” is made in Automation Chrome too (owner request).
     db.queueJob.count({ where: { queue: 'gsc', OR: [{ status: 'WAITING', runAt: { lte: now } }, { status: 'ACTIVE' }] } }),
+    db.queueJob.count({ where: { queue: 'gsc', status: 'ACTIVE' } }),
+    db.queueJob.findFirst({ where: { queue: 'gsc', status: 'WAITING', runAt: { lte: new Date(now.getTime() - STALLED_MS) } }, orderBy: { runAt: 'asc' }, select: { id: true } }),
   ]);
   return {
     needsChrome: queued > 0 || waitingPrompts > 0 || indexing > 0,
     busy: queued + running + openPrompts + runs + indexing > 0,
     waitingPrompts,
     stalledPromptId: stalled && !claimed && !backoff ? stalled.id : null,
+    stalledRequestId: stalledRequest && !indexingNow ? stalledRequest.id : null,
   };
 }
 
@@ -140,13 +148,14 @@ export async function chromeAutostartTick(deps: AutostartDeps = {}): Promise<Aut
     // A prompt nobody claims although Chrome runs (owner report: Retry did not bring Chrome back): the ChatGPT
     // window is gone (closed window, Chrome left running in the background). Opening the profile again opens a
     // window in the running Chrome. Once per stuck prompt, and not within the cooldown.
-    if (work.stalledPromptId && running !== false && windowOpenedFor !== work.stalledPromptId) {
+    const stalledId = work.stalledPromptId ?? work.stalledRequestId ?? null;
+    if (stalledId && running !== false && windowOpenedFor !== stalledId) {
       if (now.getTime() - lastAttempt < COOLDOWN_MS) return 'cooldown';
       lastAttempt = now.getTime();
-      windowOpenedFor = work.stalledPromptId;
+      windowOpenedFor = stalledId;
       try {
         (deps.launch ?? defaultLaunch)({ allowRunning: true });
-        await log({ category: 'extension', message: `A ChatGPT prompt waited ${Math.round(STALLED_MS / 1000)} s+ without being picked up although Automation Chrome runs${connected ? ' and the extension is connected' : ''}: a ChatGPT window was opened in it.` });
+        await log({ category: 'extension', message: `${work.stalledPromptId ? 'A ChatGPT prompt' : 'A Search Console indexing request'} waited ${Math.round(STALLED_MS / 1000)} s+ without being picked up although Automation Chrome runs${connected ? ' and the extension is connected' : ''}: a ChatGPT window was opened in it.` });
         return 'launched';
       } catch (error) {
         await log({ level: 'warn', category: 'extension', message: `A ChatGPT window could not be opened in Automation Chrome: ${(error as Error).message}` });

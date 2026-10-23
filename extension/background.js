@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.4.4';
+const EXTENSION_VERSION = '3.4.5';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -245,8 +245,11 @@ async function runGscJob() {
     const res = await api('gsc-claim', {});
     const job = res && res.job;
     if (!job) return;
-    // A blank tab first, then the page (the tab exists before its first request).
-    const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
+    // A blank tab first, then the page (the tab exists before its first request). Owner report: indexing waited until
+    // the owner opened Automation Chrome. With its windows closed Chrome can keep running in the background, and a tab
+    // needs a window: then one is opened for the request (unfocused) and goes away with its tab.
+    const windows = await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => []);
+    const tab = windows.length ? await chrome.tabs.create({ url: 'about:blank', active: false }) : (await chrome.windows.create({ url: 'about:blank', focused: false })).tabs[0];
     tabId = tab.id;
     await chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
     await new Promise((r) => setTimeout(r, 500));

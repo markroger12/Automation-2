@@ -2877,3 +2877,41 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 48 files, 348 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 46/46
 ```
+
+## Owner report (2026-10-23): indexing works, but only after the owner opens Automation Chrome (extension 3.4.5)
+“Indexing happens, but I have to open Automation Chrome myself; make it open Chrome for indexing if it is closed.”
+
+**What was already there:** the worker opens Automation Chrome when an indexing request is due and Chrome is not running (`currentWork` counts due and running Search Console requests).
+
+**What was missing, the closed-windows case:**
+- With all its windows closed, Chrome can keep running in the background (Windows: “Continue running background apps when Google Chrome is closed”).
+- The worker then saw “already running” and opened nothing.
+- The extension, still connected, claimed the request, but `chrome.tabs.create` needs a window, so the request never started.
+- For ChatGPT prompts, the worker already opened a window in such a Chrome (“stalled prompt”). For indexing requests it did not.
+- **Reproduced first:**
+  - **extension:** the real extension in Chromium with every window closed; the request never finished (“Timed out waiting for indexing outcome”);
+  - **worker (unit):** the old `chrome-autostart.ts` failed the new tests.
+
+**Fix:**
+- **Extension 3.4.5:** when Chrome has no normal window, the Search Console tab is opened in a new, unfocused window. The Search Console tab is closed after the request, as before.
+- **Worker:** a due indexing request nobody picks up for 90 s, while none is being made, is “stuck” like a prompt. A window is opened in the running Chrome, once per request, with the same cooldown and a line in Logs (“A Search Console indexing request waited 90 s+ … a ChatGPT window was opened in it”). A request waiting behind one being made does not count.
+- **README:** says the worker opens Chrome for due indexing requests too, and that Logs says why when it did not.
+
+**Tests:**
+- **Integration:** Automation Chrome running with no window open → the request completes (INDEXING_REQUESTED) and its tab is closed.
+- **Unit:**
+  - with the real database: a due request waiting 2 minutes is stuck; with another request running, it is not;
+  - the tick with Chrome running: a window is opened once for that request, and the log line is written.
+
+**Not verified here:**
+- The owner's Windows Chrome in background mode.
+- If Chrome still does not open, check Settings → Browser (“open Automation Chrome by itself”) and Logs: the reason is written there once.
+
+**Commands run**
+```
+npx vitest run tests/unit/chrome-autostart.test.ts   # old chrome-autostart.ts: 3 failed; new: 10/10
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "no window open"   # 3.4.4: timed out; 3.4.5: pass
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 48 files, 350 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 47/47
+```

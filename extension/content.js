@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.4.4';
+  const EXTENSION_VERSION = '3.4.5';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

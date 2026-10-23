@@ -10,6 +10,13 @@ export interface FakeSearchConsoleConfig {
   liveTestMs?: number;
   /** The “Inspect any URL in …” box at the top of Search Console (default: shown). */
   searchBox?: boolean;
+  /**
+   * Google's reCAPTCHA on the page. 'invisible': loaded but never shown (as on Google's own pages; owner report:
+   * “Google showed a check” though none was on screen). 'challenge': an “I'm not a robot” challenge is shown after
+   * REQUEST INDEXING until the owner completes it (`challengeMs`; never when absent), then the live test goes on.
+   */
+  recaptcha?: 'invisible' | 'challenge';
+  challengeMs?: number;
 }
 
 /** An inspection link as Google's URL Inspection API gives it: the `id` is Google's token, not the URL. */
@@ -29,6 +36,8 @@ export async function installFakeSearchConsole(context: BrowserContext, getConfi
   let clicks = 0;
   const opened: string[] = [];
   const typed: string[] = [];
+  // reCAPTCHA's frames (empty here; the page decides whether they are shown).
+  await context.route('https://www.google.com/recaptcha/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>reCAPTCHA</title>' }));
   await context.route('https://accounts.google.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Sign in – Google Accounts</title><h1>Sign in</h1><p>to continue to Search Console</p>' }));
   await context.route('https://search.google.com/**', async (route) => {
     const url = new URL(route.request().url());
@@ -55,6 +64,18 @@ export async function installFakeSearchConsole(context: BrowserContext, getConfi
       const PROPERTY = ${JSON.stringify(property)};
       const DIRECT = ${JSON.stringify(direct)};
       const app = document.getElementById('app');
+      // As Google loads it: an invisible reCAPTCHA (its badge hidden) and its challenge frame kept off screen.
+      if (C.recaptcha) {
+        document.body.insertAdjacentHTML('beforeend', '<div class="grecaptcha-badge" style="width:256px;height:60px;position:fixed;bottom:14px;right:-186px;visibility:hidden"><iframe title="reCAPTCHA" src="https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=fake&size=invisible" width="256" height="60"></iframe></div>'
+          + '<div id="rc-challenge" style="visibility:hidden;position:absolute;left:0;top:-10000px;z-index:2000000000"><iframe title="recaptcha challenge expires in two minutes" src="https://www.google.com/recaptcha/enterprise/bframe?k=fake" width="400" height="580"></iframe></div>');
+      }
+      function challenge(then) {
+        if (C.recaptcha !== 'challenge') return then();
+        const box = document.getElementById('rc-challenge');
+        box.style.visibility = 'visible';
+        box.style.top = '40px';
+        if (C.challengeMs !== undefined) setTimeout(() => { box.style.visibility = 'hidden'; box.style.top = '-10000px'; then(); }, C.challengeMs);
+      }
       if (C.mode === 'signed-out') location.replace('https://accounts.google.com/ServiceLogin?service=sitemaps&continue=' + encodeURIComponent(location.href));
       if (C.mode === 'signed-out-about') location.replace('https://search.google.com/search-console/about');
       function inspection(inspected) {
@@ -64,12 +85,12 @@ export async function installFakeSearchConsole(context: BrowserContext, getConfi
         document.getElementById('req').addEventListener('click', () => {
           fetch('/__fake/click', { method: 'POST' });
           app.insertAdjacentHTML('beforeend', '<div role="dialog" id="live"><p>Testing if live URL can be indexed</p></div>');
-          setTimeout(() => {
+          challenge(() => setTimeout(() => {
             document.getElementById('live').remove();
             app.insertAdjacentHTML('beforeend', C.mode === 'quota'
               ? '<div role="dialog"><h2>Quota exceeded</h2><p>Sorry--we couldn\\'t process this request because you\\'ve exceeded your daily quota. Please try submitting this again tomorrow.</p></div>'
               : '<div role="dialog"><h2>Indexing requested</h2><p>URL was added to a priority crawl queue. Submitting a page multiple times will not change its queue position or priority.</p><div role="button">Dismiss</div></div>');
-          }, C.liveTestMs);
+          }, C.liveTestMs));
         });
       }
       setTimeout(() => {

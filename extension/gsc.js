@@ -42,9 +42,38 @@
     return pick.closest('[role="button"], button, a') || pick;
   }
 
+  /**
+   * A check Google really shows: a reCAPTCHA box or challenge on screen, or Google's “unusual traffic” page. Owner
+   * report (Michael Consuelos: “Google showed a check” though none was on screen, the tab closed after a minute):
+   * Google's pages load an invisible reCAPTCHA, kept hidden or off screen; that is not a check.
+   */
   function captcha() {
-    return Boolean(document.querySelector('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], #captcha-form'));
+    if (document.querySelector('#captcha-form')) return true;
+    return Array.from(document.querySelectorAll('iframe[src*="recaptcha"], iframe[title*="recaptcha" i]')).some((f) => {
+      if (/[?&]size=invisible\b/.test(f.getAttribute('src') || '') || !visible(f)) return false;
+      const r = f.getBoundingClientRect();
+      return r.width >= 60 && r.height >= 60 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+    });
   }
+
+  const duration = (ms) => (ms < 120_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`);
+
+  /**
+   * Google shows a check: the owner completes it (never this extension). The tab comes to the front with a
+   * notification, and the request goes on once the check is gone, or as soon as Google's answer is there (`done`);
+   * false when the check is still there after the pause.
+   */
+  async function ownerCompletes(job, done) {
+    chrome.runtime.sendMessage({ type: 'gsc-check', jobId: job.jobId }).catch(() => {});
+    const until = Date.now() + job.humanWaitMs;
+    while (Date.now() < until) {
+      await sleep(1000);
+      if (!captcha() || done()) return true;
+    }
+    return false;
+  }
+
+  const notCompleted = (job, when) => ({ outcome: 'HUMAN_CHECK', message: `Google showed a check (“I'm not a robot”) ${when}; it was not completed within ${duration(job.humanWaitMs)}.` });
 
   /** The sentence of the result dialog that matched, for the record. */
   function said(re) {
@@ -105,7 +134,11 @@
     let typed = false;
     let loadUntil = Date.now() + 45_000;
     while (Date.now() < loadUntil) {
-      if (captcha()) return { outcome: 'HUMAN_CHECK', message: 'Google showed a check on the Search Console page.' };
+      if (captcha()) {
+        const started = Date.now();
+        if (!(await ownerCompletes(job, () => RE.loaded.test(text()) && Boolean(requestButton())))) return notCompleted(job, 'on the Search Console page');
+        loadUntil += Date.now() - started;
+      }
       if (RE.noAccess.test(text())) return { outcome: 'NO_ACCESS', message: said(RE.noAccess) };
       if (RE.notInProperty.test(text())) return { outcome: 'NO_ACCESS', message: said(RE.notInProperty) };
       if (RE.loaded.test(text()) && requestButton()) break;
@@ -130,13 +163,18 @@
     // 2. Request indexing, as the owner clicks it; Google first tests the live URL (about a minute or two).
     button.scrollIntoView({ block: 'center' });
     button.click();
-    const until = Date.now() + 4 * 60_000;
+    let until = Date.now() + 4 * 60_000;
     while (Date.now() < until) {
       await sleep(1000);
       const t = text();
       if (RE.requested.test(t)) return { outcome: 'REQUESTED', message: said(RE.requested) };
       if (RE.quota.test(t)) return { outcome: 'QUOTA', message: said(RE.quota) };
-      if (captcha()) return { outcome: 'HUMAN_CHECK', message: 'Google showed a check after “Request indexing”.' };
+      if (captcha()) {
+        const started = Date.now();
+        if (!(await ownerCompletes(job, () => RE.requested.test(text()) || RE.quota.test(text())))) return notCompleted(job, 'after “Request indexing”');
+        until += Date.now() - started;
+        continue;
+      }
       if (RE.failed.test(t) && !RE.testing.test(t)) return { outcome: 'ERROR', message: said(RE.failed) };
     }
     return { outcome: 'ERROR', message: 'No answer from Search Console within 4 minutes after “Request indexing”.' };
@@ -151,7 +189,7 @@
     }
     running = true;
     sendResponse({ ok: true });
-    run({ jobId: msg.jobId, typeUrl: msg.typeUrl || null, altUrl: msg.altUrl || null, attempt: Number(msg.attempt) || 1 })
+    run({ jobId: msg.jobId, typeUrl: msg.typeUrl || null, altUrl: msg.altUrl || null, attempt: Number(msg.attempt) || 1, humanWaitMs: Number(msg.humanWaitMs) || 10 * 60_000 })
       .catch((e) => ({ outcome: 'ERROR', message: String((e && e.message) || e) }))
       .then((result) => {
         // null: this tab goes on to another address; the next page reports.

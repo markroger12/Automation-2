@@ -125,7 +125,7 @@ export async function reportIndexingRequest(input: { jobId: string; installId: s
       await retry(HOUR, 'Sign in to Google (Search Console) in Automation Chrome, then the request is made automatically.');
       break;
     case 'HUMAN_CHECK':
-      await retry(HOUR, 'Google showed a check in Automation Chrome; complete it there.');
+      await retry(HOUR, `Google showed a check (“I'm not a robot”) in Automation Chrome that was not completed in time.${said} Press “Request now” and complete it in the Automation Chrome window that comes to the front.`);
       break;
     case 'NO_ACCESS':
       await db.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: now, leaseUntil: null, error: `No access to ${p.property}`, errorCode: input.outcome } });

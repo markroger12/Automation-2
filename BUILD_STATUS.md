@@ -2948,3 +2948,55 @@ Owner, after installing: fix “The data could not be prepared” (the desktop 3
 **Not verified here:**
 - The installer on the owner's Windows PC.
 - That the one-click installer replaces the earlier install in `C:\New folder\Blog Automation Studio`. If that copy stays, it can be removed in Windows Settings → Apps; the data folder is never deleted.
+
+## Owner report (2026-10-23): Search Console's tab closed before the request finished, no screenshot (extension 3.4.4)
+The owner sent:
+- a keyword row stuck at “Automation Chrome is requesting indexing … 12:10:46Z”;
+- the indexing panel's “Google showed a check (‘I'm not a robot’) … human check for techeflux.com/michael-consuelos/ · 5:11 pm”;
+- a screen recording.
+
+In the recording, Automation Chrome:
+- typed the URL;
+- Search Console showed “Retrieving data from Google Index”, then the result;
+- REQUEST INDEXING was clicked, and the “Testing if live URL can be indexed” dialog was running;
+- about 15 s later the tab closed.
+
+No check was ever on screen.
+
+**Cause:**
+- `gsc.js` counted any reCAPTCHA frame on the page (`iframe[src*="recaptcha"]`) as a check.
+- Google's pages load an invisible reCAPTCHA: a hidden badge (`size=invisible`) and a challenge frame kept off screen.
+- So the request was reported as HUMAN_CHECK during the live test and the tab was closed.
+- The screenshot is made only for an answered request, so there was none.
+- **Reproduced first:** with the fake Search Console carrying an invisible reCAPTCHA as Google loads it, 3.4.3 reported HUMAN_CHECK within 7 s.
+
+**Fix (extension 3.4.4):**
+- **What counts as a check:**
+  - a reCAPTCHA frame that is shown: not `size=invisible`, visible, on screen and at least 60 × 60 px;
+  - or Google's “unusual traffic” form.
+- **A check Google really shows:**
+  - the tab and its window come to the front, with a notification “Search Console wants a check”;
+  - the request waits until the owner completes it, up to Settings → Advanced → human-check pause (10 min by default, as for ChatGPT);
+  - then it goes on: live test, Google's answer, screenshot;
+  - when Google's answer appears while a check seems to be there, it is taken.
+- **Not completed in time:** HUMAN_CHECK, with “… it was not completed within 10 min”. The keyword and panel say to press “Request now” and complete the check in the window that comes to the front.
+- **Background timer:** 6 min plus twice the pause (before: a fixed 6 min).
+
+**Tests (integration, the real extension in Chromium):**
+- **Invisible reCAPTCHA on the page:** INDEXING_REQUESTED and a screenshot (before: HUMAN_CHECK).
+- **A shown check that the owner completes after 3 s:** the live test goes on, INDEXING_REQUESTED and a screenshot (before: HUMAN_CHECK at once).
+- **A shown check never completed:** HUMAN_CHECK only after the pause (6 s in tests), with “not completed within 6 s”.
+- **The earlier Search Console tests:** typing path, inspection link, daily limit and signed out still pass.
+
+**Not verified here:**
+- The real Search Console with 3.4.4 (it needs the owner's signed-in account).
+- How the real “I'm not a robot” challenge is laid out. The rule is a reCAPTCHA frame shown on screen.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "invisible reCAPTCHA|really shows waits"   # 3.4.3: 2 failed (HUMAN_CHECK); 3.4.4: 2 passed
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console|indexing is requested|inspection link|daily limit|reCAPTCHA|really shows"   # 5/5
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 48 files, 348 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 46/46
+```

@@ -70,7 +70,7 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
             {o.notSignedIn ? `${o.notSignedIn} request(s) wait for it. ` : ''}Use the Google account that owns the website in Search Console. You type the password yourself in Chrome; the app never sees it. Then press “Request now” (or they are made within the hour).
           </Alert>
         ) : null}
-        {o.humanCheck ? <Alert tone="warning">Google showed a check (“I'm not a robot”) in Automation Chrome; complete it there, then press “Request now”.</Alert> : null}
+        {o.humanCheck ? <Alert tone="warning">Google showed a check (“I'm not a robot”) in Automation Chrome that was not completed in time. Press “Request now” and complete it in the Automation Chrome window that comes to the front.</Alert> : null}
         {o.last ? (
           <p className="text-muted text-xs">
             Last answer: {o.last.outcome === 'REQUESTED' ? 'indexing requested' : o.last.outcome === 'NOT_SIGNED_IN' ? 'Google asked to sign in' : o.last.outcome === 'QUOTA' ? "Search Console's daily limit" : o.last.outcome.toLowerCase().replace('_', ' ')} for{' '}

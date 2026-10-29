@@ -630,9 +630,20 @@ describe('Image Template Designer, owner photos and re-runs', () => {
     t = await driver.drive(t.id);
     data = await stageData(t.id, 'IMAGES');
     expect(data.slots.flatMap((s: { sourceAssetIds: string[] }) => s.sourceAssetIds)).not.toContain(removedId);
-    expect(data.notes.join(' ')).toMatch(/removed by you earlier/);
+    // Owner request: your upload and the two photos left fill the 3 places, so no new search is made.
+    expect(data.notes.join(' ')).toMatch(/1 photo\(s\) you uploaded for 3 place\(s\): the photos collected before for this article add the rest/);
+    expect(await client.mediaAsset.count({ where: { taskId: t.id, origin: 'WIKIMEDIA' } })).toBe(3);
     // The only review reason is the switched-off WordPress step — nothing about images.
     expect(JSON.parse(t.reviewReasons)).toEqual(['WordPress draft not created (turned off for this task).']);
+
+    // Without the upload too, the photos are too few and a new search runs: the photo removed earlier is skipped.
+    expect((await call(removeRoute.DELETE, 'DELETE', `/api/tasks/${t.id}/images/${uploadId}`, { id: t.id, assetId: uploadId })).status).toBe(200);
+    await actions.regenerateStage(t.id, 'IMAGES');
+    t = await driver.drive(t.id);
+    data = await stageData(t.id, 'IMAGES');
+    expect(data.slots.flatMap((s: { sourceAssetIds: string[] }) => s.sourceAssetIds)).not.toContain(removedId);
+    expect(data.slots.flatMap((s: { sourceAssetIds: string[] }) => s.sourceAssetIds)).not.toContain(uploadId);
+    expect(data.notes.join(' ')).toMatch(/removed by you earlier/);
   });
 
   it('general article: owner uploads fill the slots and nothing is generated for them', async () => {

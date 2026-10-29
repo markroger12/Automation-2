@@ -3040,3 +3040,37 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 49 files, 360 tests pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 48/48
 ```
+
+## Owner request (2026-10-29): Celebrity images — uploaded photos are used as they are
+
+The owner: “when I upload images myself and regenerate, it should not bring images from ChatGPT; use the images I gave. Only if they are too few to complete the site's images, collect from ChatGPT again.”
+
+**What happened before (reproduced first, 3 new integration tests failed):**
+- **The search:** it ran whenever uploads plus earlier photos were fewer than 4, whether or not the uploads filled every place. Three uploads on a one-photo featured design (3 places) still brought a ChatGPT search.
+- **The photo check:** uploads went to ChatGPT's photo check together with the search's photos; regenerating with uploads asked it again. A flag from that check could even move an upload behind a searched photo.
+- **Notes on a first run:** the search's own photos, saved while the stage waited for ChatGPT, were counted as “photos collected before”. So the gallery step (its notes, and downloading the pictures given only as links) was skipped once the extension had saved 4 or more.
+
+**Now (`src/worker/pipelines/images.ts`):**
+- **The places:** the featured design's photo places plus the two body images.
+- **Uploads fill every place:** only the uploads are used, with no earlier photos, no image search and no photo check. The note says “N photo(s) you uploaded fill every place (featured F, body 2): no image search.”
+- **Fewer uploads:** the photos collected before for the article are added, and an image search runs only if that is still not enough for the places. The note says which one added the rest.
+- **The photo check** sees only the photos the search or Commons brought; uploads are never checked or moved down.
+- **“Collected before”** now means saved before this run of the stage started (`createdAt < stage.startedAt`). A regenerate still reuses them, as before.
+
+**Tests (`tests/integration/image-tools.test.ts`, new):**
+- **enough uploads on a new article:** no search, no photo check, only the uploads in the three images;
+- **regenerate after uploading 4 for a two-photo design:** no new search, no photo check, the gallery lists only the uploads;
+- **2 uploads for 4 places:** one search; the featured design takes the uploads and the body images come from the search; the photo check gets the 5 searched photos only.
+
+- **Changed test (`images.test.ts`, template designer):** after “Don't use” on a photo, the upload and the two photos left fill the 3 places, so no new Commons search is made (before, a search ran and skipped the removed photo). The test now checks that, and then removes the upload too: the photos are too few, a new search runs, and the removed photo is skipped (“removed by you earlier”).
+
+**Not verified here:** the owner's own uploads and articles.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "owner request: photos you upload"   # old code: 3 failed; new: 3/3
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts tests/integration/workflow-publish.test.ts   # 28 pass, 1 skipped, 1 failed: the template-designer test expected the Commons search that the new rule leaves out (test updated)
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # after the update: 21 pass, 1 skipped (real MediaPipe)
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 49 files, 360 tests pass
+```

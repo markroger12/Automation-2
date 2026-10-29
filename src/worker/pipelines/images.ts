@@ -455,6 +455,11 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const { confirmedFullName } = await import('@/modules/celebrity-writer/parsers');
   const name = confirmedFullName(quickBio) ?? ctx.task.keyword;
   const state = ctx.privateState<CelebState>();
+  const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
+  const siteSettings = templateSet(parseSiteImageSettings(site.imageSettings), 'celebrity');
+  const featuredNeeds = Math.max(1, templatePhotoSlots(siteSettings.featured));
+  /** The photo places of the article: the featured design's, and the two body images. */
+  const places = featuredNeeds + 2;
 
   // 1. Gallery: owner uploads first, then the configured photo source (collected once per run):
   //    ChatGPT's image-search gallery (as in the owner's earlier tool) and/or a bounded Wikimedia Commons search.
@@ -463,12 +468,17 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     const uploads = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'UPLOAD', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' } });
     const ids = uploads.map((u) => u.id);
     const galleryNotes: string[] = state.emptySearches ? [...((state.searchNotes as string[] | undefined) ?? [])] : [];
+    // Owner request: the photos you upload are used as they are. When they fill every place, nothing else is
+    // collected (no earlier photos, no image search); only when they are fewer does the gallery add more.
+    const ownFill = uploads.length >= places;
+    if (ownFill) galleryNotes.push(`${uploads.length} photo(s) you uploaded fill every place (featured ${featuredNeeds}, body 2): no image search.`);
     // Owner report (Regenerate images used only the new search's two photos, and no body image was made): the photos
     // collected for this article before are used again, unless removed on the Images tab; a new search only when they
     // are not enough.
-    if (!state.emptySearches) {
-      // Not the small thumbnails the gallery also saved (the search left them out too).
-      const earlier = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' }, width: { gte: GALLERY_MIN_SIDE }, height: { gte: GALLERY_MIN_SIDE } }, orderBy: { createdAt: 'asc' }, take: 10 });
+    if (!state.emptySearches && !ownFill) {
+      // Not the small thumbnails the gallery also saved (the search left them out too), and not the photos this run's
+      // own search brought (they arrive while the stage waits for ChatGPT, and are collected below).
+      const earlier = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' }, width: { gte: GALLERY_MIN_SIDE }, height: { gte: GALLERY_MIN_SIDE }, createdAt: { lt: ctx.stage.startedAt ?? new Date() } }, orderBy: { createdAt: 'asc' }, take: 10 });
       if (earlier.length) {
         ids.push(...earlier.map((e) => e.id));
         galleryNotes.push(`${earlier.length} photo(s) collected before for this article are used again (“Don't use” on the Images tab leaves one out).`);
@@ -476,7 +486,10 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     }
     const source = ctx.config.celebrityPhotoSource ?? 'chatgpt';
     const timeoutMs = settings.advanced.linkCheckTimeoutSec * 1000 * 2;
-    if (ids.length < 4 && source !== 'commons') {
+    // Without uploads at least 4 photos to choose from; with uploads, only what the places still need.
+    const enough = uploads.length ? places : Math.max(4, places);
+    if (uploads.length && !ownFill && !state.emptySearches) galleryNotes.push(`${uploads.length} photo(s) you uploaded for ${places} place(s): ${ids.length >= enough ? 'the photos collected before for this article add the rest' : 'an image search adds the rest'}.`);
+    if (!ownFill && ids.length < enough && source !== 'commons') {
       // In the chat the article was written in (owner request: no new chat for the photos). No photo from that search
       // (ChatGPT answered with text only): once more in a new chat.
       for (let attempt = state.emptySearches ?? 0; attempt < 2; attempt++) {
@@ -493,7 +506,7 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
         }
       }
     }
-    if (ids.length < 4 && (source === 'commons' || (source === 'chatgpt-then-commons' && ids.length < 2))) {
+    if (!ownFill && ids.length < enough && (source === 'commons' || (source === 'chatgpt-then-commons' && ids.length < 2))) {
       try {
         await ctx.progress(`Collecting photos of ${name}…`);
         const g = await collectCommonsGallery({ name, taskId: ctx.taskId, websiteId: ctx.task.websiteId, max: 6 - ids.length, timeoutMs });
@@ -550,8 +563,10 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const alts = new Map<string, string>();
   const collages = new Set<string>();
   const flag = new Map<string, number>();
-  if (ctx.config.celebrityPhotoReview && usable.length) {
-    const sample = usable.slice(0, 8);
+  // Your uploads are never checked (nor demoted): only the photos the search or Commons brought.
+  const checkable = usable.filter((a) => a.origin !== 'UPLOADED');
+  if (ctx.config.celebrityPhotoReview && checkable.length) {
+    const sample = checkable.slice(0, 8);
     let res: Awaited<ReturnType<PipelineContext['askChatGPT']>> | null = null;
     try {
       // In the article's chat too (owner request), right after the photo search.
@@ -577,9 +592,6 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   //    site's collage is never used while there is a single photo (owner report: a designed thumbnail with a circle
   //    became half of the featured image); with only collages the featured image takes one. A photo is never used
   //    twice: a small gallery leaves body images out instead of repeating one.
-  const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
-  const siteSettings = templateSet(parseSiteImageSettings(site.imageSettings), 'celebrity');
-  const featuredNeeds = Math.max(1, templatePhotoSlots(siteSettings.featured));
   const single = usable.filter((a) => !collages.has(a.id));
   // Owner report: with one photo, the two-photo featured design became the built-in single-photo design. Owner
   // decision: before that, ChatGPT is asked for photos once more, in a new chat (the photos found so far stay).

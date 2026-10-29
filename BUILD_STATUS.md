@@ -3091,3 +3091,7 @@ The owner sent a screenshot of the Images tab. Three photos were uploaded in thi
 ```
 npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "keep their upload order"   # old code: failed (FEATURED = 2nd upload); new: pass
 npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "owner request: photos you upload"   # 4/4
+npx tsc --noEmit                    # 0 errors
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 22 pass, 1 skipped (real MediaPipe)
+npx vitest run                      # 49 files, 360 tests pass
+```

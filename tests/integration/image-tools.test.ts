@@ -194,6 +194,80 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
     expect(again.slots.flatMap((x: { sourceAssetIds: string[] }) => x.sourceAssetIds)).not.toContain(rejected);
   });
 
+  describe('owner request: photos you upload are used as they are; ChatGPT is asked only when they do not fill every place', () => {
+    /** A celebrity article whose ChatGPT image search returns `pictures`; counts searches and photo checks. */
+    async function article(keyword: string, twoPhotoFeatured: boolean) {
+      const calls = { searches: 0, checks: [] as string[] };
+      const pictures = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000), await plain(190, 150, 30, 1600, 1000), await plain(120, 40, 160, 1600, 1000)];
+      const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
+        if (/show them as an image gallery/.test(prompt)) {
+          calls.searches++;
+          return { text: 'Photos.', images: pictures };
+        }
+        if (/photos from an image search, numbered 1 to/.test(prompt)) calls.checks.push(prompt);
+        return cannedAnswer(stageKey, prompt, language, kw);
+      };
+      const s = await site(`Tools ${keyword}`);
+      if (twoPhotoFeatured) {
+        const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+        await client.website.update({ where: { id: s.id }, data: { imageSettings: JSON.stringify({ ...defaultSiteImageSettings('#0b5fff'), featured: presetSplit('#0b5fff') }) } });
+      }
+      const cat = await client.category.findFirstOrThrow({ where: { websiteId: s.id } });
+      const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword, websiteId: s.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: `tools:${keyword}` }, { source: 'SINGLE' });
+      const { addOwnerImages } = await import('@/lib/tasks/images');
+      const upload = async (colours: [number, number, number][]) => (await addOwnerImages(task.id, await Promise.all(colours.map(async (c, i) => ({ name: `own-${i + 1}.jpg`, bytes: await plain(c[0], c[1], c[2], 1500, 1000) }))))).added;
+      const drive = async () => {
+        await makeDriver(client, answer).drive(task.id);
+        return stageData(task.id, 'IMAGES');
+      };
+      const used = (data: { slots: { sourceAssetIds: string[] }[] }) => data.slots.flatMap((x) => x.sourceAssetIds);
+      return { task, calls, upload, drive, used };
+    }
+
+    it('enough uploads on a new article: only they are used, with no image search and no photo check', async () => {
+      // A one-photo featured design and two body images: 3 places.
+      const a = await article('uploads fill person', false);
+      const own = await a.upload([[230, 120, 30], [30, 120, 230], [120, 230, 30]]);
+      const data = await a.drive();
+      expect(a.calls.searches).toBe(0);
+      expect(a.calls.checks).toHaveLength(0);
+      expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
+      expect(a.used(data).sort()).toEqual([...own].sort());
+      expect(data.notes.join(' | ')).toMatch(/3 photo\(s\) you uploaded fill every place \(featured 1, body 2\): no image search/);
+    });
+
+    it('regenerate after uploading: the photos collected before stay out, no new search, no photo check', async () => {
+      // A two-photo featured design and two body images: 4 places.
+      const a = await article('uploads regenerate person', true);
+      await a.drive();
+      expect(a.calls.searches).toBe(1);
+      const checksBefore = a.calls.checks.length;
+      const own = await a.upload([[230, 120, 30], [30, 120, 230], [120, 230, 30], [100, 50, 25]]);
+      const { regenerateStage } = await import('@/lib/tasks/actions');
+      await regenerateStage(a.task.id, 'IMAGES');
+      const data = await a.drive();
+      expect(a.calls.searches).toBe(1);
+      expect(a.calls.checks.length).toBe(checksBefore);
+      expect(a.used(data).sort()).toEqual([...own].sort());
+      expect(data.gallery.map((g: { id: string }) => g.id).sort()).toEqual([...own].sort());
+    });
+
+    it('fewer uploads than places: ChatGPT fills the rest, and only its photos go to the photo check', async () => {
+      const a = await article('uploads short person', true);
+      // Layouts unlike the search's photos (the fixture's layout follows the colour), so none is a near-duplicate.
+      const own = await a.upload([[230, 120, 30], [220, 90, 160]]);
+      const data = await a.drive();
+      expect(a.calls.searches).toBe(1);
+      // The featured design takes your two photos; the body images come from the search.
+      const featured = data.slots.find((x: { slot: string }) => x.slot === 'FEATURED');
+      expect([...featured.sourceAssetIds].sort()).toEqual([...own].sort());
+      expect(data.slots.filter((x: { slot: string }) => x.slot !== 'FEATURED').flatMap((x: { sourceAssetIds: string[] }) => x.sourceAssetIds).some((id: string) => own.includes(id))).toBe(false);
+      expect(a.calls.checks).toHaveLength(1);
+      expect(a.calls.checks[0]).toMatch(/numbered 1 to 5/);
+      expect(data.notes.join(' | ')).toMatch(/2 photo\(s\) you uploaded for 4 place\(s\): an image search adds the rest/);
+    });
+  });
+
   it.skipIf(!MP_SRC)('real MediaPipe: finds the face in a portrait; photos with a face come first and the crop centres on it', async () => {
     const target = path.join(dataDir, 'tools', 'mediapipe');
     fs.cpSync(MP_SRC!, target, { recursive: true });

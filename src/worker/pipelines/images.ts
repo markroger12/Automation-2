@@ -523,9 +523,14 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   // Photos the owner removed on the Images tab are never used.
   let gallery = galleryIds.length ? await db.mediaAsset.findMany({ where: { id: { in: galleryIds }, status: { not: 'REJECTED' } } }) : [];
   gallery = galleryIds.map((id) => gallery.find((g) => g.id === id)).filter(Boolean) as MediaAsset[];
-  // Near-duplicates across uploads and Commons (the bigger copy stays).
+  // Near-duplicates across uploads and Commons (the bigger copy stays; of two uploads, the one uploaded first).
+  // Owner report: your uploads go to the featured image, body 1 and body 2 in the order you uploaded them; sorting
+  // them by size had put a bigger photo uploaded second into the featured image.
+  const uploaded = (a: MediaAsset) => a.origin === 'UPLOADED';
+  const uploadOrder = new Map(gallery.map((g, i) => [g.id, i]));
+  const byUploadOrder = (a: MediaAsset, b: MediaAsset) => (uploadOrder.get(a.id) ?? 0) - (uploadOrder.get(b.id) ?? 0);
   const distinct: MediaAsset[] = [];
-  for (const g of [...gallery].sort((a, b) => (a.origin === 'UPLOADED' ? -1 : 0) - (b.origin === 'UPLOADED' ? -1 : 0) || (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0))) {
+  for (const g of [...gallery].sort((a, b) => Number(uploaded(b)) - Number(uploaded(a)) || (uploaded(a) && uploaded(b) ? byUploadOrder(a, b) : (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0)))) {
     if (g.phash && distinct.some((d) => d.phash && hammingDistance(d.phash, g.phash!) <= 6)) notes.push('A near-duplicate photo was skipped.');
     else distinct.push(g);
   }
@@ -535,7 +540,8 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   }
 
   // 2. As in the owner's earlier tool (images/choose.ts): a cropped copy (the same faces in the same moment) counts
-  //    once; photos with a clear face first, the biggest face first, soft photos last. Your uploads stay first.
+  //    once; photos with a clear face first, the biggest face first, soft photos last. Your uploads stay first, in
+  //    the order you uploaded them.
   const { facts } = await measurePhotos(ctx, distinct, notes);
   let usable: MediaAsset[] = [];
   let crops = 0;
@@ -552,7 +558,7 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const soft = (a: MediaAsset) => usable.length >= 3 && (facts[a.id]?.sharpness ?? 0) < middle * SOFT_SHARE;
   const rank = (a: MediaAsset) => (a.origin === 'UPLOADED' ? -1 : (facts[a.id]?.n ? 0 : 2) + (soft(a) ? 1 : 0));
   const facePixels = (a: MediaAsset) => facts[a.id]?.h ?? 0;
-  usable = [...usable].sort((x, y) => rank(x) - rank(y) || facePixels(y) - facePixels(x) || (y.width ?? 0) * (y.height ?? 0) - (x.width ?? 0) * (x.height ?? 0));
+  usable = [...usable].sort((x, y) => rank(x) - rank(y) || (uploaded(x) && uploaded(y) ? byUploadOrder(x, y) : facePixels(y) - facePixels(x) || (y.width ?? 0) * (y.height ?? 0) - (x.width ?? 0) * (x.height ?? 0)));
   const withFace = usable.filter((a) => facts[a.id]?.n).length;
   const softCount = usable.filter(soft).length;
   notes.push(`Photos ordered: ${usable.length} different${withFace ? `, ${withFace} with a face` : ''}${softCount ? `, ${softCount} soft (used last)` : ''}.`);

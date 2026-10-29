@@ -252,6 +252,19 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
       expect(data.gallery.map((g: { id: string }) => g.id).sort()).toEqual([...own].sort());
     });
 
+    it('owner report: uploads keep their upload order — featured, body 1, body 2 (a bigger photo uploaded second became the featured image)', async () => {
+      const a = await article('uploads order person', false);
+      const { addOwnerImages } = await import('@/lib/tasks/images');
+      // As in the owner's screenshot: the second upload is the largest, the third the smallest.
+      const sizes: [number, number, number, number, number][] = [[230, 120, 30, 1672, 941], [30, 120, 230, 2560, 1440], [120, 230, 30, 1200, 675]];
+      const own: string[] = [];
+      for (const [r, g, b, w, h] of sizes) own.push(...(await addOwnerImages(a.task.id, [{ name: `own-${own.length + 1}.jpg`, bytes: await plain(r, g, b, w, h) }])).added);
+      const data = await a.drive();
+      const bySlot = Object.fromEntries(data.slots.map((x: { slot: string; sourceAssetIds: string[] }) => [x.slot, x.sourceAssetIds[0]]));
+      expect(bySlot).toEqual({ FEATURED: own[0], BODY1: own[1], BODY2: own[2] });
+      expect(a.calls.searches).toBe(0);
+    });
+
     it('fewer uploads than places: ChatGPT fills the rest, and only its photos go to the photo check', async () => {
       const a = await article('uploads short person', true);
       // Layouts unlike the search's photos (the fixture's layout follows the colour), so none is a near-duplicate.

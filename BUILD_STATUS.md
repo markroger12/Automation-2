@@ -3267,3 +3267,24 @@ npx vitest run --config vitest.integration.config.ts tests/integration/images.te
 npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 49 files, 360 tests pass
 ```
+
+## Owner report (2026-10-29): uploaded photos not used in their order (featured, body 1, body 2)
+
+The owner sent a screenshot of the Images tab. Three photos were uploaded in this order: “Split-Scene Portraits” (1672×941), “GettyImages-2225631505” (2560×1440) and “moellerjon” (1200×675). The featured image took the second, body 1 the first, and body 2 the third. The Images tab itself says “in upload order: featured, body 1, body 2”.
+- **Cause:** two sorts in the Celebrity images step reordered the uploads too.
+  - The near-duplicate pass put the bigger photo first.
+  - The photo order put the biggest face first, then the bigger photo.
+  - So the largest upload became the featured image.
+- **Fix (`src/worker/pipelines/images.ts`):**
+  - uploads keep the order they were uploaded in, in both sorts (searched photos are still ordered by face and size);
+  - of two near-duplicate uploads, the one uploaded first stays.
+- **Test (`image-tools`, reproduced first):** the owner's sizes in the owner's order. The old code gave FEATURED = the second upload and BODY1 = the first; now FEATURED, BODY1 and BODY2 are the uploads in order, with no search.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "keep their upload order"   # old code: failed (FEATURED = 2nd upload); new: pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts -t "owner request: photos you upload"   # 4/4
+npx tsc --noEmit                    # 0 errors
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 22 pass, 1 skipped (real MediaPipe)
+npx vitest run                      # 49 files, 360 tests pass
+```

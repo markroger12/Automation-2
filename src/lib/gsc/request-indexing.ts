@@ -1,5 +1,6 @@
 import { db } from '../db';
 import { log } from '../log';
+import { savePageCopy } from '../page-copies';
 import { enqueue } from '../queue';
 import { inspectionProperty, searchConsoleHome } from '../workflow/search-console';
 import { resolveWebsiteProperty } from './property';
@@ -92,12 +93,15 @@ export async function claimIndexingRequest(installId: string, now = new Date()):
 const HOUR = 3600_000;
 
 /** What Automation Chrome saw after clicking (or trying to click) REQUEST INDEXING. */
-export async function reportIndexingRequest(input: { jobId: string; installId: string; outcome: IndexingOutcome; message?: string | null }, now = new Date()) {
+export async function reportIndexingRequest(input: { jobId: string; installId: string; outcome: IndexingOutcome; message?: string | null; pageCopy?: string }, now = new Date()) {
   const job = await db.queueJob.findUnique({ where: { id: input.jobId } });
   if (!job || job.queue !== GSC_QUEUE) return { ok: false, error: 'Unknown job' };
   // A late or repeated report (lease expired, outbox resend) never changes a job this extension no longer holds.
   if (job.status !== 'ACTIVE' || job.lockedBy !== `extension:${input.installId}`) return { ok: false, error: 'Not claimed by this extension' };
   const p = JSON.parse(job.payload) as IndexingJobPayload;
+  // The proof may miss Google's answer, or the page did not take the request: its structure, for the developer.
+  const copy = input.pageCopy ? savePageCopy('search-console', input.pageCopy, now) : null;
+  if (copy) await log({ level: 'warn', category: 'search', message: `Search Console (${input.outcome.toLowerCase()} for ${p.url}): a copy of the page's structure (no page text) was saved for the developer: Logs / Diagnostics → Page structure copies → ${copy}.` });
   const said = input.message ? ` Google: “${input.message.slice(0, 200)}”.` : '';
   const retry = async (inMs: number, why: string) => {
     if (job.attempts >= job.maxAttempts && input.outcome === 'ERROR') {

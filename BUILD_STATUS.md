@@ -3325,3 +3325,107 @@ npx tsc --noEmit                                # 0 errors
 node <scratch>/proofmodal.mjs <out>             # results above
 npx vitest run                                  # 52 files, 380 tests pass
 ```
+
+## Owner request (2026-10-30): one-click update (Settings → App updates)
+
+“Ek click me update”: instead of `git pull`, `npm run start:all` and reloading the extension by hand.
+- **`npm run start:all` → `scripts/start-all.mjs`** (plain Node.js; replaces `concurrently` for start:all only, dev:all is unchanged):
+  - it starts the dashboard (`next start`) and the worker (`node --import tsx`, one process), with the `[web]` / `[worker]` prefixes as before;
+  - when one of them stops by itself, the other is stopped too, as `concurrently -k` did;
+  - Ctrl+C stops both. The worker gets its shutdown over IPC, because on Windows a signal to a child ends it at once. A worker whose start:all is gone stops too.
+- **Settings → App updates** (`src/components/app-updates.tsx`, `src/lib/update/service.ts`, `app/api/update/*`):
+  - **Check for updates** runs `git fetch` on the branch's upstream (`GIT_TERMINAL_PROMPT=0`, no password prompt) and lists the new commits. Notes show when packages, migrations or the extension change.
+  - It refuses, saying why:
+    - outside start:all;
+    - in the desktop app;
+    - with tracked files changed on this computer;
+    - with local commits GitHub does not have.
+- **Update now** (after a confirm dialog that names the running steps): the dashboard checks again and asks start:all over IPC to update to exactly the commit shown. start:all then:
+  1. stops both;
+  2. answers on port 3000 with a small “updating” page and the progress JSON;
+  3. `git merge --ff-only <commit>`;
+  4. `npm install` only when package.json / package-lock.json changed;
+  5. `prisma generate` + `next build` + build marker;
+  6. migrations with backup and seed (`scripts/preflight.ts`);
+  7. starts both again and waits for the dashboard.
+  - Progress goes to `data/update/status.json`; the card follows it and reloads the page when done.
+  - When installing or building fails, it runs `git reset --keep <previous>` (refuses to overwrite changes), installs/builds the previous version and starts it; the card says “Went back to the previous version”.
+  - A migration failure is reported with the backup location (not undone).
+  - An update interrupted by a closed window is marked failed at the next start.
+- **Extension 3.5.0 reloads itself after an update:**
+  - When the app expects another version, every poll says hello.
+  - When the extension folder on disk (`fetch(chrome.runtime.getURL('manifest.json'))`) has exactly the expected version and no ChatGPT or Search Console job runs, it records `selfReload` (once per version) and calls `chrome.runtime.reload()`.
+  - After the reload it reloads the ChatGPT tabs it managed (their old page scripts no longer reach it) and keeps them.
+  - The app's version message now says this.
+
+**Tests**
+- **Unit `tests/unit/app-update.test.ts`:**
+  - git log parsing;
+  - change kinds;
+  - the refusal reasons;
+  - start:all's steps, package check, interrupted status, loopback Host check, ANSI stripping and HTML escaping.
+- **Integration `tests/integration/extension-update.test.ts` (real extension, Load unpacked):**
+  - a prompt runs on 3.4.99;
+  - the app expects 3.5.0 while the folder is old: no reload, the version message;
+  - the folder gets 3.5.0: the extension reloads itself, reports 3.5.0, reloads its ChatGPT tab, and the next prompt runs in the same tab.
+  - The first version of this test failed: the restore was read before the start-up finished. The test now waits for it; 3/3 runs passed.
+- **An experiment that shaped the test:** an extension loaded with `--load-extension` (how the other tests load it) is removed, not reloaded, by `chrome.runtime.reload()`. One loaded as with Load unpacked (CDP `Extensions.loadUnpacked`) reloads from its folder with the new version. The owner's setup is Load unpacked (README, First run).
+- **End to end, `npm run start:all` in a scratch clone with a local “GitHub” (bare repo):**
+  - **A → B:** the Settings card listed “1 new change”. Update now ran: stop, code, packages “not needed”, build, database, start — all done. While stopped, any page showed “Blog Automation Studio is updating · Now: Build the dashboard”. After it, Settings showed B's text and “Last update · done”.
+  - **B → C:** the card showed the steps live, then the page reloaded by itself on C (2 page loads), with no page errors.
+  - **C → D, a version whose build fails:** `next build failed` → `git reset --keep` to C → rebuilt → C running. The card said “Went back to the previous version · next build failed (exit code 1)” after 107 s.
+  - **Ctrl+C (SIGINT to start:all):** the worker logged “Worker stopped (stopped by start:all)”; the dashboard stopped; nothing was left running.
+
+**Not verified here:**
+- Windows:
+  - Ctrl+C in a Windows console;
+  - `npm.cmd` when start:all is not run through npm;
+  - file locks during `npm install`. The design stops every app process first, and start:all loads neither tsx nor Prisma, but this was not run on Windows.
+- The owner's GitHub sign-in for `git fetch` (Git's own credential store).
+- The `npm install` and migration steps with real changes (the test versions changed neither).
+- The real Chrome on Windows with Load unpacked.
+- Getting there takes one manual step: the owner gets this version with one `git pull` + `npm run start:all`, and reloads the extension by hand once, to 3.5.0.
+- A change to `scripts/start-all.mjs` itself takes effect only when the window is started again.
+
+**Commands run**
+```
+npx tsc --noEmit                                                                        # 0 errors
+npx vitest run                                                                          # 54 files, 388 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension-update.test.ts   # 3/3 runs pass (after the wait fix)
+node <scratch>/update-follow.mjs, update-e2e.mjs C, update-e2e.mjs D                     # results above
+```
+
+## Owner request (2026-10-30): page structure copies (gallery, Search Console)
+
+“Proposal 1, the diagnostic copy”: fixes have been guesses from screenshots, because the real ChatGPT markup is not available here.
+- **`extension/outline.js`** (content script for ChatGPT and Search Console; no new permission) makes an outline of elements. Each element gives:
+  - tag, role, data-testid, class (first 4), aria states;
+  - button names (aria-label/title, or a button's own text up to 24 characters);
+  - box, hidden, position/z-index/transform;
+  - for pictures: address host + path end (no query), natural size, alt (60).
+- **It never includes page text.** An element says only how many characters of its own text it has. Links give their host only (a chat's title or address stays out). At most 350 elements per outline.
+- **ChatGPT (content.js):**
+  - It outlines the gallery's tiles, the viewer when opened (or the layers over the page when no viewer is found), and the viewer where the walk stopped, with the reason (e.g. “step 2: the picture did not change”).
+  - It sends this with the answer only when fewer large pictures were taken than the gallery or viewer says.
+  - The app saves `data/page-copies/chatgpt-gallery-….json`, and the task log line names it.
+- **Search Console (gsc.js):** on an ERROR, or when the proof may miss Google's answer (“not found” / “not on screen”), it sends the answer's dialog, Request button, search box and layers with the result. The app saves `search-console-….json` and logs it.
+- **Logs / Diagnostics → Page structure copies:** the newest 8 with Download (`/api/diagnostics/page-copies/<name>`, names checked by pattern). Only the newest 40 are kept.
+
+**Tests**
+- **Unit `tests/unit/page-copies.test.ts`:**
+  - only JSON objects of the right kind are saved;
+  - newest first;
+  - read by a checked name only (`../app.db` refused);
+  - 40 kept.
+- **Integration (real extension):**
+  - **ChatGPT:** 3 tiles with “5” and a viewer that cannot be stepped (`lightbox`) → 3 photos and one copy (`said: 5, large: 3`, a stop reason, tiles with `img`, the viewer found with its “Close” button). It contains neither the prompt's words nor the answer's lines, and the log names the file.
+  - **Search Console:** no “Inspect any URL” box → one `search-console` copy (`outcome: ERROR`, `page: /search-console`). It contains neither the keyword nor the URL slug, and the log names it.
+
+**Not verified here:** the real ChatGPT and Search Console pages. That is the point of the copy: the next time photos are missing, the owner can send it.
+
+**Commands run**
+```
+npx vitest run tests/unit/page-copies.test.ts                                             # 2 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "fewer photos than the gallery says"   # pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "does not take the request"           # pass
+```

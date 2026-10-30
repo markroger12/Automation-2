@@ -1,4 +1,5 @@
 import { collectDiagnostics } from '@/lib/diagnostics';
+import { listPageCopies } from '@/lib/page-copies';
 import { Card, Chip, EmptyState, KeyValue, PageHeader, formatDateTime, formatRelative } from '@/components/ui';
 import { DiagnosticsActions } from './actions';
 import { DiagnosticChecks } from './checks';
@@ -7,6 +8,7 @@ export const metadata = { title: 'Diagnostics' };
 
 export default async function DiagnosticsPage() {
   const d = await collectDiagnostics();
+  const copies = listPageCopies();
   const lock = d.lock as { state: string; workerId?: string; pid?: number; pidAlive?: boolean; heartbeatAgeSec?: number };
   return (
     <>
@@ -73,6 +75,28 @@ export default async function DiagnosticsPage() {
                     </summary>
                     <pre className="surface-2 mt-1 max-h-64 overflow-auto rounded p-2 text-xs">{JSON.stringify(f.snapshot, null, 2)}</pre>
                   </details>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+        <Card
+          title="Page structure copies"
+          description="When the extension takes fewer gallery photos than ChatGPT shows, or Search Console's answer may be missing from the screenshot, it saves the page's structure here: elements, button names and sizes, never the chat or page text. Download the newest one and send it to the developer."
+        >
+          {copies.length === 0 ? (
+            <p className="text-muted text-sm">None yet — nothing went wrong that needed one.</p>
+          ) : (
+            <ul className="divide-y divide-[var(--border)] text-sm">
+              {copies.slice(0, 8).map((c) => (
+                <li key={c.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                  <Chip tone={c.kind === 'chatgpt-gallery' ? 'brand' : 'neutral'}>{c.kind === 'chatgpt-gallery' ? 'ChatGPT gallery' : 'Search Console'}</Chip>
+                  <span className="text-muted text-xs">
+                    {formatDateTime(c.savedAt)} · {Math.max(1, Math.round(c.bytes / 1024))} KB
+                  </span>
+                  <a className="ml-auto text-xs font-medium hover:underline" href={`/api/diagnostics/page-copies/${c.name}`} download>
+                    Download
+                  </a>
                 </li>
               ))}
             </ul>

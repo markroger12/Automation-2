@@ -52,11 +52,11 @@ describe('extension agent endpoint', () => {
     expect(unknown.status).toBe(400);
   });
 
-  it('flags version drift without handing out work (and never asks the extension to reload itself)', async () => {
+  it('flags version drift without handing out work (the extension reloads only when its own folder has the expected version)', async () => {
     const res = await handler.handleAgentRequest(req({ action: 'hello', installId: 'old-ext', version: '2.9.0' }));
     const body = (await res.json()) as { versionOk: boolean; message: string };
     expect(body.versionOk).toBe(false);
-    expect(body.message).toMatch(/Reload the unpacked extension once/);
+    expect(body.message).toMatch(/reloads itself from its folder when it is idle; an older one needs one reload by hand/);
     const claim = await handler.handleAgentRequest(req({ action: 'claim', installId: 'old-ext', tabId: 't1' }));
     expect(((await claim.json()) as { reason: string }).reason).toBe('version-mismatch');
   });

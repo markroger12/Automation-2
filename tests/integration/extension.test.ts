@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.9');
+    expect(ext?.version).toBe('3.5.0');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -529,7 +529,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.9', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.0', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;
@@ -564,6 +564,29 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(browser.searchConsole.typed()).toEqual([]);
     expect(browser.searchConsole.clicks()).toBe(1);
     expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('INDEXING_REQUESTED');
+  }, 200_000);
+
+  // Owner request: when the request goes wrong on the Search Console page, a copy of the page's structure (no page
+  // text) is saved for the developer. Here the “Inspect any URL” box is missing and there is no inspection link.
+  it('a Search Console page that does not take the request: a copy of its structure is saved, without the page text', async () => {
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode: 'ok', searchBox: false }) });
+    const { listPageCopies, readPageCopy } = await import('@/lib/page-copies');
+    const before = listPageCopies().filter((c) => c.kind === 'search-console').length;
+    const { job } = await publishedForIndexing('Copy Of Console Person');
+    const copy = await waitFor(async () => {
+      await browser!.tick().catch(() => {});
+      const all = listPageCopies().filter((c) => c.kind === 'search-console');
+      return all.length > before ? all[0] : null;
+    }, 150_000, 'the Search Console structure copy', 1000);
+    const text = readPageCopy(copy.name)!.toString('utf8');
+    expect(JSON.parse(text)).toMatchObject({ kind: 'search-console', outcome: 'ERROR', page: '/search-console', searchBox: null, requestButton: null });
+    expect(JSON.parse(text).message).toMatch(/“Inspect any URL” box was not found/);
+    expect(text).not.toContain('Copy Of Console Person');
+    expect(text).not.toContain('copy-of-console-person');
+    expect((await client.queueJob.findUniqueOrThrow({ where: { id: job.id } })).status).not.toBe('COMPLETED');
+    const logged = await client.log.findFirst({ where: { message: { contains: copy.name } } });
+    expect(logged?.message).toContain('Logs / Diagnostics → Page structure copies');
   }, 200_000);
 
   it('owner request: Search Console’s daily limit and a signed-out Google account are reported and asked again later', async () => {
@@ -683,6 +706,36 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(saved?.message).toContain('the gallery says 10');
     expect((await fakeStats()).sends).toBe(1);
   }, 240_000);
+
+  // Owner request: when fewer photos are taken than the gallery has, a copy of the page's structure — no chat text —
+  // is saved for the developer (Logs / Diagnostics → Page structure copies). A viewer that cannot be stepped: 3 of 5.
+  it('fewer photos than the gallery says: a copy of the gallery and viewer structure is saved, without the chat text', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryCount: 5, galleryShown: 3, galleryBadge: true, galleryViewer: 'lightbox' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const { listPageCopies, readPageCopy } = await import('@/lib/page-copies');
+    const before = listPageCopies().length;
+    const req = await request('Search the web for real photos of Quentin Structurecopy and show them as an image gallery.', { expectGallery: true });
+    const done = await responseDone(req.responseId, 150_000);
+    expect(done.status).toBe('COMPLETED');
+    const large = (await client.mediaAsset.findMany({ where: { responseId: req.responseId } })).filter((a) => (a.width ?? 0) >= 1000);
+    expect(large).toHaveLength(3);
+    const copies = listPageCopies();
+    expect(copies).toHaveLength(before + 1);
+    expect(copies[0].kind).toBe('chatgpt-gallery');
+    const text = readPageCopy(copies[0].name)!.toString('utf8');
+    const copy = JSON.parse(text) as { kind: string; said: number; large: number; extension: string; stop: string; gallery: { tag: string }[]; opened: { dialogFound: boolean; dialog: { tag: string; name?: string }[] } };
+    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.0' });
+    expect(copy.stop).toMatch(/step \d+: /);
+    expect(copy.gallery.some((e) => e.tag === 'img')).toBe(true);
+    expect(copy.opened.dialogFound).toBe(true);
+    expect(copy.opened.dialog.some((e) => e.tag === 'button' && e.name === 'Close')).toBe(true);
+    // The chat's text is not in it: neither the prompt nor the answer.
+    expect(text).not.toContain('Structurecopy');
+    expect(done.resultText!.length).toBeGreaterThan(20);
+    for (const words of done.resultText!.split(/\n+/).map((l) => l.trim()).filter((l) => l.length > 24).slice(0, 5)) expect(text).not.toContain(words.slice(0, 24));
+    const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'Gallery:' } }, orderBy: { createdAt: 'desc' } });
+    expect(saved?.message).toContain(`Page structure copies → ${copies[0].name}`);
+  }, 200_000);
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {
     fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 10 };

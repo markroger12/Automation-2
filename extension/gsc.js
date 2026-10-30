@@ -251,6 +251,31 @@
     return { outcome: 'ERROR', message: 'No answer from Search Console within 4 minutes after “Request indexing”.' };
   }
 
+  /**
+   * Owner request: when the proof may miss Google's answer, or the request went wrong on the page, a copy of the
+   * page's structure (no page text; extension/outline.js) goes to the app, so the real Search Console page can be
+   * fixed instead of guessed.
+   */
+  function structureCopy(result) {
+    const O = globalThis.BASOutline;
+    if (!O || !result) return undefined;
+    const proofMissed = result.shown && result.shown !== 'shown' && result.shown !== 'set as open';
+    if (result.outcome !== 'ERROR' && !proofMissed) return undefined;
+    try {
+      const box = result.outcome === 'QUOTA' ? answerBox(RE.quota) : result.outcome === 'REQUESTED' ? answerBox(RE.requested) : null;
+      let top = box;
+      for (let i = 0; top && i < 4 && top.parentElement && top.parentElement !== document.body; i++) top = top.parentElement;
+      const button = requestButton();
+      const input = searchBox();
+      const data = { kind: 'search-console', at: new Date().toISOString(), viewport: `${innerWidth}x${innerHeight}`, page: location.pathname, outcome: result.outcome, message: result.message || null, shown: result.shown || null, answer: top ? O.outline(top, 200) : null, requestButton: button ? O.outline(button, 12) : null, searchBox: input ? O.outline(input, 4) : null, layers: O.overlays() };
+      let copy = JSON.stringify(data);
+      if (copy.length > 300000) copy = JSON.stringify(Object.assign(data, { layers: null }));
+      return copy.length <= 300000 ? copy : undefined;
+    } catch (e) {
+      return undefined;
+    }
+  }
+
   let running = false;
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || msg.type !== 'gsc-run') return;
@@ -264,7 +289,7 @@
       .catch((e) => ({ outcome: 'ERROR', message: String((e && e.message) || e) }))
       .then((result) => {
         // null: this tab goes on to another address; the next page reports.
-        if (result) return chrome.runtime.sendMessage({ type: 'gsc-done', jobId: msg.jobId, outcome: result.outcome, message: result.message, shown: result.shown || null });
+        if (result) return chrome.runtime.sendMessage({ type: 'gsc-done', jobId: msg.jobId, outcome: result.outcome, message: result.message, shown: result.shown || null, pageCopy: structureCopy(result) });
       })
       .finally(() => (running = false));
   });

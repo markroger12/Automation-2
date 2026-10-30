@@ -25,6 +25,8 @@ export const dataPaths = {
   media: () => path.join(dataDir(), 'media'),
   screenshots: () => path.join(dataDir(), 'screenshots'),
   logs: () => path.join(dataDir(), 'logs'),
+  /** Structure copies of ChatGPT's gallery / Search Console's dialog when they went wrong (for the developer). */
+  pageCopies: () => path.join(dataDir(), 'page-copies'),
   backups: () => path.join(dataDir(), 'backups'),
   tools: () => path.join(dataDir(), 'tools'),
   workerLock: () => path.join(dataDir(), 'worker.lock'),

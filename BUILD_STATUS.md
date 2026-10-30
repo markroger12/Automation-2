@@ -3182,3 +3182,35 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 50 files, 371 tests pass
 npx next build                      # compiled successfully (UI and 3.4.7 together)
 ```
+
+The whole extension integration file on 3.4.7 (both changes together):
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 51/51
+```
+
+## Owner request (2026-10-30): drag and drop and paste for “Your photos”
+
+The owner sent a screenshot of an article's Images tab (no usable photo of Annie Mae Keith was found). They asked: “here there is only the upload button; add drag and drop too, and when I paste an image it should come in as well.”
+- **Images tab (`app/(dashboard)/articles/[id]/images-tab.tsx`):**
+  - **Box:** a dashed box under the uploads says “Drop photos here, or paste one with Ctrl+V”; a click opens the file chooser.
+  - **Drop:** picture files can be dropped anywhere on the tab, not only on the box. A file dropped beside the box no longer makes the browser open it instead.
+  - **Paste:** Ctrl+V on the tab adds a copied picture. It is ignored while typing in a text field.
+  - **Order:** uploads go one after another, so photos keep the order they were added in (their order in the article).
+  - **Links:** a picture dragged from another web page arrives only as a link. The tab then says to use Copy image and Ctrl+V.
+  - **Unchanged:** the “Upload photos” button and the server's rules (the same upload API: 8 at a time, 12 MB each, its checks).
+- **`src/lib/client/image-input.ts`:**
+  - only PNG, JPEG, WebP and GIF, in the order given, at most 8, with the reason for each file left out;
+  - a pasted “image.png” is named `pasted-<date>-<time>.png`.
+- **Tests:**
+  - **`tests/unit/image-input.test.ts`:** 4 new;
+  - **Chromium smoke (scratch database, dev server):** a picture dragged over the page heading shows “Drop to add the photos”; dropping it adds “dropped-photo.png”; a pasted picture is added as “pasted-20261030-111200.png” after it, in that order; a text file is refused with its reason; a dropped link gets the Copy image hint; no console errors.
+
+**Not verified:** pasting from the owner's Windows clipboard and dropping from Windows Explorer. The browser events are standard ones, but here they were made by Playwright.
+
+**Commands run**
+```
+npx vitest run tests/unit/image-input.test.ts   # 4 pass
+node <scratch>/photos.mjs <out>                 # results above
+npx tsc --noEmit                                # 0 errors
+npx vitest run                                  # 51 files, 375 tests pass
+```

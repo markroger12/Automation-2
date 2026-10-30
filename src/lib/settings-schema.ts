@@ -117,12 +117,21 @@ export const advancedSettingsSchema = z.object({
   linkCheckTimeoutSec: z.number().int().min(3).max(60).default(10),
 });
 
+/** Windows notifications (owner request): shown by the worker through Windows itself (src/lib/notify). */
+export const notificationSettingsSchema = z.object({
+  windows: z.boolean().default(true),
+  review: z.boolean().default(true),
+  chatgptSignedOut: z.boolean().default(true),
+  campaignFinished: z.boolean().default(true),
+});
+
 export const settingsSchema = z.object({
   browser: browserSettingsSchema.prefault({}),
   workflow: workflowSettingsSchema.prefault({}),
   content: contentSettingsSchema.prefault({}),
   seo: seoSettingsSchema.prefault({}),
   advanced: advancedSettingsSchema.prefault({}),
+  notifications: notificationSettingsSchema.prefault({}),
 });
 
 export type Settings = z.output<typeof settingsSchema>;

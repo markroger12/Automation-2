@@ -3429,3 +3429,35 @@ npx vitest run tests/unit/page-copies.test.ts                                   
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "fewer photos than the gallery says"   # pass
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "does not take the request"           # pass
 ```
+
+## Owner request (2026-10-30): Windows notifications
+
+“Just Windows notification … workflow ka bhi alert agher koi article review per ha.”
+- **Shown by Windows itself** (`src/lib/notify/windows.ts`): a toast through the built-in Windows PowerShell 5.1 WinRT API, with PowerShell's own app id (no registration, nothing installed, no outside service).
+  - The script goes in through stdin. The text goes in as XML (escaped) through an environment variable, so nothing the app writes is run as a command.
+  - A click (or **Open**) opens the dashboard page.
+  - On other systems nothing is shown.
+- **What** (`src/lib/notify/events.ts`, worker loop every 15 s):
+  - **Review:** articles in a review status (needs review, title/article approval). Workflow ones say “Workflow: …”. More than 3 new at once come as one toast with the count (link: Article Queue → review).
+  - **ChatGPT signed out:** a connected extension reports `loggedIn: false`, or tasks are paused for the ChatGPT sign-in. It is notified when this changes.
+  - **Campaign finished:** a campaign COMPLETED (in the last 7 days).
+  - What was already notified is stored (`notify.windows.state`). The first look only remembers, so nothing that already waited floods in. An article back in review after a retry is notified again.
+- **Settings → Notifications:** on/off overall and per kind (all on), plus **Send a test notification** (`POST /api/notifications/test`).
+
+**Tests:** unit `tests/unit/windows-notifications.test.ts` (6):
+- once per event, the first look remembers only;
+- back in review → again;
+- signed out on change;
+- more than 3 → one with the count;
+- switched-off kinds;
+- the XML is escaped and the script never holds the text;
+- nothing happens off Windows;
+- the worker tick against the database (a workflow article in review and a signed-out extension → 2 toasts, then none; switched off → none).
+
+**Not verified here:** a real Windows toast (no Windows here), including whether Focus assist holds it back and the click opening the browser. The test button shows the result on the owner's PC.
+
+**Commands run**
+```
+npx vitest run tests/unit/windows-notifications.test.ts   # 6 pass
+npx tsc --noEmit                                         # 0 errors
+```

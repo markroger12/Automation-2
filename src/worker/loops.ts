@@ -12,6 +12,7 @@ import { chromeAutostartTick } from './chrome-autostart';
 import { indexingTick, syncDue, syncWebsite } from '@/lib/gsc/sync';
 import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
+import { notifyTick } from '@/lib/notify/events';
 
 let dispatcher: ArticleDispatcher | null = null;
 
@@ -47,6 +48,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });
   registerLoop({ name: 'orphan-healer', intervalMs: 60_000, run: async () => void (await healOrphanedTasks()) });
   registerLoop({ name: 'retention', intervalMs: 6 * 3600_000, run: async () => void (await pruneDiagnostics()) });
+  // Windows notifications: an article to review, ChatGPT signed out, a campaign finished (Settings → Notifications).
+  registerLoop({ name: 'windows-notifications', intervalMs: 15_000, run: async () => void (await notifyTick()) });
 }
 
 /** Let in-flight article work reach a safe point before exit. */

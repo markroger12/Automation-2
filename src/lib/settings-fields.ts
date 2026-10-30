@@ -14,7 +14,7 @@ export interface SettingField {
 }
 
 export interface SettingGroup {
-  id: 'browser' | 'workflow' | 'content' | 'seo' | 'advanced';
+  id: 'browser' | 'workflow' | 'content' | 'seo' | 'advanced' | 'notifications';
   title: string;
   description: string;
   fields: SettingField[];
@@ -141,6 +141,17 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'chatgptTabs', label: 'ChatGPT tabs', type: 'number', min: 1, max: 5, warnAbove: { value: 3, message: 'More tabs can cause account-wide rate limiting.' } },
       { key: 'autoLaunchChatGPTChrome', label: 'Open Automation Chrome automatically', type: 'boolean', help: 'When you queue an article (or ChatGPT work is waiting) and the extension is not connected, the worker opens the ChatGPT Chrome window by itself (at most once every 3 minutes).' },
       { key: 'autoCloseChatGPTChrome', label: 'Close it when the queue is done', type: 'boolean', help: 'The Chrome window the worker opened by itself is closed normally (never forced) once no queued or running article and no ChatGPT prompt is left for 2 minutes. A Chrome you opened yourself is never closed.' },
+    ],
+  },
+  {
+    id: 'notifications',
+    title: 'Notifications',
+    description: 'Windows notifications (bottom right, and in the notification centre) when something needs you. Windows shows them itself — nothing goes to an outside service — while the worker runs; a click opens the page.',
+    fields: [
+      { key: 'windows', label: 'Windows notifications', type: 'boolean', help: 'Off: nothing is shown (the bell in the dashboard still lists what needs you).' },
+      { key: 'review', label: 'An article needs review or approval', type: 'boolean', help: 'Also articles from the workflow. More than 3 at once come as one notification with the count.' },
+      { key: 'chatgptSignedOut', label: 'ChatGPT is signed out', type: 'boolean', help: 'In Automation Chrome; the articles wait and go on after you sign in.' },
+      { key: 'campaignFinished', label: 'A bulk campaign finished', type: 'boolean' },
     ],
   },
   {

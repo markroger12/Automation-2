@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Save, RotateCcw } from 'lucide-react';
+import { BellRing, Save, RotateCcw } from 'lucide-react';
 import { api, ApiClientError } from '@/lib/client/api';
 import { SETTING_GROUPS, type SettingField } from '@/lib/settings-fields';
 import type { Settings } from '@/lib/settings-schema';
@@ -162,8 +162,35 @@ export function SettingsForm({ initial }: { initial: Settings }) {
               );
             })}
           </div>
+          {group.id === 'notifications' ? <TestNotification /> : null}
         </Card>
       ))}
+    </div>
+  );
+}
+
+/** Settings → Notifications: show one now, to see that Windows lets it through (Focus assist can hold them back). */
+function TestNotification() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  async function send() {
+    setBusy(true);
+    try {
+      const r = await api<{ shown: boolean; error?: string }>('/api/notifications/test', { method: 'POST' });
+      if (r.shown) toast('success', 'Sent. It appears at the bottom right; if not, Windows Focus assist / Do not disturb may be holding it back.');
+      else toast('error', `Not shown: ${r.error ?? 'unknown reason'}`);
+    } catch (error) {
+      toast('error', (error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="border-app mt-5 flex flex-wrap items-center gap-3 border-t pt-4">
+      <Button size="sm" variant="secondary" loading={busy} onClick={send}>
+        <BellRing className="h-3.5 w-3.5" /> Send a test notification
+      </Button>
+      <span className="text-muted text-xs">Shown by this computer's Windows right away.</span>
     </div>
   );
 }

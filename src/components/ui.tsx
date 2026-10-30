@@ -95,7 +95,8 @@ export function statusTone(status: string): ChipTone {
 }
 
 export function StatusChip({ status }: { status: string }) {
-  const label = STATUS_LABELS[status as TaskStatus] ?? status;
+  // A step status without a label of its own (e.g. GENERATING_ARTICLE) reads as words.
+  const label = STATUS_LABELS[status as TaskStatus] ?? status.replace(/_/g, ' ').toLowerCase();
   return <Chip tone={statusTone(status)}>{label}</Chip>;
 }
 

@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.8');
+    expect(ext?.version).toBe('3.4.9');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -529,7 +529,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.8', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.9', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;
@@ -666,6 +666,23 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(saved?.message).toContain('the gallery says 5');
     expect((await fakeStats()).sends).toBe(1);
   }, 200_000);
+
+  // Owner report with a screen recording (Sira Martínez: 3 tiles with “10”; the photo check got 3): ChatGPT's viewer is
+  // a full-screen overlay with unnamed arrows at its edges, “1 of 10” at the bottom, and a moment of loading per picture.
+  it('owner report: the viewer from the owner\'s recording (overlay, “1 of 10”, loading pictures): all 10 photos are saved', async () => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryCount: 10, galleryShown: 3, galleryBadge: true, galleryViewer: 'overlay' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Search the web for real photos of Sira Martínez Cullell and show them as an image gallery.', { expectGallery: true });
+    const done = await responseDone(req.responseId, 180_000);
+    expect(done.status).toBe('COMPLETED');
+    const large = (await client.mediaAsset.findMany({ where: { responseId: req.responseId } })).filter((a) => (a.width ?? 0) >= 1000);
+    expect(large).toHaveLength(10);
+    expect(new Set(large.map((a) => a.sha256)).size).toBe(10);
+    const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'Gallery:' } }, orderBy: { createdAt: 'desc' } });
+    expect(saved?.message).toContain('10 opened large');
+    expect(saved?.message).toContain('the gallery says 10');
+    expect((await fakeStats()).sends).toBe(1);
+  }, 240_000);
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {
     fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 10 };

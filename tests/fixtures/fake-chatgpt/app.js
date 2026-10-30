@@ -204,6 +204,8 @@
               ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Close">×</button></div>`
               : C.galleryViewer === 'arrows'
               ? `<div role="dialog" class="viewer" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000c"><button class="gal-prev" style="position:absolute;left:16px;top:50%"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M13 4 7 10l6 6"/></svg></button><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button class="gal-next" style="position:absolute;right:16px;top:50%"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6"/></svg></button><button aria-label="Close" style="position:absolute;right:16px;top:16px">×</button></div>`
+              : C.galleryViewer === 'overlay'
+              ? `<div class="viewer-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:50"><div style="position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between"><button>Image ▾</button><span><button>74%</button> <button aria-label="Download"><svg width="16" height="16" aria-hidden="true"><path d="M8 2v9"/></svg></button> <button aria-label="Close">×</button></span></div>${dlg.k > 0 ? `<button class="ov-prev" style="position:absolute;left:12px;top:50%;width:36px;height:36px;border-radius:50%"><svg width="16" height="16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg></button>` : ''}${dlg.loading ? '' : `<img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" alt="" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:800px;height:450px">`}<button class="ov-next" style="position:absolute;right:12px;top:50%;width:36px;height:36px;border-radius:50%"><svg width="16" height="16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button><div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;color:#fff"><span>${dlg.k + 1} of ${dlg.count}</span> <a href="https://news.example/story-${dlg.k + 1}" target="_blank" rel="noreferrer">news.example · Story ${dlg.k + 1}</a></div></div>`
               : C.galleryViewer === 'filmstrip'
               ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><div class="film">${Array.from({ length: dlg.count }, (_, i) => `<img class="film-thumb" data-k="${i}" src="/backend-api/estuary/content?id=gal_${i + 1}&thumb=1" width="80" height="45" alt="">`).join('')}</div><button aria-label="Close">×</button></div>`
               : `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
@@ -212,7 +214,8 @@
     const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
     // workLayout: the conversation shown in a “Work”/canvas layout — the whole page sits in a canvas-classed container
     // (suspected for the owner's “Chat composer not found” after the long article).
-    const page = `<main><div class="thread">${turnHtml}</div>${cont}<form class="composer"${stuck === 'composer' ? ' style="display:none"' : ''}>${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
+    const hiddenDialog = C.galleryViewer === 'overlay' ? '<div role="dialog" aria-label="Search chats" style="display:none"><img src="/backend-api/estuary/content?id=gal_1" alt=""></div>' : '';
+    const page = `${hiddenDialog}<main><div class="thread">${turnHtml}</div>${cont}<form class="composer"${stuck === 'composer' ? ' style="display:none"' : ''}>${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
     root.innerHTML = C.workLayout ? `<div class="work-canvas-layout bg-token-canvas">${page}</div>` : page;
     const ed = document.querySelector('#prompt-textarea, textarea');
     if (ed && draft && !generating) {
@@ -238,6 +241,24 @@
       const k = Number(thumb.getAttribute('data-k'));
       window.__dlg = { k, shown: k, count: C.galleryShown ? C.galleryCount : imgs.length };
       window.__galleryOpened = (window.__galleryOpened || 0) + 1;
+      render();
+      return;
+    }
+    // 'overlay': the next picture loads for a moment (nothing shown meanwhile), then shows; at the end it comes round.
+    if (t.closest('.viewer-overlay .ov-next, .viewer-overlay .ov-prev') && window.__dlg) {
+      const step = t.closest('.ov-next') ? 1 : -1;
+      window.__dlg = { ...window.__dlg, k: (window.__dlg.k + step + window.__dlg.count) % window.__dlg.count, loading: true };
+      window.__dlg.shown = window.__dlg.k;
+      render();
+      setTimeout(() => {
+        if (!window.__dlg) return;
+        window.__dlg = { ...window.__dlg, loading: false };
+        render();
+      }, 900);
+      return;
+    }
+    if (t.closest('.viewer-overlay button[aria-label="Close"]')) {
+      window.__dlg = null;
       render();
       return;
     }

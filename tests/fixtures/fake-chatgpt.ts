@@ -50,8 +50,12 @@ export interface FakeChatGptConfig {
    * 'carousel': every picture stays shown side by side on a track that slides behind a window (the ones beside it are
    * outside it); 'fade': every picture stacked in one place, all but one faded out; 'lightbox': one picture and Close,
    * no “Next” (owner report: ChatGPT showed 6 photos, 2 were used).
+   * 'overlay': the viewer in the owner's screen recording (2026-10-30): a full-screen overlay (not a role="dialog";
+   * the page keeps another, hidden dialog), “Image”, zoom, Download and Close at the top, unnamed ← / → at the edges
+   * halfway down, “1 of 10” and the source's link at the bottom, and each next picture loading for a moment (blank
+   * meanwhile).
    */
-  galleryViewer?: 'single' | 'strip' | 'carousel' | 'fade' | 'lightbox' | 'arrows' | 'keys' | 'filmstrip';
+  galleryViewer?: 'single' | 'strip' | 'carousel' | 'fade' | 'lightbox' | 'arrows' | 'keys' | 'filmstrip' | 'overlay';
   /**
    * Owner report (screenshot: 3 tiles, the third with a stacked-pictures icon and “5”; 3 photos were used): the count
    * sits on the last tile, and the viewer is the only way to the other pictures. With 'arrows' its Previous/Next are

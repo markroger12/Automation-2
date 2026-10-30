@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.4.8';
+  const EXTENSION_VERSION = '3.4.9';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -329,9 +329,9 @@
     let shown = null;
     while (Date.now() < deadline) {
       checkCancelled();
+      // While the next picture loads, the viewer can show no picture at all (owner's recording): keep waiting.
       const dialog = A.galleryDialog();
-      if (!dialog) return null;
-      shown = A.shownPicture(dialog);
+      shown = dialog && A.shownPicture(dialog);
       if (shown && (shown.currentSrc || shown.src) !== previous) return shown;
       await sleep(250);
     }
@@ -391,7 +391,9 @@
     // Owner report (3 tiles, the third with “5”; the article got 3): the gallery's own count, when it shows more
     // pictures than tiles. The others are only in the viewer.
     const said = A.galleryCount(thumbs);
-    const want = Math.max(openable, said || 0);
+    let want = Math.max(openable, said || 0);
+    // The viewer's own count (“1 of 10”), once it is open.
+    let counted = 0;
     // How the viewer was stepped through, for the task log.
     const how = new Set();
     let large = 0;
@@ -406,12 +408,20 @@
       let previous = null;
       // Whether the viewer went through all its pictures: “Next” turned off at the last one, or it came back round.
       let walked = false;
-      // A viewer with no Next button may step with the arrow keys (tried while pictures are missing).
+      // A viewer with no Next button may step with the arrow keys (tried while pictures are missing); a Next that
+      // changed nothing gets one try with the arrow keys too.
       let keys = false;
-      for (let step = 0; step < 12 && picked.length < 10; step++) {
-        const img = await viewerPicture(previous, keys ? 2500 : 6000);
+      let triedKeys = false;
+      for (let step = 0; step < 14 && picked.length < 10; step++) {
+        // Owner's recording: the next picture can take a few seconds to load after →.
+        const img = await viewerPicture(previous, step === 0 ? 6000 : keys ? 2500 : 12000);
         if (!img) break;
         const src = img.currentSrc || img.src;
+        if (step > 0 && src === previous && !triedKeys && A.galleryDialog()) {
+          triedKeys = keys = true;
+          A.pressViewerKey(A.galleryDialog(), 'ArrowRight');
+          continue;
+        }
         if (step > 0 && (src === previous || seen.has(src))) {
           walked = src !== previous;
           break;
@@ -420,7 +430,17 @@
         if (step > 0) how.add(keys ? 'arrow keys' : 'Next');
         previous = src;
         const dialog = A.galleryDialog();
-        const next = dialog && A.galleryNextButton(dialog);
+        const counter = dialog && A.viewerCounter(dialog);
+        if (counter) {
+          counted = Math.max(counted, counter.of);
+          want = Math.max(want, counter.of);
+          // “10 of 10”: the last picture (a viewer that comes round would show the first one again).
+          if (counter.at >= counter.of) {
+            walked = true;
+            break;
+          }
+        }
+        const next = !keys && dialog && A.galleryNextButton(dialog);
         if (next) {
           walked = next.disabled || next.getAttribute('aria-disabled') === 'true';
           if (walked) break;
@@ -508,7 +528,7 @@
       if (up && up.ok) images.push({ mediaAssetId: up.mediaAssetId });
       else if (/^https?:/i.test(p.src)) imageLinks.push({ url: p.src.slice(0, 1900), width: p.width, height: p.height });
     }
-    const report = `${thumbs.length} picture(s) in the gallery (${thumbs.length - openable} not shown by the page), ${large} opened large, ${images.length} saved, ${imageLinks.length} reported as link(s)${said ? `; the gallery says ${said}` : ''}; viewer stepped by: ${how.size ? [...how].join(', ') : 'nothing (one picture)'}.`;
+    const report = `${thumbs.length} picture(s) in the gallery (${thumbs.length - openable} not shown by the page), ${large} opened large, ${images.length} saved, ${imageLinks.length} reported as link(s)${said ? `; the gallery says ${said}` : ''}${counted ? `; the viewer counts ${counted}` : ''}; viewer stepped by: ${how.size ? [...how].join(', ') : 'nothing (one picture)'}.`;
     return { images, imageLinks: imageLinks.slice(0, 20), note: null, report };
   }
 

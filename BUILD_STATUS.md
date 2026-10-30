@@ -3272,3 +3272,32 @@ The whole extension integration file on 3.4.8:
 ```
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 52/52
 ```
+
+## Owner report (2026-10-30): “the image problem is still not fixed” — Sira Martínez, 3 tiles with “10” (extension 3.4.9)
+
+The owner sent a screenshot: 3 tiles, the third with “10”; the photo check got 3. Then a screen recording of ChatGPT's viewer.
+- **The viewer in the recording:**
+  - a full-screen layer: “Image ▾” at the top left; zoom (“32 %”), Download and Close at the top right;
+  - the picture in the middle; unnamed → at the right edge halfway down, and ← from the second picture on;
+  - “1 of 10” with the source site and its link at the bottom;
+  - “6 of 10” showed nothing for a moment while the picture loaded.
+- **What could not have worked (3.4.8):**
+  - **the viewer itself:** the extension took the first `role="dialog"` of the page. ChatGPT keeps other, hidden dialogs in its page, and a full-screen layer need not be a dialog at all. Either way no picture was found, and only the 3 tiles' pictures were left. The photo check sends up to 8 photos and got 3, so only 3 were usable;
+  - **loading:** a picture still loading made the walk stop.
+- **Reproduced first:** the fake ChatGPT page has the recording's viewer (`overlay`): the layer is not a dialog, a hidden dialog is in the page, → and ← are unnamed, there is “1 of 10” with the source's link, and each next picture loads for 0.9 s. 3.4.8 saved 0 large photos of 10 there.
+- **Fix (extension 3.4.9):**
+  - **The viewer:** a dialog on screen with a large picture; else the fixed layer covering most of the window around a large picture; else a dialog on screen. Hidden dialogs are never taken.
+  - **Its count:** “1 of 10” is read. The walk wants that many, stops at “10 of 10”, and the task log adds “the viewer counts 10”.
+  - **Loading:** a picture still loading (or a moment with no picture) is waited for, up to 12 s after →.
+  - **A → that changes nothing:** the arrow keys are tried once.
+  - **Close:** the viewer's own Close button, else Escape.
+- **Test (integration, real extension in Chromium):** “the viewer from the owner's recording … all 10 photos are saved”. On 3.4.8 it gave 0 of 10; on 3.4.9 it gives 10 of 10, and the log has “10 opened large” and “the gallery says 10”.
+
+**Not verified:** the real ChatGPT page's markup (the recording shows how it looks, not how it is built). If the next image search still brings fewer photos, its task log line (“Gallery: … viewer stepped by: …”) says how far the viewer was walked.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "viewer from the owner"   # 3.4.8: failed (0 of 10 large); 3.4.9: pass (10 of 10)
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 52 files, 380 tests pass
+```

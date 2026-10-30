@@ -418,8 +418,36 @@
     return img.complete && img.naturalWidth === 0 && /^https?:/i.test(img.currentSrc || img.src || '');
   }
 
+  /**
+   * The picture viewer. Owner report with a screen recording (Sira Martínez: 3 tiles with “10”, 3 photos used): ChatGPT
+   * keeps other, hidden dialogs in its page, and its viewer is a full-screen layer. So: a dialog on screen with a large
+   * picture; else the full-screen fixed layer around a large picture; else a dialog on screen.
+   */
   function galleryDialog() {
-    return qs(['[role="dialog"]', '[aria-modal="true"]', 'dialog[open]']);
+    const shown = qsAll(['[role="dialog"]', '[aria-modal="true"]', 'dialog[open]']).filter(isVisible);
+    const withPicture = shown.filter((d) => Array.from(d.querySelectorAll('img')).some((img) => isVisible(img) && img.getBoundingClientRect().width >= 200));
+    return withPicture[withPicture.length - 1] || viewerLayer() || shown[shown.length - 1] || null;
+  }
+
+  /** A fixed layer covering most of the window around a large picture (a viewer that is not marked as a dialog). */
+  function viewerLayer() {
+    for (const img of Array.from(document.images)) {
+      if (!isVisible(img) || img.getBoundingClientRect().width < 200) continue;
+      for (let p = img.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (getComputedStyle(p).position !== 'fixed') continue;
+        const b = p.getBoundingClientRect();
+        if (b.width >= innerWidth * 0.6 && b.height >= innerHeight * 0.6) return p;
+      }
+    }
+    return null;
+  }
+
+  /** The viewer's own count, e.g. “1 of 10” at the bottom of ChatGPT's viewer. */
+  function viewerCounter(dialog) {
+    const m = /(?:^|\s)(\d{1,3})\s*(?:of|von|\/)\s*(\d{1,3})(?:\s|$)/i.exec(dialog.innerText || '');
+    const at = m ? Number(m[1]) : 0;
+    const of = m ? Number(m[2]) : 0;
+    return at >= 1 && of >= at && of <= 100 ? { at, of } : null;
   }
 
   /**
@@ -536,7 +564,8 @@
   }
 
   function closeGalleryDialog() {
-    const close = qs(['[role="dialog"] button[aria-label*="Close" i]', '[role="dialog"] button[aria-label*="Schließen" i]']);
+    const viewer = galleryDialog();
+    const close = viewer && qs(['button[aria-label*="Close" i]', 'button[aria-label*="Schließen" i]'], viewer);
     if (close) close.click();
     else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
@@ -903,6 +932,7 @@
     shownPicture,
     galleryNextButton,
     galleryCount,
+    viewerCounter,
     pressViewerKey,
     viewerStrip,
     closeGalleryDialog,

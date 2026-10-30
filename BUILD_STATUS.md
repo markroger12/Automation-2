@@ -3267,3 +3267,8 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx tsc --noEmit                    # 0 errors
 npx vitest run                      # 52 files, 380 tests pass
 ```
+
+The whole extension integration file on 3.4.8:
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 52/52
+```

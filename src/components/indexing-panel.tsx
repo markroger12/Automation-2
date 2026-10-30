@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from './client';
 import { Alert, Card, Chip } from './ui';
+import { ScreenshotModal } from './screenshot-modal';
 import { formatInZone } from '@/lib/workflow/time';
 
 interface IndexingOverview {
@@ -25,6 +26,8 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
   const toast = useToast();
   const [o, setO] = useState<IndexingOverview | null>(null);
   const [busy, setBusy] = useState(false);
+  // The screenshot opens over the page (owner request: not in a new tab).
+  const [shotOpen, setShotOpen] = useState(false);
   const load = useCallback(async () => setO(await api<IndexingOverview>('/api/search-console/indexing')), []);
   useEffect(() => {
     void load().catch(() => {});
@@ -96,15 +99,19 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
         ) : null}
         {o.lastProof ? (
           <div className="flex items-start gap-3">
-            <a href={`/api/media/${o.lastProof.id}`} target="_blank" rel="noreferrer" className="shrink-0" title="Open the screenshot">
+            <button type="button" onClick={() => setShotOpen(true)} className="shrink-0" title="Open the screenshot" aria-label="Open the latest Search Console screenshot">
               <img src={`/api/media/${o.lastProof.id}`} alt="Search Console after “Request indexing” (latest)" className="border-app h-20 w-36 rounded border object-cover object-top" />
-            </a>
+            </button>
             <p className="text-muted text-xs">
               Latest proof: Search Console as Automation Chrome saw it after “Request indexing”{o.lastProof.url ? ` for ${o.lastProof.url.replace(/^https?:\/\//, '')}` : ''} · {when(o.lastProof.at)}. Each keyword's own screenshot is linked in the keyword queue.
             </p>
           </div>
         ) : null}
       </div>
+      <ScreenshotModal
+        shot={shotOpen && o.lastProof ? { id: o.lastProof.id, title: 'Search Console screenshot (latest)', caption: `${o.lastProof.url ? `${o.lastProof.url} · ` : ''}${when(o.lastProof.at)}` } : null}
+        onClose={() => setShotOpen(false)}
+      />
     </Card>
   );
 }

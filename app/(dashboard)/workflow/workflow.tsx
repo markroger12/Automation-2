@@ -29,6 +29,7 @@ import { Button, ConfirmDialog, DialogSection, Modal, useToast } from '@/compone
 import { Menu, MenuCheck, MenuItem, MenuLabel, Pagination, pageSlice, usePageSize } from '@/components/data-table';
 import { TimePicker } from '@/components/time-picker';
 import { IndexingPanel } from '@/components/indexing-panel';
+import { ScreenshotModal } from '@/components/screenshot-modal';
 import { Field, Input, Select, Switch, Textarea } from '@/components/form';
 import { Card, Chip, PageHeader, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
@@ -111,6 +112,8 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   const [pageSize, setPageSize] = usePageSize('workflow-keywords', 20);
   const [hidden, setHidden] = useState<ColumnId[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // The Search Console screenshot shown over the page (owner request: not in a new tab).
+  const [shot, setShot] = useState<{ id: string; title: string; caption?: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -476,9 +479,15 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                             </a>
                           ) : null}
                           {k.proofId ? (
-                            <a className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] hover:bg-[var(--surface-2)]" href={`/api/media/${k.proofId}`} target="_blank" rel="noreferrer" data-tip="Search Console screenshot" aria-label={`Search Console screenshot: ${k.keyword}`}>
+                            <button
+                              type="button"
+                              className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] hover:bg-[var(--surface-2)]"
+                              onClick={() => setShot({ id: k.proofId!, title: `Search Console screenshot: ${k.keyword}`, caption: k.publishedUrl ?? undefined })}
+                              data-tip="Search Console screenshot"
+                              aria-label={`Search Console screenshot: ${k.keyword}`}
+                            >
                               <ImageIcon className="h-3.5 w-3.5" aria-hidden />
-                            </a>
+                            </button>
                           ) : null}
                           {indexingLink ? (
                             <a
@@ -661,6 +670,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
         ) : null}
       </Modal>
 
+      <ScreenshotModal shot={shot} onClose={() => setShot(null)} />
       <ConfirmDialog
         open={confirmForce}
         title={`Force continue ${selectedRows.filter((k) => k.status === 'FAILED').length} keyword(s)?`}

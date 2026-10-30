@@ -3306,3 +3306,22 @@ The whole extension integration file on 3.4.9:
 ```
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 53/53
 ```
+
+## Owner request (2026-10-30): the Search Console screenshot opens in the same tab
+
+“Make the Search Console screenshot open in the same tab, not a new one.”
+- **Before:** the keyword queue's screenshot button and the indexing panel's picture were links to `/api/media/<id>` with `target="_blank"`.
+- **Now (`src/components/screenshot-modal.tsx`):**
+  - both open the screenshot in a window over the page, with the keyword and the post's URL (or the time, for the latest one);
+  - **Download** saves it; **Close** or Esc returns to the page as it was.
+- **Chromium smoke (scratch database, a proof on “mekhi phifer net worth”):**
+  - the queue's button opens the window on the same page, with no new tab, and the picture loads (1366 px wide); Esc closes it;
+  - the panel's picture opens the latest one; Close closes it; still no new tab;
+  - no console errors.
+
+**Commands run**
+```
+npx tsc --noEmit                                # 0 errors
+node <scratch>/proofmodal.mjs <out>             # results above
+npx vitest run                                  # 52 files, 380 tests pass
+```

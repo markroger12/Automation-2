@@ -10,6 +10,8 @@ import { PublishingPermission } from './publishing';
 import { RoutingRules } from './routing-rules';
 import { parseRoutingRules } from '@/lib/campaigns/router';
 import { DangerZone } from './danger';
+import { SavedLogin } from './saved-login';
+import { savedLogin } from '@/lib/wp-credentials';
 import { SiteHealth } from './site-health';
 import { siteHealth } from '@/lib/site-health';
 import { failedWordPressTasks } from '@/lib/wordpress-resave';
@@ -68,6 +70,8 @@ export default async function WebsitePage({ params, searchParams }: { params: Pr
     settingsOverrides: { content: overrides.content, seo: overrides.seo, workflow: overrides.workflow },
   };
   const live = jobs.find((j) => j.status === 'WAITING' || j.status === 'ACTIVE');
+  const login = savedLogin(site.id);
+  const host = new URL(site.adminUrl).host;
 
   return (
     <>
@@ -91,8 +95,10 @@ export default async function WebsitePage({ params, searchParams }: { params: Pr
 
       {state !== 'ACTIVE' ? (
         <div className="mb-6">
-          <Alert tone="warning" title={state === 'UNKNOWN' ? 'Next step: log in once' : 'WordPress session needs attention'}>
-            Click <strong>Log in</strong>. A visible browser window opens on your WordPress login page; sign in yourself (the app never sees your password). Keep “Remember Me” ticked (it is pre-ticked) so the login survives restarts. The window closes automatically after sign-in, then categories are synced.
+          <Alert tone="warning" title={live?.kind === 'wp.login' ? 'Logging in…' : state === 'UNKNOWN' ? 'Next step: log in' : 'WordPress session needs attention'}>
+            {login
+              ? 'The app logs in with the saved user name and password (Session tab → WordPress login → Log in now). If WordPress asks for a CAPTCHA or a 2-step code, a window opens for that step; categories are synced after the login.'
+              : 'Save the WordPress user name and password on the Session tab: the app then logs in by itself and again whenever the session ends. Or click Log in to sign in yourself in a window.'}
           </Alert>
         </div>
       ) : null}
@@ -117,11 +123,15 @@ export default async function WebsitePage({ params, searchParams }: { params: Pr
       </nav>
 
       {tab === 'session' ? (
+      <>
+      <Card title="WordPress login" className="mb-6" description="Saved user name and password: the app logs in by itself.">
+        <SavedLogin websiteId={site.id} host={host} initial={login} />
+      </Card>
       <div className="grid items-start gap-6 xl:grid-cols-3">
         <Card title="WordPress session" className="xl:col-span-2" description={`Profile folder data/${profile?.profileDir ?? `profiles/${site.slug}`}`}>
           <div className="flex flex-wrap gap-2">
-            <ControlActionButton websiteId={site.id} action="login" variant="primary">
-              Log in (visible window)
+            <ControlActionButton websiteId={site.id} action="login">
+              {login ? 'Log in' : 'Log in yourself (window)'}
             </ControlActionButton>
             <ControlActionButton websiteId={site.id} action="test">
               Test session
@@ -211,6 +221,7 @@ export default async function WebsitePage({ params, searchParams }: { params: Pr
           )}
         </Card>
       </div>
+      </>
       ) : null}
 
       {tab === 'health' ? (

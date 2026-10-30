@@ -4,7 +4,8 @@ import { registerControlHandler } from './control';
 import { launchAutomationChrome } from '@/lib/automation-chrome';
 import { GOOGLE_SIGNIN_URL } from '@/lib/gsc/request-indexing';
 import { renderGscProof } from '@/lib/gsc/proof';
-import { deleteProfile, detectEditor, interactiveLogin, openAdminWindow, resetSession, syncCategories, testSession } from '@/wordpress/session';
+import { autoLogin, deleteProfile, detectEditor, interactiveLogin, openAdminWindow, resetSession, syncCategories, testSession } from '@/wordpress/session';
+import { savedLogin } from '@/lib/wp-credentials';
 import { refreshLinkIndex } from '@/wordpress/link-index';
 import { scheduleKeywordPost, verifyKeywordPublished } from '@/wordpress/schedule';
 import { applyContentRevision } from '@/wordpress/refresh-apply';
@@ -20,7 +21,11 @@ async function site(websiteId: unknown) {
 export function registerBuiltInControlHandlers(): void {
   registerControlHandler('wp.login', async (job, payload, { heartbeat }) => {
     const s = await site(payload.websiteId ?? job.websiteId);
-    const result = await interactiveLogin(s, heartbeat);
+    // Owner request: with a saved sign-in the app logs in by itself; the window opens only for what needs the owner
+    // (a CAPTCHA or a second-factor code, or no saved sign-in) — then with the user name and password filled in.
+    const saved = savedLogin(s.id);
+    let result = saved && !saved.last?.refused ? await autoLogin(s) : null;
+    if (!result || (result.state !== 'ACTIVE' && (result.needsOwner || result.refused))) result = await interactiveLogin(await site(s.id), heartbeat);
     const extra: Record<string, unknown> = {};
     if (result.state === 'ACTIVE') {
       try {

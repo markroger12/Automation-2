@@ -34,7 +34,9 @@ export default function HelpPage() {
         <Card title="3 · WordPress websites">
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>Websites → Add website (public URL, admin URL, language, timezone).</li>
-            <li>Click <strong>Log in</strong>: a visible browser window opens; sign in yourself. Passwords are never stored or typed by the app.</li>
+            <li>
+              Give the WordPress <strong>user name and password</strong> when you add the website (or later on its Session tab): the app logs in by itself, with “Remember me”, and again whenever the session ends. They are saved encrypted on this computer only and typed only into the website's own login page. A CAPTCHA or a 2-step code opens a window where you do that step; without a saved sign-in, <strong>Log in yourself</strong> opens the window for the whole sign-in.
+            </li>
             <li>Click <strong>Sync categories</strong>. Drafts are created as drafts only; publishing needs the per-site switch plus the scheduler.</li>
             <li>
               Click <strong>Test session</strong>: it also checks that the WordPress REST API answers for the logged-in user (the block editor needs it too) and whether Rank Math is active. Drafts are saved through

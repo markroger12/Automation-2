@@ -129,7 +129,7 @@ export default async function OverviewPage() {
 
       <Card title="Websites" className="mt-6" padded={false} actions={<LinkButton href="/websites" size="sm">Manage</LinkButton>}>
         {sites.length === 0 ? (
-          <EmptyState title="No websites configured" description="Add a WordPress site, log in once in the visible browser, then sync categories." action={<LinkButton href="/websites" variant="primary">Add website</LinkButton>} />
+          <EmptyState title="No websites configured" description="Add a WordPress site with its user name and password: the app logs in and syncs its categories." action={<LinkButton href="/websites" variant="primary">Add website</LinkButton>} />
         ) : (
           <div className="overflow-x-auto">
             <table className="table-app">

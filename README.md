@@ -5,7 +5,7 @@ A private, **Windows-first, local** dashboard for a publisher running several En
 - Runs only on your computer: Next.js dashboard + one Node worker + SQLite (`data/app.db`). No Docker, no cloud database, no telemetry.
 - **No login screen** — it is a single-owner tool. The dashboard listens on `127.0.0.1` only, and every state-changing request needs a same-origin CSRF token, so neither other computers nor other websites can drive it.
 - **Draft-only by default.** Publishing/scheduling requires a per-site `canPublish` switch *and* the scheduler path.
-- WordPress passwords are never asked for, typed or stored: you log in once per site in a visible browser window.
+- WordPress sign-in: give the user name and password with the website (or on its Session tab) and the app logs in by itself, and again when the session ends. They are saved encrypted in `data\credentials` only (never in the database, a log, a backup or a report, never shown again) and typed only into the website's own login page. A CAPTCHA or 2-step code is never solved: a window opens for you. Without a saved sign-in you log in yourself in a visible window.
 
 > Build progress, verified commands and known limitations are tracked in [BUILD_STATUS.md](BUILD_STATUS.md); the release steps are in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
@@ -50,7 +50,7 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 
 1. **Automation Chrome** (sidebar): follow the five checked steps — start the dedicated Chrome window, load the unpacked extension from the `extension\` folder, paste the one-time connection key, sign in to ChatGPT yourself. “Send test prompt” proves the round trip.
    After setup you do not need to keep it open: when you queue an article, or a Search Console indexing request is due, the worker opens Automation Chrome by itself, and closes it again (normally, never forced) 2 minutes after the queue is done. When Chrome still runs in the background with its windows closed, a window is opened in it for the waiting work. A Chrome window you opened yourself is never closed. Both switches are in **Settings → Browser**; when Chrome was not opened, **Logs** says why once.
-2. **Websites → Add website**: public URL, language, country and time zone. Then **Log in** opens a visible window where *you* sign in to WordPress (leave “Remember Me” ticked, or the sign-in ends when the window closes). **Sync categories** and pick a default category.
+2. **Websites → Add website**: the address (the name is filled in from it), language, country and time zone, and the WordPress **user name and password**. **Add and log in**: the app signs in by itself (with “Remember me”) and syncs the categories; pick a default category on the Settings tab. If WordPress shows a CAPTCHA or asks for a 2-step code, a window opens with the user name and password filled in and you do that step. Without a saved sign-in, **Log in yourself** on the Session tab opens the window for the whole sign-in.
 3. **Single Article**: enter a keyword and generate. The finished article is saved as a **WordPress draft** and read back to verify it.
 4. Optional: **Bulk Campaigns**, **Workflow / Calendar**, **Image Template**, **Settings**.
 
@@ -336,6 +336,7 @@ Backups use SQLite `VACUUM INTO`, so they are consistent even while the worker r
 - The dashboard has no accounts by design (owner request). Do not expose port 3000 to a network; it binds to `127.0.0.1`.
 - The ChatGPT extension authenticates with a one-time-displayed connection key (`bas_…`); only its hash is stored.
 - Logs and the diagnostic bundle redact cookies, tokens, keys and passwords.
+- Saved WordPress sign-ins (owner request: automatic login) are encrypted with AES-256-GCM in `data\credentials\wordpress-logins.json`, with a random key next to it (`wordpress-logins.key`); each entry is bound to its website. That protects against a copied database, log or screenshot, not against someone with the whole data folder (which holds the signed-in browser profiles anyway). The dashboard never gets a password back — only the user name and how the last automatic login went. The password is typed only into the website's own login page (same host as its admin address); a refused password is not tried again until you change it, so security plugins do not lock the account; CAPTCHAs and 2-step codes are always left to you. Remove a sign-in on the website's Session tab.
 - Every outside page the app reads (link checks, images, plagiarism sources) goes through one SSRF-safe fetcher: public addresses only (checked again on every redirect), size and time limits, no cookies.
 - Article HTML is allow-listed before it is saved and again before it is shown, including unsaved edits in the editor.
 - Optional `SERPER_API_KEY` (plagiarism web search) stays in `.env`; it is sent only to that API and never logged or shown.

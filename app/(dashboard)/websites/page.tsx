@@ -22,7 +22,7 @@ export default async function WebsitesPage({ searchParams }: { searchParams: Pro
       />
       {sites.length === 0 ? (
         <Card>
-          <EmptyState icon={<Globe className="h-8 w-8" />} title="No websites yet" description="Add your first WordPress site, log in once, then sync its categories." />
+          <EmptyState icon={<Globe className="h-8 w-8" />} title="No websites yet" description="Add your first WordPress site with its user name and password: the app logs in and syncs its categories." />
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

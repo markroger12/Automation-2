@@ -289,7 +289,7 @@ async function handleError(
       'LOGIN_REQUIRED',
       error.scope === 'wordpress' ? 'wordpress-login' : 'chatgpt-login',
       error.message,
-      error.scope === 'wordpress' ? 'Open Websites → this site → Log in, sign in manually, then the task resumes.' : 'Sign in to ChatGPT in the Automation Chrome window; the task resumes automatically.',
+      error.scope === 'wordpress' ? 'Open Websites → this site → Session tab: save the WordPress sign-in (the app logs in by itself) or Log in yourself; the task then resumes.' : 'Sign in to ChatGPT in the Automation Chrome window; the task resumes automatically.',
     );
     return 'paused';
   }

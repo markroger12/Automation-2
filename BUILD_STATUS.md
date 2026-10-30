@@ -3524,3 +3524,66 @@ npx tsc --noEmit                                           # 0 errors
 npx vitest run                                             # 56 files, 396 tests pass
 npx next build                                             # compiled successfully
 ```
+
+## Owner request (2026-10-30): Add website window, and automatic WordPress login
+
+“Add website popup ka UI sahi krde … manual login hata da, add website ke sath hi password dalne ka add krde, phir vo auto login krle.”
+- **A rule changed at the owner's request.** Until now the tool never asked for, stored or typed a WordPress password (the owner logged in once in a visible window). The owner now wants the password given with the website and the app to log in by itself. How the password is protected:
+  - **Storage:** `src/lib/wp-credentials.ts` stores the user name and password per website with AES-256-GCM, bound to the website id, in `data/credentials/wordpress-logins.json`. The random key is next to it in `wordpress-logins.key`; both files are mode 600.
+  - **Where it never goes:** the database, logs (which also redact password keys), backups, the diagnostic bundle, and the browser. The dashboard API returns only the user name, when it was saved, and the last automatic login.
+  - **Honest limit (README Security notes):** this protects against a copied database, log or screenshot, not against someone with the whole data folder.
+  - **Where it is typed:** only into the website's own login form, on the same host as its admin address, with “Remember me” ticked. A login form on another host is not filled in.
+  - **Refused password:** recorded and not tried again until it is changed, so security plugins do not lock the account.
+  - **CAPTCHA and 2-step codes** are never solved. The automatic login stops, and `wp.login` opens the visible window with the user name and password filled in. A CAPTCHA page is not submitted; the owner does the check and clicks Log In. On a 2-step page the owner types only the code.
+  - **No saved sign-in:** **Log in yourself (window)** still opens the window for the whole sign-in.
+- **Automatic login, three ways:**
+  - **From the dashboard:** Add website with a sign-in → `wp.login` (automatic, else the window).
+  - **During a job:** a job that finds the session gone signs in again and retries once (`withWordPress`).
+  - **Worker loop (every 5 min):** sites with LOGIN_REQUIRED and a saved sign-in are signed in again, so paused articles resume.
+  - **Limits:** at most once per site every 10 minutes, and never after a refusal or a step that needs the owner, until the owner acts.
+- **Add website window** (`app/(dashboard)/websites/add-website.tsx`, a Modal in the new look):
+  - **Website:** address (the name is filled in from it), name, language as two buttons (German sets Germany and Europe/Berlin), country, time zone.
+  - **WordPress login:** user name and password with show/hide, and a note on how it is kept.
+  - **More options (closed):** admin address, internal-link line, editor, Search Console property.
+  - **Button:** “Add and log in”.
+- **Website → Session tab → WordPress login card:**
+  - shows “Saved for <user>”, when it was saved, and the last automatic login (worked / refused by WordPress / needed your step) with its reason;
+  - **Log in now**, **Change**, **Remove** (with a confirm);
+  - without a sign-in, a form with **Save and log in**.
+- **Texts** in the app, Help and README describe the new way. The article pause message points to the Session tab.
+
+**Tests**
+- **Unit `tests/unit/wp-credentials.test.ts` (3):**
+  - the file never holds the password, and only the user name comes back;
+  - mode 600 for both files;
+  - an entry copied to another website does not decrypt, nor does one with another key;
+  - the last result, a fresh start after saving again, removal, and empty or oversized input.
+- **Integration `tests/integration/wordpress-auto-login.test.ts` (6, real Chromium against the fake WordPress, which now has a real password check, a 2-step code and a CAPTCHA):**
+  - **Add website through the API with a sign-in:** a login job is queued; the password is not in the file, the API answer, the logs, the audit, the website, the profile or the jobs. The automatic login signs in (1 form post), and the session survives a browser restart.
+  - **Wrong password:** “refused” with WordPress's message. Neither a job nor the worker loop tries it again (still 1 post); after a change it signs in.
+  - **2-step code:** the automatic login stops (needs the owner). The window sends the saved sign-in, and the owner types only the code → active.
+  - **CAPTCHA:** nothing is sent automatically (0 posts). The window has the user name filled in; the owner does the check and clicks Log In → active (1 post).
+  - **Session ended:** the worker loop signs in again, and the article paused for the sign-in goes back to QUEUED. A second try within 10 minutes is skipped.
+  - **Remove:** the sign-in is gone, and there is no automatic login any more.
+- **The earlier WordPress tests still pass:** `wordpress-session`, `wordpress-drafts`, `workflow-publish` (with the new file: 4 files, 30 tests).
+- **Chromium screenshots (scratch database):**
+  - the Add website window in light and dark: name “Celeb News” from www.celeb-news.de, and German → Germany / Europe/Berlin;
+  - More options opened;
+  - the Session tab with the login card;
+  - no page errors.
+
+**Not verified here:**
+- real WordPress sites and their security plugins (login pages that differ from WordPress's own form);
+- the owner's Windows PC.
+- **Unit runs:** one full run had 1 failing file (7 tests skipped). Three more runs were clean, 57 files and 399 tests each. The failing file was not captured, because the output was filtered.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run tests/unit/wp-credentials.test.ts                           # 3 pass
+npx vitest run                                                             # 57 files, 399 tests (3 runs; one earlier run: 1 file failed, not reproduced)
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-auto-login.test.ts   # 6 pass (the first run failed 2: the test's owner typed into the closing automatic-login window; fixed in the test)
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-auto-login.test.ts tests/integration/wordpress-session.test.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 30 pass
+node <scratch>/addsite.mjs <out> light|dark                                 # screenshots, no page errors
+```

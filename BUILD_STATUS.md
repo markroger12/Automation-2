@@ -3461,3 +3461,34 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx vitest run tests/unit/windows-notifications.test.ts   # 6 pass
 npx tsc --noEmit                                         # 0 errors
 ```
+
+## Owner request (2026-10-30): keyword ideas on the Workflow page
+
+“Proposal 4”: Search Console queries with impressions and no article, and Serper's related searches / People also ask, with Add to queue.
+- **`src/lib/workflow/keyword-ideas.ts`** (verified sources only):
+  - **Search Console:** the latest snapshot with query rows (live API or an imported export). Queries with impressions, most first, at most 100, are left out when the website already has them as a workflow keyword (any state) or an article keyword (normalised).
+  - **Google:** one Serper search (`hl` = the website language) on the owner's Find. It takes `relatedSearches` and `peopleAlsoAsk` (deduplicated, text only) and marks those already in the queue or written.
+  - It says clearly when there is no key (`SERPER_API_KEY`), when the key is refused, or when the limit is reached.
+- **API:** `GET/POST /api/websites/<id>/workflow/ideas`.
+- **UI:** **Workflow → Keyword ideas** opens a window with two tabs:
+  - Search Console: a table with impressions / clicks / average position and the data's dates and source;
+  - Google suggestions: a seed box, plus the newest queue keywords as quick seeds.
+  - Ticked ideas → **Add N to queue** through the same Add keywords path (duplicates left out, writer detected).
+
+**Tests:** unit `tests/unit/keyword-ideas.test.ts` (2), against the database and a local fake Serper:
+- **Search Console:** queued / written queries are left out, the order is by impressions, PAGE rows are ignored, and the data dates are returned.
+- **Google:** no key → the .env message; a short seed refused; the request body `{ q, hl: 'de', num: 10 }` with the key in the header; duplicates and non-text left out; a queued keyword marked `covered`.
+- **Chromium smoke (scratch database, 8 seeded queries):**
+  - the window lists 8 ideas, most impressions first;
+  - 2 ticked → “2 keyword(s) added to the queue.”;
+  - Google without a key shows the .env message;
+  - no page errors.
+
+**Not verified here:** the real Serper answer for the owner's keywords (the format follows Serper's documented `relatedSearches` / `peopleAlsoAsk`), and the owner's live Search Console data.
+
+**Commands run**
+```
+npx vitest run tests/unit/keyword-ideas.test.ts   # 2 pass
+npx tsc --noEmit                                 # 0 errors
+node <scratch>/ideas.mjs <out>                   # results above
+```

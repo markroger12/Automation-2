@@ -10,6 +10,7 @@ import {
   Eye,
   FastForward,
   ImageIcon,
+  Lightbulb,
   ListFilter,
   MoreHorizontal,
   PenLine,
@@ -30,6 +31,7 @@ import { Menu, MenuCheck, MenuItem, MenuLabel, Pagination, pageSlice, usePageSiz
 import { TimePicker } from '@/components/time-picker';
 import { IndexingPanel } from '@/components/indexing-panel';
 import { ScreenshotModal } from '@/components/screenshot-modal';
+import { KeywordIdeas } from './keyword-ideas';
 import { Field, Input, Select, Switch, Textarea } from '@/components/form';
 import { Card, Chip, PageHeader, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
@@ -114,6 +116,8 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // The Search Console screenshot shown over the page (owner request: not in a new tab).
   const [shot, setShot] = useState<{ id: string; title: string; caption?: string } | null>(null);
+  // Keyword ideas from Search Console and Google (owner request).
+  const [ideasOpen, setIdeasOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -267,6 +271,9 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
             {siteSelect}
             <Button onClick={() => { if (view) fillForm(view); setSettingsOpen(true); }}>
               <Settings2 className="h-4 w-4" /> Settings
+            </Button>
+            <Button onClick={() => setIdeasOpen(true)}>
+              <Lightbulb className="h-4 w-4" /> Keyword ideas
             </Button>
             <Button variant="primary" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4" /> Add keywords
@@ -671,6 +678,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
       </Modal>
 
       <ScreenshotModal shot={shot} onClose={() => setShot(null)} />
+      {siteId ? <KeywordIdeas open={ideasOpen} onClose={() => setIdeasOpen(false)} siteId={siteId} seeds={[...view.keywords].reverse().map((k) => k.keyword)} onAdded={() => void load()} /> : null}
       <ConfirmDialog
         open={confirmForce}
         title={`Force continue ${selectedRows.filter((k) => k.status === 'FAILED').length} keyword(s)?`}

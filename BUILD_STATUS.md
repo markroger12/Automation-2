@@ -3492,3 +3492,35 @@ npx vitest run tests/unit/keyword-ideas.test.ts   # 2 pass
 npx tsc --noEmit                                 # 0 errors
 node <scratch>/ideas.mjs <out>                   # results above
 ```
+
+## Owner request (2026-10-30): every page good-looking and user friendly
+
+“Is page ko bhi good looking and user friendly bana. Pure tool ko hi bana har page ko” (with a screenshot of Website Control).
+- **Method:** every page in the menu, plus an article, a website and a new campaign, was screenshotted on the scratch database at 1440 px. The worst ones were redone, then checked again in light, dark and at 390 px.
+- **Website Control:** summary tiles; one card per site with its health problem in one line, facts with icons, articles by state (review and failed link to the queue) and the controls in a footer; Copy settings in a window.
+- **Publishing Calendar:** a two-week grid (seven days per row), slots coloured by state with a legend, free slots on one dashed line, today outlined. 4,061 px → 1,141 px.
+- **Overview:** the worker/extension warnings were shown twice (banner and page); now only in the banner. Short stat labels with hints; recent work as article + website/writer. 1,387 px → 1,085 px.
+- **Article Queue / History:** the website and writer go under the keyword (the keyword had wrapped onto three lines); two columns fewer.
+- **Links:** the 65 indigo links now use the text colour with a soft underline (`.link` in globals.css).
+- **Prompt Manager:** preview, variables, history and sent prompts are tabs of one card. 1,674 px → 1,316 px.
+- **Website page:** tabs (Session & categories, Health, Settings, Writer rules, Publishing; `?tab=`). 3,376 px → 966 px for the first tab. Links to a site's settings open that tab.
+- **Diagnostics:** the migration list folds into one line; cards no longer stretch. 2,098 px → 1,798 px. The same for Automation Chrome's setup card.
+- **Help:** start:all as the daily start, numbered sections, and new sections for Updates and for Notifications and keyword ideas.
+- **Article page:** Delete is a quieter (outlined, red text) button next to Report.
+- **Statuses** without a label read as words (“generating article”, not GENERATING_ARTICLE).
+- **Left as they were (they already looked right):** Single Article, Settings, Workflow, Image Template, Productivity, Writers, Websites, Campaigns, Logs, the editorial tools, Recovery and Search Performance. They are consistent with the new look in light and dark.
+
+**Checks**
+- **Accessibility audit** (`scripts/a11y-audit.ts`, light and dark, every page in the menu plus an article and a website): the first run flagged one contrast problem, green text on Website Control. It was fixed (emerald-700 / emerald-400), and then there were no serious or critical violations.
+- **Page checks:** no horizontal scrolling at 1440 px or 390 px on the redone pages, and no page errors.
+
+**Not verified here:** the owner's Windows PC and data. Only scratch data was used (2 websites, 7 articles, 18 reserved slots).
+
+**Commands run**
+```
+node <scratch>/page.mjs <out> 1440 light|dark <pages>      # heights above, overflow 0, errors 0
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://localhost:3100   # after the fix: no serious or critical violations
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 56 files, 396 tests pass
+npx next build                                             # compiled successfully
+```

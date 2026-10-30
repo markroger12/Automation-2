@@ -48,7 +48,7 @@ function Counts({ w }: { w: Row }) {
       {items.map((i) => {
         const inner = (
           <div className="h-full px-3 py-2">
-            <div className={cx('text-lg font-semibold tabular-nums', i.value > 0 && i.tone === 'warning' && 'text-amber-600', i.value > 0 && i.tone === 'danger' && 'text-rose-600', i.value > 0 && i.tone === 'success' && 'text-emerald-600', i.value === 0 && 'text-muted')}>{i.value}</div>
+            <div className={cx('text-lg font-semibold tabular-nums', i.value > 0 && i.tone === 'warning' && 'text-amber-700', i.value > 0 && i.tone === 'danger' && 'text-rose-600', i.value > 0 && i.tone === 'success' && 'text-emerald-700 dark:text-emerald-400', i.value === 0 && 'text-muted')}>{i.value}</div>
             <div className="text-muted truncate text-[11px]">{i.label}</div>
           </div>
         );
@@ -138,7 +138,7 @@ function SiteCard({ w }: { w: Row }) {
       ) : null}
       <div className="grid grid-cols-1 gap-x-5 gap-y-3 px-5 py-4 sm:grid-cols-2 2xl:grid-cols-3">
         <Fact icon={<ShieldCheck className="h-4 w-4" />} label="WordPress session">
-          <span className={cx(SESSION_TONE[w.session] === 'danger' && 'text-rose-600', SESSION_TONE[w.session] === 'success' && 'text-emerald-600')}>{session}</span>
+          <span className={cx(SESSION_TONE[w.session] === 'danger' && 'text-rose-600', SESSION_TONE[w.session] === 'success' && 'text-emerald-700 dark:text-emerald-400')}>{session}</span>
         </Fact>
         <Fact icon={<FolderTree className="h-4 w-4" />} label="Categories" title={w.defaultCategory ? `default “${w.defaultCategory}”` : 'no default category'}>
           {w.categories} · {w.defaultCategory ? `default “${w.defaultCategory}”` : <span className="text-amber-700">no default</span>}
@@ -157,7 +157,7 @@ function SiteCard({ w }: { w: Row }) {
         <Fact icon={<CalendarClock className="h-4 w-4" />} label="Workflow">
           {w.workflow ? (
             <>
-              <span className={cx(w.workflow.active && 'text-emerald-600')}>{w.workflow.active ? 'on' : 'off'}</span> · {w.workflow.slots} slot(s) a day
+              <span className={cx(w.workflow.active && 'text-emerald-700 dark:text-emerald-400')}>{w.workflow.active ? 'on' : 'off'}</span> · {w.workflow.slots} slot(s) a day
             </>
           ) : (
             <span className="text-muted">none</span>

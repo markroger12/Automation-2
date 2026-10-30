@@ -152,7 +152,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
                   <Ban className="h-4 w-4" /> Cancel
                 </Button>
               ) : null}
-              <Button variant="danger" onClick={() => setConfirmDelete(true)} loading={busy === 'delete'}>
+              <Button variant="secondary" className="text-rose-600 dark:text-rose-400" onClick={() => setConfirmDelete(true)} loading={busy === 'delete'}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>
               {task.wpEditUrl ? (

@@ -167,7 +167,7 @@ The test types these credentials itself (simulating you in the login window); th
 
 ## WordPress health
 
-On each website page, **Site health** shows only measured results, kept for 30 days:
+Each website page has tabs — **Session & categories**, **Health**, **Settings**, **Writer rules** and **Publishing** (the tab is kept in the address). **Health** shows only measured results, kept for 30 days:
 - session tests;
 - whether the REST API answers the logged-in account;
 - the account's permissions (create posts, upload images, create tags);
@@ -236,7 +236,7 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
   - **Request indexing on the keyword queue:** select published keywords and click **Request indexing**. Automation Chrome makes the request now, also when the workflow switch was off or an earlier request was answered. An indexed keyword is left out. **Mark requested** and **Mark indexed** only record what you did yourself in Search Console.
   - **Proof:** after each request, a screenshot of Search Console as Automation Chrome saw it (“Indexing requested …”) is saved with the article. It is linked as **Search Console screenshot** in the keyword queue, and the latest one is shown in the panel; a click opens it over the page (not in a new tab), with **Download** and **Close** (or Esc). Since 3.4.8, Google's answer is in the screenshot also when its tab was in the background (where its dialog had not finished opening), and Google's icons no longer show as words such as “keyboard_arrow_down” (the copy cannot carry their font; they are left out).
   - Extension 3.4.0 asks Chrome for the `pageCapture` permission for this: it saves a copy of the page, which works even in a background tab or a minimized window. The copy is deleted once the screenshot is made.
-- **Publishing Calendar** (sidebar, under Workflow): reserved and free slots of every workflow, two weeks at a time, in Pakistan time.
+- **Publishing Calendar** (sidebar, under Workflow): reserved and free slots of every workflow, two weeks at a time, in Pakistan time — seven days per row, each slot coloured by its state (the legend is above), free slots as one dashed line, today outlined; a click opens the article (or the queue for a free slot).
 
 ## Search Performance and Content Refresh
 
@@ -245,7 +245,7 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
   2. Upload the zip, or its CSV files.
 
   What you see:
-  - The website needs its Search Console property first (website page → Settings, e.g. `sc-domain:example.com`). Until then the page says **NOT CONNECTED**; with a property but no import it says **NO VERIFIED DATA**.
+  - The website needs its Search Console property first (website page → Settings tab, e.g. `sc-domain:example.com`). Until then the page says **NOT CONNECTED**; with a property but no import it says **NO VERIFIED DATA**.
   - **Live data** (service-account key on this page): the property is checked against the properties the key can use. A website added in Search Console as a URL prefix (`https://example.com/`) is found even when `sc-domain:example.com` was entered; the property in use is saved and shown. **Test connection** lists what the key can use.
   - Imports are checked: pages of another property, a search type other than Web, a missing period (no Dates.csv and no dates entered) and the same export twice are refused.
   - The page shows 7/28/90-day totals with how many days have data, and the change only when both periods are complete. Days are Search Console days (Pacific Time), as exported.
@@ -294,7 +294,7 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
   - the PASS / FAIL / suspended verdict.
 
   It starts no work.
-- **Website Control** (sidebar, under Websites) shows every website with:
+- **Website Control** (sidebar, under Websites): summary tiles on top (websites, needing attention, may publish, queued or running, waiting for review), then one card per website with its health problem in one line, the articles by state (review and failed open the queue), and Pause / Priority / Max in progress at the bottom. **Copy settings** opens a window. Each card shows:
   - its language, time zone, session, measured health and categories;
   - its editor, internal-link line, image template, prompt overrides, writer rules and Rank Math setting;
   - its workflow, Search Console property, publishing permission and article counts.

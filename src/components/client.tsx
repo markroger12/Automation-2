@@ -11,16 +11,27 @@ export function Button({
   loading,
   className,
   type = 'button',
+  tip,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'icon';
   loading?: boolean;
+  /** A short tooltip (and the accessible name when the button shows only an icon). */
+  tip?: string;
 }) {
   return (
-    <button type={type} {...props} disabled={props.disabled || loading} aria-busy={loading || undefined} className={cx(buttonClasses(variant, size), className)}>
+    <button
+      type={type}
+      aria-label={tip && size === 'icon' ? tip : undefined}
+      data-tip={tip}
+      {...props}
+      disabled={props.disabled || loading}
+      aria-busy={loading || undefined}
+      className={cx(buttonClasses(variant, size), className)}
+    >
       {loading ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden /> : null}
-      {children}
+      {loading && size === 'icon' ? null : children}
     </button>
   );
 }
@@ -149,6 +160,62 @@ export function ConfirmDialog({
   );
 }
 
+/* ---------------- Dialog ---------------- */
+
+/**
+ * A dialog for a form (owner request: settings in a window, as in the reference dashboard, instead of a long page):
+ * title and description on top, a body that scrolls, and the buttons at the bottom.
+ */
+export function Modal({ open, onClose, title, description, children, footer, width = 640 }: { open: boolean; onClose: () => void; title: ReactNode; description?: ReactNode; children: ReactNode; footer?: ReactNode; width?: number }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    if (!open && dialog.open) dialog.close();
+  }, [open]);
+  return (
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      style={{ width: `min(${width}px, calc(100vw - 2rem))` }}
+      className="surface m-auto max-h-[min(88vh,900px)] flex-col rounded-xl border p-0 text-[var(--text)] shadow-2xl backdrop:bg-black/50 open:flex"
+    >
+      <div className="border-app flex items-start justify-between gap-4 border-b px-6 py-4">
+        <div className="min-w-0">
+          <h2 id={titleId} className="text-base font-semibold">
+            {title}
+          </h2>
+          {description ? <p className="text-muted mt-0.5 text-sm">{description}</p> : null}
+        </div>
+        <button type="button" aria-label="Close" onClick={onClose} className="text-muted -mr-2 rounded-md p-1.5 hover:bg-[var(--surface-2)] hover:text-[var(--text)]">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">{open ? children : null}</div>
+      {footer ? <div className="border-app flex flex-wrap items-center justify-end gap-2 border-t px-6 py-3">{footer}</div> : null}
+    </dialog>
+  );
+}
+
+/** A part of a dialog with a small heading (icon and capitals), as “PRICING” / “CONFIGURATION” in the reference. */
+export function DialogSection({ icon, title, children }: { icon?: ReactNode; title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h3 className="text-muted mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
+        {icon}
+        {title}
+      </h3>
+      <div className="space-y-3">{children}</div>
+    </section>
+  );
+}
+
 /* ---------------- Tabs ---------------- */
 
 export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: ReactNode; badge?: ReactNode }[]; value: string; onChange: (id: string) => void }) {
@@ -170,7 +237,7 @@ export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: Rea
           }}
           className={cx(
             '-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition',
-            value === tab.id ? 'border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'text-muted border-transparent hover:text-[var(--text)]',
+            value === tab.id ? 'border-[var(--text)] text-[var(--text)]' : 'text-muted border-transparent hover:text-[var(--text)]',
           )}
         >
           {tab.label}

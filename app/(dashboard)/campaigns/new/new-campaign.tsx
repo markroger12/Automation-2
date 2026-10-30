@@ -296,7 +296,7 @@ export function NewCampaign() {
           </div>
           <div className="mb-3 flex flex-wrap items-center gap-1">
             {FILTERS.map(([id, label]) => (
-              <button key={id} type="button" aria-pressed={filter === id} onClick={() => { setFilter(id); setPage(0); }} className={cx('rounded-md px-2 py-1 text-xs', filter === id ? 'bg-indigo-600 text-white' : 'surface-2')}>
+              <button key={id} type="button" aria-pressed={filter === id} onClick={() => { setFilter(id); setPage(0); }} className={cx('rounded-md px-2 py-1 text-xs', filter === id ? 'bg-[var(--primary)] text-[var(--primary-fg)]' : 'surface-2')}>
                 {label}
               </button>
             ))}

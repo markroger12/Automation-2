@@ -143,7 +143,14 @@
         const doneStreaming = !(isLast && window.__generating);
         const gallery =
           t.gallery && doneStreaming
-            ? `<div class="image-gallery">${Array.from({ length: Math.min(t.gallery, C.galleryShown || t.gallery) }, (_, k) => `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`).join('')}${C.galleryShown && t.gallery > C.galleryShown ? `<span class="more">${t.gallery}</span>` : ''}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
+            ? `<div class="image-gallery">${Array.from({ length: Math.min(t.gallery, C.galleryShown || t.gallery) }, (_, k) => {
+                const tile = `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`;
+                const tiles = Math.min(t.gallery, C.galleryShown || t.gallery);
+                // galleryBadge: the count over the last tile, as in the owner's screenshot (an icon and “5”).
+                return C.galleryBadge && k === tiles - 1 && t.gallery > tiles
+                  ? `<span class="gal-tile" style="position:relative;display:inline-block">${tile}<span class="gal-count" style="position:absolute;right:6px;bottom:6px;pointer-events:none"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="3" width="8" height="8"/></svg>${t.gallery}</span></span>`
+                  : tile;
+              }).join('')}${C.galleryShown && t.gallery > C.galleryShown && !C.galleryBadge ? `<span class="more">${t.gallery}</span>` : ''}${(t.galleryLinks || []).map((u) => `<img class="gal-link" src="${esc(u)}" width="160" height="90" alt="Linked photo">`).join('')}</div>`
             : '';
         // galleryBroken: captioned cards whose pictures the page cannot load (a broken-picture icon with its alt text).
         const cards =
@@ -193,8 +200,12 @@
             ? `<div role="dialog" class="viewer"><div style="width:800px;height:450px;overflow:hidden"><div style="display:flex;width:${dlg.count * 800}px;transform:translateX(-${dlg.shown * 800}px)">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" style="flex:none" alt="Large photo ${i + 1}">`).join('')}</div></div><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
             : C.galleryViewer === 'fade'
               ? `<div role="dialog" class="viewer"><div style="position:relative;width:800px;height:450px">${Array.from({ length: dlg.count }, (_, i) => `<img src="/backend-api/estuary/content?id=gal_${i + 1}" width="800" height="450" style="position:absolute;left:0;top:0;opacity:${i === dlg.shown ? 1 : 0}" alt="Large photo ${i + 1}">`).join('')}</div><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
-              : C.galleryViewer === 'lightbox'
+              : C.galleryViewer === 'lightbox' || C.galleryViewer === 'keys'
               ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Close">×</button></div>`
+              : C.galleryViewer === 'arrows'
+              ? `<div role="dialog" class="viewer" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000c"><button class="gal-prev" style="position:absolute;left:16px;top:50%"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M13 4 7 10l6 6"/></svg></button><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button class="gal-next" style="position:absolute;right:16px;top:50%"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6"/></svg></button><button aria-label="Close" style="position:absolute;right:16px;top:16px">×</button></div>`
+              : C.galleryViewer === 'filmstrip'
+              ? `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><div class="film">${Array.from({ length: dlg.count }, (_, i) => `<img class="film-thumb" data-k="${i}" src="/backend-api/estuary/content?id=gal_${i + 1}&thumb=1" width="80" height="45" alt="">`).join('')}</div><button aria-label="Close">×</button></div>`
               : `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
         : '';
     // staleStreaming: a page-wide “streaming” marker that stays after the picture is finished (owner report).
@@ -230,6 +241,20 @@
       render();
       return;
     }
+    // 'arrows': icon-only Previous/Next; 'filmstrip': a small picture in the viewer shows that one.
+    if (t.closest('[role="dialog"] .gal-next, [role="dialog"] .gal-prev') && window.__dlg) {
+      const step = t.closest('.gal-next') ? 1 : -1;
+      window.__dlg = { ...window.__dlg, k: (window.__dlg.k + step + window.__dlg.count) % window.__dlg.count };
+      window.__dlg.shown = window.__dlg.k;
+      render();
+      return;
+    }
+    if (t.closest('[role="dialog"] .film-thumb') && window.__dlg) {
+      const k = Number(t.closest('.film-thumb').getAttribute('data-k'));
+      window.__dlg = { ...window.__dlg, k, shown: k };
+      render();
+      return;
+    }
     if (t.closest('[role="dialog"] button[aria-label="Next"]') && window.__dlg) {
       window.__dlg = { ...window.__dlg, k: Math.min(window.__dlg.count - 1, window.__dlg.k + 1) };
       // 'strip' and 'carousel': the picture shown changes a moment after the click (a slide), the old one stays
@@ -252,6 +277,13 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && window.__dlg) {
       window.__dlg = null;
+      render();
+    }
+    // 'keys' (and 'arrows'): the arrow keys step through the viewer, coming back round at the end.
+    if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && window.__dlg && (C.galleryViewer === 'keys' || C.galleryViewer === 'arrows')) {
+      const step = e.key === 'ArrowRight' ? 1 : -1;
+      window.__dlg = { ...window.__dlg, k: (window.__dlg.k + step + window.__dlg.count) % window.__dlg.count };
+      window.__dlg.shown = window.__dlg.k;
       render();
     }
   });

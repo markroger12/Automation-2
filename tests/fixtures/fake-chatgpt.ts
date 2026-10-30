@@ -51,7 +51,14 @@ export interface FakeChatGptConfig {
    * outside it); 'fade': every picture stacked in one place, all but one faded out; 'lightbox': one picture and Close,
    * no “Next” (owner report: ChatGPT showed 6 photos, 2 were used).
    */
-  galleryViewer?: 'single' | 'strip' | 'carousel' | 'fade' | 'lightbox';
+  galleryViewer?: 'single' | 'strip' | 'carousel' | 'fade' | 'lightbox' | 'arrows' | 'keys' | 'filmstrip';
+  /**
+   * Owner report (screenshot: 3 tiles, the third with a stacked-pictures icon and “5”; 3 photos were used): the count
+   * sits on the last tile, and the viewer is the only way to the other pictures. With 'arrows' its Previous/Next are
+   * icon-only buttons with no name; with 'keys' only the arrow keys step; with 'filmstrip' a row of small pictures in
+   * the viewer picks the one shown.
+   */
+  galleryBadge?: boolean;
   /** Answers are shown in a writing block with a “Writing” label and Copy/expand buttons (owner report). */
   writingBlock?: boolean;
   /**

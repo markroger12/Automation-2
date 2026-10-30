@@ -7,6 +7,7 @@ import { api } from '@/lib/client/api';
 import { moduleDisplayName } from '@/lib/domain';
 import type { TaskListRow } from '@/lib/tasks/query';
 import { Button, ConfirmDialog, usePersistentState, useToast, RelativeTime } from './client';
+import { Pagination, pageCount, usePageSize } from './data-table';
 import { DatePicker } from './date-picker';
 import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime } from './ui';
 
@@ -62,7 +63,9 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ action: 'cancel' | 'retry' | 'approve' | 'delete'; ids: string[] } | null>(null);
   const [approveReason, setApproveReason] = useState('');
-  const [limit, setLimit] = useState(100);
+  // Owner request: pages instead of one long list (“Results per page”, “Page 1 of N”).
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = usePageSize(`tasks-${mode}`, 20);
   const lastLoad = useRef<Date | null>(null);
 
   useEffect(() => {
@@ -74,8 +77,11 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
+  // A new filter, search or sort starts on the first page.
+  useEffect(() => setPage(1), [filters, campaignId]);
+
   const query = useMemo(() => {
-    const p = new URLSearchParams({ group: filters.group, sort: filters.sort, dir: filters.dir, limit: String(limit) });
+    const p = new URLSearchParams({ group: filters.group, sort: filters.sort, dir: filters.dir, limit: String(pageSize), offset: String((page - 1) * pageSize) });
     if (filters.websiteId) p.set('websiteId', filters.websiteId);
     if (filters.moduleKey) p.set('moduleKey', filters.moduleKey);
     if (filters.q.trim()) p.set('q', filters.q.trim());
@@ -83,7 +89,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
     if (filters.to) p.set('to', new Date(filters.to + 'T23:59:59').toISOString());
     if (campaignId) p.set('campaignId', campaignId);
     return p.toString();
-  }, [filters, limit, campaignId]);
+  }, [filters, page, pageSize, campaignId]);
 
   const load = useCallback(async () => {
     try {
@@ -133,6 +139,10 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
   }
 
   const rows = data?.rows ?? [];
+  // After a delete or a cancel the last page can be empty: show the page that is now the last one.
+  useEffect(() => {
+    if (data && page > 1 && data.rows.length === 0 && data.total > 0) setPage(pageCount(data.total, pageSize));
+  }, [data, page, pageSize]);
   // Approving a task that needs review asks for a reason (audited), as on its article page.
   const reviewInApproval = confirm?.action === 'approve' && confirm.ids.some((id) => rows.find((r) => r.id === id)?.status === 'NEEDS_REVIEW');
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
@@ -149,7 +159,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
             onClick={() => set('group', g.id)}
             className={cx(
               'rounded-full px-3 py-1 text-xs font-medium transition',
-              filters.group === g.id ? 'bg-indigo-600 text-white' : 'surface-2 text-muted hover:text-[var(--text)]',
+              filters.group === g.id ? 'bg-[var(--primary)] text-[var(--primary-fg)]' : 'surface-2 text-muted hover:text-[var(--text)]',
             )}
           >
             {g.label}
@@ -217,7 +227,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
         ) : null}
       </div>
       {selected.size > 0 ? (
-        <div className="border-app flex flex-wrap items-center gap-2 border-b bg-indigo-50/60 px-4 py-2 text-sm dark:bg-indigo-950/40">
+        <div className="border-app surface-2 flex flex-wrap items-center gap-2 border-b px-4 py-2 text-sm">
           <strong>{selected.size} selected</strong>
           <Button size="sm" variant="primary" onClick={() => setConfirm({ action: 'approve', ids: [...selected] })} loading={busy === 'approve'}>
             <CheckCircle2 className="h-3.5 w-3.5" /> Approve selected
@@ -289,7 +299,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className={selected.has(r.id) ? 'bg-indigo-50/50 dark:bg-indigo-950/30' : undefined}>
+                <tr key={r.id} className={selected.has(r.id) ? 'bg-[var(--surface-2)]' : undefined}>
                   <td>
                     <input
                       type="checkbox"
@@ -393,18 +403,13 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
               ))}
             </tbody>
           </table>
-          {data && data.total > rows.length ? (
-            <div className="border-app flex items-center justify-between border-t px-4 py-2 text-xs">
-              <span className="text-muted">
-                Showing {rows.length} of {data.total}
-              </span>
-              <Button size="sm" onClick={() => setLimit((l) => Math.min(500, l + 100))}>
-                Show more
-              </Button>
-            </div>
-          ) : null}
         </div>
       )}
+      {data && data.total > 0 ? (
+        <div className="border-app border-t px-4">
+          <Pagination total={data.total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} label="articles" />
+        </div>
+      ) : null}
       <div className="text-muted border-app border-t px-4 py-1.5 text-[11px]">
         {pollMs ? `Live — refreshes every ${Math.round(pollMs / 1000)}s` : 'Static view'} · last update {lastLoad.current ? lastLoad.current.toLocaleTimeString() : '—'}
       </div>

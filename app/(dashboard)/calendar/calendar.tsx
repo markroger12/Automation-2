@@ -161,7 +161,7 @@ export function PublishingCalendar() {
         <Card key={key} title={dayLabel(entries[0].at)} padded={false}>
           <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {entries.map((e) => (
-              <li key={`${e.websiteId}:${e.at}:${e.keywordId ?? 'free'}`} className={cx('flex flex-wrap items-center gap-3 px-4 py-2 text-sm', e.status === 'FREE' && 'text-zinc-400')}>
+              <li key={`${e.websiteId}:${e.at}:${e.keywordId ?? 'free'}`} className={cx('flex flex-wrap items-center gap-3 px-4 py-2 text-sm', e.status === 'FREE' && 'text-muted')}>
                 <span className="w-20 shrink-0 font-mono text-xs">{timeLabel(e.at)}</span>
                 <span className="w-40 shrink-0 truncate text-xs text-zinc-500" title={e.website}>
                   {e.website}

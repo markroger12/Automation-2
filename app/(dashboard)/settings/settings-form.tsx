@@ -8,7 +8,7 @@ import { SETTING_GROUPS, type SettingField } from '@/lib/settings-fields';
 import type { Settings } from '@/lib/settings-schema';
 import { Button, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
-import { Card } from '@/components/ui';
+import { Card, cx } from '@/components/ui';
 
 type GroupId = (typeof SETTING_GROUPS)[number]['id'];
 type Draft = Record<GroupId, Record<string, unknown>>;
@@ -56,6 +56,8 @@ export function SettingsForm({ initial }: { initial: Settings }) {
   const [draft, setDraft] = useState(saved);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [busy, setBusy] = useState<GroupId | null>(null);
+  // Owner request (less scrolling): one group at a time, picked on the left; unsaved changes of the others are kept.
+  const [active, setActive] = useState<GroupId>(SETTING_GROUPS[0].id);
   const dirtyGroups = useMemo(
     () => new Set(SETTING_GROUPS.filter((g) => JSON.stringify(draft[g.id]) !== JSON.stringify(saved[g.id])).map((g) => g.id)),
     [draft, saved],
@@ -82,8 +84,25 @@ export function SettingsForm({ initial }: { initial: Settings }) {
   }
 
   return (
-    <div className="space-y-6">
-      {SETTING_GROUPS.map((group) => (
+    <div className="grid items-start gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <nav aria-label="Settings groups" className="flex gap-1 overflow-x-auto lg:sticky lg:top-20 lg:flex-col">
+        {SETTING_GROUPS.map((group) => (
+          <button
+            key={group.id}
+            type="button"
+            aria-current={active === group.id ? 'true' : undefined}
+            onClick={() => setActive(group.id)}
+            className={cx(
+              'flex shrink-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition',
+              active === group.id ? 'bg-[var(--surface-2)] font-medium' : 'text-muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]',
+            )}
+          >
+            {group.title}
+            {dirtyGroups.has(group.id) ? <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" title="Unsaved changes" aria-label="unsaved" /> : null}
+          </button>
+        ))}
+      </nav>
+      {SETTING_GROUPS.filter((group) => group.id === active).map((group) => (
         <Card
           key={group.id}
           title={

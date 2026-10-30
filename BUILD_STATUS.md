@@ -3095,3 +3095,90 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 22 pass, 1 skipped (real MediaPipe)
 npx vitest run                      # 49 files, 360 tests pass
 ```
+
+## Owner request (2026-10-30): “I have to scroll so much” — and a UI like a reference dashboard
+
+The owner sent two screen recordings:
+- **the workflow keyword queue**, scrolled for a long time (every keyword on one page, each row two to eight lines high because of Google's long answers, next to a narrow settings column);
+- **a reference dashboard** to copy the look of (“ignore its content, only the UI”): a menu with folding groups and a fold button, a top bar with a search (Ctrl K) and a bell, the page in a rounded panel, a title with a description and the main button on the right, Filter / View buttons, a bordered table, “Results per page” with “Page 1 of 1” and first/previous/next/last buttons, icon buttons with tooltips, and editing in a window with small capital section headings and a switch row.
+
+**Reproduced first:** a scratch database with 68 workflow keywords (the owner's names and Google answers). The Workflow page was **7334 px** tall; it is now **1632–1728 px** with 20 keywords a page (the page height depends on the panel above the queue).
+
+**What changed (the npm tool only; the desktop app is updated when the owner asks):**
+- **Look:** neutral greys in dark and light (new colour tokens in `app/globals.css`), the main button dark-on-light / light-on-dark, square-cornered badges, buttons of fixed heights, neutral focus rings and checkboxes.
+- **Frame (`src/components/sidebar.tsx`, `Shell`):**
+  - **menu:** groups (Articles, Websites, …) that fold, remembered; the group of the open page stays open; the fold button turns the menu into an icon rail, remembered and applied before paint (no flash); “Owner · Runs on this PC only” with the theme switch at the bottom;
+  - **top bar:** the search moved here (Ctrl+K or “/”), with a list of matching pages (↑/↓, Enter) and “Articles: …”; a **bell** listing the same health warnings as the banner, with their links;
+  - **page panel:** rounded and bordered; the health banner sits at its top.
+- **Pieces (`src/components/data-table.tsx`, `client.tsx`, `form.tsx`):** `Pagination` (10–50 per page, remembered per list), `Menu` with check and item rows (Filter, View, More), `Modal` with `DialogSection`, `Switch`, icon buttons with a tooltip (`data-tip`), `.table-box` (bordered table with column lines).
+- **Workflow page:**
+  - **header:** the website, **Settings** and **Add keywords**; both open in a window (the settings in sections: Writer, Schedule, Images, Indexing; “Workflow on” and “Request indexing” as switches);
+  - **status line:** workflow on/off, drafts only / publishing allowed, the next slot, and the links;
+  - **indexing card:** its two buttons moved into its header;
+  - **queue:** full width; a search, a Filter by status (with counts and removable chips), View (hide Writer, Slot, Article, Links, Google / notes, remembered), one line per keyword, Google's answer on one line with its UTC times shown in Pakistan time and an arrow for the whole message, links as icon buttons, pages;
+  - **selection:** Retry, Force continue, Request indexing and Delete; under More the writer, To top, Skip, Restore, Mark requested and Mark indexed. The actions are the same API calls as before.
+- **Article Queue and Article History:** pages from the server (limit/offset) instead of “Show more”; an emptied last page moves to the new last page. The CSV export still exports every row.
+- **Settings:** one group at a time, picked on the left, with a dot for unsaved changes (the others' unsaved edits are kept).
+- **Small fixes found on the way:**
+  - cards in a grid could not shrink on a phone, so the Overview was 270 px wider than the screen;
+  - Calendar's free slots were too pale in light mode (axe: colour contrast).
+
+**Tests:**
+- **`tests/unit/workflow-queue-view.test.ts` (7):** pages (68 → 4 pages of 20, the last with 8, a page past the end), the search and status filter, the counts, and Google's times in Pakistan time.
+- **`tests/unit/nav-search.test.ts`:** 4 new tests for the top bar search and the menu groups (8 in all).
+
+**Chromium smoke (scratch database, dev server, dark and light):**
+- **Workflow:** 20 rows of 68 on “Page 1 of 4”; next → page 2; last → 8 rows; 50 per page → “Page 1 of 2”; Filter “writing” → 4 rows; search “tariq” → 4 rows; View without “Google / notes” → that column gone; the arrow shows the whole message; selecting the page → “20 selected” and More lists its 7 actions.
+- **Windows:** Settings opens and Cancel closes it; Add keywords previews “Add 2 keyword(s)”.
+- **Top bar and menu:** the search “plag” lists Plagiarism Evidence and Articles, and Enter opens /plagiarism; Ctrl+K focuses it; the bell lists the 2 warnings; the fold button gives a 60 px menu, still folded after a reload.
+- **Settings:** “SEO, links & images” alone, 1327 px instead of 4239 px.
+- **History:** “7 articles · Page 1 of 1”, page size 10.
+- **Phone (390 px):** no sideways scrolling on /workflow, /queue and /; the menu opens as a drawer and closes after a link.
+- **Console:** no console errors on any of the 26 pages.
+
+**Not verified:**
+- the owner's Windows PC and Chrome, and the owner's data;
+- touch use;
+- the desktop app (not updated, as asked).
+
+**Commands run**
+```
+npx vitest run tests/unit/nav-search.test.ts                 # 8 pass
+npx vitest run tests/unit/workflow-queue-view.test.ts        # 7 pass
+npx tsc --noEmit                                             # 0 errors
+npx vitest run                                               # 50 files, 371 tests pass
+BAS_DATA_DIR=<scratch> npx next dev -H 127.0.0.1 -p 3100     # scratch database with 68 workflow keywords
+node <scratch>/shot.mjs …; node <scratch>/smoke.mjs …; node <scratch>/mobile.mjs …; node <scratch>/overflow.mjs   # results above
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # first run: 1 serious (Calendar free slots, light); after the fix: 58/58, no serious or critical violations
+```
+
+## Owner report (2026-10-30): “5 pictures here, it took only 3” (extension 3.4.7)
+
+The owner sent a screenshot of a ChatGPT answer: three photo tiles, the third with a stacked-pictures icon and “5”, and the caption “Five archival photographs of John William McDonald …”. The next prompt (the photo check) attached only 3 photos. The owner had reported the same kind of thing before (3.2.7: “3 thumbnails with +10”; 3.4.2: 6 shown, 2 used).
+- **Cause:**
+  - The two other photos are only reachable in ChatGPT's viewer.
+  - The extension steps through the viewer only with a button named “Next”. When it finds none, it opens each tile on the page by itself, and there are only 3 tiles.
+  - So a viewer whose Next has no name, which steps with the arrow keys, or which shows a row of small pictures, gave 3.
+- **Reproduced first:** the fake ChatGPT page now has the owner's gallery: 3 tiles, the last with the icon and “5”. Its viewer comes in three kinds: `arrows` (icon-only, unnamed Previous/Next), `keys` (arrow keys only) and `filmstrip` (a row of small pictures). On 3.4.6 each kind saved 3 large photos of 5.
+- **Fix (extension 3.4.7, `adapter.js` and `content.js`):**
+  - **The count:** the extension reads the gallery's own count (“5”, or “+2” for two more than the tiles) and keeps going while photos are missing.
+  - **Next:** a button named Next as before; otherwise an icon-only button at the viewer's right edge, halfway down. Buttons with words are left alone: Close, Download, Share.
+  - **Arrow keys:** with no Next, → is pressed while photos are missing. When the picture does not change within 2.5 s, it stops.
+  - **Small pictures:** a row of at least 3 small pictures in the viewer is clicked one by one. Never one that links to another site.
+  - **Tiles:** then, as before, each tile is opened by itself.
+  - **The viewer** is also found as `aria-modal="true"` or an open `<dialog>`.
+  - **The task log** now adds what the gallery said and how the viewer was stepped, e.g. “…; the gallery says 5; viewer stepped by: arrow keys.”
+- **Tests (integration, real extension in Chromium, fake ChatGPT):**
+  - **new:** “3 tiles with “5” on the last” × arrows / keys / filmstrip, 5 of 5 each (3 each on 3.4.6);
+  - **unchanged and passing:** the earlier strip, carousel, fade and lightbox gallery tests.
+
+**Not verified:** the real ChatGPT viewer. Its markup is not available here, so the fix covers the three likely kinds. The task log line of the next image search says which one the real page is.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "3 tiles with"   # 3.4.6: 3 failed (3 of 5 large photos each)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "3 tiles with|viewer: the large picture|“\+10”"   # 3.4.7: 7/7
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 50 files, 371 tests pass
+npx next build                      # compiled successfully (UI and 3.4.7 together)
+```

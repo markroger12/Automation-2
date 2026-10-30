@@ -40,7 +40,7 @@ export function TimePicker({ value, onChange, ariaLabel, placeholder = 'Pick a t
     setOpen(false);
     trigger.current?.focus();
   };
-  const cell = (selected: boolean) => cx('w-full rounded-md px-2 py-1 text-center text-sm tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400', selected ? 'bg-indigo-600 font-semibold text-white' : 'hover:bg-black/5 dark:hover:bg-white/10');
+  const cell = (selected: boolean) => cx('w-full rounded-md px-2 py-1 text-center text-sm tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400', selected ? 'bg-[var(--primary)] font-semibold text-[var(--primary-fg)]' : 'hover:bg-black/5 dark:hover:bg-white/10');
 
   return (
     <div ref={root} className={cx('relative inline-block', className)}>

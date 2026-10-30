@@ -2,7 +2,7 @@ import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTML
 import { cx } from './ui';
 
 const controlBase =
-  'surface w-full rounded-lg border px-3 py-2 text-sm shadow-[inset_0_1px_1px_rgba(16,24,40,0.03)] placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-900 disabled:opacity-60';
+  'surface w-full rounded-md border px-3 py-2 text-sm placeholder:text-[var(--text-muted)] focus:border-[color-mix(in_oklab,var(--text)_40%,transparent)] focus:outline-none focus:ring-2 focus:ring-[color-mix(in_oklab,var(--text)_12%,transparent)] disabled:opacity-60';
 
 export function Field({
   label,
@@ -66,10 +66,30 @@ export function Select({ className, invalid, children, ...props }: SelectHTMLAtt
 export function Checkbox({ label, help, className, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: ReactNode; help?: ReactNode }) {
   return (
     <label className={cx('flex cursor-pointer items-start gap-2.5 text-sm', className)}>
-      <input type="checkbox" {...props} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-indigo-600" />
+      <input type="checkbox" {...props} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-[var(--primary)]" />
       <span>
         <span className="font-medium">{label}</span>
         {help ? <span className="text-muted block text-xs">{help}</span> : null}
+      </span>
+    </label>
+  );
+}
+
+/**
+ * An on/off setting as a bordered row with a switch on the right (as in the reference dashboard's “Status: Active”).
+ * It is a real checkbox with role="switch", so forms, labels and keyboards work as before.
+ */
+export function Switch({ label, help, className, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & { label: ReactNode; help?: ReactNode }) {
+  return (
+    <label className={cx('border-app flex cursor-pointer items-center justify-between gap-4 rounded-lg border px-4 py-3', className)}>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{label}</span>
+        {help ? <span className="text-muted block text-xs">{help}</span> : null}
+      </span>
+      <span className="relative inline-flex shrink-0 items-center">
+        <input type="checkbox" role="switch" {...props} className="peer sr-only" />
+        <span className="h-5 w-9 rounded-full bg-zinc-300 transition peer-checked:bg-[var(--primary)] peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color-mix(in_oklab,var(--text)_55%,transparent)] peer-disabled:opacity-50 dark:bg-zinc-600" aria-hidden />
+        <span className="pointer-events-none absolute left-0.5 h-4 w-4 rounded-full bg-white shadow transition peer-checked:translate-x-4 dark:peer-checked:bg-[var(--primary-fg)]" aria-hidden />
       </span>
     </label>
   );

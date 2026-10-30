@@ -73,15 +73,18 @@ export const NAV_ITEMS: NavItem[] = [
 /** Pages not yet built in the current milestone. Updated as milestones land. */
 export const SOON_ROUTES = new Set<string>([]);
 
+const fold = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const queryWords = (query: string) => fold(query).split(/\s+/).filter(Boolean);
+const pageHit = (item: NavItem, words: string[]) => words.every((w) => fold(`${item.label} ${item.href.replace(/[/-]/g, ' ')}`).includes(w));
+
 /**
  * The menu filtered by a search (owner request: a search box above Overview). A section whose name matches keeps all
  * its pages; otherwise only its matching pages are kept (with the section). Case and accents are ignored.
  */
 export function filterNav(items: NavItem[], query: string): NavItem[] {
-  const fold = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  const words = fold(query).split(/\s+/).filter(Boolean);
+  const words = queryWords(query);
   if (!words.length) return items;
-  const hit = (item: NavItem) => words.every((w) => fold(`${item.label} ${item.href.replace(/[/-]/g, ' ')}`).includes(w));
+  const hit = (item: NavItem) => pageHit(item, words);
   const out: NavItem[] = [];
   for (const item of items) {
     if (hit(item)) out.push(item);
@@ -103,3 +106,37 @@ export const NAV_SECTIONS: Record<string, string | null> = (() => {
   }
   return out;
 })();
+
+export interface PageHit {
+  href: string;
+  label: string;
+  icon: string;
+  /** The page it sits under (“Editorial Tools” for Humanizer), if any. */
+  parent?: string;
+}
+
+/**
+ * The top bar's search (owner request: the reference dashboard's search with Ctrl+K): the pages that match, one per
+ * line, in menu order. A page with sub-pages that matches brings its sub-pages too.
+ */
+export function searchPages(items: NavItem[], query: string): PageHit[] {
+  const words = queryWords(query);
+  if (!words.length) return [];
+  return items.flatMap((item) => {
+    const self = pageHit(item, words);
+    const children = (item.children ?? []).filter((c) => self || pageHit(c, words));
+    return [...(self ? [{ href: item.href, label: item.label, icon: item.icon }] : []), ...children.map((c) => ({ href: c.href, label: c.label, icon: c.icon, parent: item.label }))];
+  });
+}
+
+/** The menu as groups: the items before the first heading, then one group per heading (Articles, Websites, …). */
+export function navGroups(items: NavItem[]): { section: string | null; items: NavItem[] }[] {
+  const groups: { section: string | null; items: NavItem[] }[] = [];
+  for (const item of items) {
+    const section = NAV_SECTIONS[item.href] ?? null;
+    const last = groups[groups.length - 1];
+    if (last && last.section === section) last.items.push(item);
+    else groups.push({ section, items: [item] });
+  }
+  return groups;
+}

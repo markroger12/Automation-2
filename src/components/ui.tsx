@@ -20,7 +20,7 @@ export function PageHeader({
 }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div className="min-w-0">
+      <div className="min-w-[min(100%,280px)] flex-1 basis-0">
         {eyebrow ? <div className="text-muted mb-1 text-xs font-medium uppercase tracking-wide">{eyebrow}</div> : null}
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description ? <p className="text-muted mt-1 max-w-3xl text-sm">{description}</p> : null}
@@ -39,14 +39,14 @@ export function Card({ children, className, title, description, actions, padded 
   padded?: boolean;
 }) {
   return (
-    <section className={cx('surface rounded-xl border shadow-[0_1px_2px_rgba(16,24,40,0.04)]', className)}>
+    <section className={cx('surface min-w-0 rounded-xl border', className)}>
       {title || actions ? (
-        <header className="border-app flex flex-wrap items-start justify-between gap-3 border-b px-5 py-3.5">
-          <div className="min-w-0">
+        <header className="border-app flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+          <div className="min-w-[min(100%,240px)] flex-1 basis-0">
             {title ? <h2 className="text-sm font-semibold">{title}</h2> : null}
             {description ? <p className="text-muted mt-0.5 text-xs">{description}</p> : null}
           </div>
-          {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+          {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
         </header>
       ) : null}
       <div className={padded ? 'p-5' : ''}>{children}</div>
@@ -55,12 +55,12 @@ export function Card({ children, className, title, description, actions, padded 
 }
 
 const CHIP_TONES = {
-  neutral: 'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700',
-  info: 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:ring-sky-900',
-  brand: 'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:ring-indigo-900',
-  success: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-900',
-  warning: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-900',
-  danger: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:ring-rose-900',
+  neutral: 'bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-white/[0.06] dark:text-zinc-200 dark:ring-white/10',
+  info: 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-500/25',
+  brand: 'bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-200 dark:ring-indigo-400/30',
+  success: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30',
+  warning: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30',
+  danger: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/30',
 } as const;
 export type ChipTone = keyof typeof CHIP_TONES;
 
@@ -68,7 +68,7 @@ export function Chip({ tone = 'neutral', children, title, className }: { tone?: 
   return (
     <span
       title={title}
-      className={cx('inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', CHIP_TONES[tone], className)}
+      className={cx('inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', CHIP_TONES[tone], className)}
     >
       {children}
     </span>
@@ -101,7 +101,7 @@ export function StatusChip({ status }: { status: string }) {
 
 export function Stat({ label, value, hint, tone, href }: { label: string; value: ReactNode; hint?: ReactNode; tone?: ChipTone; href?: string }) {
   const inner = (
-    <div className="surface rounded-xl border px-4 py-3 transition hover:border-indigo-300">
+    <div className="surface rounded-xl border px-4 py-3 transition hover:border-[color-mix(in_oklab,var(--text)_35%,transparent)]">
       <div className="text-muted text-xs font-medium">{label}</div>
       <div className={cx('mt-1 text-2xl font-semibold tabular-nums', tone === 'danger' && 'text-rose-600', tone === 'warning' && 'text-amber-600', tone === 'success' && 'text-emerald-600')}>
         {value}
@@ -166,17 +166,17 @@ export function ProgressBar({ value, tone = 'brand', label = 'Progress' }: { val
   );
 }
 
-export const buttonClasses = (variant: 'primary' | 'secondary' | 'ghost' | 'danger' = 'secondary', size: 'sm' | 'md' = 'md') =>
+export const buttonClasses = (variant: 'primary' | 'secondary' | 'ghost' | 'danger' = 'secondary', size: 'sm' | 'md' | 'icon' = 'md') =>
   cx(
-    'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap',
-    size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3.5 py-2 text-sm',
-    variant === 'primary' && 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700',
+    'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap',
+    size === 'sm' ? 'h-8 px-2.5 text-xs' : size === 'icon' ? 'h-8 w-8 shrink-0' : 'h-9 px-3.5 text-sm',
+    variant === 'primary' && 'bg-[var(--primary)] text-[var(--primary-fg)] shadow-sm hover:opacity-90',
     variant === 'secondary' && 'surface border hover:bg-[var(--surface-2)]',
     variant === 'ghost' && 'hover:bg-[var(--surface-2)]',
     variant === 'danger' && 'bg-rose-600 text-white hover:bg-rose-700',
   );
 
-export function LinkButton({ href, children, variant = 'secondary', size = 'md' }: { href: string; children: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; size?: 'sm' | 'md' }) {
+export function LinkButton({ href, children, variant = 'secondary', size = 'md' }: { href: string; children: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; size?: 'sm' | 'md' | 'icon' }) {
   return (
     <Link href={href} className={buttonClasses(variant, size)}>
       {children}

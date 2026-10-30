@@ -167,7 +167,7 @@ export function CampaignDetail({ id }: { id: string }) {
       <Card padded={false}>
         <div className="border-app flex flex-wrap items-center gap-1 border-b p-3">
           {FILTERS.map(([fid, label]) => (
-            <button key={fid} type="button" aria-pressed={filter === fid} onClick={() => { setFilter(fid); setPage(0); }} className={cx('rounded-md px-2 py-1 text-xs', filter === fid ? 'bg-indigo-600 text-white' : 'surface-2')}>
+            <button key={fid} type="button" aria-pressed={filter === fid} onClick={() => { setFilter(fid); setPage(0); }} className={cx('rounded-md px-2 py-1 text-xs', filter === fid ? 'bg-[var(--primary)] text-[var(--primary-fg)]' : 'surface-2')}>
               {label}
             </button>
           ))}

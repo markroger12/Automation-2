@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.6');
+    expect(ext?.version).toBe('3.4.7');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -503,7 +503,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.6', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.7', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;
@@ -620,6 +620,24 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     // The task log says what the extension saw, for the next owner report.
     const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'Gallery:' } }, orderBy: { createdAt: 'desc' } });
     expect(saved?.message).toContain(`${count} picture(s) in the gallery (0 not shown by the page), ${count} opened large`);
+    expect((await fakeStats()).sends).toBe(1);
+  }, 200_000);
+
+  // Owner report (screenshot: 3 tiles, the third with a stacked-pictures icon and “5”, “Five archival photographs”;
+  // the photo check then got 3): the two other photos are only in the viewer, whose Next has no name, or which steps
+  // with the arrow keys, or shows a row of small pictures.
+  it.each(['arrows', 'keys', 'filmstrip'] as const)('owner report: 3 tiles with “5” on the last, a viewer with %s: all 5 photos are saved', async (viewer) => {
+    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryCount: 5, galleryShown: 3, galleryBadge: true, galleryViewer: viewer };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request(`Search the web for real photos of John William McDonald ${viewer} and show them as an image gallery.`, { expectGallery: true });
+    const done = await responseDone(req.responseId, 150_000);
+    expect(done.status).toBe('COMPLETED');
+    const large = (await client.mediaAsset.findMany({ where: { responseId: req.responseId } })).filter((a) => (a.width ?? 0) >= 1000);
+    expect(large).toHaveLength(5);
+    expect(new Set(large.map((a) => a.sha256)).size).toBe(5);
+    const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'Gallery:' } }, orderBy: { createdAt: 'desc' } });
+    expect(saved?.message).toContain('3 picture(s) in the gallery (0 not shown by the page), 5 opened large');
+    expect(saved?.message).toContain('the gallery says 5');
     expect((await fakeStats()).sends).toBe(1);
   }, 200_000);
 

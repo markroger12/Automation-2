@@ -55,7 +55,20 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
   const when = (iso: string) => `${formatInZone(iso, 'Asia/Karachi')} PK`;
   const needsSignIn = o.signedIn === false || o.notSignedIn > 0;
   return (
-    <Card title="Indexing in Search Console" description="About 35 seconds after a publish (or when you select keywords and click “Request indexing”), Automation Chrome opens Search Console, inspects the post's URL and clicks “Request indexing”, as you do by hand. The keyword then shows “indexing requested” and Google's answer.">
+    <Card
+      title="Indexing in Search Console"
+      description="About 35 seconds after a publish (or when you select keywords and click “Request indexing”), Automation Chrome opens Search Console, inspects the post's URL and clicks “Request indexing”, as you do by hand. The keyword then shows “indexing requested” and Google's answer."
+      actions={
+        <>
+          <Button size="sm" disabled={busy} onClick={() => void act('signin')}>
+            Sign in to Google in Automation Chrome
+          </Button>
+          <Button size="sm" variant="secondary" disabled={busy || !o.waiting} onClick={() => void act('now')}>
+            Request now
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <Chip tone={o.signedIn === true ? 'success' : needsSignIn ? 'warning' : 'neutral'}>
@@ -64,6 +77,7 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
           <Chip tone="success">{o.requested} requested</Chip>
           {o.waiting ? <Chip tone="info">{o.waiting} waiting</Chip> : null}
           {o.quota ? <Chip tone="warning">{o.quota} after today's limit</Chip> : null}
+          {!o.last ? <span className="text-muted text-xs">No request made yet.</span> : null}
         </div>
         {needsSignIn ? (
           <Alert tone="warning" title="Sign in to Google once in Automation Chrome">
@@ -79,9 +93,7 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
             </a>{' '}
             · {when(o.last.at)}
           </p>
-        ) : (
-          <p className="text-muted text-xs">No request made yet.</p>
-        )}
+        ) : null}
         {o.lastProof ? (
           <div className="flex items-start gap-3">
             <a href={`/api/media/${o.lastProof.id}`} target="_blank" rel="noreferrer" className="shrink-0" title="Open the screenshot">
@@ -92,14 +104,6 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
             </p>
           </div>
         ) : null}
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" disabled={busy} onClick={() => void act('signin')}>
-            Sign in to Google in Automation Chrome
-          </Button>
-          <Button size="sm" variant="secondary" disabled={busy || !o.waiting} onClick={() => void act('now')}>
-            Request now
-          </Button>
-        </div>
       </div>
     </Card>
   );

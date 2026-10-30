@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.4.6';
+  const EXTENSION_VERSION = '3.4.7';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -323,9 +323,9 @@
     return res && res.ok ? { base64: res.base64, mime: res.mime || 'image/jpeg' } : null;
   }
 
-  /** The picture the gallery viewer shows, once it differs from `previous` (up to 6 s; then whatever it shows). */
-  async function viewerPicture(previous) {
-    const deadline = Date.now() + 6000;
+  /** The picture the gallery viewer shows, once it differs from `previous` (up to `ms`; then whatever it shows). */
+  async function viewerPicture(previous, ms = 6000) {
+    const deadline = Date.now() + ms;
     let shown = null;
     while (Date.now() < deadline) {
       checkCancelled();
@@ -388,6 +388,12 @@
       return true;
     };
     const openable = thumbs.filter((img) => !A.brokenPicture(img)).length;
+    // Owner report (3 tiles, the third with “5”; the article got 3): the gallery's own count, when it shows more
+    // pictures than tiles. The others are only in the viewer.
+    const said = A.galleryCount(thumbs);
+    const want = Math.max(openable, said || 0);
+    // How the viewer was stepped through, for the task log.
+    const how = new Set();
     let large = 0;
     try {
       // Open the viewer from a picture the page shows (a broken one may be a link that opens another tab).
@@ -400,8 +406,10 @@
       let previous = null;
       // Whether the viewer went through all its pictures: “Next” turned off at the last one, or it came back round.
       let walked = false;
+      // A viewer with no Next button may step with the arrow keys (tried while pictures are missing).
+      let keys = false;
       for (let step = 0; step < 12 && picked.length < 10; step++) {
-        const img = await viewerPicture(previous);
+        const img = await viewerPicture(previous, keys ? 2500 : 6000);
         if (!img) break;
         const src = img.currentSrc || img.src;
         if (step > 0 && (src === previous || seen.has(src))) {
@@ -409,12 +417,37 @@
           break;
         }
         if (add(img)) large++;
+        if (step > 0) how.add(keys ? 'arrow keys' : 'Next');
         previous = src;
         const dialog = A.galleryDialog();
         const next = dialog && A.galleryNextButton(dialog);
-        walked = Boolean(next && next.disabled);
-        if (!next || next.disabled) break;
-        next.click();
+        if (next) {
+          walked = next.disabled || next.getAttribute('aria-disabled') === 'true';
+          if (walked) break;
+          next.click();
+        } else if (dialog && large < want) {
+          keys = true;
+          A.pressViewerKey(dialog, 'ArrowRight');
+        } else break;
+      }
+      // A row of small pictures in the viewer: each one shows its picture large.
+      if (!walked && large < want && A.galleryDialog()) {
+        const count = A.viewerStrip(A.galleryDialog()).length;
+        for (let k = 0; k < count && picked.length < 10; k++) {
+          checkCancelled();
+          const dialog = A.galleryDialog();
+          const small = dialog && A.viewerStrip(dialog)[k];
+          if (!small) break;
+          (small.closest('button, [role="button"], a') || small).click();
+          const img = await viewerPicture(previous, 2500);
+          if (!img) break;
+          previous = img.currentSrc || img.src;
+          if (add(img)) {
+            large++;
+            how.add('small pictures');
+          }
+        }
+        if (large >= want) walked = true;
       }
       await closeViewer();
       // Owner report (ChatGPT showed about 6 photos, the article got 2): a viewer without “Next”, or one whose picture
@@ -442,7 +475,10 @@
           const img = await viewerPicture(last);
           if (img) {
             last = img.currentSrc || img.src;
-            if (add(img)) large++;
+            if (add(img)) {
+              large++;
+              how.add('each tile');
+            }
           }
           await closeViewer();
         }
@@ -472,7 +508,7 @@
       if (up && up.ok) images.push({ mediaAssetId: up.mediaAssetId });
       else if (/^https?:/i.test(p.src)) imageLinks.push({ url: p.src.slice(0, 1900), width: p.width, height: p.height });
     }
-    const report = `${thumbs.length} picture(s) in the gallery (${thumbs.length - openable} not shown by the page), ${large} opened large, ${images.length} saved, ${imageLinks.length} reported as link(s).`;
+    const report = `${thumbs.length} picture(s) in the gallery (${thumbs.length - openable} not shown by the page), ${large} opened large, ${images.length} saved, ${imageLinks.length} reported as link(s)${said ? `; the gallery says ${said}` : ''}; viewer stepped by: ${how.size ? [...how].join(', ') : 'nothing (one picture)'}.`;
     return { images, imageLinks: imageLinks.slice(0, 20), note: null, report };
   }
 

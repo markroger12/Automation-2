@@ -1,0 +1,49 @@
+# Blog Automation Studio — Windows installer (npm run dist:win in desktop/, after node prepare.mjs).
+appId: local.blogautomationstudio.desktop
+productName: Blog Automation Studio
+copyright: Private tool
+directories:
+  output: dist
+# The window, its tabs (dashboard, ChatGPT) and the tray only; the tool itself comes in as a resource (prepare.mjs) and
+# runs on this app's own built-in Node.js, so nothing else is installed (owner request: “like Discord”). The ChatGPT
+# tab runs the tool's own extension scripts (app/extension).
+files:
+  - main.cjs
+  - shell.html
+  - shell-preload.cjs
+  - chatgpt-tab.cjs
+  - chatgpt-agent.cjs
+  - chatgpt-preload.cjs
+  - content-shim.js
+  - icon.png
+  - package.json
+extraResources:
+  - from: bundle/app
+    to: app
+  # electron-builder leaves node_modules out of a folder copy; the tool needs its own, so they are named here.
+  - from: bundle/app/node_modules
+    to: app/node_modules
+    filter: ['**/*']
+asar: true
+# Owner request: light. The smallest download, and the window's texts in English only (the dashboard is English).
+compression: maximum
+electronLanguages: [en-US]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: icon.png
+  artifactName: Blog-Automation-Studio-Setup-${version}.${ext}
+nsis:
+  # One click, like Discord: installs for this Windows user (no administrator) and starts the app.
+  oneClick: true
+  perMachine: false
+  runAfterFinish: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Blog Automation Studio
+  # The data folder is never inside the installation, and uninstalling never deletes it.
+  deleteAppDataOnUninstall: false
+linux:
+  target: [dir]
+  icon: icon.png

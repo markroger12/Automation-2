@@ -91,7 +91,7 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
         {o.last ? (
           <p className="text-muted text-xs">
             Last answer: {o.last.outcome === 'REQUESTED' ? 'indexing requested' : o.last.outcome === 'NOT_SIGNED_IN' ? 'Google asked to sign in' : o.last.outcome === 'QUOTA' ? "Search Console's daily limit" : o.last.outcome.toLowerCase().replace('_', ' ')} for{' '}
-            <a className="text-indigo-600 underline" href={o.last.url} target="_blank" rel="noreferrer">
+            <a className="link" href={o.last.url} target="_blank" rel="noreferrer">
               {o.last.url.replace(/^https?:\/\//, '')}
             </a>{' '}
             · {when(o.last.at)}

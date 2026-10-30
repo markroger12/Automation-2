@@ -53,7 +53,7 @@ export default async function RecoveryPage() {
                       {i.description}
                       {i.taskId ? (
                         <div>
-                          <Link className="text-xs text-indigo-600 hover:underline" href={i.kind === 'UNCERTAIN_WP_CREATE' ? `/articles/${i.taskId}?tab=wordpress` : `/articles/${i.taskId}`}>
+                          <Link className="text-xs link" href={i.kind === 'UNCERTAIN_WP_CREATE' ? `/articles/${i.taskId}?tab=wordpress` : `/articles/${i.taskId}`}>
                             {i.kind === 'UNCERTAIN_WP_CREATE' ? 'Choose the right WordPress post' : `Open article${i.stageKey ? ` (${i.stageKey})` : ''}`}
                           </Link>
                         </div>
@@ -63,7 +63,7 @@ export default async function RecoveryPage() {
                       <code className="break-all">{i.evidence}</code>
                       {shot?.screenshotPath ? (
                         <div>
-                          <a className="text-indigo-600 underline" href={`/api/files/screenshot?path=${encodeURIComponent(shot.screenshotPath)}`} target="_blank" rel="noreferrer">
+                          <a className="link" href={`/api/files/screenshot?path=${encodeURIComponent(shot.screenshotPath)}`} target="_blank" rel="noreferrer">
                             last screenshot ({formatRelative(shot.createdAt)})
                           </a>
                         </div>

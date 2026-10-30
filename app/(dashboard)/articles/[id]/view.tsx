@@ -267,7 +267,7 @@ function OverviewTab({ task }: { task: SerializedTaskDetail }) {
             { label: 'Focus keyword', value: task.focusKeyword ?? '—' },
             { label: 'Internal SEO score', value: task.seoScore ?? '—' },
             { label: 'Rank Math score', value: task.rankMathScore !== null ? `${task.rankMathScore} / 100 (read from WordPress)` : <span className="text-muted">not verified</span> },
-            { label: 'WordPress', value: task.wpEditUrl ? <a className="text-indigo-600 underline" href={task.wpEditUrl} target="_blank" rel="noreferrer">post #{task.wpPostId} ({task.wpPostStatus ?? 'draft'})</a> : '—' },
+            { label: 'WordPress', value: task.wpEditUrl ? <a className="link" href={task.wpEditUrl} target="_blank" rel="noreferrer">post #{task.wpPostId} ({task.wpPostStatus ?? 'draft'})</a> : '—' },
             { label: 'Verified complete', value: task.verifiedCompleteAt ? formatDateTime(task.verifiedCompleteAt) : '—' },
           ]}
         />
@@ -279,7 +279,7 @@ function OverviewTab({ task }: { task: SerializedTaskDetail }) {
             { label: 'Started', value: formatDateTime(task.startedAt) },
             { label: 'Draft saved', value: formatDateTime(task.wpDraftAt) },
             { label: 'Completed', value: formatDateTime(task.completedAt) },
-            { label: 'ChatGPT conversation', value: task.conversationUrl ? <a className="text-indigo-600 underline" href={task.conversationUrl} target="_blank" rel="noreferrer">open</a> : '—' },
+            { label: 'ChatGPT conversation', value: task.conversationUrl ? <a className="link" href={task.conversationUrl} target="_blank" rel="noreferrer">open</a> : '—' },
           ]}
         />
       </Card>
@@ -455,7 +455,7 @@ function LogsTab({ task }: { task: SerializedTaskDetail }) {
                 <td className="text-sm break-words">
                   {l.message}
                   {l.screenshotPath ? (
-                    <a className="ml-2 text-xs text-indigo-600 underline" href={`/api/files/screenshot?path=${encodeURIComponent(l.screenshotPath)}`} target="_blank" rel="noreferrer">
+                    <a className="ml-2 text-xs link" href={`/api/files/screenshot?path=${encodeURIComponent(l.screenshotPath)}`} target="_blank" rel="noreferrer">
                       screenshot
                     </a>
                   ) : null}
@@ -475,7 +475,7 @@ function ConversationTab({ task }: { task: SerializedTaskDetail }) {
     <Card
       title="ChatGPT conversation"
       description="Successive prompts of one article run in one conversation whenever possible. Conversation switches are recorded."
-      actions={task.conversationUrl ? <a className="text-sm text-indigo-600 underline" href={task.conversationUrl} target="_blank" rel="noreferrer">Open in Automation Chrome</a> : undefined}
+      actions={task.conversationUrl ? <a className="text-sm link" href={task.conversationUrl} target="_blank" rel="noreferrer">Open in Automation Chrome</a> : undefined}
     >
       {completed.length === 0 ? (
         <EmptyState title="No conversation yet" />

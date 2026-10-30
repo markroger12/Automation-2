@@ -197,11 +197,11 @@ export function DatePicker({
                 onChange('');
                 close();
               }}
-              className="rounded-md px-2 py-1 font-medium text-indigo-600 hover:bg-black/5 dark:hover:bg-white/10"
+              className="rounded-md px-2 py-1 font-medium hover:bg-black/5 dark:hover:bg-white/10"
             >
               Clear
             </button>
-            <button type="button" disabled={!allowed(today)} onClick={() => choose(today)} className="rounded-md px-2 py-1 font-medium text-indigo-600 hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10">
+            <button type="button" disabled={!allowed(today)} onClick={() => choose(today)} className="rounded-md px-2 py-1 font-medium hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10">
               Today
             </button>
           </div>

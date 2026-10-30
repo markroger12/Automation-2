@@ -12,7 +12,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
         title="Campaign"
         description={
           <>
-            <Link href="/campaigns" className="text-indigo-600 underline">
+            <Link href="/campaigns" className="link">
               ← All campaigns
             </Link>
           </>

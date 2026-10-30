@@ -68,7 +68,7 @@ export function HumanizerTab({ task }: { task: SerializedTaskDetail }) {
         <ul className="space-y-2 text-sm">
           {(runs ?? []).map((r) => (
             <li key={r.id} className="flex items-center justify-between gap-2">
-              <Link className="truncate text-indigo-600 underline" href={`/humanizer?run=${r.id}`}>
+              <Link className="truncate link" href={`/humanizer?run=${r.id}`}>
                 {r.title}
               </Link>
               <span className="flex shrink-0 items-center gap-2">

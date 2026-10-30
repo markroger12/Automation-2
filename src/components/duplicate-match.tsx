@@ -49,7 +49,7 @@ export function DuplicateMatchCard({ m }: { m: DuplicateMatchView }) {
         {m.status === 'OVERRIDDEN' ? <Chip>kept by you</Chip> : null}
         <span>
           vs{' '}
-          <Link className="text-indigo-600 underline" href={`/articles/${m.otherTaskId}`}>
+          <Link className="link" href={`/articles/${m.otherTaskId}`}>
             {m.otherTitle}
           </Link>{' '}
           <span className="text-muted">· {m.sameWebsite ? 'same website' : m.otherWebsite}</span>
@@ -60,7 +60,7 @@ export function DuplicateMatchCard({ m }: { m: DuplicateMatchView }) {
       </p>
       {m.excerpts.length ? (
         <details className="mt-2">
-          <summary className="cursor-pointer text-sm text-indigo-600">Show the passages ({m.excerpts.length})</summary>
+          <summary className="cursor-pointer text-sm link-plain">Show the passages ({m.excerpts.length})</summary>
           <ul className="mt-2 space-y-3">
             {m.excerpts.map((e, i) => (
               <li key={i}>

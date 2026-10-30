@@ -102,7 +102,7 @@ function ResearchTab({ task }: { task: SerializedTaskDetail }) {
               <ul className="space-y-1 text-xs">
                 {analysis.sources.map((s) => (
                   <li key={s.url} className="break-all">
-                    <a className="text-indigo-600 underline" href={s.url} target="_blank" rel="noreferrer">
+                    <a className="link" href={s.url} target="_blank" rel="noreferrer">
                       {s.url}
                     </a>
                   </li>

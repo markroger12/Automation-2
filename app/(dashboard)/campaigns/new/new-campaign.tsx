@@ -395,7 +395,7 @@ export function NewCampaign() {
                           </div>
                         ))}
                         {r.status === 'DUPLICATE' ? (
-                          <button type="button" className="mt-1 text-indigo-600 underline" onClick={() => override([r.line], { confirmVariant: true })}>
+                          <button type="button" className="mt-1 link" onClick={() => override([r.line], { confirmVariant: true })}>
                             Keep as a separate article
                           </button>
                         ) : null}
@@ -404,7 +404,7 @@ export function NewCampaign() {
                             Exclude
                           </button>
                         ) : r.status === 'SKIPPED' ? (
-                          <button type="button" className="mt-1 block text-indigo-600 underline" onClick={() => override([r.line], { include: true })}>
+                          <button type="button" className="mt-1 block link" onClick={() => override([r.line], { include: true })}>
                             Include again
                           </button>
                         ) : null}

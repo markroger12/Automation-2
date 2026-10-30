@@ -242,7 +242,7 @@ export function CampaignDetail({ id }: { id: string }) {
                           <StatusChip status={r.task.status} />
                         </Link>
                         {r.task.wpEditUrl ? (
-                          <a className="text-indigo-600 underline" href={r.task.wpEditUrl} target="_blank" rel="noreferrer">
+                          <a className="link" href={r.task.wpEditUrl} target="_blank" rel="noreferrer">
                             #{r.task.wpPostId}
                           </a>
                         ) : null}

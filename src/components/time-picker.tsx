@@ -104,7 +104,7 @@ export function TimePicker({ value, onChange, ariaLabel, placeholder = 'Pick a t
           </div>
           <div className="border-app mt-2 flex items-center justify-between border-t pt-2 text-sm">
             <span className="tabular-nums">{value || '—'}</span>
-            <button type="button" onClick={close} className="rounded-md px-2 py-1 font-medium text-indigo-600 hover:bg-black/5 dark:hover:bg-white/10">
+            <button type="button" onClick={close} className="rounded-md px-2 py-1 font-medium hover:bg-black/5 dark:hover:bg-white/10">
               Done
             </button>
           </div>

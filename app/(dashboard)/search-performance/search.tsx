@@ -420,7 +420,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
               title={`Declining pages (${data.declining?.length ?? 0})`}
               description={`At least 10 clicks before and at most 70 % of them now.${data.pagesReport && !data.pagesReport.compare ? ' Needs a Compare export, or an earlier report of the same length.' : ''}`}
               actions={
-                <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('declining')}>
+                <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('declining')}>
                   <Download className="h-3.5 w-3.5" /> CSV
                 </a>
               }
@@ -451,7 +451,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
               title={`Published articles without impressions (${data.zero?.length ?? 0})`}
               description={`App articles published at least 14 days before the report ended.${data.pagesReport?.capped ? ' The page report lists 1,000 pages, the export limit: articles missing from it are not counted.' : ''}`}
               actions={
-                <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('zero')}>
+                <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('zero')}>
                   <Download className="h-3.5 w-3.5" /> CSV
                 </a>
               }
@@ -477,7 +477,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
             title={`Pages${data.pagesReport ? ` · ${data.pagesReport.start} – ${data.pagesReport.end}` : ''}`}
             padded={false}
             actions={
-              <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('pages')}>
+              <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('pages')}>
                 <Download className="h-3.5 w-3.5" /> CSV
               </a>
             }
@@ -524,7 +524,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
             title={`Queries${data.queriesReport ? ` · ${data.queriesReport.start} – ${data.queriesReport.end}` : ''}`}
             padded={false}
             actions={
-              <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('queries')}>
+              <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('queries')}>
                 <Download className="h-3.5 w-3.5" /> CSV
               </a>
             }

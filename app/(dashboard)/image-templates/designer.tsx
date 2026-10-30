@@ -1018,7 +1018,7 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
                     <Alert tone={finalInfo.over ? 'warning' : 'success'} title="Final output">
                       {finalInfo.text}
                       {finalInfo.over ? ' — over budget even at the lowest quality; simplify the design or raise the byte budget in Settings.' : ''}{' '}
-                      <a href={finalInfo.url} target="_blank" rel="noreferrer" className="text-indigo-600 underline">
+                      <a href={finalInfo.url} target="_blank" rel="noreferrer" className="link">
                         Open the final file
                       </a>
                     </Alert>
@@ -1401,8 +1401,8 @@ function ColorField({ id, label, value, accent, onChange, nullable }: { id: stri
         />
       </div>
       <div className="mt-1 flex gap-2 text-xs">
-        <button type="button" className="text-indigo-600 underline" onClick={() => onChange('accent')}>accent</button>
-        {nullable ? <button type="button" className="text-indigo-600 underline" onClick={() => onChange(null)}>none</button> : <button type="button" className="text-indigo-600 underline" onClick={() => onChange('transparent')}>transparent</button>}
+        <button type="button" className="link" onClick={() => onChange('accent')}>accent</button>
+        {nullable ? <button type="button" className="link" onClick={() => onChange(null)}>none</button> : <button type="button" className="link" onClick={() => onChange('transparent')}>transparent</button>}
       </div>
     </Field>
   );

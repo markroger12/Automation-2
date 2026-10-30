@@ -67,7 +67,7 @@ function SuggestionList({ taskId }: { taskId: string }) {
           <li key={r.id}>
             <Chip tone={SUGGESTION_STATUS[r.status]?.tone ?? 'neutral'}>{SUGGESTION_STATUS[r.status]?.label ?? r.status.toLowerCase()}</Chip>{' '}
             {r.anchor ? <span>“{r.anchor}” → </span> : null}
-            <a className="text-indigo-600 underline" href={r.url} target="_blank" rel="noreferrer">
+            <a className="link" href={r.url} target="_blank" rel="noreferrer">
               {r.title}
             </a>
             {r.note ? <span className="text-muted text-xs"> · {r.note}</span> : null}
@@ -122,7 +122,7 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
               {ext.data.accepted.map((a, i) => (
                 <li key={i}>
                   <span className="font-medium">“{a.phrase}”</span> →{' '}
-                  <a className="inline-flex items-center gap-1 text-indigo-600 underline" href={a.finalUrl ?? a.url} target="_blank" rel="noreferrer">
+                  <a className="inline-flex items-center gap-1 link" href={a.finalUrl ?? a.url} target="_blank" rel="noreferrer">
                     {short(a.finalUrl ?? a.url)} <ExternalLink className="h-3 w-3" />
                   </a>{' '}
                   {a.kind ? <Chip>{a.kind}</Chip> : null}
@@ -186,7 +186,7 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
                   ) : int.data.url ? (
                     <span>
                       <strong>{int.data.line}</strong>{' '}
-                      <a className="text-indigo-600 underline" href={int.data.url} target="_blank" rel="noreferrer">
+                      <a className="link" href={int.data.url} target="_blank" rel="noreferrer">
                         {int.data.title}
                       </a>
                     </span>
@@ -206,7 +206,7 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
                   {int.data.candidates.map((c) => (
                     <li key={c.url} className="flex flex-wrap items-start justify-between gap-2">
                       <div>
-                        <a className="text-indigo-600 underline" href={c.url} target="_blank" rel="noreferrer">
+                        <a className="link" href={c.url} target="_blank" rel="noreferrer">
                           {c.title}
                         </a>{' '}
                         <Chip tone={c.related ? 'success' : 'neutral'}>{c.related ? 'related' : 'fallback'}</Chip> <span className="text-muted text-xs">score {c.score}</span>

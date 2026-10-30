@@ -68,7 +68,7 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
         title={site.name}
         description={
           <span className="flex flex-wrap items-center gap-2">
-            <a className="text-indigo-600 hover:underline" href={site.publicUrl} target="_blank" rel="noreferrer">
+            <a className="link" href={site.publicUrl} target="_blank" rel="noreferrer">
               {site.publicUrl}
             </a>
             <Chip tone={state === 'ACTIVE' ? 'success' : state === 'LOGIN_REQUIRED' ? 'warning' : state === 'ERROR' ? 'danger' : 'neutral'}>{state.replace('_', ' ').toLowerCase()}</Chip>

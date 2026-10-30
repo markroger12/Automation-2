@@ -95,7 +95,7 @@ function ClaimCard({ c, onChanged }: { c: Claim; onChanged: () => Promise<void> 
           {c.evidence.map((e, i) => (
             <li key={i} className="text-xs">
               <Chip tone={e.verdict === 'SUPPORTS' ? 'success' : 'danger'}>{e.verdict === 'SUPPORTS' ? 'supports' : 'contradicts'}</Chip>{' '}
-              <a className="inline-flex items-center gap-1 text-indigo-600 underline" href={e.url} target="_blank" rel="noreferrer noopener">
+              <a className="inline-flex items-center gap-1 link" href={e.url} target="_blank" rel="noreferrer noopener">
                 {e.host} <ExternalLink className="h-3 w-3" />
               </a>
               {e.detail ? <span className="ml-1 font-medium">{e.detail}</span> : null}
@@ -117,7 +117,7 @@ function ClaimCard({ c, onChanged }: { c: Claim; onChanged: () => Promise<void> 
         </div>
       ) : (
         <details className="mt-2">
-          <summary className="cursor-pointer text-xs text-indigo-600">Decide</summary>
+          <summary className="cursor-pointer text-xs link-plain">Decide</summary>
           <div className="mt-2 grid gap-2 md:grid-cols-[180px_1fr]">
             <Field label="Decision" htmlFor={`d-${c.id}`}>
               <Select id={`d-${c.id}`} value={decision} onChange={(e) => setDecision(e.target.value)}>
@@ -208,7 +208,7 @@ export function ResearchEvidence({ initialTaskId }: { initialTaskId?: string }) 
               description={detail.researchedAt ? `Researched ${formatDateTime(detail.researchedAt)} · ${detail.task.website.name}` : undefined}
               actions={
                 <div className="flex flex-wrap gap-2">
-                  <Link className="text-sm text-indigo-600 underline" href={`/articles/${detail.task.id}`}>
+                  <Link className="text-sm link" href={`/articles/${detail.task.id}`}>
                     Open article
                   </Link>
                   <Button
@@ -283,7 +283,7 @@ export function ResearchEvidence({ initialTaskId }: { initialTaskId?: string }) 
                   {detail.sources.map((s) => (
                     <tr key={s.id}>
                       <td className="max-w-md">
-                        <a className="break-all text-indigo-600 underline" href={s.url} target="_blank" rel="noreferrer noopener">
+                        <a className="break-all link" href={s.url} target="_blank" rel="noreferrer noopener">
                           {s.title || s.url}
                         </a>
                         {s.detail ? <div className="text-muted text-xs">{s.detail}</div> : null}

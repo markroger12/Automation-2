@@ -36,11 +36,11 @@ function FindingList({ items, tone, taskId }: { items: Finding[]; tone: 'danger'
           <span>
             {f.message}{' '}
             {f.source === 'DUPLICATES' ? (
-              <Link className="text-xs text-indigo-600 underline" href="/duplicates">
+              <Link className="text-xs link" href="/duplicates">
                 Duplicate Review
               </Link>
             ) : (
-              <Link className="text-xs text-indigo-600 underline" href={`/articles/${taskId}?tab=stages`}>
+              <Link className="text-xs link" href={`/articles/${taskId}?tab=stages`}>
                 {f.source}
               </Link>
             )}

@@ -231,6 +231,25 @@ body {
   pointer-events: none;
 }
 
+/* Links in text: the text colour with a soft underline (the reference look; indigo links were replaced). */
+.link {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--text) 35%, transparent);
+  text-underline-offset: 3px;
+}
+.link:hover {
+  text-decoration-color: currentColor;
+}
+.link-plain {
+  color: var(--text);
+  font-weight: 500;
+}
+.link-plain:hover {
+  text-decoration: underline;
+}
+
 kbd {
   font-family: var(--font-mono);
   font-size: 0.7rem;

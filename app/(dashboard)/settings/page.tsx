@@ -23,7 +23,7 @@ export default async function SettingsPage() {
         className="mb-6"
         description={
           <>
-            The extension authenticates to this dashboard with this key. Full setup: <Link className="text-indigo-600 underline" href="/automation-chrome">Automation Chrome</Link>.
+            The extension authenticates to this dashboard with this key. Full setup: <Link className="link" href="/automation-chrome">Automation Chrome</Link>.
           </>
         }
       >

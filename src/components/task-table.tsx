@@ -221,7 +221,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
           <option value="seo:desc">SEO score</option>
         </select>
         {mode === 'history' ? (
-          <a className="text-sm font-medium text-indigo-600 hover:underline" href={`/api/tasks/export?${query}`}>
+          <a className="text-sm font-medium link" href={`/api/tasks/export?${query}`}>
             Export CSV
           </a>
         ) : null}
@@ -266,7 +266,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
           description={filters.group === 'all' && !filters.q ? 'Start with Single Article or import keywords in Bulk Campaigns.' : 'Try another status or clear the search.'}
           action={
             filters.group === 'all' && !filters.q ? (
-              <Link href="/single-article" className="font-semibold text-indigo-600 hover:underline">
+              <Link href="/single-article" className="font-semibold link">
                 Write a single article →
               </Link>
             ) : undefined
@@ -285,9 +285,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
                     onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))}
                   />
                 </th>
-                <th>Keyword</th>
-                <th>Writer</th>
-                <th>Website</th>
+                <th className="min-w-[260px]">Article</th>
                 <th>Status</th>
                 {mode === 'queue' ? <th className="min-w-[220px]">Progress</th> : <th>Category</th>}
                 {mode === 'queue' ? <th>Worker / tab</th> : <th title="Internal SEO readiness score">SEO</th>}
@@ -315,19 +313,17 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
                       }
                     />
                   </td>
-                  <td className="max-w-[280px]">
+                  <td className="min-w-[260px] max-w-[360px]">
                     <Link href={`/articles/${r.id}`} className="font-medium hover:underline">
                       {r.keyword}
                     </Link>
-                    {r.selectedTitle ? <div className="text-muted line-clamp-1 text-xs">{r.selectedTitle}</div> : null}
+                    {r.selectedTitle ? <div className="line-clamp-1 text-xs">{r.selectedTitle}</div> : null}
+                    {/* Website and writer under the keyword (owner request: the keyword had no room). */}
+                    <div className="text-muted truncate text-xs">
+                      {r.websiteName} <span className="uppercase">{r.language}</span> · {moduleDisplayName(r.moduleKey)}
+                      {r.legacy ? <Chip className="ml-1">read-only</Chip> : null}
+                    </div>
                     {r.secondaryKeywords.length ? <div className="text-muted line-clamp-1 text-[11px]">+ {r.secondaryKeywords.join(', ')}</div> : null}
-                  </td>
-                  <td className="whitespace-nowrap">
-                    {moduleDisplayName(r.moduleKey)}
-                    {r.legacy ? <Chip className="ml-1">read-only</Chip> : null}
-                  </td>
-                  <td className="whitespace-nowrap">
-                    {r.websiteName} <span className="text-muted text-xs uppercase">{r.language}</span>
                   </td>
                   <td>
                     <StatusChip status={r.status} />
@@ -368,7 +364,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
                   {mode === 'history' ? (
                     <td className="text-xs">
                       {r.wpEditUrl ? (
-                        <a href={r.wpEditUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-indigo-600 hover:underline">
+                        <a href={r.wpEditUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 link">
                           #{r.wpPostId} <ExternalLink className="h-3 w-3" />
                         </a>
                       ) : (

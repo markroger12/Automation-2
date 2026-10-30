@@ -99,7 +99,7 @@ function Controls({ row }: { row: Row }) {
       <Button size="sm" variant={dirty ? 'primary' : 'ghost'} disabled={!dirty} loading={busy === 'limits'} onClick={() => void save('limits', { priority: Number(priority), queueQuota: Number(quota) }, 'Saved.')}>
         <Save className="h-3.5 w-3.5" /> Save
       </Button>
-      <Link className="text-muted ml-auto text-xs font-medium hover:text-[var(--text)] hover:underline" href={`/websites/${row.id}`}>
+      <Link className="text-muted ml-auto text-xs font-medium hover:text-[var(--text)] hover:underline" href={`/websites/${row.id}?tab=settings`}>
         All settings →
       </Link>
     </div>

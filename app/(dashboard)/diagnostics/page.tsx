@@ -17,7 +17,7 @@ export default async function DiagnosticsPage() {
         description="Live state of the worker, its lock, queue leases, sessions and the extension. The downloadable bundle strips cookies, keys and tokens."
         actions={<DiagnosticsActions />}
       />
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Card title="Worker">
           <KeyValue
             items={[
@@ -167,7 +167,23 @@ export default async function DiagnosticsPage() {
           <KeyValue
             items={[
               { label: 'Database size', value: `${(d.database.sizeBytes / 1024).toFixed(0)} KB` },
-              { label: 'Migrations', value: d.database.migrations.map((m) => m.migration_name).join(', ') || '—' },
+              {
+                label: 'Migrations',
+                value: d.database.migrations.length ? (
+                  <details>
+                    <summary className="cursor-pointer">
+                      {d.database.migrations.length} applied · latest <span className="font-mono text-xs">{d.database.migrations[d.database.migrations.length - 1].migration_name}</span>
+                    </summary>
+                    <ul className="text-muted mt-1 space-y-0.5 font-mono text-xs">
+                      {d.database.migrations.map((m) => (
+                        <li key={m.migration_name}>{m.migration_name}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : (
+                  '—'
+                ),
+              },
               { label: 'Recent backups', value: d.backups.length ? d.backups.slice(0, 5).map((b) => b.name).join(', ') : 'none yet' },
               { label: 'Runtime', value: `Node ${d.app.node} · ${d.app.platform}` },
             ]}

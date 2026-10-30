@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import { parseJson } from '@/lib/json';
 import { parseSiteOverrides } from '@/lib/settings';
-import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, formatDateTime, formatRelative } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, cx, formatDateTime, formatRelative } from '@/components/ui';
 import { ControlActionButton } from '@/components/control-action';
 import { WebsiteForm, type WebsiteFormValues } from '../website-form';
 import { PublishingPermission } from './publishing';
@@ -16,8 +16,20 @@ import { failedWordPressTasks } from '@/lib/wordpress-resave';
 
 export const metadata = { title: 'Website' };
 
-export default async function WebsitePage({ params }: { params: Promise<{ id: string }> }) {
+/** One section at a time (owner request: the page was 3,400 px of stacked cards); the tab is in the address. */
+const TABS = [
+  { id: 'session', label: 'Session & categories' },
+  { id: 'health', label: 'Health' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'rules', label: 'Writer rules' },
+  { id: 'publishing', label: 'Publishing' },
+] as const;
+type TabId = (typeof TABS)[number]['id'];
+
+export default async function WebsitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | undefined>> }) {
   const { id } = await params;
+  const sp = await searchParams;
+  const tab: TabId = TABS.some((t) => t.id === sp.tab) ? (sp.tab as TabId) : 'session';
   const site = await db.website.findUnique({
     where: { id },
     include: { wordpressProfile: true, categories: { orderBy: { name: 'asc' } }, _count: { select: { tasks: true } } },
@@ -85,7 +97,27 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-3">
+      <nav aria-label="Website sections" className="border-app mb-6 flex flex-wrap gap-x-1 border-b">
+        {TABS.map((t) => (
+          <Link
+            key={t.id}
+            href={`/websites/${site.id}?tab=${t.id}`}
+            scroll={false}
+            aria-current={tab === t.id ? 'page' : undefined}
+            className={cx(
+              '-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition',
+              tab === t.id ? 'border-[var(--text)] text-[var(--text)]' : 'text-muted border-transparent hover:text-[var(--text)]',
+            )}
+          >
+            {t.label}
+            {t.id === 'health' && health.overall !== 'OK' && health.overall !== 'UNKNOWN' ? <span className={cx('h-2 w-2 rounded-full', health.overall === 'FAIL' ? 'bg-rose-500' : 'bg-amber-500')} aria-label="needs attention" /> : null}
+            {t.id === 'publishing' ? <Chip tone={site.canPublish ? 'danger' : 'neutral'}>{site.canPublish ? 'can publish' : 'drafts only'}</Chip> : null}
+          </Link>
+        ))}
+      </nav>
+
+      {tab === 'session' ? (
+      <div className="grid items-start gap-6 xl:grid-cols-3">
         <Card title="WordPress session" className="xl:col-span-2" description={`Profile folder data/${profile?.profileDir ?? `profiles/${site.slug}`}`}>
           <div className="flex flex-wrap gap-2">
             <ControlActionButton websiteId={site.id} action="login" variant="primary">
@@ -179,20 +211,28 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
           )}
         </Card>
       </div>
+      ) : null}
 
-      <Card title="Site health" className="mt-6" description="Measured results only: session tests, REST and permission checks, editor detection, draft saves and media uploads (kept 30 days).">
+      {tab === 'health' ? (
+      <Card title="Site health" description="Measured results only: session tests, REST and permission checks, editor detection, draft saves and media uploads (kept 30 days).">
         <SiteHealth websiteId={site.id} health={health} failed={failedWp} />
       </Card>
+      ) : null}
 
-      <Card title="Settings" className="mt-6" description="Language, timezone, internal-link line, editor and per-site overrides.">
+      {tab === 'settings' ? (
+      <Card title="Settings" description="Language, timezone, internal-link line, editor and per-site overrides.">
         <WebsiteForm initial={initial} categories={site.categories.map((c) => ({ id: c.id, name: c.name }))} />
       </Card>
+      ) : null}
 
-      <Card title="Writer rules" className="mt-6" description="Bulk campaigns and the workflow send keywords that contain these words to the chosen writer. A writer chosen for a row still wins; without a matching rule the Smart Router decides.">
+      {tab === 'rules' ? (
+      <Card title="Writer rules" description="Bulk campaigns and the workflow send keywords that contain these words to the chosen writer. A writer chosen for a row still wins; without a matching rule the Smart Router decides.">
         <RoutingRules websiteId={site.id} language={site.language} initial={parseRoutingRules(site.routingRules)} />
       </Card>
+      ) : null}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      {tab === 'publishing' ? (
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Card title="Publishing permission (canPublish)" description="Site-specific. Off by default.">
           <p className="text-muted mb-3 text-sm">
             The publish guard blocks every request that would publish, schedule, make private/pending or delete a post — from the editor UI, the REST API, Quick Edit, XML-RPC and every retry.
@@ -217,6 +257,7 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
           <DangerZone websiteId={site.id} slug={site.slug} taskCount={site._count.tasks} />
         </Card>
       </div>
+      ) : null}
     </>
   );
 }

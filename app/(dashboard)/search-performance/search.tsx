@@ -330,7 +330,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
       {data?.state === 'NOT_CONNECTED' ? (
         <Alert tone="warning" title="NOT CONNECTED">
           {data.site.name} has no Search Console property. Add it on the{' '}
-          <Link className="underline" href={`/websites/${data.site.id}`}>
+          <Link className="underline" href={`/websites/${data.site.id}?tab=settings`}>
             website page
           </Link>{' '}
           (Settings → Search Console property, e.g. “sc-domain:example.com”). This page then accepts reports you export from Search Console; nothing is shown before that.

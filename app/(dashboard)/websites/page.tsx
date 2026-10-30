@@ -29,7 +29,7 @@ export default async function WebsitesPage({ searchParams }: { searchParams: Pro
           {sites.map((s) => {
             const state = s.wordpressProfile?.sessionState ?? 'UNKNOWN';
             return (
-              <Link key={s.id} href={`/websites/${s.id}`} className="surface block rounded-xl border p-4 transition hover:border-indigo-300">
+              <Link key={s.id} href={`/websites/${s.id}`} className="surface block rounded-xl border p-4 transition hover:border-[color-mix(in_oklab,var(--text)_35%,transparent)]">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate font-semibold">{s.name}</div>

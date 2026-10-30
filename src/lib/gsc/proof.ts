@@ -65,10 +65,23 @@ export async function renderGscProof(payload: { jobId: string; keywordId: string
     const { browserLaunchBase } = await import('../browser-launch');
     const browser = await chromium.launch({ ...browserLaunchBase(), headless: true });
     let png: Buffer;
+    let iconsHidden = 0;
     try {
       const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, javaScriptEnabled: false });
       await page.route(/^(https?|wss?):/, (r) => r.abort());
       await page.goto(pathToFileURL(file).href, { waitUntil: 'load', timeout: 60_000 });
+      // Owner report (“keyboard_arrow_down”, “home”, “info” all over the screenshot): Google's icons are a font that
+      // is not in the copy, so their names showed as text. They are hidden; the page's own scripts still never run.
+      iconsHidden = await page.evaluate(() => {
+        let n = 0;
+        for (const el of Array.from(document.querySelectorAll('body *'))) {
+          if (el.children.length || !/^[a-z][a-z0-9_]{1,40}$/.test((el.textContent ?? '').trim())) continue;
+          if (!/material|icons|symbols/i.test(getComputedStyle(el).fontFamily)) continue;
+          (el as HTMLElement).style.visibility = 'hidden';
+          n++;
+        }
+        return n;
+      });
       png = await page.screenshot({ type: 'png' });
     } finally {
       await browser.close();
@@ -76,7 +89,7 @@ export async function renderGscProof(payload: { jobId: string; keywordId: string
     const { storeImage } = await import('@/images/store');
     const { asset } = await storeImage({ buffer: png, taskId: kw.taskId, websiteId: kw.workflow.websiteId, role: PROOF_ROLE, origin: 'RENDERED', sourceUrl: payload.url, notes: proofNote(kw.id) });
     await log({ category: 'search', taskId: kw.taskId, message: `Search Console screenshot saved for ${payload.url} (proof of the indexing request).` });
-    return { mediaAssetId: asset.id };
+    return { mediaAssetId: asset.id, iconsHidden };
   } catch (error) {
     await log({ level: 'warn', category: 'search', message: `The Search Console screenshot for ${payload.url} could not be made: ${errorMessage(error)}` });
     throw error;

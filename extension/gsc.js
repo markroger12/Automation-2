@@ -83,6 +83,76 @@
     return [line, next[i + 1] || ''].join(' ').trim().slice(0, 300);
   }
 
+  /** Google's answer (the “Indexing requested” or daily-limit dialog): the innermost dialog that says it, else the smallest box. */
+  function answerBox(re) {
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog')).filter((d) => re.test(d.innerText || ''));
+    const inner = dialogs.filter((d) => !dialogs.some((o) => o !== d && d.contains(o)));
+    if (inner.length) return inner[0];
+    const boxes = Array.from(document.querySelectorAll('div, section')).filter((el) => re.test(el.innerText || ''));
+    return boxes.filter((el) => !boxes.some((o) => o !== el && el.contains(o)))[0] || null;
+  }
+
+  /** The scale of a CSS transform (1 when there is none). */
+  function scaleOf(transform) {
+    const m = /^matrix\(([^)]+)\)$/.exec(transform || '');
+    if (!m) return { sx: 1, sy: 1, tx: 0, ty: 0 };
+    const v = m[1].split(',').map(Number);
+    return { sx: v[0], sy: v[3], tx: v[4], ty: v[5] };
+  }
+
+  /** Whether an element is really on screen: shown, not see-through, at its full size (not in the middle of opening). */
+  function onScreen(el) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 40 || r.height < 20 || r.bottom <= 0 || r.top >= innerHeight) return false;
+    let opacity = 1;
+    for (let p = el; p && p !== document.documentElement; p = p.parentElement) {
+      const s = getComputedStyle(p);
+      if (s.display === 'none' || s.visibility === 'hidden') return false;
+      opacity *= Number(s.opacity);
+      const { sx, sy } = scaleOf(s.transform);
+      if (sx < 0.98 || sy < 0.98) return false;
+    }
+    return opacity >= 0.95;
+  }
+
+  /**
+   * Owner report (the proof screenshots showed the URL Inspection page, not Google's “Indexing requested”): in a tab
+   * in the background Chrome does not run the answer's opening animation, so the dialog was in the page, still
+   * transparent and small, when the page was saved. Its animations are finished first; if it is still not on screen,
+   * it is set as it is once open — its own text, fully opaque, full size — so the saved copy shows Google's answer.
+   * Nothing else on the page is changed, and the tab is closed right after.
+   */
+  async function showAnswer(re) {
+    const box = answerBox(re);
+    if (!box) return 'not found';
+    const chain = [];
+    for (let p = box; p && p !== document.documentElement; p = p.parentElement) chain.push(p);
+    for (const el of chain) {
+      for (const a of el.getAnimations ? el.getAnimations() : []) {
+        try {
+          a.finish();
+          if (a.commitStyles) a.commitStyles();
+        } catch (e) {
+          /* not being rendered */
+        }
+      }
+    }
+    const until = Date.now() + 1500;
+    while (Date.now() < until) {
+      if (onScreen(box)) return 'shown';
+      await sleep(250);
+    }
+    for (const el of chain) {
+      el.style.setProperty('transition', 'none', 'important');
+      const s = getComputedStyle(el);
+      if (Number(s.opacity) < 1) el.style.setProperty('opacity', '1', 'important');
+      if (s.visibility === 'hidden') el.style.setProperty('visibility', 'visible', 'important');
+      const t = scaleOf(s.transform);
+      if (t.sx < 0.98 || t.sy < 0.98) el.style.setProperty('transform', `translate(${t.tx}px, ${t.ty}px)`, 'important');
+    }
+    return onScreen(box) ? 'set as open' : 'not on screen';
+  }
+
   /** The “Inspect any URL in …” box at the top of Search Console. */
   function searchBox() {
     const inputs = Array.from(document.querySelectorAll('input')).filter(visible);
@@ -167,8 +237,9 @@
     while (Date.now() < until) {
       await sleep(1000);
       const t = text();
-      if (RE.requested.test(t)) return { outcome: 'REQUESTED', message: said(RE.requested) };
-      if (RE.quota.test(t)) return { outcome: 'QUOTA', message: said(RE.quota) };
+      // The page is saved as proof right after this answer: Google's dialog must be on screen in it.
+      if (RE.requested.test(t)) return { outcome: 'REQUESTED', message: said(RE.requested), shown: await showAnswer(RE.requested) };
+      if (RE.quota.test(t)) return { outcome: 'QUOTA', message: said(RE.quota), shown: await showAnswer(RE.quota) };
       if (captcha()) {
         const started = Date.now();
         if (!(await ownerCompletes(job, () => RE.requested.test(text()) || RE.quota.test(text())))) return notCompleted(job, 'after “Request indexing”');
@@ -193,7 +264,7 @@
       .catch((e) => ({ outcome: 'ERROR', message: String((e && e.message) || e) }))
       .then((result) => {
         // null: this tab goes on to another address; the next page reports.
-        if (result) return chrome.runtime.sendMessage({ type: 'gsc-done', jobId: msg.jobId, outcome: result.outcome, message: result.message });
+        if (result) return chrome.runtime.sendMessage({ type: 'gsc-done', jobId: msg.jobId, outcome: result.outcome, message: result.message, shown: result.shown || null });
       })
       .finally(() => (running = false));
   });

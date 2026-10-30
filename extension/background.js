@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.4.7';
+const EXTENSION_VERSION = '3.4.8';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -213,7 +213,7 @@ async function blobToBase64(blob) {
  * stands (pageCapture: works in a background tab and a minimized window, where a screen capture cannot); the
  * dashboard turns the copy into a PNG with the article. A proof that cannot be saved never stops the request.
  */
-async function saveGscProof(tabId, jobId) {
+async function saveGscProof(tabId, jobId, shown) {
   try {
     await new Promise((r) => setTimeout(r, 800)); // let the dialog finish opening
     // The copy lives in a temporary file that Chrome sometimes drops before it can be read ("could not be found"):
@@ -232,7 +232,8 @@ async function saveGscProof(tabId, jobId) {
       }
     }
     await api('gsc-proof', { jobId, mhtmlBase64 }, '/api/extension/gsc-proof');
-    gsc.proof = { jobId, ok: true, bytes: size, at: Date.now() };
+    // `shown`: whether Google's answer was on screen in the copy ('shown', 'set as open', …), for the popup's state.
+    gsc.proof = { jobId, ok: true, bytes: size, shown: shown || null, at: Date.now() };
   } catch (e) {
     gsc.proof = { jobId, ok: false, error: e.message, at: Date.now() };
     lastError = 'Search Console screenshot not saved: ' + e.message;
@@ -285,11 +286,11 @@ async function runGscJob() {
         if (!r || (!r.ok && r.error !== 'busy')) finish({ outcome: 'ERROR', message: 'The Search Console page did not take the request: ' + ((r && r.error) || 'no answer') });
       };
       gsc.onDone = (fromTab, msg) => {
-        if (fromTab === tabId && msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null });
+        if (fromTab === tabId && msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null, shown: msg.shown || null });
       };
     });
     // The proof goes first: the dashboard takes it only while this request is still open.
-    if (result.outcome === 'REQUESTED' || result.outcome === 'QUOTA') await saveGscProof(tabId, job.id);
+    if (result.outcome === 'REQUESTED' || result.outcome === 'QUOTA') await saveGscProof(tabId, job.id, result.shown);
     await outboxPush('gsc-result', { jobId: job.id, outcome: result.outcome, message: result.message ? String(result.message).slice(0, 900) : null });
     setTimeout(() => void tick(), 500);
   } catch (e) {

@@ -10,6 +10,7 @@ import { Button, ConfirmDialog, CopyButton, RelativeTime, Tabs, useToast } from 
 import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, buttonClasses, cx, formatDateTime, formatDuration } from '@/components/ui';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
 import { ArticleExtraTabs, EXTRA_TABS } from './extra-tabs';
+import { ReviewNotes } from './review-notes';
 import { WordPressTab } from './wordpress-tab';
 import { LinksTab } from './links-tab';
 import { HumanizerTab } from './humanizer-tab';
@@ -185,38 +186,28 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
           </Alert>
         </div>
       ) : null}
-      {task.reviewReasonList.length > 0 && task.group !== 'review' ? (
+      {task.reviewReasonList.length > 0 ? (
         <div className="mb-4">
-          <Alert tone="info" title={`Notes (${task.reviewReasonList.length})`}>
-            <ul className="list-disc pl-5">
-              {task.reviewReasonList.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-          </Alert>
-        </div>
-      ) : null}
-      {task.reviewReasonList.length > 0 && task.group === 'review' ? (
-        <div className="mb-4">
-          <Alert tone="warning" title="Review reasons">
-            <ul className="list-disc pl-5">
-              {task.reviewReasonList.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-            {!task.legacy ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {task.reviewReasonList.some((r) => /^(Possible duplicate|Duplicate keyword)/.test(r)) ? (
-                  <Button size="sm" onClick={() => void reviewAction('allow-duplicate')}>
-                    Allow duplicate and continue
+          <ReviewNotes
+            reasons={task.reviewReasonList}
+            taskId={task.id}
+            held={task.group === 'review'}
+            onTab={(t) => setTab(t as TabId)}
+            actions={
+              task.group === 'review' && !task.legacy ? (
+                <>
+                  {task.reviewReasonList.some((r) => /^(Possible duplicate|Duplicate keyword)/.test(r)) ? (
+                    <Button size="sm" onClick={() => void reviewAction('allow-duplicate')}>
+                      Allow duplicate and continue
+                    </Button>
+                  ) : null}
+                  <Button size="sm" onClick={() => void reviewAction('override-quality')}>
+                    Approve despite review reasons…
                   </Button>
-                ) : null}
-                <Button size="sm" onClick={() => void reviewAction('override-quality')}>
-                  Approve despite review reasons…
-                </Button>
-              </div>
-            ) : null}
-          </Alert>
+                </>
+              ) : undefined
+            }
+          />
         </div>
       ) : null}
 

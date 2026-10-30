@@ -17,6 +17,13 @@ export interface FakeSearchConsoleConfig {
    */
   recaptcha?: 'invisible' | 'challenge';
   challengeMs?: number;
+  /**
+   * Owner report (the proof screenshot showed the inspection page, not “Indexing requested”): with 'opening', Google's
+   * answer is in the page as a dialog that is still transparent and small — its opening animation never ran, as in a
+   * tab in the background. The dialog is a green panel in the middle of the screen, so a screenshot shows whether it
+   * is there.
+   */
+  dialog?: 'shown' | 'opening';
 }
 
 /** An inspection link as Google's URL Inspection API gives it: the `id` is Google's token, not the URL. */
@@ -80,7 +87,8 @@ export async function installFakeSearchConsole(context: BrowserContext, getConfi
       if (C.mode === 'signed-out-about') location.replace('https://search.google.com/search-console/about');
       function inspection(inspected) {
         if (C.mode === 'no-access') { app.innerHTML = '<h2>You don\\'t have access to property ' + PROPERTY + '</h2>'; return; }
-        app.innerHTML = '<h1>URL Inspection</h1><p></p><section><h2>URL is not on Google</h2><p>This page is not indexed.</p><div><span>Page changed?</span> <div role="button" tabindex="0" id="req"><span>REQUEST INDEXING</span></div></div></section>';
+        // Icons are a font, as on Google's pages: offline, without the font, their names show as text.
+        app.innerHTML = '<h1>URL Inspection</h1><p></p><section><h2><i class="google-material-icons" aria-hidden="true" style="font-family:\\'Google Material Icons\\'">info</i> URL is not on Google</h2><p>This page is not indexed.</p><div><span>Page changed?</span> <div role="button" tabindex="0" id="req"><span>REQUEST INDEXING</span></div></div></section><nav><i class="google-material-icons" aria-hidden="true" style="font-family:\\'Google Material Icons\\'">keyboard_arrow_down</i> Indexing</nav>';
         app.querySelector('p').textContent = inspected;
         document.getElementById('req').addEventListener('click', () => {
           fetch('/__fake/click', { method: 'POST' });
@@ -89,7 +97,7 @@ export async function installFakeSearchConsole(context: BrowserContext, getConfi
             document.getElementById('live').remove();
             app.insertAdjacentHTML('beforeend', C.mode === 'quota'
               ? '<div role="dialog"><h2>Quota exceeded</h2><p>Sorry--we couldn\\'t process this request because you\\'ve exceeded your daily quota. Please try submitting this again tomorrow.</p></div>'
-              : '<div role="dialog"><h2>Indexing requested</h2><p>URL was added to a priority crawl queue. Submitting a page multiple times will not change its queue position or priority.</p><div role="button">Dismiss</div></div>');
+              : '<div class="overlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center"><div role="dialog" style="width:600px;height:260px;background:#0b8043;color:#fff;transition:opacity .2s,transform .2s' + (C.dialog === 'opening' ? ';opacity:0;transform:scale(.8)' : '') + '"><h2>Indexing requested</h2><p>URL was added to a priority crawl queue. Submitting a page multiple times will not change its queue position or priority.</p><div role="button">Dismiss</div></div></div>');
           }, C.liveTestMs));
         });
       }

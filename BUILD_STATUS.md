@@ -3214,3 +3214,56 @@ node <scratch>/photos.mjs <out>                 # results above
 npx tsc --noEmit                                # 0 errors
 npx vitest run                                  # 51 files, 375 tests pass
 ```
+
+## Owner report (2026-10-30): “Notes (10)” — “look how bad it looks”
+
+The owner sent a screenshot of an article's Notes: a large blue box with ten long sentences, each with cut quotes, the research notes in brackets and a `[RESEARCH_EVIDENCE]` / `[DUPLICATES]` tag at the end.
+- **Cause:** the notes are stored as one sentence each (with the source in brackets) and the page printed them as they are.
+- **Now (`src/lib/review-notes.ts`, `app/(dashboard)/articles/[id]/review-notes.tsx`):**
+  - **Parts:** each note becomes a short title (“Sources disagree on the birth date”, “3 unsupported family/relationship claims · paragraph 1”, “2 % of the wording repeats an article on Techeflux”), the quoted text under it on one line, and, on a click, the research notes, “and N more notes” and the advice.
+  - **Groups:** notes are grouped by where they came from (Research evidence, Duplicates, Article, SEO, Images, …), each group with a link: **Open Research Evidence** (this article), **Open Duplicate Review**, or the right tab.
+  - **Shown:** the first 4, then **Show all 10**. Reasons that hold an article for review are all shown, with the approve buttons as before.
+  - **Text clean-up:**
+    - a quote cut at its length ends in “…”;
+    - a table row from the research (“| December 25, 2008 | … |”) reads “December 25, 2008 · …”.
+  - **Nothing is lost:** the full text of every note stays, and a note of another shape keeps its first sentence as the title.
+- **Tests:** `tests/unit/review-notes.test.ts`, 5, with the owner's notes as stored.
+- **Chromium smoke:** the owner's 10 notes on a scratch article, dark and light.
+  - The box is 290 px with 4 notes and 633 px with all 10 and one opened (the owner's box was about 700 px with every note open).
+  - The link goes to `/research-evidence?task=<id>`.
+  - No console errors.
+
+**Commands run**
+```
+npx vitest run tests/unit/review-notes.test.ts   # 5 pass
+npx tsc --noEmit                                 # 0 errors
+node <scratch>/notes.mjs <out> <task id file>    # results above
+```
+
+## Owner report (2026-10-30): the Search Console proof shows the page, not “Indexing requested” (extension 3.4.8)
+
+The owner sent three proof screenshots (easyvibs.co.uk/jordan-rock/, /lola-simone-rock/, techeflux.com/cy-kass/). Each showed the URL Inspection page (“URL is not on Google”, REQUEST INDEXING) without Google's “Indexing requested”, and icon names as text (“keyboard_arrow_down”, “home”, “info”). The owner said “mostly”: sometimes it was right.
+- **Cause:**
+  - The extension saves the page as soon as “Indexing requested” is in the page's text.
+  - The Search Console tab is in the background, where Chrome does not run the dialog's opening animation. So the dialog was in the page, still transparent and small, and the saved copy showed the page under it. When the tab happened to be in front, it was right; that explains “mostly”.
+  - The icons are a font the copy does not carry, so offline their names show as text.
+- **Reproduced first:** the fake Search Console can now show its answer as a dialog whose opening never ran (`dialog: 'opening'`, a green panel in the middle), and it has two icon-font icons. On 3.4.7 the proof's middle pixel was the white page.
+- **Fix:**
+  - **Extension 3.4.8 (`gsc.js`):** before the answer is reported (and the page saved), the dialog that says it is found.
+    - Its animations are finished.
+    - If it is still not on screen after 1.5 s, it is set as it is once open: fully opaque and full size, with its own text. Nothing else on the page is changed, and the tab is closed right after.
+    - The popup's state records whether it was “shown” or “set as open”.
+  - **Worker (`src/lib/gsc/proof.ts`):** in the offline copy, elements in an icon font whose text is a single icon name are hidden. The page's own scripts still never run.
+- **Tests (integration, real extension in Chromium):**
+  - **new:** “the proof shows Google's ‘Indexing requested’ also when its opening animation did not run, without icon names”. Its middle pixel is the dialog's green, and 2 icons are hidden;
+  - **unchanged:** the indexing request test, which also renders its proof.
+
+**Not verified:** the real Search Console dialog. If Google draws it differently (e.g. not as an element of the page), the copy may still miss it; the popup's state then says “not on screen”.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "the proof shows Google"   # 3.4.7: failed (middle pixel white: 16,16,16 of 16)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "the proof shows Google|indexing is requested in Search Console"   # 3.4.8: 2/2
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 52 files, 380 tests pass
+```

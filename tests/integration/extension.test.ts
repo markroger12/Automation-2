@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.4.7');
+    expect(ext?.version).toBe('3.4.8');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -442,6 +442,32 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect((await workflowView(siteId)).keywords.find((k) => k.id === kw.id)?.proofId).toBe(asset.id);
   }, 150_000);
 
+  // Owner report (three proof screenshots of Search Console): the proof showed the URL Inspection page with REQUEST
+  // INDEXING, not Google's “Indexing requested”, and icon names (“keyboard_arrow_down”) as text. In a tab in the
+  // background the answer is in the page, but its opening animation has not run, so the saved copy did not show it.
+  it('owner report: the proof shows Google\'s “Indexing requested” also when its opening animation did not run, without icon names', async () => {
+    fake = { variant: 'standard', mode: 'normal' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake, searchConsole: () => ({ mode: 'ok', dialog: 'opening' }) });
+    const { kw, job } = await publishedForIndexing('Jordan Rock Proof');
+    await waitFor(async () => {
+      await browser!.tick().catch(() => {});
+      return (await client.queueJob.findUniqueOrThrow({ where: { id: job.id } })).status === 'COMPLETED';
+    }, 90_000, 'indexing request', 1000);
+    const proofJob = await client.queueJob.findFirstOrThrow({ where: { queue: 'control', kind: 'gsc.proof', relatedId: kw.id } });
+    const { configureTestBrowser } = await import('../helpers/browser');
+    configureTestBrowser();
+    const { renderGscProof } = await import('@/lib/gsc/proof');
+    const rendered = await renderGscProof(JSON.parse(proofJob.payload));
+    const asset = await client.mediaAsset.findUniqueOrThrow({ where: { id: String(rendered.mediaAssetId) } });
+    // The middle of the screenshot is Google's green answer panel, not the page under it.
+    const sharp = (await import('sharp')).default;
+    const { dataDir } = await import('@/lib/paths');
+    const px = await sharp((await import('node:path')).join(dataDir(), asset.filePath)).extract({ left: 683, top: 450, width: 1, height: 1 }).raw().toBuffer();
+    expect([px[0], px[1], px[2]].map((v) => Math.round(v / 16))).toEqual([Math.round(0x0b / 16), Math.round(0x80 / 16), Math.round(0x43 / 16)]);
+    // The icons' names are hidden in the copy (their font is not in it).
+    expect(rendered.iconsHidden).toBe(2);
+  }, 150_000);
+
   // Owner report (Michael Consuelos): about a minute after it opened, the tab closed with “Google showed a check (I'm
   // not a robot)” although none was on screen, and no screenshot was saved. Google's pages load an invisible reCAPTCHA,
   // and any reCAPTCHA frame on the page counted as a check.
@@ -503,7 +529,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.7', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.4.8', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;

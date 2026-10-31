@@ -15,8 +15,9 @@ import { ensureDataDirs, projectRoot } from '../src/lib/paths';
 import { loadEnv } from '../src/lib/env';
 import { runMigrations } from './migrate';
 import { runSeed } from './seed';
-import { installMediapipe } from './install-tools';
+import { installMediapipe, installUpscayl } from './install-tools';
 import { faceToolAvailable, personModelAvailable } from '../src/images/faces';
+import { upscalerAvailable } from '../src/images/upscale';
 
 const root = projectRoot();
 const marker = path.join(root, '.next', 'bas-build-source.txt');
@@ -60,6 +61,13 @@ async function main() {
   if (!faceToolAvailable() || !personModelAvailable()) {
     console.log(faceToolAvailable() ? '▸ Installing the person detector for photo crops (once)…' : '▸ Installing the face detector for photo crops (once)…');
     await installMediapipe().catch((error) => console.warn(`  ⚠ Face detector not installed now (${(error as Error).message}); ${desktop ? 'it is tried again at the next start' : 'run npm run tools:install later'}.`));
+  }
+  // Upscayl for small photos (owner report: blurry photos; it used to be a manual download). Pinned and checked.
+  if (!upscalerAvailable()) {
+    console.log('▸ Installing Upscayl for small photos (once, about 40 MB)…');
+    await installUpscayl()
+      .then((message) => console.log(`  ${message}`))
+      .catch((error) => console.warn(`  ⚠ Upscayl not installed now (${(error as Error).message}); small photos use the built-in sharpener meanwhile, and it is tried again at the next start.`));
   }
   if (!args.includes('--build')) return;
   const built = fs.existsSync(path.join(root, '.next', 'BUILD_ID'));

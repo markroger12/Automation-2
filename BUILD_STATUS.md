@@ -3727,3 +3727,60 @@ npx vitest run                                                             # 59 
 BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # no serious or critical violations
 node <scratch>/article.mjs, more.mjs, measure.mjs                          # results above
 ```
+
+## Owner report (2026-10-31): photos not enhanced
+
+Owner screenshot: a blurry two-photo featured image. The article's Images tab said “A 512×384 photo is stretched 2.8×, but Upscayl (remacri-4x) is not installed in data\tools\upscayl — the original was used.” The owner asked to test with real people's photos.
+
+**Causes**
+- Upscayl was a manual download, and the owner's PC never had it, so every small photo was used as it was.
+- Below a 2× stretch nothing was done at all. A 512-pixel photo in a half of the two-photo design is stretched 1.98×.
+
+**Changes**
+- **Automatic install** (`installUpscayl` in `scripts/install-tools.ts`), run by `npm run tools:install` and by `npm run start:all` (preflight) while Upscayl is missing:
+  - the files: `upscayl-ncnn` release 20251207-174704 (the Windows or Linux zip) and `remacri-4x.param` / `.bin` from the Upscayl app at v2.15.0;
+  - SHA-256 checks: each file is checked against the hash taken from these exact downloads here, and a mismatch refuses the install and keeps nothing;
+  - writing: files are written as `.part` and renamed, and the licence is kept as `LICENSE-upscayl.txt`;
+  - a small zip reader, so no new dependency.
+  - Other systems get the manual instructions. A failed download warns, uses the built-in sharpener meanwhile, and is tried again at the next start.
+- **Built-in sharpener** (`enhanceLocally` in `src/images/upscale.ts`): 2× Lanczos steps, each with a light unsharp mask, then the place's size and one more sharpen. A soft photo that is big enough is only sharpened.
+  - It is used for photos stretched 1.3–2× (Upscayl would take minutes there for little change).
+  - It is used when Upscayl is missing or fails; before, the original was stretched.
+  - The Images tab's note says which was used.
+- `findEnhancer` now also requires `remacri-4x.param`.
+
+**Checked with real photos**
+- The photos: 4 photos of Dinesh D'Souza from Wikimedia Commons (CC BY-SA 2.0 / 3.0, Gage Skidmore and others; scratch only, not committed), made 512 px wide.
+  - Google was not scraped (project rule). The Commons API answered 429 after a few queries, so the photos were taken from its image server.
+- **Comparison at 2.8×:** a plain stretch, a single sharpen, and the stepped version. Face crops were checked by eye, and the stepped version looked the most natural.
+- **Edge measure** (mean absolute Laplacian), plain → built-in, with a real photo of that size for reference:
+  - 1.93 → 2.70 (6.12);
+  - 1.46 → 2.00 (3.13);
+  - 1.67 → 2.46 (3.23);
+  - 1.96 → 2.74 (6.48).
+  - The built-in sharpener does not recover detail the way an AI model would.
+- **The two-photo featured design rendered with two of them** (`renderTemplate`, `presetSplit`): the right photo, stretched 2.0×, is visibly crisper (glasses, microphone, hand). No halos were seen.
+
+**Tests**
+- **Unit `tests/unit/upscale-install.test.ts` (6):**
+  - install from a local server: verified, executable, found by the app, not downloaded twice;
+  - a wrong zip or model hash: nothing kept;
+  - the pinned URLs and hashes;
+  - built-in enlargement at 2.8× on the repo's public-domain portrait: crisper than a plain stretch;
+  - soft photo sharpened; a sharp, big photo left alone;
+  - the owner case at 1.98×: the built-in sharpener, and Upscayl not run.
+  - First run on the old code: 5 of 5 failed (the owner-case test was added afterwards).
+- **Integration:** `image-tools` and `images`, 22 pass and 1 skipped (real MediaPipe). The no-Upscayl note now names the built-in sharpener.
+- **Not verified:**
+  - the real Upscayl binary. Running a downloaded program was not allowed in this session; it needs Vulkan, which a GPU driver on Windows provides;
+  - the download on the owner's PC;
+  - the owner's own photos and template.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run tests/unit/upscale-install.test.ts                          # before: 5 failed; after: 6 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 22 pass, 1 skipped
+npx vitest run                                                             # 60 files, 412 tests pass
+npx tsx <scratch>/edges.mjs, featured-real.ts, enhance-compare.mjs        # results above
+```

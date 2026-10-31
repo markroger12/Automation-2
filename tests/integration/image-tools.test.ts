@@ -80,9 +80,9 @@ describe('image tools from the earlier tool', () => {
 
   it('a small photo is enlarged with Upscayl (fake binary) before cropping; without Upscayl the Images tab says so', async () => {
     const small = await plain(200, 120, 60, 420, 300);
-    // Without the tool: named, never silent.
+    // Without the tool: the built-in sharpener enlarges it (owner report: blurry photos), and the note says so.
     let r = await runCeleb('Small Photo Person', [small]);
-    expect(r.data.notes.join(' | ')).toMatch(/A 420×300 photo is stretched 3\.6×, but Upscayl \(remacri-4x\) is not installed/);
+    expect(r.data.notes.join(' | ')).toMatch(/A 420×300 photo is stretched 3\.6×; Upscayl \(remacri-4x\) is not installed yet .*, so it was enlarged with the built-in sharpener/);
     // A fake upscayl-bin with the same arguments as the real one (-i in -o out -s 4 -m models -n remacri-4x -f png).
     const tool = path.join(dataDir, 'tools', 'upscayl');
     fs.mkdirSync(path.join(tool, 'models'), { recursive: true });

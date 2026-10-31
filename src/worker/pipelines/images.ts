@@ -637,7 +637,7 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     const area = facts[a.id]?.area;
     return area ? { x: (area.left + area.right) / 2, y: (area.top + area.bottom) / 2, area, faces: facts[a.id]?.faces } : null;
   };
-  // A photo its place would stretch, or a soft one, is enhanced first (Upscayl remacri-4x, when installed and on).
+  // A photo its place would stretch, or a soft one, is enhanced first (Upscayl remacri-4x; without it, the built-in sharpener).
   const prep = async (a: MediaAsset, place: { width: number; height: number }) => {
     if (!enhance) return { asset: a, focus: focusOf(a) };
     const r = await enhancePhoto(await readAsset(a), place, soft(a));

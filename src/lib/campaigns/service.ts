@@ -13,6 +13,7 @@ import { requestCancel, retryTask } from '../tasks/lifecycle';
 import { parseImport, type ImportRow } from './parse';
 import { ROUTER_VERSION, normalizeWriter, parseRoutingRules, resolveWriter } from './router';
 import { isNearDuplicate } from './dedupe';
+import { deletedPostKeys } from '../tasks/deleted-posts';
 
 /**
  * Bulk campaigns: preview (pure, no writes), create (rows stored as entered,
@@ -98,7 +99,8 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
       const wanted = o.categoryId !== undefined ? o.categoryId : null;
       category = wanted ? site.categories.find((c) => c.id === wanted) : r.category ? site.categories.find((c) => c.name.toLowerCase() === r.category!.toLowerCase()) : undefined;
       if (r.category && !category && !wanted) issues.push({ kind: 'CATEGORY', message: `Category “${r.category}” is not synchronized for ${site.name}.` });
-      if (!category && site.defaultCategoryId) category = site.categories.find((c) => c.id === site.defaultCategoryId);
+      // A Tigram row without a category is left to the writer's CATEGORY stage (“chosen by the writer”).
+      if (!category && site.defaultCategoryId && decision.writer !== 'tigram-writer') category = site.categories.find((c) => c.id === site.defaultCategoryId);
     }
     let status: RowStatus = 'READY';
     if (issues.some((i) => i.kind === 'ERROR')) status = 'INVALID';
@@ -146,7 +148,9 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
   for (let i = 0; siteIds.length && i < keys.length; i += 400) {
     existing.push(...(await db.articleTask.findMany({ where: { websiteId: { in: siteIds }, normalizedKeyword: { in: keys.slice(i, i + 400) }, status: { notIn: ['CANCELLED', 'FAILED'] } }, select: { id: true, websiteId: true, normalizedKeyword: true, status: true } })));
   }
-  const posts = siteIds.length ? await db.linkTarget.findMany({ where: { websiteId: { in: siteIds }, status: 'ACTIVE' }, select: { websiteId: true, title: true, url: true, keyword: true } }) : [];
+  // Posts of articles you deleted here do not count (owner request: a deleted article can be written again).
+  const deleted = await deletedPostKeys();
+  const posts = siteIds.length ? (await db.linkTarget.findMany({ where: { websiteId: { in: siteIds }, status: 'ACTIVE' }, select: { websiteId: true, wpPostId: true, title: true, url: true, keyword: true } })).filter((p) => !deleted.has(`${p.websiteId}:${p.wpPostId}`)) : [];
   for (const row of rows) {
     if (!row.websiteId || row.status === 'INVALID' || row.status === 'SKIPPED') continue;
     const task = existing.find((t) => t.websiteId === row.websiteId && t.normalizedKeyword === normalizeKeyword(row.keyword));
@@ -306,6 +310,27 @@ export async function cancelCampaign(id: string) {
   return { ok: true, tasks: tasks.length };
 }
 
+/**
+ * Deletes the campaign and its rows (owner request). With `withArticles`, its articles are deleted from the app too
+ * (each report is backed up first, see deleteTask); otherwise they stay and only lose the campaign link. WordPress is
+ * never changed.
+ */
+export async function deleteCampaign(id: string, withArticles: boolean) {
+  const campaign = await loadCampaign(id);
+  const tasks = await db.articleTask.findMany({ where: { campaignId: id }, select: { id: true } });
+  const { deleteTask } = await import('../tasks/delete');
+  let deleted = 0;
+  let deleting = 0;
+  if (withArticles) {
+    for (const t of tasks) (await deleteTask(t.id)).status === 'deleted' ? deleted++ : deleting++;
+  } else {
+    await db.articleTask.updateMany({ where: { campaignId: id }, data: { campaignId: null } });
+  }
+  await db.campaign.delete({ where: { id } });
+  await audit('campaign.delete', 'Campaign', id, { name: campaign.name, withArticles, articles: tasks.length, deleted, deleting });
+  return { ok: true, articles: tasks.length, deleted, deleting };
+}
+
 export const rowActionSchema = z.object({
   rowIds: z.array(z.string().max(40)).min(1).max(1000),
   action: z.enum(['retry', 'priority', 'writer', 'category', 'include', 'exclude', 'confirm-variant']),
@@ -424,9 +449,15 @@ export async function getCampaign(id: string) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const sites = new Map((await db.website.findMany({ select: { id: true, name: true } })).map((s) => [s.id, s.name]));
   const progress = (await campaignProgress([id])).get(id) ?? emptyProgress();
+  // Categories of the rows' websites, for setting the category of several rows at once (owner request).
+  const siteIds = [...new Set(rows.map((r) => r.websiteId).filter((x): x is string => Boolean(x)))];
+  const cats = siteIds.length ? await db.category.findMany({ where: { websiteId: { in: siteIds } }, select: { id: true, name: true, websiteId: true }, orderBy: { name: 'asc' } }) : [];
+  const categories: Record<string, { id: string; name: string }[]> = {};
+  for (const cat of cats) (categories[cat.websiteId] ??= []).push({ id: cat.id, name: cat.name });
   return {
     ...(await settleStatus(c, progress)),
     progress,
+    categories,
     rows: rows.map((r) => ({
       ...r,
       secondaryKeywords: parseJson<string[]>(r.secondaryKeywords, []),

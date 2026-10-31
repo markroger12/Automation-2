@@ -64,13 +64,13 @@ function Marked({ h }: { h: Highlight }) {
 function SourceLink({ s }: { s: SourceReport }) {
   if (s.taskId)
     return (
-      <Link className="text-indigo-600 underline" href={`/articles/${s.taskId}`}>
+      <Link className="link" href={`/articles/${s.taskId}`}>
         {s.title}
       </Link>
     );
   if (s.url)
     return (
-      <a className="inline-flex items-center gap-1 break-all text-indigo-600 underline" href={s.url} target="_blank" rel="noreferrer noopener">
+      <a className="inline-flex items-center gap-1 break-all link" href={s.url} target="_blank" rel="noreferrer noopener">
         {s.title} <ExternalLink className="h-3 w-3 shrink-0" />
       </a>
     );
@@ -339,7 +339,7 @@ export function PlagiarismPage({ initialTaskId, initialCheckId }: { initialTaskI
                 <Chip>{check.language === 'de' ? 'German' : 'English'}</Chip>
                 <Chip>{check.inputWords} words</Chip>
                 {check.taskId ? (
-                  <Link className="text-indigo-600 underline" href={`/articles/${check.taskId}`}>
+                  <Link className="link" href={`/articles/${check.taskId}`}>
                     Open article
                   </Link>
                 ) : null}
@@ -409,7 +409,7 @@ export function PlagiarismPage({ initialTaskId, initialCheckId }: { initialTaskI
                         <Chip tone={COVERAGE_TONE[c.status]}>{COVERAGE_LABEL[c.status]}</Chip>
                         <span className="min-w-0 flex-1">
                           {c.url ? (
-                            <a className="break-all text-indigo-600 underline" href={c.url} target="_blank" rel="noreferrer noopener">
+                            <a className="break-all link" href={c.url} target="_blank" rel="noreferrer noopener">
                               {c.label}
                             </a>
                           ) : (

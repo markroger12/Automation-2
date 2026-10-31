@@ -75,7 +75,7 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
               {
                 label: 'Post',
                 value: (
-                  <a className="inline-flex items-center gap-1 text-indigo-600 underline" href={task.wpEditUrl ?? '#'} target="_blank" rel="noreferrer">
+                  <a className="inline-flex items-center gap-1 link" href={task.wpEditUrl ?? '#'} target="_blank" rel="noreferrer">
                     #{task.wpPostId} <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 ),
@@ -128,7 +128,7 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
           <ul className="mt-3 space-y-2 text-sm">
             {candidates.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center justify-between gap-2">
-                <a className="inline-flex items-center gap-1 text-indigo-600 underline" href={c.editUrl} target="_blank" rel="noreferrer">
+                <a className="inline-flex items-center gap-1 link" href={c.editUrl} target="_blank" rel="noreferrer">
                   #{c.id} · {c.status} · {c.slug} <ExternalLink className="h-3.5 w-3.5" />
                 </a>
                 <Button size="sm" onClick={() => setPending({ mode: 'adopt', postId: c.id })}>
@@ -214,7 +214,7 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
                 {r.reasons?.length ? <p className="mt-1 text-amber-700 dark:text-amber-300">Why: {r.reasons.join('; ')}</p> : null}
                 {r.before && r.after ? (
                   <details className="mt-2">
-                    <summary className="cursor-pointer text-indigo-600">Before / after</summary>
+                    <summary className="cursor-pointer link-plain">Before / after</summary>
                     <div className="mt-2 grid gap-3 md:grid-cols-2">
                       <pre className="surface-2 max-h-64 overflow-auto rounded p-2 text-xs whitespace-pre-wrap">{r.before}</pre>
                       <pre className="surface-2 max-h-64 overflow-auto rounded p-2 text-xs whitespace-pre-wrap">{r.after}</pre>

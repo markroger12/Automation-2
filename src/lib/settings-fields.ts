@@ -14,7 +14,7 @@ export interface SettingField {
 }
 
 export interface SettingGroup {
-  id: 'browser' | 'workflow' | 'content' | 'seo' | 'advanced';
+  id: 'browser' | 'workflow' | 'content' | 'seo' | 'advanced' | 'notifications';
   title: string;
   description: string;
   fields: SettingField[];
@@ -34,6 +34,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'targetArticlesPerHour', label: 'Target verified drafts per hour', type: 'number', min: 1, max: 60, help: 'Measured objective, not a guarantee.' },
       { key: 'manualTitleApproval', label: 'Manual title approval', type: 'boolean', help: 'Pause after TITLES so you can pick or edit the title.' },
       { key: 'manualArticleApproval', label: 'Manual article approval', type: 'boolean', help: 'Pause before the WordPress draft is created.' },
+      { key: 'holdForReview', label: 'Hold articles for review', type: 'boolean', help: 'Off (default): review reasons never stop an article. They are shown as notes, the draft is saved and the article completes. A draft with a serious problem is saved but never published automatically by a workflow. On: the old behaviour (Needs review).' },
       { key: 'autoSendToWordPress', label: 'Create WordPress drafts automatically', type: 'boolean', help: 'Always as drafts. Publishing requires the per-site switch and the scheduler.' },
       { key: 'createMissingCategory', label: 'Allow creating missing categories', type: 'boolean' },
       { key: 'createMissingTags', label: 'Create missing WordPress tags', type: 'boolean', help: 'Off: tags that do not exist yet are skipped with a note.' },
@@ -61,7 +62,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'keywordDensityCeilingPct', label: 'Keyword density warning ceiling (%)', type: 'number', min: 0.5, max: 10, step: 0.1 },
       { key: 'defaultLanguage', label: 'Default language', type: 'select', options: [{ value: 'en', label: 'English' }, { value: 'de', label: 'German' }] },
       { key: 'targetCountry', label: 'Default target country', type: 'text' },
-      { key: 'humanizerEnabled', label: 'Editorial humanizer stage', type: 'boolean' },
+      { key: 'humanizerEnabled', label: 'Editorial humanizer stage', type: 'boolean', help: 'Off by default. Each website can switch it on or off in its own settings (Websites → edit → Humanizer).' },
       { key: 'humanizerBatchWords', label: 'Humanizer batch size (words)', type: 'number', min: 300, max: 3000 },
       { key: 'humanizerLengthTolerancePct', label: 'Humanizer paragraph length tolerance (±%)', type: 'number', min: 5, max: 50 },
       { key: 'humanizerScope', label: 'Humanizer paragraphs', type: 'select', options: [{ value: 'all', label: 'All eligible paragraphs' }, { value: 'flagged', label: 'Only paragraphs the local editor flagged' }] },
@@ -105,7 +106,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'imagesRequired', label: 'Missing images → Needs review', type: 'boolean', help: 'Off: finish a text-only draft with a review note.' },
       { key: 'imageOutputSize', label: 'Image output size', type: 'select', options: [{ value: '1200x675', label: '1200 × 675' }, { value: '1920x1080', label: '1920 × 1080' }] },
       { key: 'imageMaxBytes', label: 'Image file-size budget (bytes)', type: 'number', min: 50000, max: 5000000 },
-      { key: 'enhanceCelebrityImages', label: 'Enlarge small celebrity photos (Upscayl)', type: 'boolean', help: 'Small photos are enlarged with Upscayl before cropping, as in your earlier tool. Needs Upscayl in data/tools/upscayl (see npm run tools:install); without it the photo is used as it is and the Images tab says so.' },
+      { key: 'enhanceCelebrityImages', label: 'Enlarge small celebrity photos (Upscayl)', type: 'boolean', help: 'Small photos are enlarged with Upscayl before cropping, as in your earlier tool. npm run start:all installs Upscayl by itself (pinned version, checksum verified); until it is there, or if it fails, the built-in sharpener enlarges the photo instead, and the Images tab says which was used.' },
       {
         key: 'celebrityPhotoSource',
         label: 'Celebrity photo source',
@@ -117,7 +118,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
         ],
         help: 'Your own uploads on the Images tab are always used first. The ChatGPT gallery: ChatGPT searches the web and shows photos of the person; the extension saves them.',
       },
-      { key: 'celebrityPhotoReview', label: 'Celebrity photo check (watermark/collage)', type: 'boolean' },
+      {
+        key: 'celebrityPhotoReview',
+        label: 'Celebrity photo check (watermark/collage)',
+        type: 'boolean',
+        help: 'On by default, as in your earlier tool: the gallery photos are shown to ChatGPT, which says which ones are another site’s collage (photos side by side, a circle or frame drawn over people) or carry a watermark. Collages are left out; watermarked photos are used last. It never identifies anyone.',
+      },
       { key: 'duplicateSimilarityReview', label: 'Duplicate similarity review threshold', type: 'number', min: 0.2, max: 1, step: 0.05 },
       { key: 'seoBriefInPrompts', label: 'Add the SEO brief to writing prompts', type: 'boolean', help: 'The article’s search intent, sections to cover and keyword guideline (SEO tab) are added to the LONG_ARTICLE / ARTICLE prompt, unless the prompt places {{seo_brief}} itself.' },
     ],
@@ -135,6 +141,17 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'chatgptTabs', label: 'ChatGPT tabs', type: 'number', min: 1, max: 5, warnAbove: { value: 3, message: 'More tabs can cause account-wide rate limiting.' } },
       { key: 'autoLaunchChatGPTChrome', label: 'Open Automation Chrome automatically', type: 'boolean', help: 'When you queue an article (or ChatGPT work is waiting) and the extension is not connected, the worker opens the ChatGPT Chrome window by itself (at most once every 3 minutes).' },
       { key: 'autoCloseChatGPTChrome', label: 'Close it when the queue is done', type: 'boolean', help: 'The Chrome window the worker opened by itself is closed normally (never forced) once no queued or running article and no ChatGPT prompt is left for 2 minutes. A Chrome you opened yourself is never closed.' },
+    ],
+  },
+  {
+    id: 'notifications',
+    title: 'Notifications',
+    description: 'Windows notifications (bottom right, and in the notification centre) when something needs you. Windows shows them itself — nothing goes to an outside service — while the worker runs; a click opens the page.',
+    fields: [
+      { key: 'windows', label: 'Windows notifications', type: 'boolean', help: 'Off: nothing is shown (the bell in the dashboard still lists what needs you).' },
+      { key: 'review', label: 'An article needs review or approval', type: 'boolean', help: 'Also articles from the workflow. More than 3 at once come as one notification with the count.' },
+      { key: 'chatgptSignedOut', label: 'ChatGPT is signed out', type: 'boolean', help: 'In Automation Chrome; the articles wait and go on after you sign in.' },
+      { key: 'campaignFinished', label: 'A bulk campaign finished', type: 'boolean' },
     ],
   },
   {

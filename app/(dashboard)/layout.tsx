@@ -1,31 +1,32 @@
 import Link from 'next/link';
-import { Sidebar } from '@/components/sidebar';
+import { Shell } from '@/components/sidebar';
 import { ToastProvider } from '@/components/client';
-import { getHealthWarnings } from '@/lib/health';
+import { getHealthWarnings, type HealthWarning } from '@/lib/health';
 import { ensurePragmas } from '@/lib/db';
 import { cx } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
 
-async function HealthBanner() {
-  let warnings: Awaited<ReturnType<typeof getHealthWarnings>> = [];
-  let dbError: string | null = null;
+async function loadHealth(): Promise<{ warnings: HealthWarning[]; dbError: string | null }> {
   try {
     await ensurePragmas();
-    warnings = await getHealthWarnings();
+    return { warnings: await getHealthWarnings(), dbError: null };
   } catch (error) {
-    dbError = (error as Error).message;
+    return { warnings: [], dbError: (error as Error).message };
   }
+}
+
+function HealthBanner({ warnings, dbError }: { warnings: HealthWarning[]; dbError: string | null }) {
   if (dbError) {
     return (
-      <div className="border-b border-rose-200 bg-rose-50 px-6 py-2 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-100" role="alert">
+      <div className="border-b border-rose-200 bg-rose-50 px-6 py-2 text-sm text-rose-900 lg:rounded-t-xl dark:border-rose-900 dark:bg-rose-950 dark:text-rose-100" role="alert">
         <strong>Database unavailable.</strong> Run <code>npm run setup</code> to create/migrate data/app.db. ({dbError.slice(0, 200)})
       </div>
     );
   }
   if (warnings.length === 0) return null;
   return (
-    <div className="border-app space-y-px border-b">
+    <div className="border-app space-y-px overflow-clip border-b lg:rounded-t-xl">
       {warnings.slice(0, 3).map((w, i) => (
         <div
           key={i}
@@ -51,16 +52,15 @@ async function HealthBanner() {
   );
 }
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const health = await loadHealth();
+  const notices = health.dbError ? [{ tone: 'danger' as const, title: 'Database unavailable', detail: 'Run npm run setup to create/migrate data/app.db.' }] : health.warnings;
   return (
     <ToastProvider>
-      <div className="lg:flex">
-        <Sidebar />
-        <div className="min-w-0 flex-1">
-          <HealthBanner />
-          <main className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">{children}</main>
-        </div>
-      </div>
+      <Shell notices={notices}>
+        <HealthBanner {...health} />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+      </Shell>
     </ToastProvider>
   );
 }

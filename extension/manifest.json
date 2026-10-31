@@ -2,16 +2,22 @@
   "manifest_version": 3,
   "name": "Blog Automation Studio – ChatGPT Agent",
   "short_name": "BAS Agent",
-  "version": "3.2.2",
-  "description": "Runs article prompts from your local Blog Automation Studio in your signed-in ChatGPT tabs. Talks only to your localhost dashboard.",
+  "version": "3.5.0",
+  "description": "Runs article prompts from your local Blog Automation Studio in your signed-in ChatGPT tabs, and requests indexing in your Search Console. Talks only to your localhost dashboard.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "tabs", "notifications", "alarms"],
-  "host_permissions": ["https://chatgpt.com/*", "https://*.oaiusercontent.com/*", "https://oaidalleapiprodscus.blob.core.windows.net/*", "https://images.openai.com/*", "https://*.mm.bing.net/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "permissions": ["storage", "tabs", "notifications", "alarms", "pageCapture"],
+  "host_permissions": ["https://chatgpt.com/*", "https://*.oaiusercontent.com/*", "https://oaidalleapiprodscus.blob.core.windows.net/*", "https://images.openai.com/*", "https://*.mm.bing.net/*", "https://search.google.com/*", "http://localhost/*", "http://127.0.0.1/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*"],
-      "js": ["adapter.js", "content.js"],
+      "js": ["outline.js", "adapter.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://search.google.com/search-console*"],
+      "js": ["outline.js", "gsc.js"],
       "run_at": "document_idle",
       "all_frames": false
     }

@@ -15,6 +15,7 @@ import { LoginRequiredError } from '@/lib/pipeline-errors';
 import { parseJson } from '@/lib/json';
 import { observe } from '@/lib/site-health';
 import { evaluatePermissions } from './permissions';
+import { loginFor, recordLoginResult, savedLogin } from '@/lib/wp-credentials';
 
 export type SessionCheck = { state: 'ACTIVE' | 'LOGIN_REQUIRED' | 'ERROR'; detail: string; url?: string; adminLanguage?: string | null };
 
@@ -135,20 +136,139 @@ export async function testSession(site: Website): Promise<SessionCheck> {
 }
 
 /**
- * Open a VISIBLE window on the login page and wait for the owner to sign in
- * manually. The app never sees or stores the password.
+ * Signs of a step only the owner can do on the login page: a CAPTCHA, or a second factor (a code from an app, an
+ * email or a security plugin). The app never solves or skips these; it hands the login window to the owner.
+ */
+const OWNER_STEP = [
+  'iframe[src*="recaptcha"]',
+  '.g-recaptcha',
+  'iframe[src*="hcaptcha"]',
+  '.h-captcha',
+  'iframe[src*="challenges.cloudflare.com"]',
+  '.cf-turnstile',
+  'input#authcode',
+  'input[name="authcode"]',
+  'input[name="two-factor-code"]',
+  'input[name="wfls-token"]',
+  'input[name="googleotp"]',
+  'input[name="mfa_code"]',
+  'input[autocomplete="one-time-code"]',
+];
+
+async function ownerStep(page: Page): Promise<boolean> {
+  for (const s of OWNER_STEP) if (await page.locator(s).first().isVisible().catch(() => false)) return true;
+  return false;
+}
+
+/** The login form is the website's own (wp-login.php on the admin URL's host): the only place a saved password is typed. */
+function ownLoginPage(page: Page, site: Website): boolean {
+  try {
+    return new URL(page.url()).host === new URL(site.adminUrl).host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Type the saved user name and password into the website's own login form, tick “Remember Me” and sign in. The
+ * password never goes into an error message or log: a failure is described in words.
+ */
+async function fillSavedLogin(page: Page, login: { username: string; password: string }, submit: boolean): Promise<boolean> {
+  try {
+    if (!(await page.locator('#user_login').count()) || !(await page.locator('#user_pass').count())) return false;
+    await page.locator('#user_login').fill(login.username, { timeout: 5000 });
+    await page.locator('#user_pass').fill(login.password, { timeout: 5000 });
+    await page.locator('#rememberme').check({ timeout: 3000 }).catch(() => {});
+    if (submit) await page.locator('#user_pass').press('Enter', { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type AutoLoginResult = SessionCheck & { needsOwner?: boolean; refused?: boolean };
+
+/**
+ * Owner request: sign in with the saved WordPress user name and password (Add website / the website's Session tab),
+ * without a window. When the login page needs the owner — a CAPTCHA, a second-factor code, a login form on another
+ * host — it stops (needsOwner) and the caller opens the visible login window. A refused password is recorded and not
+ * tried again until it is changed, so a security plugin never locks the account.
+ */
+export async function autoLogin(site: Website): Promise<AutoLoginResult> {
+  const login = loginFor(site.id);
+  if (!login) return { state: 'LOGIN_REQUIRED', detail: 'No WordPress sign-in is saved for this website.', needsOwner: true };
+  const settings = await getSettings();
+  const sel = settings.advanced.selectorOverrides;
+  const timeout = settings.browser.navigationTimeoutSec * 1000;
+  const result: AutoLoginResult = await withSiteContext(siteRef(site), { headed: settings.browser.mode === 'headed', purpose: 'auto-login' }, async (context) => {
+    const page = await firstPage(context);
+    try {
+      await boundedGoto(page, site.adminUrl, timeout);
+    } catch (error) {
+      return { state: 'ERROR', detail: `Could not open ${site.adminUrl}: ${(error as Error).message.split('\n')[0]}` };
+    }
+    await page.waitForSelector(`${anyOf('loggedIn', sel)}, ${anyOf('loginForm', sel)}`, { timeout: Math.min(timeout, 20_000) }).catch(() => {});
+    if (await isLoggedIn(page, sel)) return { state: 'ACTIVE', detail: 'Already signed in.', url: page.url() };
+    if (!ownLoginPage(page, site)) {
+      return { state: 'LOGIN_REQUIRED', needsOwner: true, detail: `The login page is on ${new URL(page.url()).host}, not on the website; the saved password is only typed on the website's own login page.` };
+    }
+    if (await ownerStep(page)) return { state: 'LOGIN_REQUIRED', needsOwner: true, detail: 'The login page shows a check (CAPTCHA) that only you can do.' };
+    if (!(await fillSavedLogin(page, login, true))) return { state: 'LOGIN_REQUIRED', needsOwner: true, detail: 'The WordPress login form was not found or did not take the user name and password.' };
+    const deadline = Date.now() + Math.min(timeout, 45_000);
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 800));
+      if (await isLoggedIn(page, sel)) {
+        const lang = await page.evaluate(() => document.documentElement.getAttribute('lang')).catch(() => null);
+        return { state: 'ACTIVE', detail: 'Signed in automatically with the saved user name and password.', url: page.url(), adminLanguage: lang };
+      }
+      if (await ownerStep(page)) return { state: 'LOGIN_REQUIRED', needsOwner: true, detail: 'WordPress asks for a second step (a code or a check) that only you can do.' };
+      const error = (await page.locator('#login_error').first().innerText({ timeout: 500 }).catch(() => '')).replace(/\s+/g, ' ').trim();
+      if (error) return { state: 'LOGIN_REQUIRED', refused: true, detail: `WordPress refused the saved sign-in: “${error.slice(0, 200)}” Change the user name or password on the website's Session tab.` };
+    }
+    return { state: 'LOGIN_REQUIRED', needsOwner: true, detail: 'No answer from WordPress after signing in.' };
+  });
+  recordLoginResult(site.id, { ok: result.state === 'ACTIVE', refused: result.refused, needsOwner: result.needsOwner, detail: result.detail });
+  await recordSession(site, result, { via: 'auto-login' });
+  await observe(site.id, 'SESSION', result.state === 'ACTIVE' ? 'OK' : 'FAIL', result.detail);
+  await log({ level: result.state === 'ACTIVE' ? 'info' : 'warn', category: 'wordpress', message: `${site.name}: automatic login — ${result.detail}` });
+  return result;
+}
+
+const lastAutoLogin = new Map<string, number>();
+
+/**
+ * Sign in again by itself when a job finds the session gone (owner request: auto login). Only with a saved sign-in
+ * whose last try was not refused or stopped at a step for the owner, and at most once per website every 10 minutes.
+ */
+export async function autoLoginIfSaved(site: Website, now = Date.now()): Promise<boolean> {
+  const saved = savedLogin(site.id);
+  // A refused password is not tried again (account lock-outs); a step for the owner waits for the owner's “Log in”.
+  if (!saved || (saved.last && !saved.last.ok && (saved.last.refused || saved.last.needsOwner))) return false;
+  if (now - (lastAutoLogin.get(site.id) ?? 0) < 10 * 60_000) return false;
+  lastAutoLogin.set(site.id, now);
+  return (await autoLogin(site)).state === 'ACTIVE';
+}
+
+/**
+ * Open a VISIBLE window on the login page for the owner: to sign in by hand (no saved sign-in), or to do the step the
+ * automatic login cannot (a CAPTCHA or a second-factor code) — then the saved user name and password are already
+ * filled in. It waits until the owner is signed in.
  */
 export async function interactiveLogin(site: Website, heartbeat: () => Promise<boolean>, timeoutMs = 10 * 60_000): Promise<SessionCheck> {
   const settings = await getSettings();
   const sel = settings.advanced.selectorOverrides;
   const ref = siteRef(site);
+  const saved = savedLogin(site.id);
+  const login = saved && !saved.last?.refused ? loginFor(site.id) : null;
   const result = await withSiteContext(ref, { headed: true, purpose: 'login' }, async (context) => {
     const page = await firstPage(context);
     await boundedGoto(page, site.adminUrl, settings.browser.navigationTimeoutSec * 1000).catch(() => {});
     await page.bringToFront().catch(() => {});
-    // Convenience only: tick "Remember Me" so the session survives browser restarts.
-    // Credentials are never typed, read or stored by the app.
+    // Tick "Remember Me" so the session survives browser restarts.
     await page.locator('#rememberme').check({ timeout: 3000 }).catch(() => {});
+    // The saved sign-in is filled in on the website's own login page; with a CAPTCHA on the page it is not sent, so
+    // the owner can do the check and click Log In.
+    if (login && ownLoginPage(page, site)) await fillSavedLogin(page, login, !(await ownerStep(page)));
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       for (const p of context.pages()) {
@@ -160,7 +280,7 @@ export async function interactiveLogin(site: Website, heartbeat: () => Promise<b
             return { state: 'LOGIN_REQUIRED', detail: 'Signed in without “Remember Me”, so WordPress gave a sign-in that ends when the window closes. Log in again and leave “Remember Me” ticked.' } as SessionCheck;
           }
           const lang = await p.evaluate(() => document.documentElement.getAttribute('lang')).catch(() => null);
-          return { state: 'ACTIVE', detail: 'Signed in manually in the visible window.', url: p.url(), adminLanguage: lang } as SessionCheck;
+          return { state: 'ACTIVE', detail: login ? 'Signed in in the login window (saved sign-in filled in, last step by you).' : 'Signed in manually in the visible window.', url: p.url(), adminLanguage: lang } as SessionCheck;
         }
       }
       if (context.pages().length === 0) return { state: 'LOGIN_REQUIRED', detail: 'The login window was closed before sign-in finished.' } as SessionCheck;
@@ -169,6 +289,7 @@ export async function interactiveLogin(site: Website, heartbeat: () => Promise<b
     }
     return { state: 'LOGIN_REQUIRED', detail: `No sign-in detected within ${Math.round(timeoutMs / 60000)} minutes.` } as SessionCheck;
   });
+  if (saved && result.state === 'ACTIVE') recordLoginResult(site.id, { ok: true, detail: 'Signed in in the login window.' });
   await recordSession(site, result, { via: 'interactive-login' });
   await observe(site.id, 'SESSION', result.state === 'ACTIVE' ? 'OK' : 'FAIL', result.state === 'ACTIVE' ? 'Signed in manually in the login window.' : result.detail);
   await log({ level: result.state === 'ACTIVE' ? 'info' : 'warn', category: 'wordpress', message: `${site.name}: login window finished — ${result.detail}` });

@@ -7,16 +7,17 @@
  *   while it owns work.
  * - Manages 1–5 ChatGPT tabs it opened itself (never hijacks the owner's own
  *   tabs), reuses a tab that already shows the needed conversation, and never
- *   restarts tabs or itself to "fix" a routine error.
+ *   restarts tabs or itself to "fix" a routine error (it reloads itself only
+ *   to pick up an updated extension folder, when idle).
  * - Completions/failures go through a persistent outbox so an answer is not
  *   lost if the dashboard is briefly unreachable.
  * - Login pages and human checks are never automated: it notifies the owner.
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.2.2';
+const EXTENSION_VERSION = '3.5.0';
 const DEFAULT_SERVER = 'http://localhost:3000';
-const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox'];
+const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
 let cfg = null;
 let serverCfg = {
@@ -30,6 +31,7 @@ let serverCfg = {
   backoffUntil: null,
   claimsPaused: false,
   waitingJobs: 0,
+  chatgptInApp: false,
   warning: null,
 };
 let versionMessage = null;
@@ -110,10 +112,20 @@ async function setManagedTabIds(ids) {
 async function api(action, body, path) {
   if (!cfg || !cfg.key) throw Object.assign(new Error('Not paired: paste the connection key in the extension popup.'), { status: 401 });
   if (!isLocalOrigin(cfg.serverOrigin)) throw Object.assign(new Error('The dashboard address must be localhost.'), { status: 400 });
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30_000);
   try {
-    const res = await fetch(cfg.serverOrigin + (path || '/api/extension/agent'), {
+    return await apiAt(cfg.serverOrigin, action, body, path);
+  } catch (e) {
+    // Nothing answers there, or a dashboard that does not know this key (another data folder): look for ours.
+    if ((e.status === undefined || e.status === 401) && (await findDashboard())) return apiAt(cfg.serverOrigin, action, body, path);
+    throw e;
+  }
+}
+
+async function apiAt(origin, action, body, path, timeoutMs = 30_000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(origin + (path || '/api/extension/agent'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.key },
       body: JSON.stringify(Object.assign({ action, installId: cfg.installId }, body || {})),
@@ -126,6 +138,34 @@ async function api(action, body, path) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Owner request (desktop app): no fixed port. The dashboard starts on the first free port from 3000 to 3010; when it
+ * does not answer at the saved address, the extension asks those ports on this computer and keeps the one whose
+ * dashboard knows this connection key. At most once every 15 s.
+ */
+const DASHBOARD_PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
+let lastSearchAt = 0;
+async function findDashboard() {
+  if (Date.now() - lastSearchAt < 15_000) return false;
+  lastSearchAt = Date.now();
+  const current = new URL(cfg.serverOrigin);
+  for (const port of DASHBOARD_PORTS) {
+    if (String(port) === (current.port || '80')) continue;
+    const origin = `http://127.0.0.1:${port}`;
+    try {
+      await apiAt(origin, 'hello', { version: EXTENSION_VERSION, protocol: 1, capabilities: CAPABILITIES }, null, 2000);
+    } catch (e) {
+      continue;
+    }
+    cfg.serverOrigin = origin;
+    await chrome.storage.local.set({ serverOrigin: origin });
+    // The next tick tells this dashboard about the open tabs again.
+    lastHelloAt = 0;
+    return true;
+  }
+  return false;
 }
 
 /** Persistent outbox for completions/failures (retried until the dashboard answers). */
@@ -151,6 +191,120 @@ async function flushOutbox() {
     }
   }
   await chrome.storage.local.set({ outbox: remaining });
+}
+
+// ---------------- Search Console: request indexing ----------------
+
+/**
+ * Owner request: after a publish, request indexing as the owner does — open the URL in Search Console's URL Inspection
+ * (signed in with the owner's Google account in this Chrome) and click REQUEST INDEXING (gsc.js). The tab is opened in
+ * the background and closed afterwards. Sign-in pages and Google's checks are never handled here: they are reported.
+ */
+const gsc = { running: false, onReady: null, onDone: null, proof: null };
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/**
+ * Owner request: proof of the request, like Search Console's “Indexing requested” on screen. The page is saved as it
+ * stands (pageCapture: works in a background tab and a minimized window, where a screen capture cannot); the
+ * dashboard turns the copy into a PNG with the article. A proof that cannot be saved never stops the request.
+ */
+/** A page structure copy from a content script (extension/outline.js), when it sent one of a sane size. */
+const pageCopyOf = (msg) => (typeof msg.pageCopy === 'string' && msg.pageCopy.length <= 300000 ? msg.pageCopy : undefined);
+
+async function saveGscProof(tabId, jobId, shown) {
+  try {
+    await new Promise((r) => setTimeout(r, 800)); // let the dialog finish opening
+    // The copy lives in a temporary file that Chrome sometimes drops before it can be read ("could not be found"):
+    // a fresh copy is taken, up to three times.
+    let mhtmlBase64 = null;
+    let size = 0;
+    for (let attempt = 1; !mhtmlBase64; attempt++) {
+      try {
+        const blob = await chrome.pageCapture.saveAsMHTML({ tabId });
+        if (!blob) throw new Error('Chrome returned no page copy');
+        mhtmlBase64 = await blobToBase64(blob);
+        size = blob.size;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        await new Promise((r) => setTimeout(r, 300 * attempt));
+      }
+    }
+    await api('gsc-proof', { jobId, mhtmlBase64 }, '/api/extension/gsc-proof');
+    // `shown`: whether Google's answer was on screen in the copy ('shown', 'set as open', …), for the popup's state.
+    gsc.proof = { jobId, ok: true, bytes: size, shown: shown || null, at: Date.now() };
+  } catch (e) {
+    gsc.proof = { jobId, ok: false, error: e.message, at: Date.now() };
+    lastError = 'Search Console screenshot not saved: ' + e.message;
+  }
+}
+
+async function runGscJob() {
+  gsc.running = true;
+  let tabId = null;
+  try {
+    const res = await api('gsc-claim', {});
+    const job = res && res.job;
+    if (!job) return;
+    // A blank tab first, then the page (the tab exists before its first request). Owner report: indexing waited until
+    // the owner opened Automation Chrome. With its windows closed Chrome can keep running in the background, and a tab
+    // needs a window: then one is opened for the request (unfocused) and goes away with its tab.
+    const windows = await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => []);
+    const tab = windows.length ? await chrome.tabs.create({ url: 'about:blank', active: false }) : (await chrome.windows.create({ url: 'about:blank', focused: false })).tabs[0];
+    tabId = tab.id;
+    await chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 500));
+    const result = await new Promise((resolve) => {
+      let timer = null;
+      const onUpdated = (id, info, t) => {
+        if (id !== tabId) return;
+        const u = info.url || (t && t.url) || '';
+        // Google's sign-in page, or Search Console's start page that a signed-out visitor gets.
+        if (/^https:\/\/accounts\.google\.com\/|^https:\/\/search\.google\.com\/search-console\/about/.test(u)) finish({ outcome: 'NOT_SIGNED_IN', message: 'Search Console asked to sign in to Google.' });
+      };
+      const finish = (r) => {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        gsc.onReady = null;
+        gsc.onDone = null;
+        resolve(r);
+      };
+      // How long the owner has for a check Google shows (Settings → Advanced, as for ChatGPT), twice at most.
+      const humanWaitMs = Math.round((serverCfg.humanCheckPauseMinutes || 10) * 60_000);
+      timer = setTimeout(() => finish({ outcome: 'ERROR', message: 'Search Console did not finish in time.' }), 6 * 60_000 + 2 * humanWaitMs);
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      chrome.tabs.update(tabId, { url: job.inspectUrl }).catch((e) => finish({ outcome: 'ERROR', message: 'Could not open Search Console: ' + e.message }));
+      // Each page of the tab asks for the job: the property's page (type the URL), and after Google's 404 or a box that
+      // did nothing, the next address. A few pages at most.
+      let pages = 0;
+      gsc.onReady = async (fromTab) => {
+        if (fromTab !== tabId) return;
+        pages++;
+        if (pages > 4) return finish({ outcome: 'ERROR', message: 'Search Console kept changing pages; the URL could not be inspected.' });
+        const r = await chrome.tabs.sendMessage(tabId, { type: 'gsc-run', jobId: job.id, typeUrl: job.url, altUrl: job.altUrl || null, attempt: pages, humanWaitMs }).catch((e) => ({ ok: false, error: e.message }));
+        if (!r || (!r.ok && r.error !== 'busy')) finish({ outcome: 'ERROR', message: 'The Search Console page did not take the request: ' + ((r && r.error) || 'no answer') });
+      };
+      gsc.onDone = (fromTab, msg) => {
+        if (fromTab === tabId && msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null, shown: msg.shown || null, pageCopy: pageCopyOf(msg) });
+      };
+    });
+    // The proof goes first: the dashboard takes it only while this request is still open.
+    if (result.outcome === 'REQUESTED' || result.outcome === 'QUOTA') await saveGscProof(tabId, job.id, result.shown);
+    await outboxPush('gsc-result', { jobId: job.id, outcome: result.outcome, message: result.message ? String(result.message).slice(0, 900) : null, pageCopy: result.pageCopy });
+    setTimeout(() => void tick(), 500);
+  } catch (e) {
+    lastError = e.message;
+  } finally {
+    if (tabId !== null) await chrome.tabs.remove(tabId).catch(() => {});
+    gsc.running = false;
+    gsc.onReady = null;
+    gsc.onDone = null;
+  }
 }
 
 // ---------------- tabs ----------------
@@ -243,10 +397,15 @@ async function runOnTab(tabId, job) {
   try {
     const target = targetUrl(job, t.url);
     const isRoot = /^https:\/\/chatgpt\.com\/?$/.test(target);
-    if (isRoot || !sameConversation(target, t.url)) {
+    // After the page stopped working (no composer / no Send button) the next job gets a freshly loaded page, even
+    // in the same conversation: before 3.2.5 every retry ran on the same stuck page (owner report).
+    const fresh = t.freshPage;
+    t.freshPage = false;
+    if (isRoot || !sameConversation(target, t.url) || fresh) {
       t.ready = false;
       await checkpoint(job.id, { step: 'navigating', target });
-      await chrome.tabs.update(tabId, { url: target });
+      if (fresh && !isRoot && sameConversation(target, t.url)) await chrome.tabs.reload(tabId);
+      else await chrome.tabs.update(tabId, { url: target });
       await waitReady(tabId, 60_000, target);
     } else if (!t.ready) {
       await waitReady(tabId, 60_000);
@@ -256,6 +415,7 @@ async function runOnTab(tabId, job) {
   } catch (e) {
     t.busy = false;
     t.job = null;
+    t.freshPage = true;
     await outboxPush('fail', { jobId: job.id, tabId: String(tabId), code: 'ERROR', message: 'Tab could not start the job: ' + e.message });
     await dropCheckpoint(job.id);
   }
@@ -316,7 +476,49 @@ async function hello(managed) {
   lastHelloAt = Date.now();
   serverCfg = Object.assign({}, serverCfg, res.config || {});
   versionMessage = res.versionOk === false ? res.message : null;
+  if (res.versionOk === false && res.expectedVersion) await reloadFromFolder(res.expectedVersion, managed);
   return res;
+}
+
+/**
+ * After an app update (Settings → App updates, or git pull) the extension folder holds the new version while Chrome
+ * still runs the old one (owner request: no reload by hand after each update). When the folder has exactly the
+ * version the app expects and nothing runs here, reload from it — as chrome://extensions → reload does. Once per
+ * version: if Chrome loads the extension from another folder, the badge says VER as before.
+ */
+async function reloadFromFolder(expected, managed) {
+  if (expected === EXTENSION_VERSION || gsc.running || managed.some((id) => tabState(id).busy)) return false;
+  let onDisk = null;
+  try {
+    // An unpacked extension's files are read from its folder, so this is the version on disk now.
+    onDisk = (await (await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' })).json()).version;
+  } catch (e) {
+    return false;
+  }
+  if (onDisk !== expected) return false;
+  const { selfReload } = await chrome.storage.local.get('selfReload');
+  if (selfReload && selfReload.to === expected) return false;
+  await chrome.storage.local.set({ selfReload: { from: EXTENSION_VERSION, to: expected, at: Date.now(), tabs: managed } });
+  chrome.runtime.reload();
+  return true;
+}
+
+/** Right after such a reload: the ChatGPT tabs it managed still run the old page scripts, so reload them and keep them. */
+async function afterReloadFromFolder() {
+  const { selfReload } = await chrome.storage.local.get('selfReload');
+  if (!selfReload || selfReload.to !== EXTENSION_VERSION || selfReload.restored) return;
+  await chrome.storage.local.set({ selfReload: Object.assign({}, selfReload, { restored: true }) });
+  const alive = [];
+  for (const id of selfReload.tabs || []) {
+    try {
+      await chrome.tabs.get(id);
+      await chrome.tabs.reload(id);
+      alive.push(id);
+    } catch (e) {
+      /* the tab was closed */
+    }
+  }
+  if (alive.length) await setManagedTabIds(alive);
 }
 
 async function setBadge(text, color) {
@@ -332,6 +534,7 @@ async function tick() {
   if (ticking) return;
   ticking = true;
   try {
+    await startup;
     await loadConfig();
     if (!cfg.key) {
       await setBadge('KEY', '#b45309');
@@ -340,9 +543,17 @@ async function tick() {
     await flushOutbox();
     let managed = await refreshTabs();
     const anyBusy = managed.some((id) => tabState(id).busy);
-    if (anyBusy || Date.now() - lastHelloAt > 20_000 || !lastHelloAt) await hello(managed);
+    // While the versions differ, every poll says hello: it reloads from the folder as soon as an update wrote it.
+    if (anyBusy || versionMessage || Date.now() - lastHelloAt > 20_000 || !lastHelloAt) await hello(managed);
     if (versionMessage) {
       await setBadge('VER', '#b91c1c');
+      return;
+    }
+    // Search Console “Request indexing” (owner request): one at a time, in a tab of its own.
+    if (!cfg.paused && (serverCfg.gscWaiting || 0) > 0 && !gsc.running) void runGscJob();
+    // The desktop app's own ChatGPT tab runs the prompts (owner request): no ChatGPT tab here, no claims.
+    if (serverCfg.chatgptInApp) {
+      await setBadge('APP', '#0f766e');
       return;
     }
     if (cfg.paused || serverCfg.claimsPaused) {
@@ -380,7 +591,7 @@ async function tick() {
 function scheduleNext() {
   if (busyTimer) clearTimeout(busyTimer);
   const busy = Array.from(tabs.values()).some((t) => t.busy);
-  if (busy || (serverCfg.waitingJobs || 0) > 0) busyTimer = setTimeout(() => void tick(), Math.max(1, serverCfg.pollBusySec || 3) * 1000);
+  if (busy || ((serverCfg.waitingJobs || 0) > 0 && !serverCfg.chatgptInApp)) busyTimer = setTimeout(() => void tick(), Math.max(1, serverCfg.pollBusySec || 3) * 1000);
 }
 
 // ---------------- messages from content scripts / popup ----------------
@@ -426,6 +637,8 @@ chrome.runtime.onConnect.addListener((port) => {
           html: msg.html || null,
           images: Array.isArray(msg.images) && msg.images.length ? msg.images : undefined,
           imageLinks: Array.isArray(msg.imageLinks) && msg.imageLinks.length ? msg.imageLinks.slice(0, 20) : undefined,
+          galleryReport: typeof msg.galleryReport === 'string' ? msg.galleryReport.slice(0, 400) : undefined,
+          pageCopy: pageCopyOf(msg),
           conversationUrl: msg.conversationUrl || null,
           recovered: Boolean(msg.recovered),
           elapsedMs: msg.elapsedMs,
@@ -435,6 +648,7 @@ chrome.runtime.onConnect.addListener((port) => {
       } else if (msg.type === 'fail') {
         await outboxPush('fail', { tabId: String(tabId), jobId, code: msg.code || 'ERROR', message: String(msg.message || 'Unknown error').slice(0, 2000), retryAfterSec: msg.retryAfterSec ?? null, uncertain: Boolean(msg.uncertain), diagnostics: msg.snapshot || {} });
         if (msg.code === 'USAGE_LIMIT') serverCfg.backoffUntil = new Date(Date.now() + (msg.retryAfterSec || 60) * 1000).toISOString();
+        if (msg.freshPage) t.freshPage = true;
         await finishTab(tabId, jobId);
         setTimeout(() => void tick(), 1000);
       }
@@ -469,8 +683,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'url-changed':
         if (tabId !== null) tabState(tabId).url = msg.url;
         return sendResponse({ ok: true });
+      case 'gsc-ready':
+        if (gsc.onReady) void gsc.onReady(tabId);
+        return sendResponse({ ok: true });
+      case 'gsc-done':
+        if (gsc.onDone) gsc.onDone(tabId, msg);
+        else if (msg.jobId && /^[\w-]{1,64}$/.test(String(msg.jobId))) {
+          // Chrome restarted this background while Google was answering: still report it (proof first), close the tab.
+          void (async () => {
+            if (tabId !== null && (msg.outcome === 'REQUESTED' || msg.outcome === 'QUOTA')) await saveGscProof(tabId, String(msg.jobId));
+            await outboxPush('gsc-result', { jobId: String(msg.jobId), outcome: msg.outcome, message: msg.message ? String(msg.message).slice(0, 900) : null, pageCopy: pageCopyOf(msg) });
+            if (tabId !== null) await chrome.tabs.remove(tabId).catch(() => {});
+          })();
+        }
+        return sendResponse({ ok: true });
+      case 'gsc-alive':
+        return sendResponse({ ok: true });
+      case 'gsc-check': {
+        // Google shows a check in the Search Console tab: the owner completes it there (never this extension).
+        if (tabId !== null) {
+          const tab = await chrome.tabs.update(tabId, { active: true }).catch(() => null);
+          if (tab && tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true }).catch(() => {});
+        }
+        chrome.notifications.create(`bas-gsc-check-${tabId}`, {
+          type: 'basic',
+          iconUrl: 'icons/icon-128.png',
+          title: 'Search Console wants a check',
+          message: `Google shows a check (“I'm not a robot”) in Automation Chrome. Complete it there; indexing is requested right after. It waits up to ${serverCfg.humanCheckPauseMinutes || 10} minutes.`,
+          priority: 2,
+        });
+        return sendResponse({ ok: true });
+      }
+      case 'come-to-front': {
+        // ChatGPT draws a picture only in a visible tab (owner's earlier tool did the same).
+        if (tabId === null) return sendResponse({ ok: false });
+        await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+        return sendResponse({ ok: true });
+      }
       case 'checkpoint':
-        await checkpoint(msg.jobId, { step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore });
+        // Only the fields given: a step-only checkpoint (e.g. 'reloading') must never erase a recorded sentAt.
+        await checkpoint(msg.jobId, Object.fromEntries(Object.entries({ step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore }).filter(([, v]) => v !== undefined)));
         return sendResponse({ ok: true });
       case 'pre-send-check': {
         const res = await api('progress', { tabId: String(tabId), jobId: msg.jobId, step: 'about to send' }).catch(() => null);
@@ -534,6 +786,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           tabs: managed.map((id) => ({ id, busy: tabState(id).busy, ready: tabState(id).ready, url: tabState(id).url })),
           outbox: outbox.length,
           warning: serverCfg.warning,
+          chatgptInApp: Boolean(serverCfg.chatgptInApp),
           loggedIn: pageLogin,
           humanCheck: pageHumanCheck,
         });
@@ -601,6 +854,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 async function restoreAfterWorkerRestart() {
   await loadConfig();
+  await afterReloadFromFolder().catch((e) => (lastError = e.message));
   const checkpoints = await sessionGet('checkpoints', {});
   for (const [jobId, cp] of Object.entries(checkpoints)) {
     if (!cp || cp.tabId === undefined) continue;
@@ -630,6 +884,7 @@ chrome.alarms.create('bas-poll', { periodInMinutes: 0.5 });
 
 // Test/diagnostic hooks (no privileged actions).
 self.basTick = tick;
-self.basState = () => ({ cfg: cfg && { serverOrigin: cfg.serverOrigin, installId: cfg.installId, paired: Boolean(cfg.key) }, serverCfg, versionMessage, lastError, tabs: Array.from(tabs.entries()).map(([id, t]) => ({ id, ready: t.ready, busy: t.busy, url: t.url, jobId: t.jobId })) });
+self.basState = () => ({ cfg: cfg && { serverOrigin: cfg.serverOrigin, installId: cfg.installId, paired: Boolean(cfg.key) }, serverCfg, versionMessage, lastError, gscProof: gsc.proof, tabs: Array.from(tabs.entries()).map(([id, t]) => ({ id, ready: t.ready, busy: t.busy, url: t.url, jobId: t.jobId })) });
 
-void restoreAfterWorkerRestart().then(() => tick());
+const startup = restoreAfterWorkerRestart().catch((e) => (lastError = e.message));
+void startup.then(() => tick());

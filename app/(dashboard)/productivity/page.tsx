@@ -140,7 +140,7 @@ export default async function ProductivityPage() {
           description={`Completed stage runs; time includes waiting for ChatGPT answers. Whole article: median ${r.articleMinutes.p50 ?? '—'} min, p90 ${r.articleMinutes.p90 ?? '—'} min (${r.articleMinutes.samples} articles).`}
           padded={false}
           actions={
-            <a className="inline-flex items-center gap-1 px-2 text-sm text-indigo-600 underline" href="/api/productivity/export?view=stages">
+            <a className="inline-flex items-center gap-1 px-2 text-sm link" href="/api/productivity/export?view=stages">
               <Download className="h-3.5 w-3.5" /> CSV
             </a>
           }
@@ -225,7 +225,7 @@ export default async function ProductivityPage() {
         description="Most recent first: each one is an article whose WordPress draft was read back and verified."
         padded={false}
         actions={
-          <a className="inline-flex items-center gap-1 px-2 text-sm text-indigo-600 underline" href="/api/productivity/export?view=verified">
+          <a className="inline-flex items-center gap-1 px-2 text-sm link" href="/api/productivity/export?view=verified">
             <Download className="h-3.5 w-3.5" /> CSV
           </a>
         }

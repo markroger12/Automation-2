@@ -30,6 +30,19 @@ async function siteClient<T>(websiteId: string, purpose: string, fn: (client: Wp
 
 type Outcome = { kind: 'error'; error: string } | { kind: 'published'; post: WpPost } | { kind: 'scheduled'; post: WpPost };
 
+/**
+ * The keyword as WordPress published it. Published at another time than its slot (owner report: the owner published
+ * the draft in WordPress the day before its slot): the calendar shows it when it was really published, and its
+ * reserved slot is free again for another article.
+ */
+async function markPublished(kw: { id: string; keyword: string; taskId: string | null; scheduledAt: Date | null }, post: WpPost, fallback: Date) {
+  const at = post.date_gmt ? new Date(`${post.date_gmt}Z`) : fallback;
+  const offSlot = !kw.scheduledAt || Math.abs(at.getTime() - kw.scheduledAt.getTime()) >= 60_000;
+  if (offSlot) await db.slotReservation.deleteMany({ where: { workflowKeywordId: kw.id } });
+  await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'PUBLISHED', publishedUrl: post.link, publishedAt: at, lastError: null, ...(offSlot ? { scheduledAt: at } : {}) } });
+  if (offSlot && kw.scheduledAt) await log({ category: 'workflow', taskId: kw.taskId, message: `“${kw.keyword}” was published in WordPress at ${at.toISOString()}, not at its slot ${kw.scheduledAt.toISOString()}: the calendar shows the real time and the slot is free again.` });
+}
+
 const sameMinute = (a: string | null | undefined, b: Date) => Boolean(a) && Math.abs(Date.parse(`${a!.replace(/Z$/, '')}Z`) - b.getTime()) < 60_000;
 
 export async function scheduleKeywordPost(keywordId: string): Promise<Record<string, unknown>> {
@@ -67,7 +80,7 @@ export async function scheduleKeywordPost(keywordId: string): Promise<Record<str
     throw new Error(result.error);
   }
   if (result.kind === 'published') {
-    await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'PUBLISHED', publishedUrl: result.post.link, publishedAt: result.post.date_gmt ? new Date(`${result.post.date_gmt}Z`) : now, lastError: null } });
+    await markPublished(kw, result.post, now);
     return { published: true };
   }
   await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'SCHEDULED', lastError: null } });
@@ -84,7 +97,7 @@ export async function verifyKeywordPublished(keywordId: string): Promise<Record<
   if (!task.wpPostId) return { skipped: 'no post' };
   const post = await siteClient(kw.workflow.websiteId, `verify post #${task.wpPostId}`, (client) => client.getPost(task.wpPostId!));
   if (post?.status === 'publish') {
-    await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'PUBLISHED', publishedUrl: post.link, publishedAt: post.date_gmt ? new Date(`${post.date_gmt}Z`) : new Date(), lastError: null } });
+    await markPublished(kw, post, new Date());
     return { published: true, url: post.link };
   }
   if (post?.status === 'future') {

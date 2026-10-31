@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.2.2';
+  const EXTENSION_VERSION = '3.5.0';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -106,14 +106,14 @@
       else if (s.state === 'lost') throw new JobError('CONVERSATION_LOST', 'The saved ChatGPT conversation could not be loaded.');
       await sleep(500);
     }
-    throw new JobError('ERROR', `ChatGPT composer did not become ready within ${readySec} seconds (the page layout may have changed; see the debug snapshot).`);
+    throw new JobError('ERROR', `ChatGPT composer did not become ready within ${readySec} seconds (the page layout may have changed; text boxes on the page: ${A.composerDiagnostics()}).`, { pageStuck: true });
   }
 
   async function typeAndVerify(prompt) {
     let lastProblem = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const composer = A.findComposer();
-      if (!composer) throw new JobError('ERROR', 'Chat composer not found.');
+      if (!composer) throw new JobError('ERROR', `Chat composer not found (text boxes on the page: ${A.composerDiagnostics()}).`, { pageStuck: true });
       A.clearComposer(composer);
       for (const chip of A.pastedTextChips()) {
         const remove = chip.querySelector('button');
@@ -165,7 +165,7 @@
       if (send && !send.disabled && send.getAttribute('aria-disabled') !== 'true') break;
       await sleep(250);
     }
-    if (!send || send.disabled) throw new JobError('ERROR', 'Send button not available.');
+    if (!send || send.disabled) throw new JobError('ERROR', `Send button not available (text boxes on the page: ${A.composerDiagnostics()}).`, { pageStuck: true });
     checkCancelled();
     progress('sending');
     send.click();
@@ -198,6 +198,7 @@
     let stable = 0;
     let continues = 0;
     let lastProgress = 0;
+    let lastFront = 0;
     while (true) {
       checkCancelled();
       const elapsed = Date.now() - started - current.pausedMs;
@@ -244,21 +245,29 @@
           continue;
         }
       }
-      // Image answers: wait until every generated image has fully loaded and stopped changing.
+      // Image answers (owner's earlier tool): done when ChatGPT is no longer drawing (composer Stop button, “Creating
+      // image”) and the pictures have stayed the same for 6 seconds. A page-wide “streaming” marker is not used here:
+      // it stayed on after the picture was finished (owner report: 600 s “generating (0 chars)” with the image shown).
       const images = expectImages && userEl ? A.generatedImagesAfter(userEl) : [];
       const imagesReady = images.length > 0 && images.every((img) => img.complete && img.naturalWidth >= 256);
       const imageSig = images.map((img) => `${img.currentSrc || img.src}:${img.naturalWidth}`).join('|');
+      const drawing = expectImages ? Boolean(userEl && A.imageInProgress(userEl)) : generating;
       const settled = expectImages ? (imagesReady && imageSig === lastImages) || (!images.length && text && text === lastText && Date.now() - started > 45000) : text && text === lastText;
-      if (!generating && settled) stable++;
+      if (!drawing && settled) stable++;
       else stable = 0;
+      // ChatGPT draws a picture only while its tab is visible: bring the tab to the front (as the earlier tool did).
+      if (expectImages && document.hidden && Date.now() - lastFront > 20000) {
+        lastFront = Date.now();
+        chrome.runtime.sendMessage({ type: 'come-to-front' }).catch(() => {});
+      }
       lastText = text;
       lastImages = imageSig;
       if (Date.now() - lastProgress > 5000) {
         lastProgress = Date.now();
-        progress(generating ? `generating (${text.length} chars so far)` : text ? 'checking that the answer is complete' : 'waiting for the answer to start');
+        progress(expectImages ? (drawing ? 'ChatGPT is creating the image' : images.length ? `checking that the image is finished (${images.length} found)` : 'waiting for the image') : generating ? `generating (${text.length} chars so far)` : text ? 'checking that the answer is complete' : 'waiting for the answer to start');
       }
-      const composerReady = Boolean(A.findComposer()) && !A.findStopButton();
-      if (stable >= 3 && composerReady) return { text, html: answerEl ? answerEl.innerHTML : null, images: imagesReady ? images : [] };
+      const composerReady = Boolean(A.findComposer()) && (expectImages ? !drawing : !A.findStopButton());
+      if (stable >= (expectImages && imagesReady ? 6 : 3) && composerReady) return { text, html: answerEl ? answerEl.innerHTML : null, images: imagesReady ? images : [] };
       await sleep(1000);
     }
   }
@@ -314,13 +323,52 @@
     return res && res.ok ? { base64: res.base64, mime: res.mime || 'image/jpeg' } : null;
   }
 
+  /** The picture the gallery viewer shows, once it differs from `previous` (up to `ms`; then whatever it shows). */
+  async function viewerPicture(previous, ms = 6000) {
+    const deadline = Date.now() + ms;
+    let shown = null;
+    while (Date.now() < deadline) {
+      checkCancelled();
+      // While the next picture loads, the viewer can show no picture at all (owner's recording): keep waiting.
+      const dialog = A.galleryDialog();
+      shown = dialog && A.shownPicture(dialog);
+      if (shown && (shown.currentSrc || shown.src) !== previous) return shown;
+      await sleep(250);
+    }
+    return shown;
+  }
+
+  /** Wait (up to `ms`) for the gallery viewer to open; null if it does not. */
+  async function openedViewer(ms) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const dialog = A.galleryDialog();
+      if (dialog) return dialog;
+      await sleep(200);
+    }
+    return null;
+  }
+
+  /** Close the gallery viewer and wait (up to 3 s) until it is gone. */
+  async function closeViewer() {
+    A.closeGalleryDialog();
+    const deadline = Date.now() + 3000;
+    while (A.galleryDialog() && Date.now() < deadline) await sleep(200);
+    await sleep(300);
+  }
+
   /**
    * Image search (as in the owner's earlier tool): open the picture gallery ChatGPT shows with its answer, step through
-   * it with “Next” like a person and save up to 10 large pictures, plus the thumbnails. Pictures this extension may not
-   * read are reported as links; the app downloads those through its own safe fetcher. Returns { images, imageLinks }.
+   * it with “Next” like a person (or open each picture when the viewer has no “Next”) and save up to 10 large pictures,
+   * plus the thumbnails. Pictures this extension may not read are reported as links; the app downloads those through
+   * its own safe fetcher. Returns { images, imageLinks, note, report }.
    */
   async function collectGallery(job, userEl, config) {
     const deadline = Date.now() + (config.galleryWaitSec || 90) * 1000;
+    const turn = async () => {
+      if (!userEl || !userEl.isConnected) userEl = (await A.sentPromptTurn(job.promptHash, job.prompt, { priorKeys: null, fallbackIndex: -1 })) || userEl;
+      return userEl;
+    };
     let thumbs = A.galleryThumbs(userEl);
     while (!thumbs.length && Date.now() < deadline) {
       checkCancelled();
@@ -334,27 +382,158 @@
     const seen = new Set();
     const add = (img) => {
       const src = img.currentSrc || img.src;
-      if (!src || seen.has(src) || picked.length >= 10) return;
+      if (!src || seen.has(src) || picked.length >= 10) return false;
       seen.add(src);
       picked.push({ src, width: img.naturalWidth || 0, height: img.naturalHeight || 0 });
+      return true;
+    };
+    const openable = thumbs.filter((img) => !A.brokenPicture(img)).length;
+    // Owner report (3 tiles, the third with “5”; the article got 3): the gallery's own count, when it shows more
+    // pictures than tiles. The others are only in the viewer.
+    const said = A.galleryCount(thumbs);
+    let want = Math.max(openable, said || 0);
+    // The viewer's own count (“1 of 10”), once it is open.
+    let counted = 0;
+    // How the viewer was stepped through, for the task log.
+    const how = new Set();
+    let large = 0;
+    // Owner request: when fewer pictures are taken than the gallery has, a copy of the page's structure (no chat text)
+    // goes to the app, so the real gallery and viewer can be fixed instead of guessed.
+    const O = globalThis.BASOutline;
+    const copy = { gallery: null, opened: null, stopped: null, stop: null };
+    try {
+      let box = thumbs[0].parentElement;
+      while (box && !thumbs.every((t) => box.contains(t))) box = box.parentElement;
+      copy.gallery = O && box ? O.outline(box.parentElement || box, 200) : null;
+    } catch (e) {
+      /* the copy is only for the developer */
+    }
+    const copyViewer = () => {
+      const dialog = A.galleryDialog();
+      return O ? { dialogFound: Boolean(dialog), dialog: dialog ? O.outline(dialog) : null, layers: dialog ? null : O.overlays() } : null;
     };
     try {
-      thumbs[0].click();
+      // Open the viewer from a picture the page shows (a broken one may be a link that opens another tab).
+      const opener = thumbs.find((img) => !A.brokenPicture(img));
+      if (!opener) throw new Error('no picture to open');
+      opener.click();
       await sleep(1200);
-      for (let step = 0; step < 12 && picked.length < 10; step++) {
+      copy.opened = copyViewer();
+      // One picture per step: wait until the viewer shows a different one after “Next” (it may slide), stop when it
+      // shows nothing new or comes back to a picture already taken.
+      let previous = null;
+      // Whether the viewer went through all its pictures: “Next” turned off at the last one, or it came back round.
+      let walked = false;
+      // A viewer with no Next button may step with the arrow keys (tried while pictures are missing); a Next that
+      // changed nothing gets one try with the arrow keys too.
+      let keys = false;
+      let triedKeys = false;
+      for (let step = 0; step < 14 && picked.length < 10; step++) {
+        // Owner's recording: the next picture can take a few seconds to load after →.
+        const img = await viewerPicture(previous, step === 0 ? 6000 : keys ? 2500 : 12000);
+        if (!img) {
+          copy.stop = `step ${step + 1}: no large picture in the viewer`;
+          break;
+        }
+        const src = img.currentSrc || img.src;
+        if (step > 0 && src === previous && !triedKeys && A.galleryDialog()) {
+          triedKeys = keys = true;
+          A.pressViewerKey(A.galleryDialog(), 'ArrowRight');
+          continue;
+        }
+        if (step > 0 && (src === previous || seen.has(src))) {
+          walked = src !== previous;
+          copy.stop = `step ${step + 1}: ${src === previous ? 'the picture did not change' : 'came back to a picture already taken'}`;
+          break;
+        }
+        if (add(img)) large++;
+        if (step > 0) how.add(keys ? 'arrow keys' : 'Next');
+        previous = src;
         const dialog = A.galleryDialog();
-        if (!dialog) break;
-        const big = Array.from(dialog.querySelectorAll('img')).filter((i) => (i.naturalWidth || 0) >= 200);
-        big.sort((a, b) => b.naturalWidth * b.naturalHeight - a.naturalWidth * a.naturalHeight);
-        if (big[0]) add(big[0]);
-        const next = A.galleryNextButton(dialog);
-        if (!next || next.disabled) break;
-        next.click();
-        await sleep(900);
+        const counter = dialog && A.viewerCounter(dialog);
+        if (counter) {
+          counted = Math.max(counted, counter.of);
+          want = Math.max(want, counter.of);
+          // “10 of 10”: the last picture (a viewer that comes round would show the first one again).
+          if (counter.at >= counter.of) {
+            walked = true;
+            copy.stop = `step ${step + 1}: the viewer says ${counter.at} of ${counter.of}`;
+            break;
+          }
+        }
+        const next = !keys && dialog && A.galleryNextButton(dialog);
+        if (next) {
+          walked = next.disabled || next.getAttribute('aria-disabled') === 'true';
+          if (walked) {
+            copy.stop = `step ${step + 1}: Next is turned off`;
+            break;
+          }
+          next.click();
+        } else if (dialog && large < want) {
+          keys = true;
+          A.pressViewerKey(dialog, 'ArrowRight');
+        } else {
+          copy.stop = `step ${step + 1}: ${dialog ? 'no Next button' : 'no viewer found'}`;
+          break;
+        }
       }
-      A.closeGalleryDialog();
+      copy.stopped = copyViewer();
+      // A row of small pictures in the viewer: each one shows its picture large.
+      if (!walked && large < want && A.galleryDialog()) {
+        const count = A.viewerStrip(A.galleryDialog()).length;
+        for (let k = 0; k < count && picked.length < 10; k++) {
+          checkCancelled();
+          const dialog = A.galleryDialog();
+          const small = dialog && A.viewerStrip(dialog)[k];
+          if (!small) break;
+          (small.closest('button, [role="button"], a') || small).click();
+          const img = await viewerPicture(previous, 2500);
+          if (!img) break;
+          previous = img.currentSrc || img.src;
+          if (add(img)) {
+            large++;
+            how.add('small pictures');
+          }
+        }
+        if (large >= want) walked = true;
+      }
+      await closeViewer();
+      // Owner report (ChatGPT showed about 6 photos, the article got 2): a viewer without “Next”, or one whose picture
+      // stopped changing, gave fewer large pictures than the gallery has; then each picture is opened by itself, as a
+      // person would.
+      if (!walked && large < openable) {
+        // Never a picture that links to another site (it would open a new tab).
+        const opensSite = (img) => {
+          const a = img.closest('a[href]');
+          return Boolean(a && new URL(a.href, location.href).origin !== location.origin);
+        };
+        let last = null;
+        let misses = 0;
+        for (let k = 0; k < openable && picked.length < 10; k++) {
+          checkCancelled();
+          const tile = A.galleryThumbs(await turn()).filter((img) => !A.brokenPicture(img))[k];
+          if (!tile) break;
+          if (opensSite(tile)) continue;
+          progress(`opening gallery picture ${k + 1} of ${openable}`);
+          tile.click();
+          if (!(await openedViewer(3000))) {
+            if (++misses >= 2) break;
+            continue;
+          }
+          const img = await viewerPicture(last);
+          if (img) {
+            last = img.currentSrc || img.src;
+            if (add(img)) {
+              large++;
+              how.add('each tile');
+            }
+          }
+          await closeViewer();
+        }
+      }
     } catch (e) {
       /* the thumbnails are enough */
+      if (A.galleryDialog()) A.closeGalleryDialog();
     }
     thumbs.forEach(add);
     const images = [];
@@ -377,7 +556,17 @@
       if (up && up.ok) images.push({ mediaAssetId: up.mediaAssetId });
       else if (/^https?:/i.test(p.src)) imageLinks.push({ url: p.src.slice(0, 1900), width: p.width, height: p.height });
     }
-    return { images, imageLinks: imageLinks.slice(0, 20), note: null };
+    const report = `${thumbs.length} picture(s) in the gallery (${thumbs.length - openable} not shown by the page), ${large} opened large, ${images.length} saved, ${imageLinks.length} reported as link(s)${said ? `; the gallery says ${said}` : ''}${counted ? `; the viewer counts ${counted}` : ''}; viewer stepped by: ${how.size ? [...how].join(', ') : 'nothing (one picture)'}.`;
+    // Fewer large pictures than the gallery or its viewer says it has: send the structure copy along.
+    let structure;
+    if (O && large < Math.min(want, 10)) {
+      const data = { kind: 'chatgpt-gallery', extension: EXTENSION_VERSION, at: new Date().toISOString(), viewport: `${innerWidth}x${innerHeight}`, report, tiles: thumbs.length, said, counted, want, large, stop: copy.stop, gallery: copy.gallery, opened: copy.opened, stopped: copy.stopped };
+      structure = JSON.stringify(data);
+      // Keep it small enough for the app: the layers over the page go first.
+      if (structure.length > 300000) structure = JSON.stringify(Object.assign(data, { opened: data.opened && Object.assign({}, data.opened, { layers: null }), stopped: data.stopped && Object.assign({}, data.stopped, { layers: null }) }));
+      if (structure.length > 300000) structure = undefined;
+    }
+    return { images, imageLinks: imageLinks.slice(0, 20), note: null, report, structure };
   }
 
   /** Poll (bounded) for a prompt the app recorded as sent; null if it never shows up. */
@@ -398,8 +587,20 @@
     return url && /^https:\/\/chatgpt\.com\/c\/[0-9a-f-]{20,}$/i.test(url) ? url : null;
   }
 
+  /** Reload the page for this job once (the background runs the job again when the page is back). False if done before. */
+  async function reloadOnce(job, why) {
+    const key = `bas-fresh-page:${job.id}`;
+    if (sessionStorage.getItem(key)) return false;
+    sessionStorage.setItem(key, new Date().toISOString());
+    progress(`the ChatGPT page stopped working (${why.slice(0, 120)}); reloading it once`);
+    await chrome.runtime.sendMessage({ type: 'checkpoint', jobId: job.id, operationId: job.operationId, step: 'reloading' }).catch(() => {});
+    location.reload();
+    return true;
+  }
+
   async function runJob(job, config, port) {
     current = { job, port, cancelled: false, step: 'start', startedAt: Date.now(), pausedMs: 0 };
+    let typed = false;
     try {
       progress('checking the ChatGPT page');
       await waitForReady(config);
@@ -431,7 +632,7 @@
         const answer = await waitForAnswer({ job, priorKeys: null, fallbackIndex: existing.index }, config, job.expectImages);
         const gallery = job.expectGallery ? await collectGallery(job, existing.element, config) : null;
         const images = gallery ? gallery.images : job.expectImages ? await uploadImages(job, answer.images) : [];
-        post('complete', { text: answer.text, html: answer.html, images, imageLinks: gallery ? gallery.imageLinks : undefined, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
+        post('complete', { text: answer.text, html: answer.html, images, imageLinks: gallery ? gallery.imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, pageCopy: gallery ? gallery.structure : undefined, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
         return;
       }
       if (evidence) {
@@ -440,6 +641,7 @@
       }
 
       progress('typing the prompt');
+      typed = true;
       await typeAndVerify(job.prompt);
       await attachFiles(job, config);
       checkCancelled();
@@ -460,11 +662,21 @@
       const images = gallery ? gallery.images : job.expectImages && answer.images.length ? await uploadImages(job, answer.images) : [];
       const imageLinks = gallery ? gallery.imageLinks : [];
       if (!answer.text && !images.length && !imageLinks.length) throw new JobError('ERROR', 'The answer was empty.');
-      post('complete', { text: answer.text || (gallery && gallery.note) || '', html: answer.html, images, imageLinks: gallery ? imageLinks : undefined, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
+      post('complete', { text: answer.text || (gallery && gallery.note) || '', html: answer.html, images, imageLinks: gallery ? imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, pageCopy: gallery ? gallery.structure : undefined, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
     } catch (error) {
       const code = error instanceof JobError ? error.code : 'ERROR';
       const extra = error instanceof JobError ? error.extra : {};
-      post('fail', { code, message: String(error && error.message ? error.message : error), retryAfterSec: extra.retryAfterSec ?? null, uncertain: Boolean(extra.uncertain), snapshot: A.snapshot({ step: current && current.step, error: String(error && error.message) }) });
+      let message = String(error && error.message ? error.message : error);
+      if (extra.pageStuck) {
+        // Owner report (FINAL_ARTICLE after LONG_ARTICLE): the page stopped working — no composer, or no Send button —
+        // and every retry ran on the same stuck page. Nothing was sent (these errors all come before Send): reload the
+        // page once, as a person would, and run the job again there; the prompt is typed afresh.
+        const composer = typed ? A.findComposer() : null;
+        if (composer) A.clearComposer(composer);
+        if (await reloadOnce(job, message)) return;
+        message = `${message} The ChatGPT page was reloaded once and it still did not work.`;
+      }
+      post('fail', { code, message, retryAfterSec: extra.retryAfterSec ?? null, uncertain: Boolean(extra.uncertain), freshPage: Boolean(extra.pageStuck), snapshot: A.snapshot({ step: current && current.step, error: message }) });
     } finally {
       current = null;
     }

@@ -12,6 +12,7 @@ import { evaluateArticleEvidence } from '@/lib/research/ledger';
 import { baseVariables } from '@/lib/prompts/variables';
 import { recordMetric } from '@/lib/metrics';
 import { isNearDuplicate } from '@/lib/campaigns/dedupe';
+import { deletedPostKeys } from '@/lib/tasks/deleted-posts';
 import { STOPWORDS } from '@/lib/plagiarism/text';
 import type { TemplateVars } from '@/lib/prompts/template';
 import type { StageManifest } from '@/modules/types';
@@ -83,7 +84,9 @@ export function duplicatePrecheck(manifest: StageManifest): PipelineStage {
       const near = siteTasks.filter((o) => isNearDuplicate(o.keyword, ctx.task.keyword));
       // Posts already published on this website whose title covers every content word of the keyword.
       const words = contentWords(ctx.task.keyword);
-      const published = words.length >= 2 ? (await db.linkTarget.findMany({ where: { websiteId: ctx.task.websiteId, status: 'ACTIVE' }, select: { wpPostId: true, title: true, url: true }, take: 5000 })).filter((p) => { const tw = new Set(contentWords(p.title)); return words.every((w) => tw.has(w)); }) : [];
+      // Posts of articles you deleted here do not count (owner request: a deleted article can be written again).
+      const deleted = await deletedPostKeys();
+      const published = words.length >= 2 ? (await db.linkTarget.findMany({ where: { websiteId: ctx.task.websiteId, status: 'ACTIVE' }, select: { wpPostId: true, title: true, url: true }, take: 5000 })).filter((p) => { const tw = new Set(contentWords(p.title)); return !deleted.has(`${ctx.task.websiteId}:${p.wpPostId}`) && words.every((w) => tw.has(w)); }) : [];
       const options = parseJson<Record<string, unknown>>(ctx.task.options, {});
       if ((sameSite.length || near.length) && options.allowDuplicate !== true) {
         const hits = [...sameSite.map((s) => ({ id: s.id, keyword: ctx.task.keyword, status: s.status })), ...near];
@@ -131,6 +134,7 @@ export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
   const settings = await getSettings();
   return assembleArticle({
     boldLinks: settings.content.boldLinks,
+    title: ctx.task.selectedTitle ?? ctx.task.seoTitle,
     bodyHtml,
     language: ctx.task.language,
     moduleKey: ctx.task.moduleKey,
@@ -295,6 +299,14 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
         images: { count: seo.metrics.images, withAlt: seo.metrics.imagesWithAlt, required: ctx.config.images && ctx.config.imagesRequired },
       };
       await saveQualityReport(t.id, 'QUALITY_GATE', { hardStops: result.hardStops, warnings: result.warnings, sections, overridden: override });
+      // Review system off (owner decision, default): a hard stop does not hold the article. The draft is saved with
+      // the problems as notes, and a workflow never publishes it automatically (see the workflow scheduler).
+      if (!result.passed && !override && !ctx.config.holdForReview) {
+        const blocked = result.hardStops.map((h) => h.message);
+        await ctx.updateTask({ options: JSON.stringify({ ...options, publishBlocked: blocked }) });
+        return { outcome: 'completed', data: { ...result, override, publishBlocked: blocked, duplicates: sections.duplicates }, message: `${blocked.length} serious problem(s) noted — saved as a draft only, never published automatically` };
+      }
+      if (options.publishBlocked) await ctx.updateTask({ options: JSON.stringify({ ...options, publishBlocked: undefined }) });
       if (!result.passed && !override) {
         throw new NeedsReviewError(
           `Quality gate stopped before WordPress: ${result.hardStops.map((h) => h.message).join(' ')}`,
@@ -302,7 +314,7 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
           'Fix the listed items (edit, or regenerate the named stage), then Retry. Or use “Approve despite review reasons”.',
         );
       }
-      return { outcome: 'completed', data: { ...result, override, duplicates: sections.duplicates }, message: result.passed ? (result.warnings.length ? `${result.warnings.length} warning(s) — draft will be flagged for review` : 'All quality checks passed') : 'Hard stops overridden by the owner' };
+      return { outcome: 'completed', data: { ...result, override, duplicates: sections.duplicates }, message: result.passed ? (result.warnings.length ? (ctx.config.holdForReview ? `${result.warnings.length} warning(s) — draft will be flagged for review` : `${result.warnings.length} note(s) for the article page`) : 'All quality checks passed') : 'Hard stops overridden by the owner' };
     },
   });
 }
@@ -343,7 +355,7 @@ export async function finalizeTask(ctx: PipelineContext): Promise<void> {
       reasons.push(wpStage?.message ?? 'No verified WordPress draft.');
       nextAction = t.wpPostId ? `Open draft #${t.wpPostId} to check it, then Retry the WordPress steps.` : 'Log in to the website if needed, then Retry to create the WordPress draft.';
     }
-  } else if (reasons.length && options.qualityOverride !== true) {
+  } else if (reasons.length && options.qualityOverride !== true && ctx.config.holdForReview) {
     status = 'NEEDS_REVIEW';
     message = `WordPress draft #${t.wpPostId} saved; ${reasons.length} review reason(s) remain.`;
     nextAction = reasons.every((r) => /^Rank Math is not active/.test(r))
@@ -351,7 +363,9 @@ export async function finalizeTask(ctx: PipelineContext): Promise<void> {
       : 'Review the reasons and the draft. Use “Approve despite review reasons” if acceptable.';
   } else {
     status = 'COMPLETED';
-    message = `Verified WordPress draft #${t.wpPostId}.`;
+    // Without “Hold articles for review” the reasons are notes on the article page (owner decision).
+    const blocked = Array.isArray(options.publishBlocked) && options.publishBlocked.length > 0;
+    message = `Verified WordPress draft #${t.wpPostId}.${reasons.length && options.qualityOverride !== true ? ` ${reasons.length} note(s) on the article page.` : ''}${blocked ? ' Not published automatically: a serious problem is noted.' : ''}`;
   }
   const now = new Date();
   await db.articleTask.update({

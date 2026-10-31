@@ -12,6 +12,8 @@ import { chromeAutostartTick } from './chrome-autostart';
 import { indexingTick, syncDue, syncWebsite } from '@/lib/gsc/sync';
 import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
+import { notifyTick } from '@/lib/notify/events';
+import { autoLoginTick } from '@/wordpress/auto-login-loop';
 
 let dispatcher: ArticleDispatcher | null = null;
 
@@ -31,7 +33,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'workflow-scheduler', intervalMs: 60_000, run: async () => void (await schedulerTick()) });
   // Content refresh: one read-only evaluation per website and day (enqueues only).
   registerLoop({ name: 'refresh-scheduler', intervalMs: 3600_000, run: async () => void (await scheduleDailyEvaluations()) });
-  // Search Console (when connected): live data every 2 h, one website per tick; sitemap resubmit and index proof.
+  // Search Console: “Request indexing” queued for Automation Chrome after a publish; with the key, live data every 2 h
+  // (one website per tick) and Google's index proof.
   registerLoop({
     name: 'search-console',
     intervalMs: 30_000,
@@ -46,6 +49,10 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });
   registerLoop({ name: 'orphan-healer', intervalMs: 60_000, run: async () => void (await healOrphanedTasks()) });
   registerLoop({ name: 'retention', intervalMs: 6 * 3600_000, run: async () => void (await pruneDiagnostics()) });
+  // Windows notifications: an article to review, ChatGPT signed out, a campaign finished (Settings → Notifications).
+  registerLoop({ name: 'windows-notifications', intervalMs: 15_000, run: async () => void (await notifyTick()) });
+  // A WordPress session that ended: sign in again with the saved sign-in (owner request), so paused articles go on.
+  registerLoop({ name: 'wordpress-auto-login', intervalMs: 5 * 60_000, run: async () => void (await autoLoginTick()) });
 }
 
 /** Let in-flight article work reach a safe point before exit. */

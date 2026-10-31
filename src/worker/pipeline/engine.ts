@@ -254,6 +254,9 @@ export async function markCancelled(taskId: string) {
   await db.articleTask.update({ where: { id: taskId }, data: { status: 'CANCELLED', message: 'Cancelled by the owner. Completed content is preserved.', pausedFor: null } });
   await db.queueJob.updateMany({ where: { taskId, status: 'WAITING' }, data: { status: 'CANCELLED', finishedAt: new Date(), errorCode: 'CANCELLED' } });
   await log({ category: 'task', taskId, message: 'Task cancelled; completed stage outputs were kept.' });
+  // Deleted by the owner while it was running: removed now that it stopped.
+  const { deleteIfRequested } = await import('@/lib/tasks/delete');
+  await deleteIfRequested(taskId);
 }
 
 async function handleError(
@@ -286,7 +289,7 @@ async function handleError(
       'LOGIN_REQUIRED',
       error.scope === 'wordpress' ? 'wordpress-login' : 'chatgpt-login',
       error.message,
-      error.scope === 'wordpress' ? 'Open Websites → this site → Log in, sign in manually, then the task resumes.' : 'Sign in to ChatGPT in the Automation Chrome window; the task resumes automatically.',
+      error.scope === 'wordpress' ? 'Open Websites → this site → Session tab: save the WordPress sign-in (the app logs in by itself) or Log in yourself; the task then resumes.' : 'Sign in to ChatGPT in the Automation Chrome window; the task resumes automatically.',
     );
     return 'paused';
   }

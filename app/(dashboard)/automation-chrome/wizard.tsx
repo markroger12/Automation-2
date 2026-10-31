@@ -5,6 +5,7 @@ import { CircleCheck, CircleDashed, Pause, Play, Rocket, Send } from 'lucide-rea
 import { api } from '@/lib/client/api';
 import { Button, CopyButton, RelativeTime, useToast } from '@/components/client';
 import { ExtensionPairing } from '@/components/extension-pairing';
+import { IndexingPanel } from '@/components/indexing-panel';
 import { Alert, Card, Chip, cx } from '@/components/ui';
 import { Textarea } from '@/components/form';
 
@@ -115,7 +116,7 @@ export function AutomationChromeWizard() {
   const allOk = Object.values(s.steps).every((x) => x.ok);
 
   return (
-    <div className="grid gap-6 xl:grid-cols-3">
+    <div className="grid items-start gap-6 xl:grid-cols-3">
       <Card title="Setup — five checked steps" className="xl:col-span-2" description="Status refreshes every 3 seconds from real signals (installed browser, profile lock, extension heartbeats).">
         <ol>
           <StepRow n={1} title="Google Chrome installed" step={s.steps.chromeInstalled}>
@@ -211,6 +212,9 @@ export function AutomationChromeWizard() {
             </p>
           ) : null}
         </Card>
+
+        {/* Google (Search Console) sign-in, for “Request indexing” after a publish (owner request). */}
+        <IndexingPanel />
       </div>
     </div>
   );

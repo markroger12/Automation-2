@@ -4,7 +4,8 @@ import type { ModuleManifest } from '../types';
  * Celebrity Article Writer — the original Celebrity Writer 1.0 pipeline
  * (internal key "celebrity-writer" preserved) with the 3.0 checkpoints.
  * Six original writing prompts in order: TITLES, RESEARCH, LONG_ARTICLE,
- * FINAL_ARTICLE, FAQS, QUICK_BIO — never replaced by one composite prompt.
+ * FINAL_ARTICLE, FAQS, QUICK_BIO — never replaced by one composite prompt. A CATEGORY prompt follows only for an
+ * article nobody chose a category for (the workflow's).
  */
 export const celebrityManifest: ModuleManifest = {
   key: 'celebrity-writer',
@@ -33,6 +34,7 @@ export const celebrityManifest: ModuleManifest = {
     { key: 'FINAL_ARTICLE', label: 'Final article', kind: 'chatgpt', runningStatus: 'OPTIMIZING', progress: 40, dependsOn: ['LONG_ARTICLE'], prompt: { moduleKey: 'celebrity-writer', stageKey: 'FINAL_ARTICLE' }, checkpoint: 'EXISTING_WRITER_STAGES', regenerable: true, description: 'Polished article within the configured maximum (default 1,300 words).' },
     { key: 'FAQS', label: 'FAQs', kind: 'chatgpt', runningStatus: 'GENERATING_FAQS', progress: 50, dependsOn: ['FINAL_ARTICLE'], prompt: { moduleKey: 'celebrity-writer', stageKey: 'FAQS' }, checkpoint: 'EXISTING_WRITER_STAGES', regenerable: true, description: 'Exactly the configured number of QUESTION/ANSWER pairs.' },
     { key: 'QUICK_BIO', label: 'Quick Bio', kind: 'chatgpt', runningStatus: 'GENERATING_BIO_TABLE', progress: 56, dependsOn: ['RESEARCH'], prompt: { moduleKey: 'celebrity-writer', stageKey: 'QUICK_BIO' }, checkpoint: 'EXISTING_WRITER_STAGES', regenerable: true, description: 'Two-column Attribute | Details HTML table (~11–13 rows).' },
+    { key: 'CATEGORY', label: 'Category', kind: 'chatgpt', runningStatus: 'OPTIMIZING', progress: 59, dependsOn: ['TITLE_APPROVAL'], prompt: { moduleKey: 'celebrity-writer', stageKey: 'CATEGORY' }, regenerable: true, description: 'Exactly one existing synchronized category, when you did not choose one (workflow articles).' },
     { key: 'EXTERNAL_LINKS', label: 'External links', kind: 'chatgpt', runningStatus: 'LINKING', progress: 62, dependsOn: ['FINAL_ARTICLE'], prompt: { moduleKey: 'shared', stageKey: 'EXTERNAL_LINKS' }, regenerable: true, description: 'Candidate links, each verified (reachable, on-topic, SSRF-safe) before insertion.' },
     { key: 'INTERNAL_LINKS', label: 'Internal links', kind: 'local', runningStatus: 'LINKING', progress: 66, dependsOn: ['FINAL_ARTICLE'], checkpoint: 'INTERNAL_LINKS', regenerable: true, description: 'Relevant existing posts of the same site and the final “Also read” line.' },
     { key: 'IMAGES', label: 'Images', kind: 'local', runningStatus: 'PROCESSING_IMAGES', progress: 70, dependsOn: ['TITLE_APPROVAL'], checkpoint: 'IMAGE_STUDIO', regenerable: true, description: 'Optional featured + two body images; degrades safely when unavailable.' },

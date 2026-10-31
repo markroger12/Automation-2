@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { setupTestDb } from '../helpers/test-db';
 import { formatSlot, parseSlot, upcomingSlots, zonedTimeToUtc } from '@/lib/workflow/time';
-import { inspectionProperty, inspectionUrl, normalizeSearchConsoleProperty } from '@/lib/workflow/search-console';
+import { inspectionProperty, normalizeSearchConsoleProperty, searchConsoleHome } from '@/lib/workflow/search-console';
 
 describe('slot time math', () => {
   it('parses h:mm AM/PM and converts wall times to UTC, DST-safe', () => {
@@ -31,14 +31,15 @@ describe('slot time math', () => {
 });
 
 describe('Search Console property', () => {
-  it('accepts URL-prefix and domain properties, builds the inspection link, and falls back to the website URL', () => {
+  it('accepts URL-prefix and domain properties, links the property’s Search Console page, and falls back to the website URL', () => {
     expect(normalizeSearchConsoleProperty('https://Tech.example/blog')).toBe('https://tech.example/blog/');
     expect(normalizeSearchConsoleProperty(' sc-domain:Tech.Example ')).toBe('sc-domain:tech.example');
     for (const bad of ['ftp://tech.example/', 'sc-domain:', 'sc-domain:not a host', 'https://u:p@tech.example/', 'https://tech.example/?q=1', 'tech.example']) expect(normalizeSearchConsoleProperty(bad), bad).toBeNull();
     expect(normalizeSearchConsoleProperty('')).toBeNull();
     expect(inspectionProperty(null, 'https://tech.example')).toBe('https://tech.example/');
     expect(inspectionProperty('sc-domain:tech.example', 'https://tech.example')).toBe('sc-domain:tech.example');
-    expect(inspectionUrl('sc-domain:tech.example', 'https://tech.example/a-post/')).toBe('https://search.google.com/search-console/inspect?resource_id=sc-domain%3Atech.example&id=https%3A%2F%2Ftech.example%2Fa-post%2F');
+    // Owner report: an inspection link with the post's URL as `id` answers 404, so the property's page is opened.
+    expect(searchConsoleHome('sc-domain:tech.example')).toBe('https://search.google.com/search-console?resource_id=sc-domain%3Atech.example');
   });
 });
 
@@ -167,10 +168,12 @@ describe('publishing scheduler', () => {
     expect((await kw('How to Install WordPress')).indexingStatus).toMatch(/not evidence of indexing/);
     await wf.keywordAction(siteId, { keywordIds: [a.id], action: 'indexed' });
     expect((await kw('How to Install WordPress')).status).toBe('INDEXED');
-    // The calendar shows reserved and free slots.
+    // The calendar shows reserved and free slots. Free slots are counted from the real clock (a past slot is never
+    // free), so they are looked for in the coming days, not in the test's fixed October window.
     const cal = await wf.calendar('2026-10-20T00:00:00Z', 3);
     expect(cal.entries.some((e) => e.status === 'WRITING' && e.keyword === 'jaguar')).toBe(true);
-    expect(cal.entries.some((e) => e.status === 'FREE')).toBe(true);
+    const coming = await wf.calendar(new Date().toISOString(), 3);
+    expect(coming.entries.some((e) => e.status === 'FREE')).toBe(true);
   });
 
   it('draft-only website: once its slot passes, a verified draft is kept for the owner and leaves the backlog', async () => {

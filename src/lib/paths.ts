@@ -22,9 +22,14 @@ export const dataPaths = {
   chatgptChromeAuto: () => path.join(dataDir(), 'chatgpt-chrome-auto.json'),
   /** Google Search Console service-account key (a credential, like the browser profiles). */
   gscKey: () => path.join(dataDir(), 'credentials', 'gsc-service-account.json'),
+  /** WordPress sign-ins the owner chose to save (encrypted; src/lib/wp-credentials.ts) and their key. */
+  wpCredentials: () => path.join(dataDir(), 'credentials', 'wordpress-logins.json'),
+  wpCredentialsKey: () => path.join(dataDir(), 'credentials', 'wordpress-logins.key'),
   media: () => path.join(dataDir(), 'media'),
   screenshots: () => path.join(dataDir(), 'screenshots'),
   logs: () => path.join(dataDir(), 'logs'),
+  /** Structure copies of ChatGPT's gallery / Search Console's dialog when they went wrong (for the developer). */
+  pageCopies: () => path.join(dataDir(), 'page-copies'),
   backups: () => path.join(dataDir(), 'backups'),
   tools: () => path.join(dataDir(), 'tools'),
   workerLock: () => path.join(dataDir(), 'worker.lock'),

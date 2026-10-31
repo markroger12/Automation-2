@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useRef, useState } from 'react';
-import { ImagePlus, LayoutTemplate, RefreshCcw, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CheckCircle2, CircleDashed, ImagePlus, LayoutTemplate, RefreshCcw, Trash2 } from 'lucide-react';
 import { api, upload } from '@/lib/client/api';
+import { MAX_PHOTOS_AT_ONCE, PHOTO_TYPES, pickPhotos } from '@/lib/client/image-input';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
-import { Alert, Card, Chip, EmptyState, StatusChip, buttonClasses } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, StatusChip, buttonClasses, cx } from '@/components/ui';
 
 interface ImagesData {
   slots: { slot: 'FEATURED' | 'BODY1' | 'BODY2'; mediaAssetId: string; alt: string; sourceAssetIds: string[]; width: number; height: number; bytes: number }[];
@@ -36,22 +37,80 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
   const ran = stage?.status === 'COMPLETED' || stage?.status === 'FAILED' || stage?.status === 'SKIPPED';
   const applyHint = ran ? 'Regenerate images to use them.' : 'They are used when the Images step runs.';
 
-  async function onFiles(files: FileList | null) {
-    if (!files?.length) return;
-    const form = new FormData();
-    for (const f of Array.from(files)) form.append('files', f);
-    setUploading(true);
-    try {
-      const res = await upload<{ added: string[]; skipped: string[] }>(`/api/tasks/${task.id}/images`, form);
-      toast(res.skipped.length ? 'info' : 'success', `${res.added.length} photo(s) added.${res.skipped.length ? ` Skipped: ${res.skipped.join('; ')}` : ''} ${applyHint}`);
-      await onChanged();
-    } catch (e) {
-      toast('error', (e as Error).message);
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = '';
+  // Owner request: besides the button, photos dropped anywhere on this tab or pasted with Ctrl+V are added too.
+  const [dragging, setDragging] = useState(false);
+  // One upload after another, so photos keep the order they were added in (it is their order in the article).
+  const queue = useRef<Promise<void>>(Promise.resolve());
+
+  function onFiles(list: File[], how: 'chosen' | 'dropped' | 'pasted') {
+    const { photos, skipped } = pickPhotos(list, how);
+    if (fileRef.current) fileRef.current.value = '';
+    if (!photos.length) {
+      if (skipped.length) toast('error', `No photo added. Skipped: ${skipped.join('; ')}`);
+      return;
     }
+    queue.current = queue.current.then(async () => {
+      const form = new FormData();
+      for (const f of photos) form.append('files', f);
+      setUploading(true);
+      try {
+        const res = await upload<{ added: string[]; skipped: string[] }>(`/api/tasks/${task.id}/images`, form);
+        const all = [...skipped, ...res.skipped];
+        toast(all.length ? 'info' : 'success', `${res.added.length} photo(s) ${how === 'pasted' ? 'pasted' : how === 'dropped' ? 'dropped in' : 'added'}.${all.length ? ` Skipped: ${all.join('; ')}` : ''} ${applyHint}`);
+        await onChanged();
+      } catch (e) {
+        toast('error', (e as Error).message);
+      } finally {
+        setUploading(false);
+      }
+    });
   }
+  const onFilesRef = useRef(onFiles);
+  onFilesRef.current = onFiles;
+
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => Boolean(e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files'));
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      // Without this the browser would open a photo dropped beside the box instead of adding it.
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      setDragging(true);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!e.relatedTarget) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      setDragging(false);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length) {
+        e.preventDefault();
+        onFilesRef.current(files, 'dropped');
+      } else if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('text/uri-list')) {
+        // A picture dragged from another web page arrives as a link only.
+        e.preventDefault();
+        toast('info', 'That was a link to a picture, not the picture itself. Right-click the picture → Copy image, then press Ctrl+V here (or save it and drop the file).');
+      }
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target;
+      if (t instanceof HTMLElement && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (!files.length) return;
+      e.preventDefault();
+      onFilesRef.current(files, 'pasted');
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, [toast]);
 
   async function remove(id: string) {
     try {
@@ -105,12 +164,30 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
             </Alert>
           </div>
         ) : null}
-        {data?.notes.length ? (
-          <ul className="text-muted mt-3 list-disc space-y-0.5 pl-5 text-sm">
-            {data.notes.map((n, i) => (
-              <li key={i}>{n}</li>
-            ))}
+        {data && !imagesOff ? (
+          // Owner request (a cleaner page): which of the three images is there, at a glance.
+          <ul className="mt-3 grid gap-2 sm:grid-cols-3" aria-label="Images">
+            {(['FEATURED', 'BODY1', 'BODY2'] as const).map((slot) => {
+              const ready = data.slots.find((x) => x.slot === slot);
+              return (
+                <li key={slot} className={cx('flex items-center gap-2 rounded-lg border px-3 py-2 text-sm', ready ? 'border-app' : 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30')}>
+                  {ready ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden /> : <CircleDashed className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden />}
+                  <span className="font-medium">{SLOT_LABEL[slot]}</span>
+                  <span className={cx('ml-auto text-xs', ready ? 'text-muted' : 'text-amber-800 dark:text-amber-300')}>{ready ? `${ready.width}×${ready.height}` : 'missing'}</span>
+                </li>
+              );
+            })}
           </ul>
+        ) : null}
+        {data?.notes.length ? (
+          <details className="mt-3 text-sm">
+            <summary className="text-muted cursor-pointer hover:text-[var(--text)]">How the images were made ({data.notes.length} steps)</summary>
+            <ul className="text-muted mt-2 list-disc space-y-0.5 pl-5">
+              {data.notes.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
+          </details>
         ) : null}
       </Card>
 
@@ -139,18 +216,33 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
         description="Uploaded photos are used before any searched or generated image (in upload order: featured, body 1, body 2). Max 12 MB each."
         actions={
           <>
-            <input ref={fileRef} type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(e) => void onFiles(e.target.files)} />
+            <input ref={fileRef} type="file" multiple accept={PHOTO_TYPES.join(',')} className="hidden" onChange={(e) => onFiles(Array.from(e.target.files ?? []), 'chosen')} />
             <Button size="sm" onClick={() => fileRef.current?.click()} loading={uploading}>
               <ImagePlus className="h-4 w-4" /> Upload photos
             </Button>
           </>
         }
       >
-        {uploads.length ? (
-          <PhotoGrid items={uploads.map((u) => ({ id: u.id, title: u.notes ?? 'Upload', sub: `${u.width}×${u.height}`, used: usedIds.has(u.id), sourceUrl: null }))} onRemove={remove} />
-        ) : (
-          <p className="text-muted text-sm">No uploads. Upload photos when the automatic search finds nothing usable, or to choose the exact photos yourself.</p>
-        )}
+        <div className="space-y-3">
+          {uploads.length ? <PhotoGrid items={uploads.map((u) => ({ id: u.id, title: u.notes ?? 'Upload', sub: `${u.width}×${u.height}`, used: usedIds.has(u.id), sourceUrl: null }))} onRemove={remove} /> : null}
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            aria-label="Add photos: choose files, drop them here, or paste with Ctrl+V"
+            className={cx(
+              'flex w-full flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-4 text-center text-sm transition',
+              uploads.length ? 'py-5' : 'py-9',
+              dragging ? 'border-[var(--text)] bg-[var(--surface-2)]' : 'border-app hover:bg-[var(--surface-2)]',
+            )}
+          >
+            <ImagePlus className="text-muted h-6 w-6" aria-hidden />
+            <span className="font-medium">{dragging ? 'Drop to add the photos' : 'Drop photos here, or paste one with Ctrl+V'}</span>
+            <span className="text-muted text-xs">
+              or click to choose files · PNG, JPEG, WebP or GIF · up to 12 MB each, {MAX_PHOTOS_AT_ONCE} at a time
+              {uploads.length ? '' : ' · use this when the automatic search finds nothing usable, or to choose the exact photos yourself'}
+            </span>
+          </button>
+        </div>
       </Card>
 
       {gallery.length ? (

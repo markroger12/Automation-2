@@ -100,7 +100,7 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
     warnings.push({ tone: 'info', title: 'No WordPress website yet', detail: 'Add a website and log in once to create drafts.', href: '/websites', action: 'Add website' });
   }
   for (const site of loginSites) {
-    warnings.push({ tone: 'warning', title: `WordPress login required: ${site.name}`, detail: 'Log in once in the visible browser window; paused tasks resume automatically.', href: `/websites/${site.id}`, action: 'Log in' });
+    warnings.push({ tone: 'warning', title: `WordPress login required: ${site.name}`, detail: 'Log in on the website page (with a saved sign-in the app does it by itself); paused tasks resume automatically.', href: `/websites/${site.id}`, action: 'Log in' });
   }
   if (loginTasks > 0 && loginSites.length === 0) {
     warnings.push({ tone: 'warning', title: `${loginTasks} task(s) waiting for a login`, detail: 'ChatGPT or WordPress asked for sign-in or a human check.', href: '/queue?group=paused', action: 'Open queue' });

@@ -71,9 +71,12 @@ interface Connection {
   email?: string;
   project?: string | null;
   properties?: { siteUrl: string; permissionLevel: string }[];
+  /** With a website: the property in use (detected from the list when the configured one is not shared). */
+  property?: string | null;
+  detectedFrom?: string | null;
 }
 
-/** Live Search Console data through the owner's service account (Google's official API; read data, resubmit sitemaps). */
+/** Live Search Console data through the owner's service account (Google's official API; read-only data and URL Inspection proof). */
 function LiveConnection({ websiteId, property, liveSync, onSynced }: { websiteId: string; property: string; liveSync: Data['liveSync']; onSynced: () => Promise<void> }) {
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -106,10 +109,18 @@ function LiveConnection({ websiteId, property, liveSync, onSynced }: { websiteId
     });
   const test = () =>
     run('test', async () => {
-      const r = await api<Connection>('/api/search-console?test=1');
+      const r = await api<Connection>(`/api/search-console?test=1&websiteId=${encodeURIComponent(websiteId)}`);
       setConn(r);
-      const match = r.properties?.find((p) => p.siteUrl === property);
-      toast(match ? 'success' : 'error', match ? `Connected: ${property} (${match.permissionLevel.replace('SITE_', '').toLowerCase().replace('_', ' ')}).` : `${r.email} cannot see ${property}. Add it in Search Console → Settings → Users and permissions (Full).`);
+      const used = r.property ?? property;
+      const match = r.properties?.find((p) => p.siteUrl === used);
+      const seen = r.properties?.length ? ` It can use: ${r.properties.map((p) => p.siteUrl).join(', ')}.` : '';
+      toast(
+        match ? 'success' : 'error',
+        match
+          ? `Connected: ${used} (${match.permissionLevel.replace('SITE_', '').toLowerCase().replace('_', ' ')})${r.detectedFrom !== undefined && r.detectedFrom !== null && r.detectedFrom !== used ? ` — detected instead of ${r.detectedFrom}` : ''}.`
+          : `${r.email} cannot see ${used}.${seen} Add it in Search Console → Settings → Users and permissions (Full).`,
+      );
+      if (used !== property) await onSynced();
     });
   const sync = () =>
     run('sync', async () => {
@@ -319,7 +330,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
       {data?.state === 'NOT_CONNECTED' ? (
         <Alert tone="warning" title="NOT CONNECTED">
           {data.site.name} has no Search Console property. Add it on the{' '}
-          <Link className="underline" href={`/websites/${data.site.id}`}>
+          <Link className="underline" href={`/websites/${data.site.id}?tab=settings`}>
             website page
           </Link>{' '}
           (Settings → Search Console property, e.g. “sc-domain:example.com”). This page then accepts reports you export from Search Console; nothing is shown before that.
@@ -409,7 +420,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
               title={`Declining pages (${data.declining?.length ?? 0})`}
               description={`At least 10 clicks before and at most 70 % of them now.${data.pagesReport && !data.pagesReport.compare ? ' Needs a Compare export, or an earlier report of the same length.' : ''}`}
               actions={
-                <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('declining')}>
+                <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('declining')}>
                   <Download className="h-3.5 w-3.5" /> CSV
                 </a>
               }
@@ -440,7 +451,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
               title={`Published articles without impressions (${data.zero?.length ?? 0})`}
               description={`App articles published at least 14 days before the report ended.${data.pagesReport?.capped ? ' The page report lists 1,000 pages, the export limit: articles missing from it are not counted.' : ''}`}
               actions={
-                <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('zero')}>
+                <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('zero')}>
                   <Download className="h-3.5 w-3.5" /> CSV
                 </a>
               }
@@ -466,7 +477,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
             title={`Pages${data.pagesReport ? ` · ${data.pagesReport.start} – ${data.pagesReport.end}` : ''}`}
             padded={false}
             actions={
-              <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('pages')}>
+              <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('pages')}>
                 <Download className="h-3.5 w-3.5" /> CSV
               </a>
             }
@@ -513,7 +524,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
             title={`Queries${data.queriesReport ? ` · ${data.queriesReport.start} – ${data.queriesReport.end}` : ''}`}
             padded={false}
             actions={
-              <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={exportUrl('queries')}>
+              <a className="inline-flex items-center gap-1 text-sm link" href={exportUrl('queries')}>
                 <Download className="h-3.5 w-3.5" /> CSV
               </a>
             }

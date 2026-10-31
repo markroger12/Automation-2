@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Unlink, Wand2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
@@ -34,6 +34,26 @@ function stageData<T>(task: SerializedTaskDetail, key: string): { status: string
 }
 
 const short = (url: string) => url.replace(/^https?:\/\//, '').slice(0, 70);
+const KIND_LABEL: Record<string, string> = { official: 'official site', 'edu-gov': 'gov / edu', reference: 'reference', imdb: 'IMDb', wikipedia: 'Wikipedia', news: 'news' };
+/** “www.cbsnews.com/news/…” as the site in bold and the page in grey, on one line. */
+function UrlLine({ url }: { url: string }) {
+  let host = url;
+  let rest = '';
+  try {
+    const u = new URL(url);
+    host = u.hostname.replace(/^www\./, '');
+    rest = `${u.pathname}${u.search}`.replace(/^\/$/, '');
+  } catch {
+    /* shown as it is */
+  }
+  return (
+    <a className="group flex min-w-0 items-center gap-1 text-xs" href={url} target="_blank" rel="noreferrer" title={url}>
+      <span className="shrink-0 font-medium group-hover:underline">{host}</span>
+      <span className="text-muted truncate">{rest}</span>
+      <ExternalLink className="text-muted h-3 w-3 shrink-0" aria-hidden />
+    </a>
+  );
+}
 
 interface Suggestion {
   id: string;
@@ -67,7 +87,7 @@ function SuggestionList({ taskId }: { taskId: string }) {
           <li key={r.id}>
             <Chip tone={SUGGESTION_STATUS[r.status]?.tone ?? 'neutral'}>{SUGGESTION_STATUS[r.status]?.label ?? r.status.toLowerCase()}</Chip>{' '}
             {r.anchor ? <span>“{r.anchor}” → </span> : null}
-            <a className="text-indigo-600 underline" href={r.url} target="_blank" rel="noreferrer">
+            <a className="link" href={r.url} target="_blank" rel="noreferrer">
               {r.title}
             </a>
             {r.note ? <span className="text-muted text-xs"> · {r.note}</span> : null}
@@ -117,15 +137,15 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
                 {w}
               </Alert>
             ))}
-            <h4 className="mt-2 mb-2 text-sm font-semibold">Added ({ext.data.accepted.length})</h4>
-            <ul className="space-y-2 text-sm">
+            <h4 className="mt-2 mb-1 text-sm font-semibold">Added ({ext.data.accepted.length})</h4>
+            <ul className="divide-y divide-[var(--border)] text-sm">
               {ext.data.accepted.map((a, i) => (
-                <li key={i}>
-                  <span className="font-medium">“{a.phrase}”</span> →{' '}
-                  <a className="inline-flex items-center gap-1 text-indigo-600 underline" href={a.finalUrl ?? a.url} target="_blank" rel="noreferrer">
-                    {short(a.finalUrl ?? a.url)} <ExternalLink className="h-3 w-3" />
-                  </a>{' '}
-                  {a.kind ? <Chip>{a.kind}</Chip> : null}
+                <li key={i} className="py-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium">“{a.phrase}”</span>
+                    {a.kind && KIND_LABEL[a.kind] ? <Chip>{KIND_LABEL[a.kind]}</Chip> : null}
+                  </div>
+                  <UrlLine url={a.finalUrl ?? a.url} />
                   <div className="text-muted text-xs">{a.reason}</div>
                 </li>
               ))}
@@ -152,12 +172,12 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
         description="One line at the very end, to the most related published post of this website (then the previous article, then the latest post). Drafts and this article itself are never linked."
         actions={
           !task.legacy && int.data ? (
-            <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setPending({ mode: 'auto' })}>
-                Automatic
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => setPending({ mode: 'auto' })} title="Let the app choose the best related post again">
+                <Wand2 className="h-3.5 w-3.5" /> Automatic
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setPending({ mode: 'none' })}>
-                Remove line
+                <Unlink className="h-3.5 w-3.5" /> Remove line
               </Button>
             </div>
           ) : null
@@ -186,7 +206,7 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
                   ) : int.data.url ? (
                     <span>
                       <strong>{int.data.line}</strong>{' '}
-                      <a className="text-indigo-600 underline" href={int.data.url} target="_blank" rel="noreferrer">
+                      <a className="link" href={int.data.url} target="_blank" rel="noreferrer">
                         {int.data.title}
                       </a>
                     </span>
@@ -202,20 +222,25 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
             {int.data.candidates.length ? (
               <>
                 <h4 className="mt-4 mb-2 text-sm font-semibold">Candidates (preview)</h4>
-                <ul className="space-y-2 text-sm">
+                <ul className="divide-y divide-[var(--border)] text-sm">
                   {int.data.candidates.map((c) => (
-                    <li key={c.url} className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <a className="text-indigo-600 underline" href={c.url} target="_blank" rel="noreferrer">
+                    <li key={c.url} className="flex items-start gap-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <a className="link" href={c.url} target="_blank" rel="noreferrer">
                           {c.title}
-                        </a>{' '}
-                        <Chip tone={c.related ? 'success' : 'neutral'}>{c.related ? 'related' : 'fallback'}</Chip> <span className="text-muted text-xs">score {c.score}</span>
-                        {c.reasons.length ? <div className="text-muted text-xs">{c.reasons.join('; ')}</div> : null}
+                        </a>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <Chip tone={c.related ? 'success' : 'neutral'}>{c.related ? 'related' : 'fallback'}</Chip>
+                          <span className="text-muted text-xs">score {c.score}</span>
+                        </div>
+                        {c.reasons.length ? <div className="text-muted mt-0.5 text-xs">{c.reasons.join(' · ')}</div> : null}
                       </div>
                       {!task.legacy && c.url !== int.data!.url ? (
-                        <Button size="sm" onClick={() => setPending({ mode: 'url', url: c.url, title: c.title })}>
+                        <Button size="sm" className="shrink-0" onClick={() => setPending({ mode: 'url', url: c.url, title: c.title })}>
                           Use this
                         </Button>
+                      ) : c.url === int.data!.url ? (
+                        <Chip tone="brand">in use</Chip>
                       ) : null}
                     </li>
                   ))}

@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Ban, CheckCircle2, ExternalLink, Play, RotateCcw, Search } from 'lucide-react';
+import { Ban, CheckCircle2, ExternalLink, Play, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { moduleDisplayName } from '@/lib/domain';
 import type { TaskListRow } from '@/lib/tasks/query';
 import { Button, ConfirmDialog, usePersistentState, useToast, RelativeTime } from './client';
+import { Pagination, pageCount, usePageSize } from './data-table';
 import { DatePicker } from './date-picker';
 import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime } from './ui';
 
@@ -27,6 +28,8 @@ export interface TaskTableProps {
   mode: 'queue' | 'history';
   websites: { id: string; name: string }[];
   initialGroup?: Group;
+  /** A search from the sidebar (“Articles: …”). */
+  initialQuery?: string;
   pollMs?: number;
   campaignId?: string;
 }
@@ -42,7 +45,7 @@ interface Filters {
   to: string;
 }
 
-export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3000, campaignId }: TaskTableProps) {
+export function TaskTable({ storageKey, mode, websites, initialGroup, initialQuery, pollMs = 3000, campaignId }: TaskTableProps) {
   const toast = useToast();
   const [filters, setFilters] = usePersistentState<Filters>(`${storageKey}:filters`, {
     group: initialGroup ?? 'all',
@@ -58,18 +61,27 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<{ action: 'cancel' | 'retry' | 'approve'; ids: string[] } | null>(null);
+  const [confirm, setConfirm] = useState<{ action: 'cancel' | 'retry' | 'approve' | 'delete'; ids: string[] } | null>(null);
   const [approveReason, setApproveReason] = useState('');
-  const [limit, setLimit] = useState(100);
+  // Owner request: pages instead of one long list (“Results per page”, “Page 1 of N”).
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = usePageSize(`tasks-${mode}`, 20);
   const lastLoad = useRef<Date | null>(null);
 
   useEffect(() => {
     if (initialGroup) setFilters((f) => ({ ...f, group: initialGroup }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialGroup]);
+  useEffect(() => {
+    if (initialQuery !== undefined) setFilters((f) => ({ ...f, q: initialQuery, group: 'all' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
+
+  // A new filter, search or sort starts on the first page.
+  useEffect(() => setPage(1), [filters, campaignId]);
 
   const query = useMemo(() => {
-    const p = new URLSearchParams({ group: filters.group, sort: filters.sort, dir: filters.dir, limit: String(limit) });
+    const p = new URLSearchParams({ group: filters.group, sort: filters.sort, dir: filters.dir, limit: String(pageSize), offset: String((page - 1) * pageSize) });
     if (filters.websiteId) p.set('websiteId', filters.websiteId);
     if (filters.moduleKey) p.set('moduleKey', filters.moduleKey);
     if (filters.q.trim()) p.set('q', filters.q.trim());
@@ -77,7 +89,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
     if (filters.to) p.set('to', new Date(filters.to + 'T23:59:59').toISOString());
     if (campaignId) p.set('campaignId', campaignId);
     return p.toString();
-  }, [filters, limit, campaignId]);
+  }, [filters, page, pageSize, campaignId]);
 
   const load = useCallback(async () => {
     try {
@@ -99,10 +111,13 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
     return () => clearInterval(id);
   }, [load, pollMs]);
 
-  async function act(action: 'cancel' | 'retry' | 'resume' | 'approve', ids: string[]) {
+  async function act(action: 'cancel' | 'retry' | 'resume' | 'approve' | 'delete', ids: string[]) {
     setBusy(action);
     try {
-      if (action === 'approve') {
+      if (action === 'delete') {
+        const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action } });
+        toast(res.failed ? 'error' : 'success', `${res.ok} article(s) deleted${res.failed ? `, ${res.failed} not deleted: ${res.results.find((r) => !r.ok)?.message ?? ''}` : ''}. A running one is deleted as soon as it stops.`);
+      } else if (action === 'approve') {
         const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action, reason: approveReason } });
         const skipped = res.results.filter((r) => !r.ok);
         toast(res.ok ? 'success' : 'error', `${res.ok} task(s) approved${skipped.length ? `, ${skipped.length} skipped (${skipped[0].message ?? 'not waiting for an approval'})` : ''}.`);
@@ -124,6 +139,10 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
   }
 
   const rows = data?.rows ?? [];
+  // After a delete or a cancel the last page can be empty: show the page that is now the last one.
+  useEffect(() => {
+    if (data && page > 1 && data.rows.length === 0 && data.total > 0) setPage(pageCount(data.total, pageSize));
+  }, [data, page, pageSize]);
   // Approving a task that needs review asks for a reason (audited), as on its article page.
   const reviewInApproval = confirm?.action === 'approve' && confirm.ids.some((id) => rows.find((r) => r.id === id)?.status === 'NEEDS_REVIEW');
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
@@ -140,7 +159,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
             onClick={() => set('group', g.id)}
             className={cx(
               'rounded-full px-3 py-1 text-xs font-medium transition',
-              filters.group === g.id ? 'bg-indigo-600 text-white' : 'surface-2 text-muted hover:text-[var(--text)]',
+              filters.group === g.id ? 'bg-[var(--primary)] text-[var(--primary-fg)]' : 'surface-2 text-muted hover:text-[var(--text)]',
             )}
           >
             {g.label}
@@ -202,13 +221,13 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
           <option value="seo:desc">SEO score</option>
         </select>
         {mode === 'history' ? (
-          <a className="text-sm font-medium text-indigo-600 hover:underline" href={`/api/tasks/export?${query}`}>
+          <a className="text-sm font-medium link" href={`/api/tasks/export?${query}`}>
             Export CSV
           </a>
         ) : null}
       </div>
       {selected.size > 0 ? (
-        <div className="border-app flex flex-wrap items-center gap-2 border-b bg-indigo-50/60 px-4 py-2 text-sm dark:bg-indigo-950/40">
+        <div className="border-app surface-2 flex flex-wrap items-center gap-2 border-b px-4 py-2 text-sm">
           <strong>{selected.size} selected</strong>
           <Button size="sm" variant="primary" onClick={() => setConfirm({ action: 'approve', ids: [...selected] })} loading={busy === 'approve'}>
             <CheckCircle2 className="h-3.5 w-3.5" /> Approve selected
@@ -218,6 +237,9 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
           </Button>
           <Button size="sm" variant="danger" onClick={() => setConfirm({ action: 'cancel', ids: [...selected] })} loading={busy === 'cancel'}>
             <Ban className="h-3.5 w-3.5" /> Cancel selected
+          </Button>
+          <Button size="sm" variant="danger" onClick={() => setConfirm({ action: 'delete', ids: [...selected] })} loading={busy === 'delete'}>
+            <Trash2 className="h-3.5 w-3.5" /> Delete selected
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
             Clear
@@ -244,7 +266,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
           description={filters.group === 'all' && !filters.q ? 'Start with Single Article or import keywords in Bulk Campaigns.' : 'Try another status or clear the search.'}
           action={
             filters.group === 'all' && !filters.q ? (
-              <Link href="/single-article" className="font-semibold text-indigo-600 hover:underline">
+              <Link href="/single-article" className="font-semibold link">
                 Write a single article →
               </Link>
             ) : undefined
@@ -263,9 +285,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                     onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))}
                   />
                 </th>
-                <th>Keyword</th>
-                <th>Writer</th>
-                <th>Website</th>
+                <th className="min-w-[260px]">Article</th>
                 <th>Status</th>
                 {mode === 'queue' ? <th className="min-w-[220px]">Progress</th> : <th>Category</th>}
                 {mode === 'queue' ? <th>Worker / tab</th> : <th title="Internal SEO readiness score">SEO</th>}
@@ -277,7 +297,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className={selected.has(r.id) ? 'bg-indigo-50/50 dark:bg-indigo-950/30' : undefined}>
+                <tr key={r.id} className={selected.has(r.id) ? 'bg-[var(--surface-2)]' : undefined}>
                   <td>
                     <input
                       type="checkbox"
@@ -293,19 +313,17 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                       }
                     />
                   </td>
-                  <td className="max-w-[280px]">
+                  <td className="min-w-[260px] max-w-[360px]">
                     <Link href={`/articles/${r.id}`} className="font-medium hover:underline">
                       {r.keyword}
                     </Link>
-                    {r.selectedTitle ? <div className="text-muted line-clamp-1 text-xs">{r.selectedTitle}</div> : null}
+                    {r.selectedTitle ? <div className="line-clamp-1 text-xs">{r.selectedTitle}</div> : null}
+                    {/* Website and writer under the keyword (owner request: the keyword had no room). */}
+                    <div className="text-muted truncate text-xs">
+                      {r.websiteName} <span className="uppercase">{r.language}</span> · {moduleDisplayName(r.moduleKey)}
+                      {r.legacy ? <Chip className="ml-1">read-only</Chip> : null}
+                    </div>
                     {r.secondaryKeywords.length ? <div className="text-muted line-clamp-1 text-[11px]">+ {r.secondaryKeywords.join(', ')}</div> : null}
-                  </td>
-                  <td className="whitespace-nowrap">
-                    {moduleDisplayName(r.moduleKey)}
-                    {r.legacy ? <Chip className="ml-1">read-only</Chip> : null}
-                  </td>
-                  <td className="whitespace-nowrap">
-                    {r.websiteName} <span className="text-muted text-xs uppercase">{r.language}</span>
                   </td>
                   <td>
                     <StatusChip status={r.status} />
@@ -346,7 +364,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                   {mode === 'history' ? (
                     <td className="text-xs">
                       {r.wpEditUrl ? (
-                        <a href={r.wpEditUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-indigo-600 hover:underline">
+                        <a href={r.wpEditUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 link">
                           #{r.wpPostId} <ExternalLink className="h-3 w-3" />
                         </a>
                       ) : (
@@ -373,31 +391,29 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
                         <Ban className="h-3.5 w-3.5" /> Cancel
                       </Button>
                     ) : null}
+                    <Button size="sm" variant="ghost" onClick={() => setConfirm({ action: 'delete', ids: [r.id] })} title="Delete this article from the app (WordPress is not changed)" aria-label={`Delete ${r.keyword}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {data && data.total > rows.length ? (
-            <div className="border-app flex items-center justify-between border-t px-4 py-2 text-xs">
-              <span className="text-muted">
-                Showing {rows.length} of {data.total}
-              </span>
-              <Button size="sm" onClick={() => setLimit((l) => Math.min(500, l + 100))}>
-                Show more
-              </Button>
-            </div>
-          ) : null}
         </div>
       )}
+      {data && data.total > 0 ? (
+        <div className="border-app border-t px-4">
+          <Pagination total={data.total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} label="articles" />
+        </div>
+      ) : null}
       <div className="text-muted border-app border-t px-4 py-1.5 text-[11px]">
         {pollMs ? `Live — refreshes every ${Math.round(pollMs / 1000)}s` : 'Static view'} · last update {lastLoad.current ? lastLoad.current.toLocaleTimeString() : '—'}
       </div>
       <ConfirmDialog
         open={Boolean(confirm)}
-        title={confirm?.action === 'cancel' ? `Cancel ${confirm.ids.length} task(s)?` : confirm?.action === 'approve' ? `Approve ${confirm.ids.length} task(s)?` : `Retry ${confirm?.ids.length ?? 0} task(s)?`}
-        confirmLabel={confirm?.action === 'cancel' ? 'Cancel tasks' : confirm?.action === 'approve' ? 'Approve' : 'Retry'}
-        tone={confirm?.action === 'cancel' ? 'danger' : 'primary'}
+        title={confirm?.action === 'cancel' ? `Cancel ${confirm.ids.length} task(s)?` : confirm?.action === 'delete' ? `Delete ${confirm.ids.length} article(s)?` : confirm?.action === 'approve' ? `Approve ${confirm.ids.length} task(s)?` : `Retry ${confirm?.ids.length ?? 0} task(s)?`}
+        confirmLabel={confirm?.action === 'cancel' ? 'Cancel tasks' : confirm?.action === 'delete' ? 'Delete' : confirm?.action === 'approve' ? 'Approve' : 'Retry'}
+        tone={confirm?.action === 'cancel' || confirm?.action === 'delete' ? 'danger' : 'primary'}
         busy={Boolean(busy)}
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
@@ -408,6 +424,8 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, pollMs = 3
       >
         {confirm?.action === 'cancel' ? (
           'Work stops at the next safe point. Completed stage outputs, prompts and responses are kept; nothing is deleted.'
+        ) : confirm?.action === 'delete' ? (
+          'The articles are removed from this app, with their stages, prompts and answers. Drafts and posts in WordPress stay as they are. A report of each article is saved in data\\backups\\deleted-articles first. A running article stops and is deleted when it stops.'
         ) : confirm?.action === 'approve' ? (
           <div className="space-y-2">
             <p>Each task gets the approval it is waiting for, as on its article page:</p>

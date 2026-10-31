@@ -15,6 +15,9 @@ import { defaultSettings, SITE_OVERRIDE_KEYS } from './settings-schema';
  */
 export const SITE_OVERRIDES_MIGRATION_ID = '2026-10-14-unpin-default-site-overrides';
 
+/** Keys added to the override groups after this migration was written: not part of the bug's signature. */
+const LATER_KEYS = new Set(['holdForReview']);
+
 export async function unpinDefaultSiteOverrides(client: PrismaClient): Promise<Record<string, unknown>> {
   const defaults = defaultSettings() as unknown as Record<string, Record<string, unknown>>;
   const sites = await client.website.findMany({ select: { id: true, settingsOverrides: true } });
@@ -24,7 +27,8 @@ export async function unpinDefaultSiteOverrides(client: PrismaClient): Promise<R
     const stored = parseJson<Record<string, Record<string, unknown>>>(site.settingsOverrides, {});
     const next = { ...stored };
     const groups: string[] = [];
-    for (const [group, keys] of Object.entries(SITE_OVERRIDE_KEYS)) {
+    for (const [group, allKeys] of Object.entries(SITE_OVERRIDE_KEYS)) {
+      const keys = (allKeys as readonly string[]).filter((k) => !LATER_KEYS.has(k));
       const values = stored[group];
       if (!values || typeof values !== 'object') continue;
       const pinned = keys.every((k) => k in values && JSON.stringify(values[k]) === JSON.stringify(defaults[group][k]));

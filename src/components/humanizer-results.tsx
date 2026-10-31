@@ -94,7 +94,7 @@ export function ParagraphComparison({ paragraphs }: { paragraphs: HumanizerParag
       actions={
         <div className="flex flex-wrap gap-1" role="group" aria-label="Filter paragraphs">
           {(['all', 'rewritten', 'kept', 'unchanged', 'skipped'] as const).map((f) => (
-            <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)} className={cx('rounded-md px-2 py-1 text-xs', filter === f ? 'bg-indigo-600 text-white' : 'surface-2')}>
+            <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)} className={cx('rounded-md px-2 py-1 text-xs', filter === f ? 'bg-[var(--primary)] text-[var(--primary-fg)]' : 'surface-2')}>
               {f === 'all' ? `All (${paragraphs.length})` : `${LABEL[f]} (${paragraphs.filter((p) => p.status === f).length})`}
             </button>
           ))}

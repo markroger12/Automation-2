@@ -1,4 +1,5 @@
 import { collectDiagnostics } from '@/lib/diagnostics';
+import { listPageCopies } from '@/lib/page-copies';
 import { Card, Chip, EmptyState, KeyValue, PageHeader, formatDateTime, formatRelative } from '@/components/ui';
 import { DiagnosticsActions } from './actions';
 import { DiagnosticChecks } from './checks';
@@ -7,6 +8,7 @@ export const metadata = { title: 'Diagnostics' };
 
 export default async function DiagnosticsPage() {
   const d = await collectDiagnostics();
+  const copies = listPageCopies();
   const lock = d.lock as { state: string; workerId?: string; pid?: number; pidAlive?: boolean; heartbeatAgeSec?: number };
   return (
     <>
@@ -15,7 +17,7 @@ export default async function DiagnosticsPage() {
         description="Live state of the worker, its lock, queue leases, sessions and the extension. The downloadable bundle strips cookies, keys and tokens."
         actions={<DiagnosticsActions />}
       />
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Card title="Worker">
           <KeyValue
             items={[
@@ -73,6 +75,28 @@ export default async function DiagnosticsPage() {
                     </summary>
                     <pre className="surface-2 mt-1 max-h-64 overflow-auto rounded p-2 text-xs">{JSON.stringify(f.snapshot, null, 2)}</pre>
                   </details>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+        <Card
+          title="Page structure copies"
+          description="When the extension takes fewer gallery photos than ChatGPT shows, or Search Console's answer may be missing from the screenshot, it saves the page's structure here: elements, button names and sizes, never the chat or page text. Download the newest one and send it to the developer."
+        >
+          {copies.length === 0 ? (
+            <p className="text-muted text-sm">None yet — nothing went wrong that needed one.</p>
+          ) : (
+            <ul className="divide-y divide-[var(--border)] text-sm">
+              {copies.slice(0, 8).map((c) => (
+                <li key={c.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                  <Chip tone={c.kind === 'chatgpt-gallery' ? 'brand' : 'neutral'}>{c.kind === 'chatgpt-gallery' ? 'ChatGPT gallery' : 'Search Console'}</Chip>
+                  <span className="text-muted text-xs">
+                    {formatDateTime(c.savedAt)} · {Math.max(1, Math.round(c.bytes / 1024))} KB
+                  </span>
+                  <a className="ml-auto text-xs font-medium hover:underline" href={`/api/diagnostics/page-copies/${c.name}`} download>
+                    Download
+                  </a>
                 </li>
               ))}
             </ul>
@@ -143,7 +167,23 @@ export default async function DiagnosticsPage() {
           <KeyValue
             items={[
               { label: 'Database size', value: `${(d.database.sizeBytes / 1024).toFixed(0)} KB` },
-              { label: 'Migrations', value: d.database.migrations.map((m) => m.migration_name).join(', ') || '—' },
+              {
+                label: 'Migrations',
+                value: d.database.migrations.length ? (
+                  <details>
+                    <summary className="cursor-pointer">
+                      {d.database.migrations.length} applied · latest <span className="font-mono text-xs">{d.database.migrations[d.database.migrations.length - 1].migration_name}</span>
+                    </summary>
+                    <ul className="text-muted mt-1 space-y-0.5 font-mono text-xs">
+                      {d.database.migrations.map((m) => (
+                        <li key={m.migration_name}>{m.migration_name}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : (
+                  '—'
+                ),
+              },
               { label: 'Recent backups', value: d.backups.length ? d.backups.slice(0, 5).map((b) => b.name).join(', ') : 'none yet' },
               { label: 'Runtime', value: `Node ${d.app.node} · ${d.app.platform}` },
             ]}

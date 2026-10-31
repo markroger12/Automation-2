@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { History, RotateCcw, Save } from 'lucide-react';
+import { RotateCcw, Save } from 'lucide-react';
 import { api, ApiClientError } from '@/lib/client/api';
 import { renderTemplate, TemplateSyntaxError, referencedVariables } from '@/lib/prompts/template';
-import { Button, ConfirmDialog, CopyButton, useToast } from '@/components/client';
+import { Button, ConfirmDialog, CopyButton, Tabs, useToast } from '@/components/client';
 import { Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, EmptyState, cx, formatDateTime } from '@/components/ui';
 
@@ -80,6 +80,7 @@ export function PromptManager({ initialId }: { initialId?: string }) {
   const [selected, setSelected] = useState<string | null>(initialId ?? null);
   const [detail, setDetail] = useState<PromptDetail | null>(null);
   const [content, setContent] = useState('');
+  const [bottom, setBottom] = useState<'preview' | 'variables' | 'history' | 'sent'>('preview');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirmRestore, setConfirmRestore] = useState<null | { version?: number }>(null);
@@ -171,7 +172,7 @@ export function PromptManager({ initialId }: { initialId?: string }) {
                     if (dirty && !window.confirm('Discard unsaved changes?')) return;
                     setSelected(p.id);
                   }}
-                  className={cx('flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm', selected === p.id ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200' : 'hover:bg-[var(--surface-2)]')}
+                  className={cx('flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm', selected === p.id ? 'bg-[var(--surface-2)] font-semibold' : 'text-muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]')}
                 >
                   <span className="truncate">{p.stageKey}</span>
                   <span className="flex shrink-0 items-center gap-1">
@@ -224,34 +225,25 @@ export function PromptManager({ initialId }: { initialId?: string }) {
             </p>
           </Card>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card title="Variables">
-              <table className="table-app">
-                <thead>
-                  <tr>
-                    <th>Variable</th>
-                    <th>Source</th>
-                    <th>Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.variablesList.map((v) => (
-                    <tr key={v.name}>
-                      <td>
-                        <button type="button" className="font-mono text-xs text-indigo-600 hover:underline" onClick={() => setContent((c) => `${c}{{${v.name}}}`)} title="Append to the prompt">
-                          {`{{${v.name}}}`}
-                        </button>
-                        {v.required ? <Chip tone="warning" className="ml-1">required</Chip> : null}
-                      </td>
-                      <td className="text-xs">{v.source}</td>
-                      <td className="text-xs">{v.description}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-            <Card title="Live preview (sample inputs)" actions={<CopyButton text={analysis.text} />}>
-              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+          {/* Owner request (less scrolling): preview, variables, history and sent prompts as tabs of one card. */}
+          <Card padded={false}>
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-3">
+              <Tabs
+                value={bottom}
+                onChange={(id) => setBottom(id as typeof bottom)}
+                tabs={[
+                  { id: 'preview', label: 'Live preview' },
+                  { id: 'variables', label: 'Variables', badge: <Chip>{detail.variablesList.length}</Chip> },
+                  { id: 'history', label: 'Version history', badge: <Chip>{detail.versions.length}</Chip> },
+                  { id: 'sent', label: 'Sent prompts', badge: detail.submissions.length ? <Chip>{detail.submissions.length}</Chip> : undefined },
+                ]}
+              />
+              {bottom === 'preview' ? <CopyButton text={analysis.text} /> : null}
+            </div>
+            <div className={bottom === 'history' || bottom === 'sent' ? '' : 'p-4'}>
+              {bottom === 'preview' ? (
+                <>
+                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <Field label="keyword" htmlFor="s-kw">
                   <Input id="s-kw" value={sample.keyword} onChange={(e) => setSample({ ...sample, keyword: e.target.value })} />
                 </Field>
@@ -269,12 +261,33 @@ export function PromptManager({ initialId }: { initialId?: string }) {
                 </Field>
               </div>
               <pre className="surface-2 max-h-96 overflow-auto rounded-lg p-3 text-xs whitespace-pre-wrap">{analysis.text || analysis.error}</pre>
-            </Card>
-          </div>
-
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card title={<span className="flex items-center gap-2"><History className="h-4 w-4" /> Version history</span>} padded={false}>
-              <table className="table-app">
+                </>
+              ) : bottom === 'variables' ? (
+                <table className="table-app">
+                <thead>
+                  <tr>
+                    <th>Variable</th>
+                    <th>Source</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.variablesList.map((v) => (
+                    <tr key={v.name}>
+                      <td>
+                        <button type="button" className="font-mono text-xs link" onClick={() => setContent((c) => `${c}{{${v.name}}}`)} title="Append to the prompt">
+                          {`{{${v.name}}}`}
+                        </button>
+                        {v.required ? <Chip tone="warning" className="ml-1">required</Chip> : null}
+                      </td>
+                      <td className="text-xs">{v.source}</td>
+                      <td className="text-xs">{v.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              ) : bottom === 'history' ? (
+                <table className="table-app">
                 <tbody>
                   {detail.versions.map((v) => (
                     <tr key={v.id}>
@@ -294,9 +307,7 @@ export function PromptManager({ initialId }: { initialId?: string }) {
                   ))}
                 </tbody>
               </table>
-            </Card>
-            <Card title="Exactly submitted prompts (latest 20)" padded={false}>
-              {detail.submissions.length === 0 ? (
+              ) : detail.submissions.length === 0 ? (
                 <EmptyState title="Not used yet" />
               ) : (
                 <ul className="divide-y divide-[var(--border)]">
@@ -316,8 +327,8 @@ export function PromptManager({ initialId }: { initialId?: string }) {
                   ))}
                 </ul>
               )}
-            </Card>
-          </div>
+            </div>
+          </Card>
         </div>
       ) : (
         <div className="surface-2 h-96 animate-pulse rounded-xl" />

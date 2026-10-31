@@ -34,7 +34,7 @@ export default async function WritersPage() {
               ))}
             </ol>
             <div className="mt-4 flex gap-2 text-sm">
-              <Link className="text-indigo-600 hover:underline" href="/prompts">
+              <Link className="link" href="/prompts">
                 Edit prompts →
               </Link>
               <span className="text-muted">· {counts.find((c) => c.moduleKey === m.key)?._count._all ?? 0} article(s)</span>

@@ -4,17 +4,30 @@ import { stripTracking } from '../links/url';
 
 const marked = new Marked({ gfm: true, breaks: false, async: false });
 
+/**
+ * The label ChatGPT shows above a writing block (owner report: “Writing” under the title of every article). The page
+ * text of an answer can carry it as a line of its own; it is never article text.
+ */
+export const WRITING_LABEL_RE = /^(?:writing|schreiben)$/i;
+
+/** Text compared loosely (case, punctuation, spacing), e.g. a heading against the article title. */
+export const sameTitle = (a: string, b: string) => {
+  const norm = (s: string) => s.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  return Boolean(norm(a)) && norm(a) === norm(b);
+};
+
 /** Remove chatbot wrappers, fences and a leading duplicate title from model Markdown. */
 export function cleanModelMarkdown(md: string, options: { title?: string | null } = {}): string {
   let text = md.replace(/\r\n/g, '\n').trim();
   const fenced = text.match(/^```(?:markdown|md|html)?\n([\s\S]*?)\n```$/i);
   if (fenced) text = fenced[1].trim();
+  // The writing block's “Writing” label (a line of its own), wherever it stands.
+  const lines = text.split('\n').filter((line) => !WRITING_LABEL_RE.test(line.replace(/^\*\*|\*\*$/g, '').trim()));
   // Leading H1 or "Title:" line that repeats the article title.
-  const lines = text.split('\n');
   while (lines.length && /^\s*$/.test(lines[0])) lines.shift();
   if (lines.length) {
     const first = lines[0].trim();
-    const isTitle = /^#\s+/.test(first) || /^(?:title|titel)\s*:/i.test(first) || (options.title && first.replace(/^#+\s*/, '').replace(/^\*\*|\*\*$/g, '').trim().toLowerCase() === options.title.trim().toLowerCase());
+    const isTitle = /^#\s+/.test(first) || /^(?:title|titel)\s*:/i.test(first) || (options.title && sameTitle(first.replace(/^#+\s*/, '').replace(/^\*\*|\*\*$/g, ''), options.title));
     if (isTitle) lines.shift();
   }
   text = lines.join('\n');

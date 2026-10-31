@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Check, Clipboard, LoaderCircle, Moon, Sun, X } from 'lucide-react';
+import { Check, ChevronDown, Clipboard, LoaderCircle, Moon, Sun, X } from 'lucide-react';
 import { buttonClasses, cx, formatRelative } from './ui';
 
 export function Button({
@@ -11,16 +11,27 @@ export function Button({
   loading,
   className,
   type = 'button',
+  tip,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'icon';
   loading?: boolean;
+  /** A short tooltip (and the accessible name when the button shows only an icon). */
+  tip?: string;
 }) {
   return (
-    <button type={type} {...props} disabled={props.disabled || loading} aria-busy={loading || undefined} className={cx(buttonClasses(variant, size), className)}>
+    <button
+      type={type}
+      aria-label={tip && size === 'icon' ? tip : undefined}
+      data-tip={tip}
+      {...props}
+      disabled={props.disabled || loading}
+      aria-busy={loading || undefined}
+      className={cx(buttonClasses(variant, size), className)}
+    >
       {loading ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden /> : null}
-      {children}
+      {loading && size === 'icon' ? null : children}
     </button>
   );
 }
@@ -149,34 +160,135 @@ export function ConfirmDialog({
   );
 }
 
+/* ---------------- Dialog ---------------- */
+
+/**
+ * A dialog for a form (owner request: settings in a window, as in the reference dashboard, instead of a long page):
+ * title and description on top, a body that scrolls, and the buttons at the bottom.
+ */
+export function Modal({ open, onClose, title, description, children, footer, width = 640 }: { open: boolean; onClose: () => void; title: ReactNode; description?: ReactNode; children: ReactNode; footer?: ReactNode; width?: number }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    if (!open && dialog.open) dialog.close();
+  }, [open]);
+  return (
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      style={{ width: `min(${width}px, calc(100vw - 2rem))` }}
+      className="surface m-auto max-h-[min(88vh,900px)] flex-col rounded-xl border p-0 text-[var(--text)] shadow-2xl backdrop:bg-black/50 open:flex"
+    >
+      <div className="border-app flex items-start justify-between gap-4 border-b px-6 py-4">
+        <div className="min-w-0">
+          <h2 id={titleId} className="text-base font-semibold">
+            {title}
+          </h2>
+          {description ? <p className="text-muted mt-0.5 text-sm">{description}</p> : null}
+        </div>
+        <button type="button" aria-label="Close" onClick={onClose} className="text-muted -mr-2 rounded-md p-1.5 hover:bg-[var(--surface-2)] hover:text-[var(--text)]">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">{open ? children : null}</div>
+      {footer ? <div className="border-app flex flex-wrap items-center justify-end gap-2 border-t px-6 py-3">{footer}</div> : null}
+    </dialog>
+  );
+}
+
+/** A part of a dialog with a small heading (icon and capitals), as “PRICING” / “CONFIGURATION” in the reference. */
+export function DialogSection({ icon, title, children }: { icon?: ReactNode; title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h3 className="text-muted mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
+        {icon}
+        {title}
+      </h3>
+      <div className="space-y-3">{children}</div>
+    </section>
+  );
+}
+
 /* ---------------- Tabs ---------------- */
 
-export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: ReactNode; badge?: ReactNode }[]; value: string; onChange: (id: string) => void }) {
+type TabItem = { id: string; label: ReactNode; badge?: ReactNode };
+
+const tabClass = (active: boolean) =>
+  cx('-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium transition', active ? 'border-[var(--text)] text-[var(--text)]' : 'text-muted border-transparent hover:text-[var(--text)]');
+
+/**
+ * `more` (optional): tabs that open from a “More” menu at the end of the row, so a long row stays on one line (the
+ * article page: its technical tabs). When one of them is open, the menu's tab shows its name.
+ */
+export function Tabs({ tabs, value, onChange, more, moreLabel = 'More' }: { tabs: TabItem[]; value: string; onChange: (id: string) => void; more?: TabItem[]; moreLabel?: string }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const all = [...tabs, ...(more ?? [])];
+  const activeMore = more?.find((t) => t.id === value);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  const onArrows = (e: React.KeyboardEvent) => {
+    const idx = all.findIndex((t) => t.id === value);
+    if (e.key === 'ArrowRight') onChange(all[(idx + 1) % all.length].id);
+    if (e.key === 'ArrowLeft') onChange(all[(idx - 1 + all.length) % all.length].id);
+  };
   return (
     // Tabs wrap to a second row instead of scrolling: a scroll box here showed scrollbars (the active tab's
     // underline sits 1 px below the bar, so even tabs that fit made it scroll vertically).
     <div role="tablist" className="border-app flex flex-wrap gap-x-1 border-b">
       {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          role="tab"
-          type="button"
-          aria-selected={value === tab.id}
-          onClick={() => onChange(tab.id)}
-          onKeyDown={(e) => {
-            const idx = tabs.findIndex((t) => t.id === value);
-            if (e.key === 'ArrowRight') onChange(tabs[(idx + 1) % tabs.length].id);
-            if (e.key === 'ArrowLeft') onChange(tabs[(idx - 1 + tabs.length) % tabs.length].id);
-          }}
-          className={cx(
-            '-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition',
-            value === tab.id ? 'border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'text-muted border-transparent hover:text-[var(--text)]',
-          )}
-        >
+        <button key={tab.id} role="tab" type="button" aria-selected={value === tab.id} onClick={() => onChange(tab.id)} onKeyDown={onArrows} className={tabClass(value === tab.id)}>
           {tab.label}
           {tab.badge}
         </button>
       ))}
+      {more?.length ? (
+        <div ref={box} className="relative">
+          <button role="tab" type="button" aria-selected={Boolean(activeMore)} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} onKeyDown={onArrows} className={tabClass(Boolean(activeMore))}>
+            {activeMore ? activeMore.label : moreLabel}
+            {activeMore?.badge}
+            <ChevronDown className={cx('h-3.5 w-3.5 transition', open && 'rotate-180')} aria-hidden />
+          </button>
+          {open ? (
+            <div role="menu" aria-label={moreLabel} className="surface border-app absolute top-full right-0 z-40 mt-1 min-w-52 rounded-lg border p-1 shadow-xl">
+              {more.map((tab) => (
+                <button
+                  key={tab.id}
+                  role="menuitem"
+                  type="button"
+                  aria-current={value === tab.id ? 'page' : undefined}
+                  onClick={() => {
+                    onChange(tab.id);
+                    setOpen(false);
+                  }}
+                  className={cx('flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-[var(--surface-2)]', value === tab.id && 'bg-[var(--surface-2)] font-medium')}
+                >
+                  {tab.label}
+                  {tab.badge}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

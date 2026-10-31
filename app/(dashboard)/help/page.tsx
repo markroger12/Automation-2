@@ -23,7 +23,7 @@ export default function HelpPage() {
         <Card title="2 · Start every day">
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>
-              Run <Code>npm run dev:all</Code> (development) or <Code>npm run build</Code> once, then <Code>npm run start:all</Code>.
+              Run <Code>npm run start:all</Code> and keep that window open. It prepares the database and builds the dashboard by itself when needed (<Code>npm run dev:all</Code> is for development).
             </li>
             <li>
               Open <Code>http://localhost:3000</Code>. There is no login: the dashboard only listens on this computer (127.0.0.1).
@@ -34,7 +34,9 @@ export default function HelpPage() {
         <Card title="3 · WordPress websites">
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>Websites → Add website (public URL, admin URL, language, timezone).</li>
-            <li>Click <strong>Log in</strong>: a visible browser window opens; sign in yourself. Passwords are never stored or typed by the app.</li>
+            <li>
+              Give the WordPress <strong>user name and password</strong> when you add the website (or later on its Session tab): the app logs in by itself, with “Remember me”, and again whenever the session ends. They are saved encrypted on this computer only and typed only into the website's own login page. A CAPTCHA or a 2-step code opens a window where you do that step; without a saved sign-in, <strong>Log in yourself</strong> opens the window for the whole sign-in.
+            </li>
             <li>Click <strong>Sync categories</strong>. Drafts are created as drafts only; publishing needs the per-site switch plus the scheduler.</li>
             <li>
               Click <strong>Test session</strong>: it also checks that the WordPress REST API answers for the logged-in user (the block editor needs it too) and whether Rank Math is active. Drafts are saved through
@@ -77,7 +79,7 @@ export default function HelpPage() {
             </li>
           </ol>
         </Card>
-        <Card title="Plagiarism evidence">
+        <Card title="7 · Plagiarism evidence">
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>
               <strong>Editorial Tools → Plagiarism Evidence</strong> (or an article’s <strong>Originality</strong> tab): choose a saved article or paste text, pick what to compare with, add URLs if you like, and run the check.
@@ -88,7 +90,7 @@ export default function HelpPage() {
             </li>
           </ol>
         </Card>
-        <Card title="7 · Bulk campaigns and the workflow">
+        <Card title="8 · Bulk campaigns and the workflow">
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>
               <strong>Bulk Campaigns → New</strong>: paste keywords or load a CSV, check the preview (writer, category, duplicates), fix what it flags and create. One article is queued per ready row. Campaigns never publish.
@@ -101,6 +103,25 @@ export default function HelpPage() {
             </li>
             <li>
               <strong>Publishing Calendar</strong> shows reserved and free slots for two weeks. “Indexed” is only ever recorded by you after checking Search Console.
+            </li>
+          </ol>
+        </Card>
+        <Card title="9 · Updates">
+          <ol className="list-decimal space-y-2 pl-5 text-sm">
+            <li>
+              <strong>Settings → App updates → Check for updates</strong> lists what is new on GitHub; <strong>Update now</strong> stops the app, installs the new version, builds it and starts it again (2–5 minutes). The page shows each step and opens the new version by itself.
+            </li>
+            <li>It needs the app started with <Code>npm run start:all</Code>. If something fails while installing or building, the version you had starts again.</li>
+            <li>The extension (3.5.0 and later) reloads itself from its folder after an update when it is idle; an older one needs one reload in <Code>chrome://extensions</Code>.</li>
+          </ol>
+        </Card>
+        <Card title="10 · Notifications and keyword ideas">
+          <ol className="list-decimal space-y-2 pl-5 text-sm">
+            <li>
+              <strong>Settings → Notifications</strong>: Windows shows a notification when an article needs review (workflow ones too), ChatGPT is signed out, or a campaign finished. A click opens the page; <strong>Send a test notification</strong> tries it.
+            </li>
+            <li>
+              <strong>Workflow → Keyword ideas</strong>: searches Search Console shows for the website that have no article yet, and Google's related searches / “People also ask” (with <Code>SERPER_API_KEY</Code>). Tick ideas and add them to the queue.
             </li>
           </ol>
         </Card>
@@ -117,7 +138,7 @@ export default function HelpPage() {
         </Card>
         <Card title="Troubleshooting">
           <ul className="list-disc space-y-2 pl-5 text-sm">
-            <li>Red “Worker is not running” banner → start <Code>npm run dev:all</Code>.</li>
+            <li>Red “Worker is not running” banner → start <Code>npm run start:all</Code>.</li>
             <li>“Login required” → open the website page and log in again; paused tasks resume.</li>
             <li>Diagnostics → Download diagnostic bundle (secrets removed) when reporting a problem.</li>
           </ul>

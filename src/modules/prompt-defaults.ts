@@ -156,16 +156,23 @@ Use valid HTML only: <table>, <thead>, <tbody>, <tr>, <th> and <td>. First row h
     moduleKey: 'celebrity-writer',
     stageKey: 'PHOTO_CHECK',
     name: 'Celebrity — Photo check',
-    description: 'Optional visible-content check for watermarks/collages and alt text. Never identifies people.',
-    version: 1,
+    description: 'Asks ChatGPT which photos carry a watermark or are another site\'s collage, and for alt text (owner\'s earlier tool). Never identifies people.',
+    version: 2,
     kind: 'vision',
-    previousHashes: [],
+    // v1 only said “a collage made from multiple images”: a designed thumbnail (a photo with a circle around one person,
+    // owner report) was not called a collage. v2 is the earlier tool's wording plus shapes drawn over people.
+    previousHashes: ['ba797c3cb90409610c6ee7f4f7ae205f4bfda14d1f2092049e5f6b9742252044'],
     variables: [v('photo_count', 'Number of attached candidate images', true, 'stage'), KEYWORD],
-    content: `I attached {{photo_count}} candidate editorial images for a biography about "{{keyword}}", numbered in attachment order. Inspect visible content only. For every photo, report whether there is an overlay watermark/agency logo/website name or a collage made from multiple images. A real-life sign or shirt print is not a watermark. Make a concise alt-text description of visible clothing, action, surroundings or scene, without guessing the person's identity, event, location.
+    content: `I am writing an article about "{{keyword}}". I attached {{photo_count}} photos from an image search, numbered 1 to {{photo_count}} in the order they are attached.
 
-Output only one line per image:
+For every photo, write one line in exactly this format:
+<number>: watermark=<yes or no> | collage=<yes or no> | alt=<alt text>
 
-<number>: watermark=yes|no | collage=yes|no | alt=<description of 12 words or fewer>`,
+watermark=yes when the photo has a watermark, a website name or web address, a channel or photo agency logo, or large text written over the picture. Text that belongs to the scene itself (a sign, the backdrop at an event, a shirt print) does not count.
+collage=yes when the picture is not one plain photo but several photos put together or a designed thumbnail: side by side, split by a line, in frames or a grid, a photo inside another photo, or circles, arrows, shapes, borders or boxes drawn around or over people.
+alt: at most 12 words describing what is visible: the place, the occasion, what the people wear or do. Do not name anyone and do not guess who the people are; the name is added separately.
+
+Write nothing else.`,
   },
   {
     moduleKey: 'celebrity-writer',
@@ -209,6 +216,23 @@ Then deliver the full article as Markdown, without a redundant title heading or 
 Keep paragraphs easy to follow and varied in length. Distinguish verified facts from estimates, opinions, unsupported product claims and current information you cannot confirm. Do not pretend to have tested software or products unless the research actually provides that evidence. No fabricated statistics, links, release dates, quotations or testimonials. No empty filler sections. The primary goal is to solve the reader's question, not to game a plugin score.`,
   },
   {
+    moduleKey: 'celebrity-writer',
+    stageKey: 'CATEGORY',
+    name: 'Celebrity — Category',
+    description: 'Pick exactly one existing synchronized WordPress category (only for articles without a chosen category, e.g. from the workflow).',
+    version: 1,
+    kind: 'text',
+    previousHashes: [],
+    variables: [KEYWORD, v('categories', 'Synchronized category names, one per line', true, 'stage')],
+    content: `Select exactly one suitable WordPress category for the article about "{{keyword}}" from this list:
+
+{{categories}}
+
+Choose only a category literally present in the list. Output a single line:
+
+CATEGORY: <exact category name>`,
+  },
+  {
     moduleKey: 'tigram-writer',
     stageKey: 'CATEGORY',
     name: 'Tigram — Category',
@@ -229,33 +253,46 @@ CATEGORY: <exact category name>`,
     moduleKey: 'tigram-writer',
     stageKey: 'IMAGE_PLAN',
     name: 'Tigram — Image plan',
-    description: 'Featured + two body image directions with alt text.',
-    version: 1,
+    description: 'Plans the featured image (with a short title text written on it) and two simple flat body images, with alt texts (owner\'s earlier tool).',
+    version: 2,
     kind: 'text',
     previousHashes: [],
-    variables: [KEYWORD],
-    content: `Create a practical 3-image plan for the article about "{{keyword}}" using the final article's actual topic. One image is a 16:9 featured visual with space for a short editorial headline and the website logo. Two are helpful body illustrations with no text, watermark or logo. Avoid inaccurate depictions of branded UIs, real people, proprietary logos or product details you cannot verify.
+    // Owner request: optional, so an own image-plan prompt without them saves without warnings.
+    variables: [{ ...KEYWORD, required: false }, v('image_title', 'Short title for the featured picture: the article title before “:” or “–”, at most ~45 characters', false, 'stage')],
+    content: `Plan 3 images for this article about "{{keyword}}". Do not create the images yet.
 
-Return exactly three lines:
+Image 1 — FEATURED IMAGE (blog header), landscape.
+It shows this short title text, spelled exactly: "{{image_title}}".
+Large, bold, easy to read text in the middle, with empty space above and below it (the top and bottom edges will be cropped to 16:9).
+Clean, modern background that fits the topic, strong contrast, no logos, no watermark, no other words.
 
-FEATURED: <visual direction> | ALT: <specific accessible alt text>
-BODY1: <visual direction> | ALT: <specific accessible alt text>
-BODY2: <visual direction> | ALT: <specific accessible alt text>`,
+Image 2 — BODY IMAGE, landscape. A simple flat illustration of the main topic of the article.
+Image 3 — BODY IMAGE, landscape. A simple flat illustration of another key part of the article (for example the step-by-step part or the comparison).
+
+Body image style (images 2 and 3): minimal flat illustration, soft colours, plain light background, lots of empty space, only a few simple objects, NO text, letters or numbers at all, no logos, no faces.
+
+Answer only with these six lines and nothing else:
+IMAGE 1 PROMPT: <complete prompt for image 1, including the title text and style>
+IMAGE 1 ALT: <alt text, max 120 characters, contains "{{keyword}}">
+IMAGE 2 PROMPT: <complete prompt for image 2, including the style>
+IMAGE 2 ALT: <alt text, max 120 characters>
+IMAGE 3 PROMPT: <complete prompt for image 3, including the style>
+IMAGE 3 ALT: <alt text, max 120 characters>`,
   },
   {
     moduleKey: 'tigram-writer',
     stageKey: 'IMAGE_GENERATION',
     name: 'Tigram — Image generation',
-    description: 'One clean editorial illustration from an approved brief (image prompt: no language line).',
-    version: 1,
+    description: 'Sent once per planned image: ChatGPT creates the picture; the app adds the website logo and places it (owner\'s earlier tool).',
+    version: 2,
     kind: 'image',
     previousHashes: [],
-    variables: [v('image_brief', 'Approved visual direction from the image plan', true, 'stage')],
-    content: `Create one clean editorial illustration based on this approved image brief:
+    variables: [v('image_brief', 'The complete prompt for this image from the image plan', true, 'stage')],
+    content: `Create this image now, landscape (wide) format:
 
 {{image_brief}}
 
-Use the specified 16:9 composition, readable shapes, professional lighting and clear focal subject. Follow the website's configured visual style. Keep the content visually relevant and accurate; avoid unnecessary text, watermarks, third-party logos, false UI screenshots and unrequested people. No surrounding explanation.`,
+Only create the image — no text answer is needed.`,
   },
   {
     moduleKey: 'shared',

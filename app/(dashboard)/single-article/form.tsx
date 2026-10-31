@@ -376,7 +376,7 @@ export function SingleArticleForm({
                 ))}
               </Select>
               {site && site.categories.length === 0 ? (
-                <Link className="text-xs font-semibold text-indigo-600 underline" href={`/websites/${site.id}`}>
+                <Link className="text-xs font-semibold link" href={`/websites/${site.id}`}>
                   Sync categories for {site.name} →
                 </Link>
               ) : null}

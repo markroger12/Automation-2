@@ -14,7 +14,7 @@ import { AppError } from '../errors';
 export async function articleReport(taskId: string) {
   const task = await db.articleTask.findUnique({ where: { id: taskId }, include: { website: { select: { name: true, publicUrl: true, language: true, timezone: true } } } });
   if (!task) throw new AppError(404, 'NOT_FOUND', 'Task not found.');
-  const [stages, responses, qualityReports, claims, incidents, logs, seoReports, linkSuggestions] = await Promise.all([
+  const [stages, responses, qualityReports, claims, incidents, logs, seoReports, linkSuggestions, snapshotJobs] = await Promise.all([
     db.articleStage.findMany({ where: { taskId }, orderBy: { position: 'asc' } }),
     db.chatGPTResponse.findMany({ where: { taskId }, orderBy: { createdAt: 'asc' } }),
     db.articleQualityReport.findMany({ where: { taskId }, orderBy: { createdAt: 'asc' } }),
@@ -23,6 +23,8 @@ export async function articleReport(taskId: string) {
     db.log.findMany({ where: { taskId }, orderBy: { createdAt: 'asc' }, take: 2000 }),
     db.sEOReport.findMany({ where: { taskId }, orderBy: { createdAt: 'asc' } }),
     db.suggestedInternalLink.findMany({ where: { taskId }, orderBy: { createdAt: 'asc' } }),
+    // What the ChatGPT page looked like when a job failed (composer, Send/Stop, text boxes; never page text).
+    db.queueJob.findMany({ where: { taskId, queue: 'chatgpt', progress: { contains: 'failureSnapshot' } }, orderBy: { createdAt: 'asc' }, select: { status: true, attempts: true, error: true, errorCode: true, updatedAt: true, payload: true, progress: true } }),
   ]);
   const json = (raw: string | null | undefined) => parseJson<unknown>(raw, raw ?? null);
   const report = {
@@ -121,6 +123,15 @@ export async function articleReport(taskId: string) {
       ownerValue: c.ownerValue,
     })),
     internalLinks: linkSuggestions.map((l) => ({ url: l.url, title: l.title, kind: l.kind, anchor: l.anchor, score: l.score, status: l.status, reasons: json(l.reasons), note: l.note })),
+    chatgptPageSnapshots: snapshotJobs.map((j) => ({
+      stageKey: parseJson<{ stageKey?: string }>(j.payload, {}).stageKey ?? null,
+      status: j.status,
+      attempts: j.attempts,
+      error: j.error,
+      errorCode: j.errorCode,
+      at: j.updatedAt,
+      page: parseJson<{ failureSnapshot?: Record<string, unknown> }>(j.progress, {}).failureSnapshot ?? {},
+    })),
     incidents: incidents.map((i) => ({ kind: i.kind, severity: i.severity, status: i.status, stageKey: i.stageKey, description: i.description, resolution: i.resolution, createdAt: i.createdAt, resolvedAt: i.resolvedAt })),
     logs: logs.map((l) => ({ at: l.createdAt, level: l.level, category: l.category, stage: l.stage, message: l.message, details: json(l.details) })),
   };

@@ -3638,3 +3638,50 @@ npx next build                                                             # com
 npx vitest run                                                             # 58 files, 401 tests pass
 node tests/.tmp/ui/<scratch>.mjs                                           # results above
 ```
+
+## Owner request (2026-10-31): move keywords to another day
+
+Screenshot of the Workflow queue: one keyword had moved to tomorrow (“not ready by its slot”), and the owner wants all of them on tomorrow.
+- **Workflow → select keywords → Move to day:** Tomorrow / Day after / Today, or any day within 60 days.
+  - The window shows each keyword's current slot and its new one before anything changes (a preview run of the same code).
+  - The selected keywords take that day's free slots in queue order. The slots of the keywords being moved count as free, so they can swap. When the day has too few free slots, the rest go to the next day(s).
+- **What happens to each keyword (`moveKeywords` in `src/lib/workflow/service.ts`):**
+  - The slot reservations and the keywords change in one transaction.
+  - **Scheduled in WordPress:** back to READY, and one `wp.schedule` job changes the post's time through the existing approved path (`withPublishPermit`, read back). Refused, with a note, when WordPress publishes the post within 10 minutes, or when publishing has been switched off for the website since.
+  - **Not started yet:** keeps the slot as its planned slot. The scheduler starts it within the write-ahead time before that slot, and uses that slot. A keyword that was not selected may still use the slots that became free. A skipped planned keyword gives its slot back; a planned slot that passes before the article could start is given back.
+  - **Being written:** only the slot changes. An old “Moved to the next free slot” note is cleared, and `retries` (the automatic moves) is not changed.
+  - **Published, finished, stopped or skipped:** not moved, with a note.
+  - Audited as `workflow.keywords.move`.
+- **Job key:** a schedule job key used before (a move back to an earlier time) gets a fresh key. Otherwise the scheduler's own key is used, so the tick does not queue a second job.
+
+**Tests**
+- **Unit `tests/unit/workflow-move.test.ts` (5), the owner's queue from the screenshot:**
+  - preview without changes, including the spill to Monday and a slot owned by a keyword that was not selected;
+  - the move: reservations, READY plus one schedule job, retries unchanged, audit;
+  - the scheduler afterwards: nothing moves back, no second job, the planned keyword waits and then starts at its slot;
+  - refusals: a past day, an impossible date, a post WordPress publishes within minutes, publishing switched off;
+  - skip gives the slot back, and the `move` action works through `keywordAction`.
+  - First run on the old code: 5 of 5 failed (no move).
+- **Integration `workflow-publish` (+1):** a post scheduled in the fake WordPress, moved to the day after tomorrow through `keywordAction`, then the schedule job: the post's `date_gmt` in WordPress is the new slot, `future`, and the keyword is SCHEDULED again.
+- **Chromium, production build:** `next build` + `next start` on port 3100, with a scratch database in `/tmp` (deleted afterwards) holding the owner's queue on today's clock.
+  - Select all → Move to day: the preview listed all 5 on Sun 1 Nov, 5:00–7:00 pm, with isabella's “time in WordPress changes too”.
+  - Day after → Mon 2 Nov.
+  - Move → toast “5 keyword(s) moved to Sun, 1 Nov. 1 post(s) get the new time in WordPress in a moment.”
+  - The queue and the database then showed those slots and reservations, and one `wp.schedule` job.
+  - Light and dark screenshots; no page errors.
+- **Limits:**
+  - The new time reaches WordPress only when the worker runs the schedule job with a WordPress session. The app logs in again by itself; a CAPTCHA or 2-step code needs the owner.
+  - Until the job has run, the post keeps its old time in WordPress. If WordPress publishes it at that time first, the queue shows it as published at the real time, as before.
+  - When the worker takes one of the free slots during a move, the whole move is rolled back (“A slot was taken while moving … Try again.”).
+- **Not verified:** on the owner's Windows PC, and against the owner's real WordPress (the fake WordPress takes the new `date_gmt` the way WordPress's REST API does).
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run tests/unit/workflow-move.test.ts                            # before the change: 5 failed; after: 5 pass
+npx vitest run tests/unit/workflow-scheduler.test.ts                       # 9 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 9 pass
+npx vitest run                                                             # 59 files, 406 tests pass
+npx next build                                                             # compiled successfully
+node tests/.tmp/ui/move.mjs <out> light|dark                               # results above
+```

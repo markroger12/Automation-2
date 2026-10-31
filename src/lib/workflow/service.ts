@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { db } from '../db';
 import { audit } from '../audit';
 import { AppError, badRequest, notFound } from '../errors';
@@ -9,8 +10,9 @@ import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/
 import { retryTask } from '../tasks/lifecycle';
 import { overrideQuality } from '../tasks/actions';
 import { deleteTask } from '../tasks/delete';
-import { DEFAULT_SLOT_TIMEZONE, isValidTimeZone, parseSlot, formatSlot, upcomingSlots } from './time';
+import { DEFAULT_SLOT_TIMEZONE, formatInZone, isValidTimeZone, parseSlot, formatSlot, upcomingSlots, zonedParts, zonedTimeToUtc } from './time';
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
+import { enqueue } from '../queue';
 import { normalizeSearchConsoleProperty } from './search-console';
 import { proofsFor } from '../gsc/proof';
 import { requestIndexingNow, requestProperty } from '../gsc/request-indexing';
@@ -139,11 +141,112 @@ export async function addKeywords(websiteId: string, raw: unknown) {
 
 export const keywordActionSchema = z.object({
   keywordIds: z.array(z.string().max(40)).min(1).max(500),
-  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'force', 'request-indexing', 'indexing-requested', 'indexed', 'delete']),
+  action: z.enum(['writer', 'skip', 'restore', 'top', 'retry', 'force', 'request-indexing', 'indexing-requested', 'indexed', 'delete', 'move']),
   writer: z.string().max(40).optional(),
   /** With “delete”: also delete the keywords' articles from the app (WordPress is never changed). */
   articles: z.boolean().optional(),
+  /** With “move”: the day (YYYY-MM-DD, in the workflow's slot time zone) and whether only to preview the new slots. */
+  date: z.string().max(10).optional(),
+  dryRun: z.boolean().optional(),
 });
+
+/** A scheduled post closer than this to its time is left to WordPress: changing it might race WordPress publishing it. */
+export const MOVE_MARGIN_MS = 10 * 60_000;
+const MOVABLE = ['WAITING', 'WRITING', 'READY', 'SCHEDULED'];
+const MOVE_DAYS = 60;
+const STATUS_WORD: Record<string, string> = { PUBLISHED: 'published', INDEXING_REQUESTED: 'published', INDEXED: 'published', DONE: 'finished', FAILED: 'stopped (use Retry)', SKIPPED: 'skipped' };
+
+export interface MovePlan {
+  id: string;
+  keyword: string;
+  status: string;
+  from: string | null;
+  to: string;
+}
+
+/**
+ * Owner request (one keyword had moved to tomorrow: “I want all of them on tomorrow”): the selected keywords take the
+ * free slots of the chosen day, in queue order, spilling into the next days when that day is full. The slots of the
+ * keywords being moved count as free, so they can swap. A post already scheduled in WordPress goes back to READY and is
+ * scheduled again for its new slot through the approved path (withPublishPermit, read back). A keyword not started
+ * yet keeps the slot as its planned slot and starts within the write-ahead time before it. A move by the owner is not
+ * counted against the automatic moves (maxRetries). Published keywords are never moved.
+ */
+export async function moveKeywords(websiteId: string, raw: unknown, now = new Date()): Promise<{ ok: true; changed: number; plan: MovePlan[]; notes: string[] }> {
+  const input = z.object({ keywordIds: z.array(z.string().max(40)).min(1).max(500), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose a day.'), dryRun: z.boolean().default(false) }).parse(raw);
+  const wf = await ensureWorkflow(websiteId);
+  const site = await db.website.findUniqueOrThrow({ where: { id: websiteId } });
+  const rules = slotRules(wf);
+  if (!rules.slots.length) throw badRequest('Add publishing slots to the workflow first (Settings).');
+  const [y, m, d] = input.date.split('-').map(Number);
+  const check = new Date(Date.UTC(y, m - 1, d));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() !== m - 1 || check.getUTCDate() !== d) throw badRequest(`${input.date} is not a day.`);
+  const today = zonedParts(now, rules.timezone);
+  const todayUtc = Date.UTC(today.year, today.month - 1, today.day);
+  if (check.getTime() < todayUtc) throw badRequest('Choose today or a later day.');
+  if (check.getTime() > todayUtc + MOVE_DAYS * 86_400_000) throw badRequest(`Choose a day within the next ${MOVE_DAYS} days.`);
+  const from = new Date(Math.max(zonedTimeToUtc(y, m, d, 0, 0, rules.timezone).getTime(), now.getTime() + SCHEDULE_LEAD_MS));
+  const publishing = site.canPublish && Boolean(site.canPublishAcknowledgedAt);
+  const rows = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, id: { in: input.keywordIds } }, orderBy: { position: 'asc' } });
+  const notes: string[] = [];
+  const moving = rows.filter((kw) => {
+    if (!MOVABLE.includes(kw.status)) {
+      notes.push(`“${kw.keyword}” is ${STATUS_WORD[kw.status] ?? kw.status.toLowerCase()}; only keywords not published yet can be moved.`);
+      return false;
+    }
+    if (kw.status === 'SCHEDULED' && !publishing) {
+      notes.push(`“${kw.keyword}” is scheduled in WordPress, but publishing is now off for this website, so the app cannot change its time there. Change it in WordPress.`);
+      return false;
+    }
+    if (kw.status === 'SCHEDULED' && (!kw.scheduledAt || kw.scheduledAt.getTime() - now.getTime() < MOVE_MARGIN_MS)) {
+      notes.push(`“${kw.keyword}”: WordPress publishes it at ${kw.scheduledAt ? formatInZone(kw.scheduledAt, rules.timezone) : 'its time'}, too soon to move safely.`);
+      return false;
+    }
+    return true;
+  });
+  const ids = new Set(moving.map((k) => k.id));
+  const slots = upcomingSlots(rules, from, MOVE_DAYS + 7);
+  const taken = new Set(
+    slots.length
+      ? (await db.slotReservation.findMany({ where: { websiteId, scheduledAt: { gte: slots[0], lte: slots[slots.length - 1] } } })).filter((r) => !ids.has(r.workflowKeywordId)).map((r) => r.scheduledAt.getTime())
+      : [],
+  );
+  const free = slots.filter((s) => !taken.has(s.getTime()));
+  if (free.length < moving.length) throw badRequest(`Only ${free.length} free slot(s) from ${input.date} on; add slots or move fewer keywords.`);
+  const plan: MovePlan[] = moving.map((kw, i) => ({ id: kw.id, keyword: kw.keyword, status: kw.status, from: kw.scheduledAt?.toISOString() ?? null, to: free[i].toISOString() }));
+  if (input.dryRun || !plan.length) return { ok: true, changed: 0, plan, notes };
+
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.slotReservation.deleteMany({ where: { workflowKeywordId: { in: [...ids] } } });
+      for (const p of plan) {
+        const kw = moving.find((k) => k.id === p.id)!;
+        const at = new Date(p.to);
+        await tx.slotReservation.create({ data: { websiteId, scheduledAt: at, workflowKeywordId: p.id } });
+        // An earlier automatic-move note no longer applies; other notes (waiting for you, forced) stay.
+        const lastError = kw.status === 'SCHEDULED' ? 'Moved by you: its time in WordPress is being changed to the new slot.' : kw.lastError && /Moved to the next free slot\.$/.test(kw.lastError) ? null : kw.lastError;
+        await tx.workflowKeyword.update({ where: { id: p.id }, data: { scheduledAt: at, lastError, ...(kw.status === 'SCHEDULED' ? { status: 'READY' } : {}) } });
+      }
+    });
+  } catch (error) {
+    // The worker took one of the free slots meanwhile: the whole move was rolled back.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new AppError(409, 'CONFLICT', 'A slot was taken while moving, so nothing was changed. Try again.');
+    throw error;
+  }
+  // Posts in WordPress (scheduled, or verified drafts about to be): one schedule job each for the new slot. The
+  // scheduler's own key is used when it is new, so the tick does not queue a second job; a key used before (a move
+  // back to an earlier time) gets a fresh one.
+  if (publishing) {
+    for (const p of plan.filter((x) => x.status === 'SCHEDULED' || x.status === 'READY')) {
+      const kw = moving.find((k) => k.id === p.id)!;
+      const key = `wp-schedule:${p.id}:${p.to}:${kw.retries}`;
+      const used = await db.queueJob.findUnique({ where: { idempotencyKey: key }, select: { id: true } });
+      await enqueue({ queue: 'control', kind: 'wp.schedule', idempotencyKey: used ? `${key}:moved:${now.getTime()}` : key, websiteId, relatedId: p.id, payload: { keywordId: p.id, websiteId } });
+    }
+  }
+  await audit('workflow.keywords.move', 'Workflow', wf.id, { date: input.date, moved: plan.map((p) => ({ keyword: p.keyword, from: p.from, to: p.to })), notMoved: notes.length });
+  return { ok: true, changed: plan.length, plan, notes };
+}
 
 /**
  * Owner actions on queued keywords. INDEXED is only recorded from the owner's own verification. “request-indexing” has
@@ -152,6 +255,7 @@ export const keywordActionSchema = z.object({
  */
 export async function keywordAction(websiteId: string, raw: unknown) {
   const input = keywordActionSchema.parse(raw);
+  if (input.action === 'move') return moveKeywords(websiteId, { keywordIds: input.keywordIds, date: input.date, dryRun: input.dryRun });
   const wf = await ensureWorkflow(websiteId);
   const rows = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, id: { in: input.keywordIds } } });
   let changed = 0;
@@ -174,7 +278,9 @@ export async function keywordAction(websiteId: string, raw: unknown) {
           notes.push(`“${kw.keyword}” is ${kw.status.toLowerCase()}; cancel its article first.`);
           continue;
         }
-        await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'SKIPPED' } });
+        // A keyword moved to a later day holds its planned slot until it starts: skipped, the slot is free again.
+        await db.slotReservation.deleteMany({ where: { workflowKeywordId: kw.id } });
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'SKIPPED', ...(kw.status === 'WAITING' ? { scheduledAt: null } : {}) } });
         break;
       case 'restore':
         if (kw.status !== 'SKIPPED') continue;

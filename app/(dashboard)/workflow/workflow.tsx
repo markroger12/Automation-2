@@ -32,6 +32,7 @@ import { TimePicker } from '@/components/time-picker';
 import { IndexingPanel } from '@/components/indexing-panel';
 import { ScreenshotModal } from '@/components/screenshot-modal';
 import { KeywordIdeas } from './keyword-ideas';
+import { MoveKeywords } from './move-keywords';
 import { Field, Input, Select, Switch, Textarea } from '@/components/form';
 import { Card, Chip, PageHeader, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
@@ -106,6 +107,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteArticles, setDeleteArticles] = useState(false);
   const [confirmForce, setConfirmForce] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   // Owner request: “I have to scroll so much” — settings and new keywords open in a window, the queue has pages.
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -375,6 +377,9 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
             </Button>
             <Button size="sm" onClick={() => void action('request-indexing', {}, (n) => `Automation Chrome requests indexing in Search Console for ${n} keyword(s) now; Google's answer shows on each keyword.`)} title="Automation Chrome inspects the post URL in Search Console and clicks REQUEST INDEXING now">
               <Send className="h-3.5 w-3.5" /> Request indexing
+            </Button>
+            <Button size="sm" onClick={() => setMoveOpen(true)} title="Move the selected keywords to another day's slots (e.g. all to tomorrow)">
+              <CalendarClock className="h-3.5 w-3.5" /> Move to day
             </Button>
             <Menu label="More" icon={<MoreHorizontal className="h-3.5 w-3.5" />}>
               {(close) => (
@@ -731,6 +736,20 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
       </Modal>
 
       <ScreenshotModal shot={shot} onClose={() => setShot(null)} />
+      {siteId ? (
+        <MoveKeywords
+          open={moveOpen}
+          onClose={() => setMoveOpen(false)}
+          siteId={siteId}
+          keywordIds={[...selected]}
+          timezone={view.workflow?.slotTimezone ?? 'Asia/Karachi'}
+          onMoved={() => {
+            setSelected(new Set());
+            void load();
+            setActed((n) => n + 1);
+          }}
+        />
+      ) : null}
       {siteId ? <KeywordIdeas open={ideasOpen} onClose={() => setIdeasOpen(false)} siteId={siteId} seeds={[...view.keywords].reverse().map((k) => k.keyword)} onAdded={() => void load()} /> : null}
       <ConfirmDialog
         open={confirmForce}

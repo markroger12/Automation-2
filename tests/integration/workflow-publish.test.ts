@@ -200,4 +200,30 @@ describe('approved publishing path', () => {
     const r = await schedulerTick(new Date());
     expect(r.scheduleJobs).toBe(1);
   });
+
+  it('owner request: a post scheduled in WordPress moved to another day gets its new time in WordPress (approved path, read back)', async () => {
+    await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date() } });
+    const t = await draftTask('How to Move a WordPress Site', 'pub:move-1');
+    const first = new Date(Math.floor((Date.now() + 3 * 3_600_000) / 60_000) * 60_000);
+    const kw = await readyKeyword('How to Move a WordPress Site', t.id, first);
+    expect(await schedule.scheduleKeywordPost(kw.id)).toMatchObject({ scheduled: true });
+    expect(wp.posts.get(t.wpPostId!)!.status).toBe('future');
+
+    // Move it to the day after tomorrow (Pakistan time): the first slot of that day, 9:00 AM = 04:00 UTC.
+    const day = new Date(Date.now() + 5 * 3_600_000 + 2 * 86_400_000).toISOString().slice(0, 10);
+    const service = await import('@/lib/workflow/service');
+    const moved = await service.keywordAction(site.id, { keywordIds: [kw.id], action: 'move', date: day });
+    expect(moved.changed).toBe(1);
+    const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+    expect(row.status).toBe('READY');
+    expect(row.scheduledAt!.toISOString()).toBe(`${day}T04:00:00.000Z`);
+    expect(await client.queueJob.count({ where: { kind: 'wp.schedule', relatedId: kw.id, status: 'WAITING' } })).toBe(1);
+
+    // The worker's schedule job: the post's time in WordPress changes, and it is read back.
+    expect(await schedule.scheduleKeywordPost(kw.id)).toMatchObject({ scheduled: true, at: `${day}T04:00:00.000Z` });
+    const post = wp.posts.get(t.wpPostId!)!;
+    expect(post.status).toBe('future');
+    expect(post.date_gmt).toBe(`${day}T04:00:00`);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('SCHEDULED');
+  });
 });

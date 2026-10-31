@@ -17,7 +17,8 @@ import { upcomingSlots } from './time';
  *     scheduled ones past their time → one wp.verify-published job;
  *  4. starts new articles: next WAITING keyword (by position), next free
  *     slot (unique per website and time), within the write-ahead horizon and
- *     the backlog cap.
+ *     the backlog cap. A keyword the owner moved to a later day keeps its
+ *     planned (reserved) slot and starts within the write-ahead time before it.
  */
 
 export const SCHEDULE_LEAD_MS = 5 * 60_000;
@@ -167,12 +168,22 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
     if (created) report.verifyJobs++;
   }
 
+  // 3b. A keyword moved to a later day whose planned slot came before its article could start (the backlog was full):
+  // the planned slot is given back, and it takes the next free slot when it starts.
+  const passed = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'WAITING', scheduledAt: { lte: new Date(now.getTime() + SCHEDULE_LEAD_MS) } }, select: { id: true } });
+  for (const kw of passed) {
+    await release(kw.id);
+    await db.workflowKeyword.update({ where: { id: kw.id }, data: { scheduledAt: null } });
+  }
+
   // 4. Start new articles within the backlog cap and the write-ahead horizon.
   // Keywords that need the owner's writer choice are flagged right away, whatever the backlog.
   if (wf.writerPreference === 'AUTO') await db.workflowKeyword.updateMany({ where: { workflowId: wf.id, status: 'WAITING', writerType: 'UNKNOWN', lastError: null }, data: { lastError: 'Choose a writer for this keyword.' } });
   let backlog = await db.workflowKeyword.count({ where: { workflowId: wf.id, status: { in: ['WRITING', 'READY'] } } });
   if (backlog >= wf.maxBacklog) return;
   const waiting = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'WAITING' }, orderBy: { position: 'asc' }, take: 50 });
+  // Once the next free slot is beyond the write-ahead time, only keywords with a planned slot can still start.
+  let freeSlotsAhead = true;
   for (const kw of waiting) {
     if (backlog >= wf.maxBacklog) break;
     const writer = writerFor(wf, kw);
@@ -186,11 +197,22 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       if (kw.lastError !== msg) await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: msg } });
       continue;
     }
-    const slot = await nextFreeSlot(wf, new Date(now.getTime() + SCHEDULE_LEAD_MS));
-    if (!slot) break;
-    if (wf.writeAheadHours > 0 && slot.getTime() - now.getTime() > wf.writeAheadHours * 3_600_000) break;
-    const reserved = await reserveSlot(wf, kw.id, new Date(now.getTime() + SCHEDULE_LEAD_MS));
-    if (!reserved) break;
+    const planned = kw.scheduledAt ? await db.slotReservation.findFirst({ where: { workflowKeywordId: kw.id, scheduledAt: kw.scheduledAt } }) : null;
+    if (!planned && !freeSlotsAhead) continue;
+    const slot = planned ? planned.scheduledAt : await nextFreeSlot(wf, new Date(now.getTime() + SCHEDULE_LEAD_MS));
+    if (!slot) {
+      freeSlotsAhead = false;
+      continue;
+    }
+    if (wf.writeAheadHours > 0 && slot.getTime() - now.getTime() > wf.writeAheadHours * 3_600_000) {
+      if (!planned) freeSlotsAhead = false;
+      continue;
+    }
+    const reserved = planned ? planned.scheduledAt : await reserveSlot(wf, kw.id, new Date(now.getTime() + SCHEDULE_LEAD_MS));
+    if (!reserved) {
+      freeSlotsAhead = false;
+      continue;
+    }
     try {
       const { task } = await createArticleTask(
         {
@@ -209,7 +231,7 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       report.started++;
     } catch (error) {
       await release(kw.id);
-      await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: `Could not start the article: ${(error as Error).message}`.slice(0, 400) } });
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { scheduledAt: null, lastError: `Could not start the article: ${(error as Error).message}`.slice(0, 400) } });
     }
   }
 }

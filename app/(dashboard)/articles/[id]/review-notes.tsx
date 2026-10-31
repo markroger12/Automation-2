@@ -18,9 +18,7 @@ export function ReviewNotes({ reasons, taskId, held, onTab, actions }: { reasons
   const groups = groupReviewNotes(reasons);
   // Reasons that hold the article are all shown; plain notes start with the first few.
   const [all, setAll] = useState(held);
-  const [open, setOpen] = useState<Set<string>>(new Set());
   const Icon = held ? TriangleAlert : Info;
-  let left = all ? Infinity : FIRST;
   return (
     <section className={cx('surface rounded-xl border', held && 'border-amber-500/40')} aria-label={held ? 'Review reasons' : 'Notes'}>
       <header className="border-app flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-3">
@@ -34,58 +32,60 @@ export function ReviewNotes({ reasons, taskId, held, onTab, actions }: { reasons
           </button>
         ) : null}
       </header>
-      <div className="divide-y divide-[var(--border)]">
-        {groups.map((g) => {
-          const shown = g.notes.slice(0, Math.max(0, left));
-          left -= shown.length;
-          if (!shown.length) return null;
-          const where = g.source ? NOTE_SOURCES[g.source] : undefined;
-          return (
-            <div key={g.label} className="px-4 py-3">
-              <div className="mb-1 flex items-center justify-between gap-3">
-                <h3 className="text-muted text-[11px] font-semibold uppercase tracking-wider">
-                  {g.label} · {g.notes.length}
-                </h3>
-                {where?.page ? (
-                  <Link href={where.page(taskId)} className="text-xs font-medium hover:underline">
-                    {where.pageLabel} →
-                  </Link>
-                ) : where?.tab ? (
-                  <button type="button" onClick={() => onTab(where.tab!)} className="text-xs font-medium hover:underline">
-                    Open the {where.tab === 'editor' ? 'Editor' : where.tab === 'seo' ? 'SEO' : where.tab === 'images' ? 'Images' : 'Stages'} tab →
-                  </button>
-                ) : null}
-              </div>
-              <ul className="space-y-0.5">
-                {shown.map((n, i) => {
-                  const key = `${g.label}:${i}`;
-                  return (
-                    <NoteRow
-                      key={key}
-                      note={n}
-                      open={open.has(key)}
-                      onToggle={() =>
-                        setOpen((s) => {
-                          const next = new Set(s);
-                          if (next.has(key)) next.delete(key);
-                          else next.add(key);
-                          return next;
-                        })
-                      }
-                    />
-                  );
-                })}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
+      <NoteGroups groups={groups} taskId={taskId} onTab={onTab} limit={all ? Infinity : FIRST} />
       {actions ? <div className="border-app flex flex-wrap gap-2 border-t px-4 py-3">{actions}</div> : null}
     </section>
   );
 }
 
-function NoteRow({ note, open, onToggle }: { note: ReviewNote; open: boolean; onToggle: () => void }) {
+const TAB_NAME: Record<string, string> = { editor: 'Editor', seo: 'SEO', images: 'Images', stages: 'Stages' };
+
+/**
+ * Notes grouped by where they came from: each group with its count and a link to the page or tab that shows it in
+ * full, then one row per note. `limit` counts rows across all groups (the rest waits for “Show all”). Used by the
+ * Notes above and by the Quality report.
+ */
+export function NoteGroups({ groups, taskId, onTab, limit = Infinity }: { groups: { label: string; source: string | null; notes: ReviewNote[] }[]; taskId: string; onTab?: (tab: string) => void; limit?: number }) {
+  let left = limit;
+  return (
+    <div className="divide-y divide-[var(--border)]">
+      {groups.map((g) => {
+        const shown = g.notes.slice(0, Math.max(0, left));
+        left -= shown.length;
+        if (!shown.length) return null;
+        const where = g.source ? NOTE_SOURCES[g.source] : undefined;
+        return (
+          <div key={g.label} className="px-4 py-3">
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <h3 className="text-muted text-[11px] font-semibold uppercase tracking-wider">
+                {g.label} · {g.notes.length}
+              </h3>
+              {where?.page ? (
+                <Link href={where.page(taskId)} className="text-xs font-medium hover:underline">
+                  {where.pageLabel} →
+                </Link>
+              ) : where?.tab && onTab ? (
+                <button type="button" onClick={() => onTab(where.tab!)} className="text-xs font-medium hover:underline">
+                  Open the {TAB_NAME[where.tab] ?? 'Stages'} tab →
+                </button>
+              ) : null}
+            </div>
+            <ul className="space-y-0.5">
+              {shown.map((n, i) => (
+                <NoteRow key={`${g.label}:${i}`} note={n} />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One note: its short title and quote; a click shows the research notes and what to do. */
+export function NoteRow({ note }: { note: ReviewNote }) {
+  const [open, setOpen] = useState(false);
+  const onToggle = () => setOpen((o) => !o);
   const details = note.notes.length > 0 || Boolean(note.more) || Boolean(note.advice) || Boolean(note.quote && note.quote.length > 90);
   return (
     <li>

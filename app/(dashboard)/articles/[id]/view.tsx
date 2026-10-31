@@ -216,7 +216,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
 
       <Tabs tabs={tabs} more={moreTabs} value={tab} onChange={(id) => setTab(id as TabId)} />
       <div className="mt-4">
-        {tab === 'overview' ? <OverviewTab task={task} /> : null}
+        {tab === 'overview' ? <OverviewTab task={task} onTab={(t) => setTab(t as TabId)} /> : null}
         {tab === 'links' ? <LinksTab task={task} onChanged={reload} /> : null}
         {tab === 'humanizer' ? <HumanizerTab task={task} /> : null}
         {tab === 'originality' ? <OriginalityTab task={task} /> : null}

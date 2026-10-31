@@ -201,6 +201,11 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
   - the scores show as chips (Rank Math only when read from WordPress);
   - the timeline shows the time between steps;
   - long incident texts are shortened, with **more**.
+- **Quality report** (top of Overview):
+  - a summary line counts the hard stops and warnings;
+  - **hard stops** are in a red box (“fix these first”);
+  - **warnings** are grouped by where they come from (Research evidence, Article, SEO, …), each group with its link (e.g. **Open Research Evidence**) and one short line per warning with the quoted text. Click a line for the research notes and what to do. The first 4 are shown, and **Show all** shows the rest;
+  - the checks (SEO readiness, Structure, Research evidence, Duplicates, Links, Images, Rank Math, WordPress) are small tiles with a green, amber or red dot.
 - **Research:** each source page is listed once (ChatGPT cites many pages twice, with and without `?utm_source=chatgpt.com`), as the site and the page.
 - **Images:** three tiles show which image is there or missing. The steps are under **How the images were made**.
 - **Links:** each external link shows its phrase, then the site and the page on one line. The internal-link candidates have **Use this** on the right, and the chosen one says **in use**.

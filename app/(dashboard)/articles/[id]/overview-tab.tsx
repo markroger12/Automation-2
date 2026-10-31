@@ -114,7 +114,7 @@ const INCIDENT_STATUS: Record<string, { label: string; tone: ChipTone }> = {
 const words = (code: string) => code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, ' ');
 
 /** Article → Overview: what was asked, what came out, when, and what went wrong (owner request: a cleaner page). */
-export function OverviewTab({ task }: { task: SerializedTaskDetail }) {
+export function OverviewTab({ task, onTab }: { task: SerializedTaskDetail; onTab?: (tab: string) => void }) {
   const opts = optionLabels(task.optionValues as Record<string, unknown>);
   const steps = [
     { label: 'Created', at: task.createdAt },
@@ -129,7 +129,7 @@ export function OverviewTab({ task }: { task: SerializedTaskDetail }) {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div className="lg:col-span-2">
-        <QualityCard taskId={task.id} />
+        <QualityCard taskId={task.id} onTab={onTab} />
       </div>
 
       <Card title="Input" description="As submitted">

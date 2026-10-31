@@ -3784,3 +3784,34 @@ npx vitest run --config vitest.integration.config.ts tests/integration/image-too
 npx vitest run                                                             # 60 files, 412 tests pass
 npx tsx <scratch>/edges.mjs, featured-real.ts, enhance-compare.mjs        # results above
 ```
+
+## Owner request (2026-10-31): the Quality report, tidied
+
+Screenshot of an article's Quality report (Mallory Plotnik: 1 hard stop, a long list of warnings with “RESEARCH_EVIDENCE” links): “abhi yaha ka ui sahi kr”.
+- **Shared parts:** the findings go through the same parser as the article's Notes (`parseReviewNote`). Its group and row rendering moved into `NoteGroups` / `NoteRow` in `review-notes.tsx`, used by both.
+  - Each row has a short title (“4 unsupported family/relationship claims · paragraph 38”) and a one-line quote.
+  - A click shows the research notes and what to do.
+  - Each group has its count and its page link (“Open Research Evidence →”, “Open Duplicate Review →”), or a button that switches the article's tab (SEO, Editor, Images, Stages).
+- **Card layout:**
+  - a summary line (“1 hard stop · 12 warnings” and the groups);
+  - hard stops in a red box;
+  - warnings with the first 4 shown and “Show all N”;
+  - the checks as tiles with a green, amber or red dot.
+  - Nothing is dropped: every finding and every check value is still there.
+
+**Checked:**
+- A production build with a scratch database in `/tmp` holding a report shaped like the owner's.
+- Before and after screenshots: the card went from 1,115 px to 708 px tall.
+- One row opened (research notes and advice shown); Show all → every warning; “Open the SEO tab” switches to SEO.
+- The article's Notes block still works: 4 rows, then Show all 12, and a row opens.
+- `scripts/a11y-audit.ts`: no serious or critical violations, light and dark, including this article.
+- **Not verified:** the owner's articles on Windows.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run                                                             # 60 files, 412 tests pass
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # no serious or critical violations
+node <scratch>/quality.mjs, notes.mjs                                      # results above
+```

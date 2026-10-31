@@ -96,9 +96,18 @@ export async function previewKeywords(websiteId: string, text: string) {
   return { problems: parsed.problems, rows };
 }
 
-/** Append keywords to the workflow queue (duplicates are left out unless `keepDuplicates` lists their lines). */
+/**
+ * Append keywords to the workflow queue (duplicates are left out unless `keepDuplicates` lists their lines).
+ * `writers` (owner request: choose the writer right in Add keywords) sets a line's writer, by line number.
+ */
 export async function addKeywords(websiteId: string, raw: unknown) {
-  const input = z.object({ text: z.string().max(2_000_000), keepDuplicates: z.array(z.number().int()).default([]) }).parse(raw);
+  const input = z
+    .object({
+      text: z.string().max(2_000_000),
+      keepDuplicates: z.array(z.number().int()).default([]),
+      writers: z.record(z.string().regex(/^\d+$/), z.enum(['CELEBRITY', 'TIGRAM', 'UNKNOWN'])).default({}),
+    })
+    .parse(raw);
   const preview = await previewKeywords(websiteId, input.text);
   const wf = await ensureWorkflow(websiteId);
   const last = await db.workflowKeyword.findFirst({ where: { workflowId: wf.id }, orderBy: { position: 'desc' }, select: { position: true } });
@@ -106,18 +115,23 @@ export async function addKeywords(websiteId: string, raw: unknown) {
   const keep = new Set(input.keepDuplicates);
   const rows = preview.rows.filter((r) => !r.errors.length && (!r.duplicateOf || keep.has(r.line)));
   await db.workflowKeyword.createMany({
-    data: rows.map((r) => ({
-      workflowId: wf.id,
-      keyword: r.keyword,
-      normalizedKeyword: normalizeKeyword(r.keyword),
-      exampleTitle: r.exampleTitle,
-      secondaryKeywords: JSON.stringify(r.secondaryKeywords),
-      writerType: r.writerType,
-      detectionReason: r.detectionReason,
-      detectionSource: r.detectionSource,
-      detectionConfidence: r.detectionConfidence,
-      position: ++position,
-    })),
+    data: rows.map((r) => {
+      // The owner's choice in Add keywords wins over the detection; “choose later” keeps the line undecided.
+      const chosen = input.writers[String(r.line)];
+      const writer = chosen && chosen !== r.writerType ? { writerType: chosen, detectionReason: chosen === 'UNKNOWN' ? 'Left for you to choose.' : 'Chosen by you.', detectionSource: 'OVERRIDE', detectionConfidence: 1 } : null;
+      return {
+        workflowId: wf.id,
+        keyword: r.keyword,
+        normalizedKeyword: normalizeKeyword(r.keyword),
+        exampleTitle: r.exampleTitle,
+        secondaryKeywords: JSON.stringify(r.secondaryKeywords),
+        writerType: writer?.writerType ?? r.writerType,
+        detectionReason: writer?.detectionReason ?? r.detectionReason,
+        detectionSource: writer?.detectionSource ?? r.detectionSource,
+        detectionConfidence: writer?.detectionConfidence ?? r.detectionConfidence,
+        position: ++position,
+      };
+    }),
   });
   await audit('workflow.keywords.add', 'Workflow', wf.id, { added: rows.length, skipped: preview.rows.length - rows.length });
   return { added: rows.length, skippedDuplicates: preview.rows.filter((r) => r.duplicateOf && !keep.has(r.line)).length, invalid: preview.rows.filter((r) => r.errors.length).length };

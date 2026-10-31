@@ -99,6 +99,8 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   const [text, setText] = useState('');
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [keep, setKeep] = useState<Set<number>>(new Set());
+  // Owner request: choose the writer right in Add keywords (by line; missing = the detected one).
+  const [writers, setWriters] = useState<Record<number, string>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [acted, setActed] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -174,6 +176,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
       const r = await api<{ rows: PreviewRow[]; problems: string[] }>(`/api/websites/${siteId}/workflow/keywords/preview`, { body: { text } });
       setPreview(r.rows);
       setKeep(new Set());
+      setWriters({});
       if (r.problems.length) toast('info', r.problems.join(' '));
     } catch (e) {
       toast('error', (e as Error).message);
@@ -182,7 +185,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
 
   async function addAll() {
     try {
-      const r = await api<{ added: number; skippedDuplicates: number; invalid: number }>(`/api/websites/${siteId}/workflow/keywords`, { body: { text, keepDuplicates: [...keep] } });
+      const r = await api<{ added: number; skippedDuplicates: number; invalid: number }>(`/api/websites/${siteId}/workflow/keywords`, { body: { text, keepDuplicates: [...keep], writers } });
       toast('success', `${r.added} keyword(s) added${r.skippedDuplicates ? `, ${r.skippedDuplicates} duplicate(s) left out` : ''}${r.invalid ? `, ${r.invalid} invalid` : ''}.`);
       setText('');
       setPreview(null);
@@ -659,21 +662,64 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
       >
         <Textarea aria-label="Workflow keywords" rows={8} value={text} onChange={(e) => { setText(e.target.value); setPreview(null); }} />
         {preview ? (
-          <ul className="space-y-1 text-sm">
-            {preview.map((r) => (
-              <li key={r.line} className="flex flex-wrap items-center gap-2">
-                <span className="text-muted w-8 text-xs">{r.line}</span>
-                <span className="font-medium">{r.keyword}</span>
-                <Chip tone={r.writerType === 'UNKNOWN' ? 'warning' : 'brand'}>{r.writerType === 'UNKNOWN' ? 'choose writer later' : r.writerType.toLowerCase()}</Chip>
-                {r.errors.length ? <span className="text-xs text-rose-600">{r.errors.join(' ')}</span> : null}
-                {r.duplicateOf ? (
-                  <label className="flex items-center gap-1 text-xs text-amber-700">
-                    <input type="checkbox" checked={keep.has(r.line)} onChange={(e) => setKeep((k) => { const n = new Set(k); e.target.checked ? n.add(r.line) : n.delete(r.line); return n; })} /> duplicate of {r.duplicateOf} — keep anyway
-                  </label>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+          <div className="table-box">
+            <div className="border-app flex flex-wrap items-center gap-3 border-b px-3 py-2 text-sm">
+              <span className="font-medium">
+                {preview.length} keyword{preview.length === 1 ? '' : 's'}
+              </span>
+              <span className="text-muted text-xs">
+                {preview.filter((r) => (writers[r.line] ?? r.writerType) === 'UNKNOWN').length ? `${preview.filter((r) => (writers[r.line] ?? r.writerType) === 'UNKNOWN').length} without a writer` : 'every keyword has a writer'}
+              </span>
+              <label className="ml-auto flex items-center gap-2 text-xs">
+                <span className="text-muted">Writer for all</span>
+                <Select
+                  aria-label="Writer for all keywords"
+                  className="h-8 w-40! py-0 text-xs"
+                  value=""
+                  onChange={(e) => {
+                    const w = e.target.value;
+                    if (w) setWriters(Object.fromEntries(preview.map((r) => [r.line, w])));
+                  }}
+                >
+                  <option value="">Set all to…</option>
+                  <option value="CELEBRITY">Celebrity</option>
+                  <option value="TIGRAM">Tigram</option>
+                  <option value="UNKNOWN">Choose later</option>
+                </Select>
+              </label>
+            </div>
+            <ul className="max-h-[45vh] divide-y divide-[var(--border)] overflow-y-auto text-sm">
+              {preview.map((r) => {
+                const writer = writers[r.line] ?? r.writerType;
+                return (
+                  <li key={r.line} className={cx('flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2', r.errors.length > 0 && 'opacity-70')}>
+                    <span className="text-muted w-6 text-right text-xs tabular-nums">{r.line}</span>
+                    <span className="min-w-0 flex-1 font-medium">{r.keyword || <em className="text-muted">empty</em>}</span>
+                    {r.errors.length ? (
+                      <span className="text-xs text-rose-600">{r.errors.join(' ')}</span>
+                    ) : (
+                      <Select
+                        aria-label={`Writer for ${r.keyword}`}
+                        title={writers[r.line] ? 'Chosen by you' : `Detected: ${r.detectionReason}`}
+                        className={cx('h-8 w-40! py-0 text-xs', writer === 'UNKNOWN' && 'border-amber-500/60')}
+                        value={writer}
+                        onChange={(e) => setWriters((w) => ({ ...w, [r.line]: e.target.value }))}
+                      >
+                        <option value="CELEBRITY">Celebrity{r.writerType === 'CELEBRITY' ? ' (detected)' : ''}</option>
+                        <option value="TIGRAM">Tigram{r.writerType === 'TIGRAM' ? ' (detected)' : ''}</option>
+                        <option value="UNKNOWN">Choose later</option>
+                      </Select>
+                    )}
+                    {r.duplicateOf ? (
+                      <label className="flex w-full items-center gap-1 pl-9 text-xs text-amber-700">
+                        <input type="checkbox" checked={keep.has(r.line)} onChange={(e) => setKeep((k) => { const n = new Set(k); e.target.checked ? n.add(r.line) : n.delete(r.line); return n; })} /> duplicate of {r.duplicateOf} — keep anyway
+                      </label>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         ) : null}
       </Modal>
 

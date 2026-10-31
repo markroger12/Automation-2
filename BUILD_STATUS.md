@@ -3587,3 +3587,30 @@ npx vitest run --config vitest.integration.config.ts tests/integration/wordpress
 npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-auto-login.test.ts tests/integration/wordpress-session.test.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 30 pass
 node <scratch>/addsite.mjs <out> light|dark                                 # screenshots, no page errors
 ```
+
+## Owner request (2026-10-31): choose the writer in Add keywords
+
+Screenshot of Workflow → Add keywords with “choose writer later” chips: “add the choose-writer option right here”.
+- **Preview** now shows the keywords in a bordered list. Each line has a writer dropdown: Celebrity / Tigram / Choose later, with the detected one marked “(detected)” and the detection's reason as its tooltip.
+  - **Writer for all** (“Set all to…”) sets every line at once.
+  - The header says how many keywords are still without a writer.
+  - Duplicates keep their “keep anyway” box.
+- `addKeywords` takes `writers` by line number (CELEBRITY / TIGRAM / UNKNOWN, validated):
+  - a choice that differs from the detection is saved with `detectionSource: OVERRIDE` and “Chosen by you.”, the same as the queue's writer action;
+  - “Choose later” on a detected line gives “Left for you to choose.”;
+  - lines without a choice keep the detection.
+
+**Tests**
+- **Unit `tests/unit/workflow-add-writers.test.ts` (2):** the chosen writers are saved as overrides, “choose later” keeps a line undecided, unchosen lines keep the detection, and an unknown writer or a non-number line is refused. `workflow-scheduler` still passes (9).
+- **Chromium (a fresh scratch database in `tests/.tmp`, git-ignored):**
+  - 6 keywords → Preview → Writer for all = Celebrity → the WordPress keyword set to Tigram → “6 keyword(s) added.”;
+  - the database then had Celebrity (override) for the 4 undetected names, Celebrity (rule) for the detected one, and Tigram (rule) for the WordPress keyword;
+  - light and dark screenshots, no page errors.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run tests/unit/workflow-add-writers.test.ts tests/unit/workflow-scheduler.test.ts   # 11 pass
+npx vitest run                                                             # 58 files, 401 tests pass
+node tests/.tmp/ui/addkw.mjs <out> light|dark                              # results above
+```

@@ -187,6 +187,18 @@ The overall status is *healthy*, *needs attention*, *failing* or *no data yet*, 
 
 The editorial humanizer is **off by default**. To turn it on for a website, go to Websites → edit → **Humanizer: On**. **Inherit global** follows Settings → Content. Updating turns the global switch off once; websites set to On keep it.
 
+## The article page
+
+- **Tabs** stay on one row: Overview, Titles, Research, Editor, SEO, Images, Links, Humanizer, Originality and WordPress. The technical tabs (**Stages**, **Prompt / Response**, **Logs**, **Conversation**) are under **More**.
+- **Overview:**
+  - the secondary keywords show as chips (8, then **+N more**) and the options in words;
+  - the scores show as chips (Rank Math only when read from WordPress);
+  - the timeline shows the time between steps;
+  - long incident texts are shortened, with **more**.
+- **Research:** each source page is listed once (ChatGPT cites many pages twice, with and without `?utm_source=chatgpt.com`), as the site and the page.
+- **Images:** three tiles show which image is there or missing. The steps are under **How the images were made**.
+- **Links:** each external link shows its phrase, then the site and the page on one line. The internal-link candidates have **Use this** on the right, and the chosen one says **in use**.
+
 ## Review, notes and deleting
 
 - **Hold articles for review** (Settings → Workflow) is **off by default**:

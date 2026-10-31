@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Check, Clipboard, LoaderCircle, Moon, Sun, X } from 'lucide-react';
+import { Check, ChevronDown, Clipboard, LoaderCircle, Moon, Sun, X } from 'lucide-react';
 import { buttonClasses, cx, formatRelative } from './ui';
 
 export function Button({
@@ -218,32 +218,77 @@ export function DialogSection({ icon, title, children }: { icon?: ReactNode; tit
 
 /* ---------------- Tabs ---------------- */
 
-export function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: ReactNode; badge?: ReactNode }[]; value: string; onChange: (id: string) => void }) {
+type TabItem = { id: string; label: ReactNode; badge?: ReactNode };
+
+const tabClass = (active: boolean) =>
+  cx('-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium transition', active ? 'border-[var(--text)] text-[var(--text)]' : 'text-muted border-transparent hover:text-[var(--text)]');
+
+/**
+ * `more` (optional): tabs that open from a “More” menu at the end of the row, so a long row stays on one line (the
+ * article page: its technical tabs). When one of them is open, the menu's tab shows its name.
+ */
+export function Tabs({ tabs, value, onChange, more, moreLabel = 'More' }: { tabs: TabItem[]; value: string; onChange: (id: string) => void; more?: TabItem[]; moreLabel?: string }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const all = [...tabs, ...(more ?? [])];
+  const activeMore = more?.find((t) => t.id === value);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  const onArrows = (e: React.KeyboardEvent) => {
+    const idx = all.findIndex((t) => t.id === value);
+    if (e.key === 'ArrowRight') onChange(all[(idx + 1) % all.length].id);
+    if (e.key === 'ArrowLeft') onChange(all[(idx - 1 + all.length) % all.length].id);
+  };
   return (
     // Tabs wrap to a second row instead of scrolling: a scroll box here showed scrollbars (the active tab's
     // underline sits 1 px below the bar, so even tabs that fit made it scroll vertically).
     <div role="tablist" className="border-app flex flex-wrap gap-x-1 border-b">
       {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          role="tab"
-          type="button"
-          aria-selected={value === tab.id}
-          onClick={() => onChange(tab.id)}
-          onKeyDown={(e) => {
-            const idx = tabs.findIndex((t) => t.id === value);
-            if (e.key === 'ArrowRight') onChange(tabs[(idx + 1) % tabs.length].id);
-            if (e.key === 'ArrowLeft') onChange(tabs[(idx - 1 + tabs.length) % tabs.length].id);
-          }}
-          className={cx(
-            '-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition',
-            value === tab.id ? 'border-[var(--text)] text-[var(--text)]' : 'text-muted border-transparent hover:text-[var(--text)]',
-          )}
-        >
+        <button key={tab.id} role="tab" type="button" aria-selected={value === tab.id} onClick={() => onChange(tab.id)} onKeyDown={onArrows} className={tabClass(value === tab.id)}>
           {tab.label}
           {tab.badge}
         </button>
       ))}
+      {more?.length ? (
+        <div ref={box} className="relative">
+          <button role="tab" type="button" aria-selected={Boolean(activeMore)} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} onKeyDown={onArrows} className={tabClass(Boolean(activeMore))}>
+            {activeMore ? activeMore.label : moreLabel}
+            {activeMore?.badge}
+            <ChevronDown className={cx('h-3.5 w-3.5 transition', open && 'rotate-180')} aria-hidden />
+          </button>
+          {open ? (
+            <div role="menu" aria-label={moreLabel} className="surface border-app absolute top-full right-0 z-40 mt-1 min-w-52 rounded-lg border p-1 shadow-xl">
+              {more.map((tab) => (
+                <button
+                  key={tab.id}
+                  role="menuitem"
+                  type="button"
+                  aria-current={value === tab.id ? 'page' : undefined}
+                  onClick={() => {
+                    onChange(tab.id);
+                    setOpen(false);
+                  }}
+                  className={cx('flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-[var(--surface-2)]', value === tab.id && 'bg-[var(--surface-2)] font-medium')}
+                >
+                  {tab.label}
+                  {tab.badge}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -15,7 +15,7 @@ import { WordPressTab } from './wordpress-tab';
 import { LinksTab } from './links-tab';
 import { HumanizerTab } from './humanizer-tab';
 import { OriginalityTab } from './originality-tab';
-import { QualityCard } from './quality-card';
+import { OverviewTab } from './overview-tab';
 import { ACTIVE_MODULES } from '@/modules/registry';
 
 const REGENERABLE: Record<string, string[]> = Object.fromEntries(ACTIVE_MODULES.map((m) => [m.key, m.stages.filter((s) => s.regenerable).map((s) => s.key)]));
@@ -108,9 +108,12 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     { id: 'humanizer', label: 'Humanizer' },
     { id: 'originality', label: 'Originality' },
     { id: 'wordpress', label: 'WordPress', badge: task.wpPostId ? <Chip>#{task.wpPostId}</Chip> : undefined },
+  ];
+  // The technical tabs open from “More”, so the row stays on one line (owner: the tabs wrapped onto two lines).
+  const moreTabs = [
     { id: 'stages', label: 'Stages' },
     { id: 'prompts', label: 'Prompt / Response', badge: task.responses.length ? <Chip>{task.responses.length}</Chip> : undefined },
-    { id: 'logs', label: 'Logs' },
+    { id: 'logs', label: 'Logs', badge: task.logs.length ? <Chip>{task.logs.length}</Chip> : undefined },
     { id: 'conversation', label: 'Conversation' },
   ];
 
@@ -211,7 +214,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
         </div>
       ) : null}
 
-      <Tabs tabs={tabs} value={tab} onChange={(id) => setTab(id as TabId)} />
+      <Tabs tabs={tabs} more={moreTabs} value={tab} onChange={(id) => setTab(id as TabId)} />
       <div className="mt-4">
         {tab === 'overview' ? <OverviewTab task={task} /> : null}
         {tab === 'links' ? <LinksTab task={task} onChanged={reload} /> : null}
@@ -232,79 +235,6 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
         Work stops at the next safe point. Completed outputs, prompts and responses are kept.
       </ConfirmDialog>
     </>
-  );
-}
-
-function OverviewTab({ task }: { task: SerializedTaskDetail }) {
-  const opts = task.optionValues as Record<string, unknown>;
-  return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <div className="lg:col-span-2">
-        <QualityCard taskId={task.id} />
-      </div>
-      <Card title="Input (as submitted)">
-        <KeyValue
-          items={[
-            { label: 'Primary keyword', value: <span className="font-medium">{task.keyword}</span> },
-            { label: 'Secondary keywords', value: task.secondaryKeywordList.length ? task.secondaryKeywordList.join(', ') : '—' },
-            { label: 'Example title', value: task.exampleTitle ?? '—' },
-            { label: 'Writer', value: task.writerName },
-            { label: 'Website', value: task.website.name },
-            { label: 'Category', value: task.categoryName ?? 'Not chosen yet' },
-            { label: 'Language / country', value: `${LANGUAGE_LABELS[task.language as Language] ?? task.language} · ${task.targetCountry}` },
-            { label: 'Source', value: task.source },
-            { label: 'Options', value: Object.keys(opts).length ? <code className="text-xs">{JSON.stringify(opts)}</code> : 'site defaults' },
-          ]}
-        />
-      </Card>
-      <Card title="Result">
-        <KeyValue
-          items={[
-            { label: 'Selected title', value: task.selectedTitle ?? '—' },
-            { label: 'SEO title', value: task.seoTitle ?? '—' },
-            { label: 'Meta description', value: task.metaDescription ?? '—' },
-            { label: 'Slug', value: task.slug ?? '—' },
-            { label: 'Focus keyword', value: task.focusKeyword ?? '—' },
-            { label: 'Internal SEO score', value: task.seoScore ?? '—' },
-            { label: 'Rank Math score', value: task.rankMathScore !== null ? `${task.rankMathScore} / 100 (read from WordPress)` : <span className="text-muted">not verified</span> },
-            { label: 'WordPress', value: task.wpEditUrl ? <a className="link" href={task.wpEditUrl} target="_blank" rel="noreferrer">post #{task.wpPostId} ({task.wpPostStatus ?? 'draft'})</a> : '—' },
-            { label: 'Verified complete', value: task.verifiedCompleteAt ? formatDateTime(task.verifiedCompleteAt) : '—' },
-          ]}
-        />
-      </Card>
-      <Card title="Timeline">
-        <KeyValue
-          items={[
-            { label: 'Created', value: formatDateTime(task.createdAt) },
-            { label: 'Started', value: formatDateTime(task.startedAt) },
-            { label: 'Draft saved', value: formatDateTime(task.wpDraftAt) },
-            { label: 'Completed', value: formatDateTime(task.completedAt) },
-            { label: 'ChatGPT conversation', value: task.conversationUrl ? <a className="link" href={task.conversationUrl} target="_blank" rel="noreferrer">open</a> : '—' },
-          ]}
-        />
-      </Card>
-      <Card title="Errors & incidents">
-        {task.errorList.length === 0 && task.incidents.length === 0 ? (
-          <p className="text-muted text-sm">No errors recorded.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {task.incidents.map((i) => (
-              <li key={i.id}>
-                <Chip tone={i.status === 'OPEN' ? 'warning' : 'neutral'}>{i.kind}</Chip> {i.description}
-              </li>
-            ))}
-            {task.errorList
-              .slice()
-              .reverse()
-              .map((e, i) => (
-                <li key={i} className="text-rose-700 dark:text-rose-300">
-                  <span className="text-muted text-xs">{formatDateTime(e.at)}</span> {e.stage ? <code className="text-xs">{e.stage}</code> : null} {e.message}
-                </li>
-              ))}
-          </ul>
-        )}
-      </Card>
-    </div>
   );
 }
 

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { ImagePlus, LayoutTemplate, RefreshCcw, Trash2 } from 'lucide-react';
+import { CheckCircle2, CircleDashed, ImagePlus, LayoutTemplate, RefreshCcw, Trash2 } from 'lucide-react';
 import { api, upload } from '@/lib/client/api';
 import { MAX_PHOTOS_AT_ONCE, PHOTO_TYPES, pickPhotos } from '@/lib/client/image-input';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
@@ -164,12 +164,30 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
             </Alert>
           </div>
         ) : null}
-        {data?.notes.length ? (
-          <ul className="text-muted mt-3 list-disc space-y-0.5 pl-5 text-sm">
-            {data.notes.map((n, i) => (
-              <li key={i}>{n}</li>
-            ))}
+        {data && !imagesOff ? (
+          // Owner request (a cleaner page): which of the three images is there, at a glance.
+          <ul className="mt-3 grid gap-2 sm:grid-cols-3" aria-label="Images">
+            {(['FEATURED', 'BODY1', 'BODY2'] as const).map((slot) => {
+              const ready = data.slots.find((x) => x.slot === slot);
+              return (
+                <li key={slot} className={cx('flex items-center gap-2 rounded-lg border px-3 py-2 text-sm', ready ? 'border-app' : 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30')}>
+                  {ready ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden /> : <CircleDashed className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden />}
+                  <span className="font-medium">{SLOT_LABEL[slot]}</span>
+                  <span className={cx('ml-auto text-xs', ready ? 'text-muted' : 'text-amber-800 dark:text-amber-300')}>{ready ? `${ready.width}×${ready.height}` : 'missing'}</span>
+                </li>
+              );
+            })}
           </ul>
+        ) : null}
+        {data?.notes.length ? (
+          <details className="mt-3 text-sm">
+            <summary className="text-muted cursor-pointer hover:text-[var(--text)]">How the images were made ({data.notes.length} steps)</summary>
+            <ul className="text-muted mt-2 list-disc space-y-0.5 pl-5">
+              {data.notes.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
+          </details>
         ) : null}
       </Card>
 

@@ -3685,3 +3685,45 @@ npx vitest run                                                             # 59 
 npx next build                                                             # compiled successfully
 node tests/.tmp/ui/move.mjs <out> light|dark                               # results above
 ```
+
+## Owner request (2026-10-31): the article page, tidied
+
+Screenshots of the “morgan carey” article (Overview, Research, Images, Links, WordPress): “yaha koi ui bhi better krde”.
+- **Tabs on one row:** the technical tabs (Stages, Prompt / Response, Logs, Conversation) open from **More** (a new optional `more` list on the shared `Tabs`). The menu's tab shows the name of the open tab. Tab padding went from 12 to 10 px a side.
+  - Measured: the row needs 926 px; there is 950 px at a 1280 px window. Before: 970 px of tabs, two rows from 1440 px down.
+- **Overview (`overview-tab.tsx`):**
+  - secondary keywords as chips (8, then “+N more”);
+  - options in words instead of JSON (unknown keys are still listed, with the value in the tooltip);
+  - the source in words;
+  - “same as the title” when the SEO title equals it;
+  - the meta description's length;
+  - scores as chips;
+  - the WordPress post with its status;
+  - the timeline as steps with the time between them, and the total;
+  - incidents and errors as rows with a kind chip, a status chip and the text shortened to 180 characters, with “more”.
+- **Research → Evidence summary:**
+  - each page once: `utm_*` parameters are removed only for display and the link, and the stored sources are unchanged;
+  - the header gives the page count and the cited count (“11 pages, 15 cited” for the owner's list);
+  - each source shows as the site with its path below on one line;
+  - empty sections say “none”.
+- **Images:** Featured / Body 1 / Body 2 tiles (ready with its size, or missing). The step notes are folded under “How the images were made (N steps)”.
+- **Links:**
+  - external links as rows: the phrase, a kind chip (none for “other”), then the site and the page on one line;
+  - **Automatic** and **Remove line** as buttons with icons;
+  - candidates as rows with **Use this** on the right, and “in use” for the chosen one.
+
+**Checked:**
+- A production build (`next build` + `next start` on port 3100) with a scratch database in `/tmp`, holding an article like the owner's: 16 secondary keywords, 15 cited sources (6 of them repeats), 2 of 3 images, 4 + 3 links, an incident and an error.
+- Screenshots before and after, dark at 1440 px and light at 1280 px. The tab row was 75 px tall before (two rows) and 38 px after.
+- More → Logs opens Logs, and Escape closes the menu. No page errors, and no sideways scrolling.
+- `scripts/a11y-audit.ts` (light and dark, every page plus the article and a website): no serious or critical violations.
+- **Not verified:** on the owner's Windows PC with the owner's articles.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run                                                             # 59 files, 406 tests pass
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # no serious or critical violations
+node <scratch>/article.mjs, more.mjs, measure.mjs                          # results above
+```

@@ -456,9 +456,16 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                       <input type="checkbox" aria-label={`Select ${k.keyword}`} checked={selected.has(k.id)} onChange={(e) => setSelected((s) => { const n = new Set(s); e.target.checked ? n.add(k.id) : n.delete(k.id); return n; })} />
                     </td>
                     <td className="max-w-64">
-                      <div className="truncate font-medium" title={k.keyword}>
-                        {k.keyword}
-                      </div>
+                      {/* Owner request: the keyword opens its article page in the tool (once an article was started). */}
+                      {k.task ? (
+                        <Link href={`/articles/${k.task.id}`} className="block truncate font-medium hover:underline" title={`Open the article: ${k.keyword}`}>
+                          {k.keyword}
+                        </Link>
+                      ) : (
+                        <div className="truncate font-medium" title={`${k.keyword} — no article yet`}>
+                          {k.keyword}
+                        </div>
+                      )}
                     </td>
                     {shows('writer') ? (
                       <td className="text-muted text-xs whitespace-nowrap" title={k.detectionReason ?? undefined}>

@@ -3614,3 +3614,27 @@ npx vitest run tests/unit/workflow-add-writers.test.ts tests/unit/workflow-sched
 npx vitest run                                                             # 58 files, 401 tests pass
 node tests/.tmp/ui/addkw.mjs <out> light|dark                              # results above
 ```
+
+## Owner request (2026-10-31): the workflow keyword links to its article
+
+Screenshot of the Workflow queue: “add the article's link on the keyword”, then “the tool's article page”.
+- In the queue, the keyword is now a link to the app's article page (`/articles/<task id>`) when an article was started for it. The tooltip says “Open the article: …”.
+- A keyword without an article yet stays plain text (tooltip “… — no article yet”).
+- Nothing else changed: the live-post, Search Console and inspect buttons under **Links** are as before.
+
+**Verified**
+- `next dev` in this container kept recompiling (the scratch data lives inside the repo), so client-side navigation did not finish there. This also happened for the existing Article Queue links, so it is not caused by this change.
+- The check was therefore done on a production build (`next build` + `next start` on port 3100, scratch database in `tests/.tmp`, git-ignored, deleted afterwards), in Chromium:
+  - the keyword with an article had `href="/articles/<id>"`;
+  - the keyword without one had no link;
+  - clicking opened the article page with that keyword as its heading;
+  - no page errors.
+- **Not verified:** on the owner's Windows PC.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run                                                             # 58 files, 401 tests pass
+node tests/.tmp/ui/<scratch>.mjs                                           # results above
+```

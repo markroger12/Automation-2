@@ -44,6 +44,11 @@ export interface FakeChatGptConfig {
    * composer (e.g. read aloud in an earlier answer).
    */
   stuckStreamingShown?: boolean;
+  /**
+   * Owner report (Jelena Djokovic report: 20,094 characters unchanged for hours, Stop shown, Send gone): the answer's
+   * text stops, but the composer keeps its Stop button (and the answer gets no Copy button) until Stop is pressed.
+   */
+  stallStream?: boolean;
   /** Image-search answers (prompt mentions an “image gallery”): show this many gallery thumbnails with a viewer. */
   galleryCount?: number;
   /** Extra gallery pictures on other hosts (the extension reports these as links). */

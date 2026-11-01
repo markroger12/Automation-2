@@ -94,6 +94,14 @@ export async function retryTask(taskId: string, client: Tx = db): Promise<{ resu
   // the uncertain prompt is kept as history (superseded) and a fresh one is sent. Without this, the same
   // operation was found again and the task went straight back to review.
   const uncertain = await client.chatGPTResponse.updateMany({ where: { taskId, status: 'FAILED', error: { startsWith: 'UNCERTAIN' } }, data: { status: 'SUPERSEDED' } });
+  // Owner report (Jelena Djokovic: RESEARCH failed after 3 attempts; Retry failed three times within a minute and sent
+  // nothing): the stages start again at attempt 1, so the failed answers of attempts 1–3 were found again and each
+  // attempt failed at once. Retry means “try again”: those are kept as history and a fresh prompt is sent. A lost
+  // conversation stays as it is (the next prompt then opens a new chat with the saved context).
+  const failed = await client.chatGPTResponse.updateMany({
+    where: { taskId, status: 'FAILED', OR: [{ error: null }, { NOT: { error: { startsWith: 'CONVERSATION_LOST' } } }] },
+    data: { status: 'SUPERSEDED' },
+  });
   if (uncertain.count) {
     await client.recoveryIncident.updateMany({
       where: { taskId, status: 'OPEN', kind: 'UNCERTAIN_PROMPT' },
@@ -105,7 +113,7 @@ export async function retryTask(taskId: string, client: Tx = db): Promise<{ resu
     data: { status: 'QUEUED', cancelRequested: false, message: 'Retry queued — resuming from the first unfinished stage.', nextAction: null },
   });
   const result = await ensureArticleRun(taskId, 'retry', client);
-  await audit('task.retry', 'ArticleTask', taskId, { from: task.status, uncertainPromptsSuperseded: uncertain.count }, client);
+  await audit('task.retry', 'ArticleTask', taskId, { from: task.status, uncertainPromptsSuperseded: uncertain.count, failedPromptsSuperseded: failed.count }, client);
   return { result };
 }
 

@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.5.2';
+  const EXTENSION_VERSION = '3.5.3';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -236,6 +236,26 @@
       // Copy button and has not changed for 8 seconds, so it is finished whatever else the page still shows.
       const finishedAnyway = !expectImages && generating && Boolean(text) && Date.now() - lastChangeAt >= 8000 && A.answerFinishedMarks(answerEl);
       if (finishedAnyway) generating = false;
+      // Owner report (Jelena Djokovic: the research answer stood at 20,094 characters for hours while ChatGPT kept its
+      // Stop button and no Send; every wait ran into the 600 s limit, and each retry waited on the same stuck answer):
+      // no new text for `stallStopSec` while Stop is still shown — press Stop, as you would, and take the answer.
+      const stallMs = (config.stallStopSec || 180) * 1000;
+      if (!expectImages && generating && text.length >= 200 && Date.now() - lastChangeAt >= stallMs) {
+        const stop = A.findStopButton();
+        if (stop) {
+          progress(`no new text for ${Math.round(stallMs / 1000)} s while ChatGPT still shows Stop: pressing Stop and taking the answer`);
+          stop.click();
+          const until = Date.now() + 10000;
+          while (A.findStopButton() && Date.now() < until) await sleep(500);
+        }
+        const kept = (answerEl && A.toMarkdown(answerEl)) || text;
+        return {
+          text: kept,
+          html: answerEl ? answerEl.innerHTML : null,
+          images: [],
+          notice: `ChatGPT wrote no new text for ${Math.round(stallMs / 1000)} s but kept showing its Stop button; the extension ${stop ? 'pressed Stop and ' : ''}took the answer as it stood (${kept.length} characters).`,
+        };
+      }
       const limitInAnswer = limit && text && A.normalizeForHash(text).toLowerCase().includes(A.normalizeForHash(limit.message).toLowerCase().slice(0, 40));
       if (limit && !generating && (!text || limitInAnswer)) throw new JobError('USAGE_LIMIT', limit.message, { retryAfterSec: limit.retryAfterSec });
       if (errorTurn && !generating) {
@@ -641,7 +661,7 @@
         const answer = await waitForAnswer({ job, priorKeys: null, fallbackIndex: existing.index }, config, job.expectImages);
         const gallery = job.expectGallery ? await collectGallery(job, existing.element, config) : null;
         const images = gallery ? gallery.images : job.expectImages ? await uploadImages(job, answer.images) : [];
-        post('complete', { text: answer.text, html: answer.html, images, imageLinks: gallery ? gallery.imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, pageCopy: gallery ? gallery.structure : undefined, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt });
+        post('complete', { text: answer.text, html: answer.html, images, imageLinks: gallery ? gallery.imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, pageCopy: gallery ? gallery.structure : undefined, conversationUrl: realConversationUrl(), recovered: true, elapsedMs: Date.now() - current.startedAt, notice: answer.notice });
         return;
       }
       if (evidence) {
@@ -671,7 +691,7 @@
       const images = gallery ? gallery.images : job.expectImages && answer.images.length ? await uploadImages(job, answer.images) : [];
       const imageLinks = gallery ? gallery.imageLinks : [];
       if (!answer.text && !images.length && !imageLinks.length) throw new JobError('ERROR', 'The answer was empty.');
-      post('complete', { text: answer.text || (gallery && gallery.note) || '', html: answer.html, images, imageLinks: gallery ? imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, pageCopy: gallery ? gallery.structure : undefined, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt });
+      post('complete', { text: answer.text || (gallery && gallery.note) || '', html: answer.html, images, imageLinks: gallery ? imageLinks : undefined, galleryReport: gallery ? gallery.report : undefined, pageCopy: gallery ? gallery.structure : undefined, conversationUrl: realConversationUrl(), recovered: false, elapsedMs: Date.now() - current.startedAt, notice: answer.notice });
     } catch (error) {
       const code = error instanceof JobError ? error.code : 'ERROR';
       const extra = error instanceof JobError ? error.extra : {};

@@ -245,6 +245,14 @@
   document.addEventListener('click', (e) => {
     const t = e.target;
     if (!(t instanceof Element)) return;
+    // The composer's Stop button: the answer stops where it is (like the real app).
+    if (t.closest('form.composer [data-testid="stop-button"], form.composer button[aria-label="Stop streaming"]') && window.__generating) {
+      window.__stopClicked = (window.__stopClicked || 0) + 1;
+      window.__stopped = true;
+      window.__generating = false;
+      render();
+      return;
+    }
     // 'overlay-button' tiles: a hidden “Add to Favorites” (never to be pressed by the extension) and the “Open …” button.
     if (t.closest('.gal-fav')) {
       window.__favorited = (window.__favorited || 0) + 1;
@@ -451,6 +459,12 @@
       window.__generating = true;
       render();
       setTimeout(() => stream(id), C.chunkMs);
+      return;
+    }
+    // stallStream: the text is done, but ChatGPT keeps “generating” (Stop shown) until Stop is pressed.
+    if (C.stallStream && !window.__stopped) {
+      window.__generating = true;
+      render();
       return;
     }
     window.__generating = false;

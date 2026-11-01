@@ -3885,3 +3885,45 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx vitest run                                                             # 60 files, 412 tests pass
 npx tsc --noEmit                                                           # 0 errors
 ```
+
+## Owner report (2026-11-01): research stuck for hours, and Retry sent nothing (extension 3.5.3)
+
+Owner's article report (Jelena Djokovic, Promizeiten, German):
+- **The failure:** RESEARCH failed after 3 attempts, each 3 × “No complete answer within 600s.” (about 2 hours of waiting in all).
+- **The page snapshots:** at 16:16, 17:02 and 19:48 they were identical: `generating: true`, `stopVisible: true`, `sendVisible: false`, step “generating (20094 chars so far)”, 2 user and 2 assistant turns.
+- **What the owner saw:** the answer had stopped at 20,094 characters hours earlier, but ChatGPT kept showing its Stop button. Closing the tab and reloading did not change it either.
+- **Retry:** at 19:57–19:58 RESEARCH failed three more times within 90 seconds, and no new ChatGPT attempt was created.
+
+**Cause 1, Retry:**
+- `retryTask` resets a failed stage to attempt 0.
+- `askChatGPT` names each attempt's operation `…:RESEARCH:a<attempt>`. For attempts 1–3 it found the old FAILED answers and threw their error again, without sending anything.
+- **Fix:** Retry now marks those failed answers SUPERSEDED (kept as history), as it already did for “uncertain” prompts. The stage then sends a new operation, fresh, so the stuck answer on the page is not taken again.
+- A failed answer from a lost conversation (`CONVERSATION_LOST`) stays, so the next prompt still opens a new chat with the saved context.
+
+**Cause 2, the stalled answer:**
+- The text had not changed for hours, but the composer's Stop button stayed. 3.5.2's Copy-button rule did not apply: an answer that ChatGPT still shows as running has no Copy button.
+- **Fix (extension 3.5.3):** when there has been no new text for `stallStopSec` (new setting, Settings → Browser → “Take a stalled answer after”, 180 s by default, 10–1800) while Stop is shown, the extension presses Stop, as a person would, and takes the answer as it stood.
+- It sends a notice that the task log appends: “ChatGPT wrote no new text for 180 s but kept showing its Stop button; the extension pressed Stop and took the answer as it stood (N characters).”
+- The answer then goes through the stage's usual checks.
+- **Not the image fix:** the owner suspected the gallery fix (3.5.1). It changed only how gallery tiles are clicked. This article started failing at 15:33, and its snapshots show the composer's own Stop.
+
+**Tests**
+- **Unit `engine` (+1):** a ChatGPT stage that fails 3 times, then Retry.
+  - Before: “retry” at once, nothing sent, the owner's case.
+  - After: the 3 failed answers are SUPERSEDED, a new PENDING operation is created with `fresh: true`, and the answer completes the stage.
+- **The fake ChatGPT page:** new option `stallStream` keeps the composer's Stop (and no Copy) after the text ends, until Stop is pressed. Stop then ends the answer and counts presses.
+- **Integration `extension` (+1), with `stallStopSec` 12:**
+  - the answer is taken after more than 12 s, Stop is pressed once, the log carries the notice, and the prompt is sent once;
+  - with 1800 s, as if there were no rule, it never completed (test timed out at 90 s).
+- **Unit:** 60 files, 413 tests; `tsc` 0 errors.
+- **Whole suites:** `extension` + `extension-update` 60/60 on 3.5.3.
+- **Not verified:** the real ChatGPT page with 3.5.3, and why ChatGPT kept Stop for hours. The rule takes the answer as it stood. If ChatGPT really stopped mid-sentence, the research checks see what is there.
+
+**Commands run**
+```
+npx vitest run tests/unit/engine.test.ts                                   # before the fix: the new test got “retry”; after: 15 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "stops changing while"   # stallStopSec 1800: timed out (no rule); 12: pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 60 pass
+npx vitest run                                                             # 60 files, 413 tests pass
+npx tsc --noEmit                                                           # 0 errors
+```

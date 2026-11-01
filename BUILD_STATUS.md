@@ -3849,3 +3849,39 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx vitest run                                                             # 60 files, 412 tests pass
 npx tsc --noEmit                                                           # 0 errors
 ```
+
+## Owner report (2026-11-01): finished titles stuck on “generating” (extension 3.5.2)
+
+Owner screenshots (chassidy celeste blackstock):
+- **The app:** TITLES waiting, “ChatGPT (TITLES): generating (770 chars so far)”, for 3–4 minutes.
+- **ChatGPT:** the 10 titles and “Recommended Title: …” were finished, with the answer's Copy / like / read-aloud buttons and the composer back to its voice button.
+
+**Cause:** the text was read (770 characters), but the answer counted as unfinished. A text answer counted as “still writing” while either of these was true:
+- any visible button on the page had “Stop” in its name, not only the composer's Stop;
+- any `.result-streaming` / `[data-testid*="streaming"]` element was on the page, even a hidden one.
+- The image path had already stopped using the page-wide marker (owner report: 600 s “generating” after a picture). The text path still used both.
+
+**Fix (extension 3.5.2):**
+- **`findStopButton`:** `button[data-testid="stop-button"]`, else a Stop button inside the composer's form or area only.
+- **`isGenerating`:** only streaming markers that are on screen count.
+- **Safety net in `waitForAnswer`:** for a text answer that has its own Copy button (`answerFinishedMarks`) and has not changed for 8 seconds, a stray marker or a Stop elsewhere no longer holds it.
+- **Version:** the app expects 3.5.2.
+
+**Tests**
+- **The fake ChatGPT page:**
+  - the answer's Copy button now appears only when the answer is finished (as in ChatGPT);
+  - new option `stuckStreamingShown`: a visible streaming marker that stays, and a “Stop reading aloud” outside the composer.
+- **Integration `extension` (+2):**
+  - a hidden page-wide marker (`staleStreaming`) with a text answer;
+  - a visible stale marker plus a stray Stop.
+  - On 3.5.1 both waited until the test gave up (60 s; the app's limit is 600 s). On 3.5.2 they completed in 6.6 s and 13.6 s, sent once.
+- **Whole suites:** `extension` + `extension-update` 59/59 on 3.5.2. Unit 60 files / 412 tests; `tsc` 0 errors.
+- **Not verified:** which element the real page kept. The fix covers both possible signals, and the Copy-button rule covers markers not seen yet.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "streaming marker"   # 3.5.1: 2 timed out; 3.5.2: 3 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 59 pass
+npx vitest run                                                             # 60 files, 412 tests pass
+npx tsc --noEmit                                                           # 0 errors
+```

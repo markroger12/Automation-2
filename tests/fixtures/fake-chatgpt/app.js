@@ -168,7 +168,7 @@
         if (C.turnMarkup === 'units') {
           // writingBlock: the answer inside ChatGPT's writing block, under its “Writing” label (owner report).
           const answerHtml = C.writingBlock ? `<div data-writing-block="true"><div class="wb-header"><span>Writing</span><button aria-label="Copy">⧉</button><button aria-label="Expand">⤢</button></div>${md(t.text || '')}</div>` : md(t.text || '');
-          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${answerHtml}</div>${gallery}${cards}<div class="turn-action-controls"><button aria-label="Copy">⧉</button></div></div></div>`;
+          return `<div data-turn-key="turn-${i}"><div data-content-search-unit-key="${id}:${i}:assistant">${tool}${img}<div data-markdown-text-style="assistant-message">${answerHtml}</div>${gallery}${cards}${doneStreaming ? `<div class="turn-action-controls"><button aria-label="Copy">⧉</button>${C.stuckStreamingShown && !isLast ? '<button aria-label="Stop reading aloud">■</button>' : ''}</div>` : ''}</div></div>`;
         }
         return std
           ? `<div data-testid="conversation-turn-${i}"><div data-message-author-role="assistant">${content}</div></div>`
@@ -217,7 +217,11 @@
               : `<div role="dialog" class="viewer"><img src="/backend-api/estuary/content?id=gal_${dlg.k + 1}" width="800" height="450" alt="Large photo ${dlg.k + 1}"><button aria-label="Next" ${dlg.k >= dlg.count - 1 ? 'disabled' : ''}>›</button><button aria-label="Close">×</button></div>`
         : '';
     // staleStreaming: a page-wide “streaming” marker that stays after the picture is finished (owner report).
-    const stale = C.staleStreaming ? '<div data-testid="image-gen-streaming-status" hidden></div>' : '';
+    const stale = C.staleStreaming
+      ? '<div data-testid="image-gen-streaming-status" hidden></div>'
+      : C.stuckStreamingShown
+        ? '<div data-testid="conversation-streaming-status" style="width:24px;height:4px;background:#999"></div><button aria-label="Stop reading aloud" style="width:24px;height:24px">■</button>'
+        : '';
     // workLayout: the conversation shown in a “Work”/canvas layout — the whole page sits in a canvas-classed container
     // (suspected for the owner's “Chat composer not found” after the long article).
     const hiddenDialog = C.galleryViewer === 'overlay' ? '<div role="dialog" aria-label="Search chats" style="display:none"><img src="/backend-api/estuary/content?id=gal_1" alt=""></div>' : '';

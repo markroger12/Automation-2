@@ -204,8 +204,27 @@
     return qsAll(SELECTORS.sendButton).find((b) => isVisible(b)) || null;
   }
 
+  /**
+   * ChatGPT's Stop button while it writes. Owner report (finished titles, “generating (770 chars so far)” for minutes):
+   * only the composer's own Stop counts, never a “Stop …” elsewhere on the page (e.g. read aloud in an earlier answer).
+   */
   function findStopButton() {
-    return qsAll(SELECTORS.stopButton).find((b) => isVisible(b)) || null;
+    const byId = qsAll(['button[data-testid="stop-button"]']).find((b) => isVisible(b));
+    if (byId) return byId;
+    const composer = findComposer();
+    const area = composer && (composer.closest('form') || (composer.parentElement && composer.parentElement.parentElement && composer.parentElement.parentElement.parentElement));
+    return qsAll(SELECTORS.stopButton, area || document).find((b) => isVisible(b)) || null;
+  }
+
+  /**
+   * The answer shows its own action buttons (Copy, …), which ChatGPT adds when the answer is finished. Used when a stray
+   * streaming marker would otherwise keep a finished answer “generating”.
+   */
+  function answerFinishedMarks(answerEl) {
+    if (!answerEl) return false;
+    const turn = answerEl.closest('[data-turn-key], [data-testid^="conversation-turn"], article, [data-message-author-role="assistant"]') || answerEl.parentElement;
+    if (!turn) return false;
+    return Array.from(turn.querySelectorAll('button')).some((b) => !answerEl.contains(b) && isVisible(b) && (/copy/i.test(b.getAttribute('data-testid') || '') || /^(copy|kopieren)\b/i.test((b.getAttribute('aria-label') || '').trim())));
   }
 
   function bodyText() {
@@ -895,8 +914,13 @@
     return `the composer showed ${have.length} of ${want.length} characters; first difference at character ${i}: expected ${cut(want)} but found ${cut(have)}`;
   }
 
+  /**
+   * ChatGPT is still writing: the composer's Stop button, or a streaming marker on screen. A marker that is not shown no
+   * longer counts (owner report: a hidden page-wide “…streaming…” marker stayed after the answer, as it did after
+   * pictures, and kept finished titles “generating” for minutes).
+   */
   function isGenerating() {
-    return Boolean(findStopButton()) || Boolean(document.querySelector('.result-streaming, [data-testid*="streaming"]'));
+    return Boolean(findStopButton()) || qsAll(['.result-streaming', '[data-testid*="streaming"]']).some((el) => isVisible(el));
   }
 
   function snapshot(extra) {
@@ -961,6 +985,7 @@
     galleryNextButton,
     galleryCount,
     tileOpener,
+    answerFinishedMarks,
     viewerCounter,
     pressViewerKey,
     viewerStrip,

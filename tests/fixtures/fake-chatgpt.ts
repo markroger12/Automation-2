@@ -63,6 +63,12 @@ export interface FakeChatGptConfig {
    * the viewer picks the one shown.
    */
   galleryBadge?: boolean;
+  /**
+   * Owner's page structure copy (2026-11-01: 3 tiles with “7”, 0 opened large): each tile is the picture with an
+   * “Open …” button laid OVER it (beside it in the page, not around it) — a click on the picture itself opens nothing.
+   * The count (an icon and “7”) sits inside the last tile's button, and each tile has a hidden “Add to Favorites”.
+   */
+  galleryTiles?: 'overlay-button';
   /** Answers are shown in a writing block with a “Writing” label and Copy/expand buttons (owner report). */
   writingBlock?: boolean;
   /**

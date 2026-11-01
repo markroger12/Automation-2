@@ -3815,3 +3815,37 @@ npx vitest run                                                             # 60 
 BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # no serious or critical violations
 node <scratch>/quality.mjs, notes.mjs                                      # results above
 ```
+
+## Owner report (2026-11-01): 3 tiles with “7”, again only 3 photos (extension 3.5.1)
+
+Owner screenshot: Melissa Esplana's gallery has 3 tiles, the last with a stacked-pictures icon and “7”. The owner sent the task log line and the page structure copy, and tried it by hand: a click on the “7” tile opened “3 of 7”, and → stepped on.
+- **The log line:** “3 picture(s) in the gallery (0 not shown by the page), 0 opened large, 3 saved; the gallery says 7; viewer stepped by: nothing”.
+- **The copy (`chatgpt-gallery-20261101-113642-f863f7.json`, extension 3.5.0):** `said: 7`, `large: 0`, `stop: "step 1: no large picture in the viewer"`, and no viewer layer after the click.
+- **The tile's markup:** the `img` sits beside an `Overlay` div holding `button[name="Open <alt>"]` (same box as the picture), with the count inside that button. There is also a hidden `Add to Favorites` button.
+- **Cause:** the extension clicked the `img` (`img.click()`). The handler is on the sibling “Open …” button over it, not on an ancestor, so nothing opened. The per-tile fallback clicked the `img` too. A person's click lands on the button.
+
+**Fix (extension 3.5.1):** `tileOpener(img)` in `extension/adapter.js` returns what a person's click on the picture reaches, and both the first open and the per-tile fallback click it.
+- **Order:** a button or link around the picture (the old markup), then a button over the picture (same box ±15 %, preferring an “Open …” name), then the button on top at the picture's middle, then the picture itself.
+- **Never clicked:** a Favorites, Share, Download, Copy, Save, Like or Report button, or anything outside the picture.
+- **Version:** the app expects 3.5.1. A 3.5.0 extension reloads itself from the folder when idle.
+
+**Tests**
+- **The fake ChatGPT page** gained `galleryTiles: 'overlay-button'`, built from the owner's copy:
+  - each picture has an “Open …” button over it;
+  - the count is inside the last tile's button;
+  - each tile has a hidden “Add to Favorites” that counts presses;
+  - a click on the picture opens nothing;
+  - the viewer is the owner's full-screen viewer with “N of 7”.
+- **Integration `extension` (+1):**
+  - on 3.5.0: 0 large photos, the owner's result;
+  - on 3.5.1: 7 different large photos, “7 opened large”, “the gallery says 7”, no favourites pressed, the prompt sent once.
+- **Whole suites:** `extension` + `extension-update` 57/57 on 3.5.1, so the older gallery and viewer kinds still pass. Unit 60 files / 412 tests; `tsc` 0 errors.
+- **Not verified:** the real ChatGPT page with 3.5.1. If it differs again, the next page copy shows how.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "over the picture"   # 3.5.0: 0 of 7 large; 3.5.1: pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 57 pass
+npx vitest run                                                             # 60 files, 412 tests pass
+npx tsc --noEmit                                                           # 0 errors
+```

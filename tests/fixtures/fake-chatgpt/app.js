@@ -146,6 +146,12 @@
             ? `<div class="image-gallery">${Array.from({ length: Math.min(t.gallery, C.galleryShown || t.gallery) }, (_, k) => {
                 const tile = `<img class="gal-thumb" data-k="${k}" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" width="160" height="90" alt="Photo ${k + 1}">`;
                 const tiles = Math.min(t.gallery, C.galleryShown || t.gallery);
+                // galleryTiles 'overlay-button': the owner's page copy — the picture, an “Open …” button over it (the
+                // count inside the last one), and a hidden “Add to Favorites”. A click on the picture opens nothing.
+                if (C.galleryTiles === 'overlay-button') {
+                  const badge = k === tiles - 1 && t.gallery > tiles ? `<div aria-hidden="true"><div style="position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:2px;color:#fff"><svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="3" width="8" height="8"/></svg><span><span>${t.gallery}</span></span></div></div>` : '';
+                  return `<div class="gal-box" style="display:inline-block;margin:4px"><div class="gal-frame" style="position:relative;width:208px;height:166px"><img class="gal-img" src="/backend-api/estuary/content?id=gal_${k + 1}&thumb=1" alt="Photo ${k + 1} of the person" style="display:block;width:208px;height:166px;object-fit:cover"><div class="gal-overlay" style="position:absolute;inset:0;z-index:2"><button class="gal-open" data-k="${k}" type="button" aria-label="Open Photo ${k + 1} of the person" style="position:absolute;inset:0;width:100%;height:100%;background:transparent;border:0;padding:0;cursor:pointer">${badge}</button></div><div style="position:absolute;inset:0;z-index:3;pointer-events:none"><div style="position:absolute;right:12px;top:12px"><div style="opacity:0;pointer-events:none"><button class="gal-fav" type="button" aria-label="Add to Favorites" style="width:36px;height:36px"><svg width="20" height="20" aria-hidden="true"><path d="M2 2h16"/></svg></button></div></div></div></div></div>`;
+                }
                 // galleryBadge: the count over the last tile, as in the owner's screenshot (an icon and “5”).
                 return C.galleryBadge && k === tiles - 1 && t.gallery > tiles
                   ? `<span class="gal-tile" style="position:relative;display:inline-block">${tile}<span class="gal-count" style="position:absolute;right:6px;bottom:6px;pointer-events:none"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="3" width="8" height="8"/></svg>${t.gallery}</span></span>`
@@ -235,6 +241,19 @@
   document.addEventListener('click', (e) => {
     const t = e.target;
     if (!(t instanceof Element)) return;
+    // 'overlay-button' tiles: a hidden “Add to Favorites” (never to be pressed by the extension) and the “Open …” button.
+    if (t.closest('.gal-fav')) {
+      window.__favorited = (window.__favorited || 0) + 1;
+      return;
+    }
+    const opener = t.closest('.gal-open');
+    if (opener) {
+      const k = Number(opener.getAttribute('data-k'));
+      window.__dlg = { k, shown: k, count: C.galleryCount || document.querySelectorAll('.gal-open').length };
+      window.__galleryOpened = (window.__galleryOpened || 0) + 1;
+      render();
+      return;
+    }
     const thumb = t.closest('.gal-thumb');
     if (thumb) {
       const imgs = document.querySelectorAll('.gal-thumb');

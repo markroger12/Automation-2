@@ -158,3 +158,19 @@ describe('move keywords to another day', () => {
     expect(Date.parse((r as { plan: { to: string }[] }).plan[0].to)).toBeGreaterThanOrEqual(Date.parse(`${tomorrow}T00:00:00+05:00`));
   });
 });
+
+describe('keyword queue order (owner request: newest first)', () => {
+  it('newest first by default: the latest batch on top, its later lines first; “queue” keeps the writing order', async () => {
+    const { sortKeywords } = await import('@/lib/workflow/queue-view');
+    const rows = [
+      { keyword: 'old 1', position: 1, createdAt: '2026-10-30T10:00:00.000Z' },
+      { keyword: 'old 2', position: 2, createdAt: '2026-10-30T10:00:00.000Z' },
+      { keyword: 'new 1', position: 3, createdAt: '2026-11-01T18:00:00.000Z' },
+      { keyword: 'new 2', position: 4, createdAt: '2026-11-01T18:00:00.000Z' },
+      { keyword: 'moved to top', position: 0, createdAt: '2026-10-31T09:00:00.000Z' },
+    ];
+    expect(sortKeywords(rows, 'newest').map((r) => r.keyword)).toEqual(['new 2', 'new 1', 'moved to top', 'old 2', 'old 1']);
+    expect(sortKeywords(rows, 'queue').map((r) => r.keyword)).toEqual(['moved to top', 'old 1', 'old 2', 'new 1', 'new 2']);
+    expect(rows[0].keyword).toBe('old 1'); // the input is not changed
+  });
+});

@@ -37,7 +37,7 @@ import { Field, Input, Select, Switch, Textarea } from '@/components/form';
 import { Card, Chip, PageHeader, StatusChip, cx, type ChipTone } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
 import { inspectionProperty, searchConsoleHome } from '@/lib/workflow/search-console';
-import { KEYWORD_LABEL as KW_LABEL, KEYWORD_STATUSES, filterKeywords, readableTimes, statusCounts } from '@/lib/workflow/queue-view';
+import { KEYWORD_LABEL as KW_LABEL, KEYWORD_STATUSES, filterKeywords, readableTimes, sortKeywords, statusCounts, type QueueOrder } from '@/lib/workflow/queue-view';
 
 interface Site {
   id: string;
@@ -57,6 +57,7 @@ interface Keyword {
   retries: number;
   lastError: string | null;
   position: number;
+  createdAt: string;
   task: { id: string; status: string; wpPostId: number | null; wpEditUrl: string | null } | null;
   /** Screenshot of Search Console's answer after “Request indexing”. */
   proofId?: string | null;
@@ -89,6 +90,7 @@ const COLUMNS = [
 ] as const;
 type ColumnId = (typeof COLUMNS)[number]['id'];
 const COLUMNS_KEY = 'bas:workflow-columns';
+const ORDER_KEY = 'bas:workflow-order';
 
 export function WorkflowPage({ sites, initialSiteId, description }: { sites: Site[]; initialSiteId: string; description: string }) {
   const toast = useToast();
@@ -122,14 +124,26 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   const [shot, setShot] = useState<{ id: string; title: string; caption?: string } | null>(null);
   // Keyword ideas from Search Console and Google (owner request).
   const [ideasOpen, setIdeasOpen] = useState(false);
+  // Owner request: newest first by default; “Queue order” shows the order the articles are written in.
+  const [order, setOrder] = useState<QueueOrder>('newest');
 
   useEffect(() => {
     try {
       setHidden(JSON.parse(localStorage.getItem(COLUMNS_KEY) ?? '[]') as ColumnId[]);
+      if (localStorage.getItem(ORDER_KEY) === 'queue') setOrder('queue');
     } catch {
       /* storage unavailable */
     }
   }, []);
+  const changeOrder = (next: QueueOrder) => {
+    setOrder(next);
+    setPage(1);
+    try {
+      localStorage.setItem(ORDER_KEY, next);
+    } catch {
+      /* storage unavailable */
+    }
+  };
   const toggleColumn = (id: ColumnId, show: boolean) =>
     setHidden((h) => {
       const next = show ? h.filter((x) => x !== id) : [...h, id];
@@ -226,7 +240,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   }
 
   const counts = useMemo(() => statusCounts(view?.keywords ?? []), [view]);
-  const rows = useMemo(() => filterKeywords(view?.keywords ?? [], { q, statuses }), [view, q, statuses]);
+  const rows = useMemo(() => sortKeywords(filterKeywords(view?.keywords ?? [], { q, statuses }), order), [view, q, statuses, order]);
   const shown = pageSlice(rows, page, pageSize);
   // A new search or filter starts on the first page.
   useEffect(() => setPage(1), [q, statuses, siteId]);
@@ -354,6 +368,13 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
             <Menu label="View" icon={<SlidersHorizontal className="h-3.5 w-3.5" />} align="end">
               {() => (
                 <>
+                  <MenuLabel>Order</MenuLabel>
+                  <MenuCheck checked={order === 'newest'} onChange={() => changeOrder('newest')}>
+                    Newest first
+                  </MenuCheck>
+                  <MenuCheck checked={order === 'queue'} onChange={() => changeOrder('queue')}>
+                    Queue order (as written)
+                  </MenuCheck>
                   <MenuLabel>Columns</MenuLabel>
                   {COLUMNS.map((c) => (
                     <MenuCheck key={c.id} checked={shows(c.id)} onChange={(v) => toggleColumn(c.id, v)}>

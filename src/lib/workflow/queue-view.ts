@@ -34,6 +34,17 @@ export function filterKeywords<T extends { keyword: string; status: string; seco
   });
 }
 
+export type QueueOrder = 'newest' | 'queue';
+
+/**
+ * Owner request (42 keywords, the newest on “Page 5 of 5”): the queue is shown newest first by default — the keyword
+ * added last on top (same batch: its later lines first). “Queue order” is the order the articles are written in.
+ */
+export function sortKeywords<T extends { position: number; createdAt?: string | Date | null }>(rows: T[], order: QueueOrder): T[] {
+  const at = (r: T) => (r.createdAt ? new Date(r.createdAt).getTime() : 0);
+  return [...rows].sort((a, b) => (order === 'queue' ? a.position - b.position : at(b) - at(a) || b.position - a.position));
+}
+
 export function statusCounts(rows: { status: string }[]): Record<string, number> {
   const c: Record<string, number> = {};
   for (const k of rows) c[k.status] = (c[k.status] ?? 0) + 1;

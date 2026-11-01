@@ -3927,3 +3927,13 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx vitest run                                                             # 60 files, 413 tests pass
 npx tsc --noEmit                                                           # 0 errors
 ```
+
+## Owner request (2026-11-01): the keyword queue newest first
+
+Screenshot of the Workflow queue: 42 keywords, the newest on “Page 5 of 5”.
+- **Default order:** the queue is now shown newest first. The latest batch is on top, and within a batch the later lines come first (by `createdAt`, then `position`).
+- **View → Order:** Newest first or Queue order (as written). The choice is remembered in this browser, and changing it goes back to page 1.
+- **Unchanged:** the order the articles are written and scheduled in (positions).
+- **Tests:** unit `sortKeywords` in `tests/unit/workflow-move.test.ts`: newest first, queue order, input unchanged.
+- **Checked:** `tsc` 0 errors, unit 60 files / 414 tests, `next build` compiled.
+- **Not verified:** a browser check. The container's disk was full: `next build` first failed with ENOSPC, and the project's `.next/cache` was deleted to make room.

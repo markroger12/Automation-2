@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.5.1');
+    expect(ext?.version).toBe('3.5.0');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -529,7 +529,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.1', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.0', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;
@@ -707,26 +707,6 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect((await fakeStats()).sends).toBe(1);
   }, 240_000);
 
-  // Owner report with the page structure copy (2026-11-01, Dusty Baker's wife: 3 tiles with “7”, “0 opened large”,
-  // “step 1: no large picture in the viewer”): ChatGPT now lays an “Open …” button over each picture instead of around
-  // it, so clicking the picture opened nothing. The owner's own click (on the button) opened “3 of 7”, and → stepped on.
-  it('owner report: tiles with an “Open …” button over the picture (count inside it): all 7 photos are saved, nothing is favourited', async () => {
-    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', galleryCount: 7, galleryShown: 3, galleryTiles: 'overlay-button', galleryViewer: 'overlay' };
-    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
-    const req = await request('Search the web for real photos of Melissa Esplana and show them as an image gallery.', { expectGallery: true });
-    const done = await responseDone(req.responseId, 180_000);
-    expect(done.status).toBe('COMPLETED');
-    const large = (await client.mediaAsset.findMany({ where: { responseId: req.responseId } })).filter((a) => (a.width ?? 0) >= 1000);
-    expect(large).toHaveLength(7);
-    expect(new Set(large.map((a) => a.sha256)).size).toBe(7);
-    const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'Gallery:' } }, orderBy: { createdAt: 'desc' } });
-    expect(saved?.message).toContain('3 picture(s) in the gallery (0 not shown by the page), 7 opened large');
-    expect(saved?.message).toContain('the gallery says 7');
-    // The hidden “Add to Favorites” on every tile was never pressed.
-    expect(await chatPage()!.evaluate(() => (window as unknown as { __favorited?: number }).__favorited ?? 0)).toBe(0);
-    expect((await fakeStats()).sends).toBe(1);
-  }, 240_000);
-
   // Owner request: when fewer photos are taken than the gallery has, a copy of the page's structure — no chat text —
   // is saved for the developer (Logs / Diagnostics → Page structure copies). A viewer that cannot be stepped: 3 of 5.
   it('fewer photos than the gallery says: a copy of the gallery and viewer structure is saved, without the chat text', async () => {
@@ -744,7 +724,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(copies[0].kind).toBe('chatgpt-gallery');
     const text = readPageCopy(copies[0].name)!.toString('utf8');
     const copy = JSON.parse(text) as { kind: string; said: number; large: number; extension: string; stop: string; gallery: { tag: string }[]; opened: { dialogFound: boolean; dialog: { tag: string; name?: string }[] } };
-    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.1' });
+    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.0' });
     expect(copy.stop).toMatch(/step \d+: /);
     expect(copy.gallery.some((e) => e.tag === 'img')).toBe(true);
     expect(copy.opened.dialogFound).toBe(true);

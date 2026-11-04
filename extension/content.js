@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.5.1';
+  const EXTENSION_VERSION = '3.5.0';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -416,8 +416,7 @@
       // Open the viewer from a picture the page shows (a broken one may be a link that opens another tab).
       const opener = thumbs.find((img) => !A.brokenPicture(img));
       if (!opener) throw new Error('no picture to open');
-      // What a person's click reaches (owner report: an “Open …” button over the picture, not around it).
-      A.tileOpener(opener).click();
+      opener.click();
       await sleep(1200);
       copy.opened = copyViewer();
       // One picture per step: wait until the viewer shows a different one after “Next” (it may slide), stop when it
@@ -516,7 +515,7 @@
           if (!tile) break;
           if (opensSite(tile)) continue;
           progress(`opening gallery picture ${k + 1} of ${openable}`);
-          A.tileOpener(tile).click();
+          tile.click();
           if (!(await openedViewer(3000))) {
             if (++misses >= 2) break;
             continue;

@@ -414,34 +414,6 @@
     });
   }
 
-  /**
-   * What a person's click on a gallery picture reaches. Owner report with the page structure copy (3 tiles with “7”,
-   * none opened large): ChatGPT now lays an “Open …” button OVER each picture (beside it in the page, not around it),
-   * so a click on the picture itself opened nothing. Never the tile's small hidden “Add to Favorites” (or Share,
-   * Download) button, and never something outside the picture.
-   */
-  function tileOpener(img) {
-    const around = img.closest('button, [role="button"], a');
-    if (around) return around;
-    const r = img.getBoundingClientRect();
-    const over = (el) => {
-      const b = el.getBoundingClientRect();
-      return b.width >= r.width * 0.7 && b.height >= r.height * 0.7 && Math.abs(b.left - r.left) <= r.width * 0.15 && Math.abs(b.top - r.top) <= r.height * 0.15;
-    };
-    const other = (el) => /favou?rite|share|download|copy|save|like|report|teilen|herunterladen/i.test(`${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`);
-    let box = img.parentElement;
-    for (let up = 0; box && up < 3; up++, box = box.parentElement) {
-      const buttons = Array.from(box.querySelectorAll('button, [role="button"]')).filter((b) => !other(b) && over(b));
-      const pick = buttons.find((b) => /^(open|öffnen|view|anzeigen)\b/i.test(b.getAttribute('aria-label') || '')) || buttons[0];
-      if (pick) return pick;
-    }
-    // Else whatever is on top at the picture's middle, if it is a button over the picture.
-    const top = r.width && r.height ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
-    const hit = top && top.closest('button, [role="button"]');
-    if (hit && !other(hit) && over(hit)) return hit;
-    return img;
-  }
-
   function brokenPicture(img) {
     return img.complete && img.naturalWidth === 0 && /^https?:/i.test(img.currentSrc || img.src || '');
   }
@@ -960,7 +932,6 @@
     shownPicture,
     galleryNextButton,
     galleryCount,
-    tileOpener,
     viewerCounter,
     pressViewerKey,
     viewerStrip,

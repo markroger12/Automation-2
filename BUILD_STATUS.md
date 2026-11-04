@@ -4095,3 +4095,55 @@ npx vitest run                                                            # 61 f
 npx tsc --noEmit                                                          # 0 errors
 npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 19 pass
 ```
+
+## Owner request (2026-11-04): one indexing request a day; “indexed” from Google search, not Search Console
+
+Owner: “din me ek article bas ek bar hi indexing ki request ho … check … google search ki api sa ho, search console sa nahi”. Answer to the question: “roz ek bar request or 24 hours ke baad check index howa ke nahi howa. or agher index nahi howa toh again request”.
+- **One request per article per day** (`REQUEST_EVERY_MS`, `nextRequestAllowedAt`): a request is not made within a day of the last one.
+  - The last one is the last request Google accepted, or one the owner marked as made, or an attempt that ended in an error (the click may have reached Google).
+  - The rule is applied when Automation Chrome takes a request, so it covers every way of asking: automatic, again after a search, the owner's **Request indexing** (“requested less than a day ago; the next request is made at …”), and **Request now**.
+  - An error is tried again a day later (was: an hour). “Request now” no longer pulls errors forward.
+  - Not signed in and Google's check stay hourly, because no request was made there.
+- **Is it on Google?** (`src/lib/gsc/google-index.ts`)
+  - One Google search through the search API (Serper, `SERPER_API_KEY`): `site:` + the post's address. It counts only when Google's results contain that exact address (scheme, “www.”, trailing slash, query and fragment ignored).
+  - Search Console's URL Inspection is no longer asked for the status. Its link is still fetched as the request's fallback when the key is connected.
+- **Cycle** (`indexingTick`):
+  1. Publish → request queued; the first search is due a day after publishing.
+  2. On REQUESTED, the next search is 24 h after the request.
+  3. Found → INDEXED (“Google: found in Google search (site:…)”), and a waiting request is cancelled.
+  4. Not found → requested again (one a day) and searched 24 h after it.
+  5. After 14 days without it, requests and searches stop.
+  - Without the workflow switch: searched daily, nothing requested.
+  - Without a Serper key: nothing is searched, and the keyword says what to add.
+  - Search API errors: network or HTTP → an hour; key or credits → a day.
+- **Texts:** the workflow switch help, the README indexing section, and Search Performance (“Indexed (found in Google search)”).
+
+**Tests**
+- **Unit `search-console-live`:** the indexing tests were rewritten for the new rules, against a fake Serper.
+  - Queued ~35 s after publishing, the search a day after the request, not found → requested again, then found → INDEXED.
+  - One a day: the owner's Request indexing → “later”; a pulled-forward run time is held back when taken; an error retry a day later; Request now leaves it.
+  - Without the switch: searched daily, stops after 14 searches.
+  - INDEXED never stepped back; the daily limit and no access as before.
+  - Without either key; and the search API unreachable → “asked again in an hour”, with the request's state kept.
+- **Unit `indexing-signin`:** the owner's Request indexing right after a request → “the next request is made at …” a day later; then made.
+
+**Checked**
+- `tsc` 0 errors.
+- Unit: 61 files, 428 tests.
+- Integration: `extension.test.ts -t "Search Console|indexing|reCAPTCHA|Indexing requested"` 6/6 with the real extension; `workflow-publish` 9/9 (a first run while `next build` ran at the same time failed to start; run alone it passed).
+- `next build` compiled.
+
+**Not verified**
+- Serper's real answers for the owner's posts.
+- How soon a `site:` search shows a newly indexed post (it can lag behind Search Console).
+- The Serper credits used (one per search, at most 14 per article).
+
+**Commands run**
+```
+npx vitest run tests/unit/search-console-live.test.ts tests/unit/indexing-signin.test.ts   # 17 pass
+npx vitest run                                                                           # 61 files, 428 tests pass
+npx tsc --noEmit                                                                         # 0 errors
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console|indexing|reCAPTCHA|Indexing requested"   # 6 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 9 pass
+npx next build                                                                           # compiled
+```

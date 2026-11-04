@@ -349,10 +349,13 @@ export async function keywordAction(websiteId: string, raw: unknown) {
           notes.push(`“${kw.keyword}” is not published yet.`);
           continue;
         }
-        if ((await requestIndexingNow({ keywordId: kw.id, url: kw.publishedUrl, property, websiteId })) === 'running') {
+        const asked = await requestIndexingNow({ keywordId: kw.id, url: kw.publishedUrl, property, websiteId });
+        if (asked.result === 'running') {
           notes.push(`“${kw.keyword}”: Automation Chrome is requesting indexing for it right now.`);
           continue;
         }
+        // Owner rule: one request per article per day.
+        if (asked.result === 'later') notes.push(`“${kw.keyword}”: indexing was requested less than a day ago; the next request is made at ${formatInZone(asked.at.toISOString(), wf.slotTimezone)} (one a day).`);
         break;
       }
       case 'indexing-requested':

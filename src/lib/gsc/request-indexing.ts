@@ -9,14 +9,19 @@ import { resolveWebsiteProperty } from './property';
  * “Request indexing” as the owner does it (owner request): open the URL in Search Console's URL Inspection and click
  * REQUEST INDEXING. Google offers no API for this button (the URL Inspection API only reads the status, and the
  * Indexing API is not used), so Automation Chrome does it with the Google account signed in there. A request is never
- * proof of indexing: “Indexed” still comes only from Google's URL Inspection.
+ * proof of indexing: “Indexed” comes from Google search (owner request: the search API, not Search Console).
  */
 
 export const GSC_QUEUE = 'gsc';
 /** Google's sign-in page, continuing to Search Console: opened in Automation Chrome for the owner to sign in there. */
 export const GOOGLE_SIGNIN_URL = `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent('https://search.google.com/search-console')}`;
-/** Reasons a request waits that signing in (or another try) can clear; the daily limit is not one of them. */
-const ASK_AGAIN_NOW = ['NOT_SIGNED_IN', 'HUMAN_CHECK', 'ERROR'];
+/**
+ * Reasons a request waits that signing in can clear: no request was made. Not the daily limit, and not an error (the
+ * click may have reached Google: owner rule, one request per article per day).
+ */
+const ASK_AGAIN_NOW = ['NOT_SIGNED_IN', 'HUMAN_CHECK'];
+/** Owner rule (2026-11-04): at most one indexing request per article per day; Google search is checked a day after it. */
+export const REQUEST_EVERY_MS = 24 * 3600_000;
 const KIND = 'gsc.request-indexing';
 const LEASE_MS = 8 * 60_000;
 
@@ -37,6 +42,38 @@ export async function queueIndexingRequest(p: IndexingJobPayload, now = new Date
   return { job, created };
 }
 
+/**
+ * The earliest time the next request for a keyword may be made: a day after the last one. The last one is the last
+ * request Google accepted (or that the owner marked as made), or an attempt that ended in an error (the click may
+ * have reached Google).
+ */
+export async function nextRequestAllowedAt(keywordId: string): Promise<Date | null> {
+  const kw = await db.workflowKeyword.findUnique({ where: { id: keywordId }, select: { indexingRequestedAt: true } });
+  const job = await db.queueJob.findUnique({ where: { idempotencyKey: `gsc-index:${keywordId}` }, select: { errorCode: true, startedAt: true } });
+  const times = [kw?.indexingRequestedAt?.getTime() ?? 0, job?.errorCode === 'ERROR' && job.startedAt ? job.startedAt.getTime() : 0];
+  const last = Math.max(...times);
+  return last ? new Date(last + REQUEST_EVERY_MS) : null;
+}
+
+/**
+ * Ask again (owner: “if it is not indexed, request again”): the keyword's request is made once more, not before a day
+ * after the last one. Returns when it is due; a request Automation Chrome is making right now is left alone.
+ */
+export async function requestIndexingAgain(p: IndexingJobPayload, now = new Date()): Promise<Date> {
+  const allowed = await nextRequestAllowedAt(p.keywordId);
+  const runAt = allowed && allowed > now ? allowed : now;
+  const job = await db.queueJob.findUnique({ where: { idempotencyKey: `gsc-index:${p.keywordId}` } });
+  if (!job) {
+    await enqueue({ queue: GSC_QUEUE, kind: KIND, idempotencyKey: `gsc-index:${p.keywordId}`, websiteId: p.websiteId, payload: p, runAt, maxAttempts: 4 });
+    return runAt;
+  }
+  if (job.status === 'ACTIVE' && job.leaseUntil && job.leaseUntil > now) return now;
+  const before = JSON.parse(job.payload) as IndexingJobPayload;
+  const payload: IndexingJobPayload = { ...p, inspectLink: p.inspectLink ?? (before.url === p.url && before.property === p.property ? (before.inspectLink ?? null) : null) };
+  await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'WAITING', runAt, attempts: 0, lockedBy: null, leaseUntil: null, startedAt: null, finishedAt: null, error: null, errorCode: null, payload: JSON.stringify(payload) } });
+  return runAt;
+}
+
 /** The property a request is made in: the website's (detected when the key is connected), else its URL as a URL prefix. */
 export async function requestProperty(websiteId: string): Promise<string> {
   const { site, property } = await resolveWebsiteProperty(websiteId);
@@ -48,20 +85,27 @@ export async function requestProperty(websiteId: string): Promise<string> {
  * workflow switch is off or an earlier request was answered (that request is asked again: one per keyword). A request
  * Automation Chrome is making right now is left alone ('running').
  */
-export async function requestIndexingNow(p: IndexingJobPayload, now = new Date()): Promise<'queued' | 'running'> {
+export async function requestIndexingNow(p: IndexingJobPayload, now = new Date()): Promise<{ result: 'queued' | 'running' | 'later'; at: Date }> {
+  // Owner rule: one request per article per day — a request asked for within a day of the last one waits for that day.
+  const allowed = await nextRequestAllowedAt(p.keywordId);
+  const runAt = allowed && allowed > now ? allowed : now;
   const job = await db.queueJob.findUnique({ where: { idempotencyKey: `gsc-index:${p.keywordId}` } });
   if (!job) {
-    await queueIndexingRequest(p, now);
+    await enqueue({ queue: GSC_QUEUE, kind: KIND, idempotencyKey: `gsc-index:${p.keywordId}`, websiteId: p.websiteId, payload: p, runAt, maxAttempts: 4 });
   } else {
-    if (job.status === 'ACTIVE' && job.leaseUntil && job.leaseUntil > now) return 'running';
+    if (job.status === 'ACTIVE' && job.leaseUntil && job.leaseUntil > now) return { result: 'running', at: now };
     const before = JSON.parse(job.payload) as IndexingJobPayload;
     const payload: IndexingJobPayload = { ...p, inspectLink: p.inspectLink ?? (before.url === p.url && before.property === p.property ? (before.inspectLink ?? null) : null) };
     // Compare-and-set, as the extension's claim does: a claim in between wins.
-    const reset = await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'WAITING', runAt: now, attempts: 0, lockedBy: null, leaseUntil: null, startedAt: null, finishedAt: null, error: null, errorCode: null, payload: JSON.stringify(payload) } });
-    if (!reset.count) return 'running';
+    const reset = await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'WAITING', runAt, attempts: 0, lockedBy: null, leaseUntil: null, startedAt: null, finishedAt: null, error: null, errorCode: null, payload: JSON.stringify(payload) } });
+    if (!reset.count) return { result: 'running', at: now };
+  }
+  if (runAt > now) {
+    await setKeyword(p.keywordId, { indexingStatus: `Indexing was requested less than a day ago; the next request (one a day) is made at ${runAt.toISOString()} (asked by you ${now.toISOString()}).` });
+    return { result: 'later', at: runAt };
   }
   await setKeyword(p.keywordId, { indexingStatus: `Waiting for Automation Chrome to request indexing in Search Console (asked by you ${now.toISOString()}).` });
-  return 'queued';
+  return { result: 'queued', at: now };
 }
 
 export async function waitingIndexingRequests(now = new Date()): Promise<number> {
@@ -78,6 +122,12 @@ export async function claimIndexingRequest(installId: string, now = new Date()):
     const kw = await db.workflowKeyword.findUnique({ where: { id: p.keywordId }, select: { status: true } });
     if (!kw || kw.status === 'INDEXED') {
       await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'CANCELLED', finishedAt: now, leaseUntil: null, error: kw ? 'Google already shows the URL as indexed.' : 'The keyword was deleted.' } });
+      continue;
+    }
+    // Owner rule: one request per article per day, whichever way it was asked for (automatic, again, by the owner).
+    const allowed = job.status === 'ACTIVE' ? null : await nextRequestAllowedAt(p.keywordId);
+    if (allowed && allowed > now) {
+      await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { runAt: allowed } });
       continue;
     }
     const taken = await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'ACTIVE', lockedBy: `extension:${installId}`, leaseUntil: new Date(now.getTime() + LEASE_MS), attempts: { increment: 1 }, startedAt: now } });
@@ -116,7 +166,8 @@ export async function reportIndexingRequest(input: { jobId: string; installId: s
   switch (input.outcome) {
     case 'REQUESTED':
       await db.queueJob.update({ where: { id: job.id }, data: { status: 'COMPLETED', finishedAt: now, leaseUntil: null, error: null, errorCode: null } });
-      await setKeyword(p.keywordId, { status: 'INDEXING_REQUESTED', indexingRequestedAt: now, indexingStatus: `Indexing requested in Search Console (URL Inspection → Request indexing) at ${now.toISOString()}.${said} A request is not proof of indexing; Google is asked for the index status next.` }, true);
+      // Owner: Google search is checked 24 hours after the request; not on Google → requested again.
+      await setKeyword(p.keywordId, { status: 'INDEXING_REQUESTED', indexingRequestedAt: now, indexCheckAt: new Date(now.getTime() + REQUEST_EVERY_MS), indexingStatus: `Indexing requested in Search Console (URL Inspection → Request indexing) at ${now.toISOString()}.${said} A request is not proof of indexing; Google search is checked 24 hours later (${new Date(now.getTime() + REQUEST_EVERY_MS).toISOString()}).` }, true);
       await log({ category: 'search', message: `Indexing requested in Search Console for ${p.url}.` });
       // Google is signed in now: requests that waited for the sign-in (or a check) are made next, not an hour later.
       await db.queueJob.updateMany({ where: { queue: GSC_QUEUE, status: 'WAITING', errorCode: { in: ['NOT_SIGNED_IN', 'HUMAN_CHECK'] }, runAt: { gt: now } }, data: { runAt: now } });
@@ -136,12 +187,13 @@ export async function reportIndexingRequest(input: { jobId: string; installId: s
       await setKeyword(p.keywordId, { indexingStatus: `The Google account in Automation Chrome cannot use ${p.property} in Search Console.${said} Sign in with the account that owns the property, then retry the keyword.` });
       break;
     default:
-      await retry(HOUR, `Indexing could not be requested (${(input.message ?? 'unknown problem').slice(0, 200)}).`);
+      // The click may have reached Google: the next try is a day later (one request per article per day).
+      await retry(24 * HOUR, `Indexing could not be requested (${(input.message ?? 'unknown problem').slice(0, 200)}).`);
   }
   return { ok: true };
 }
 
-async function setKeyword(id: string, data: { status?: string; indexingRequestedAt?: Date; indexingStatus: string }, onlyIfPublished = false) {
+async function setKeyword(id: string, data: { status?: string; indexingRequestedAt?: Date; indexCheckAt?: Date; indexingStatus: string }, onlyIfPublished = false) {
   // Never step back: a keyword Google already reported as indexed keeps that.
   await db.workflowKeyword.updateMany({ where: { id, status: onlyIfPublished ? { in: ['PUBLISHED', 'INDEXING_REQUESTED'] } : { not: 'INDEXED' } }, data });
 }

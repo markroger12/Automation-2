@@ -273,8 +273,13 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
   - How: it opens the property's Search Console page, types the post's URL into **“Inspect any URL in …”**, presses Enter, checks that the result shows that URL, then clicks **REQUEST INDEXING** and waits for Google's live test. If the box does not work, it opens Google's own inspection link instead (needs the Search Console key).
   - Sign in to Google once in Automation Chrome with the account that owns the property.
   - Search Console allows only a few requests a day; the rest are made the next day.
-  - What Google answered is shown on the keyword. A sign-in page or a Google check is left to you and asked again an hour later.
-  - The tool never claims a post is indexed: “Indexed” comes only from Google's URL Inspection (needs the Search Console key on the Search Performance page).
+  - What Google answered is shown on the keyword. A sign-in page or a Google check is left to you and asked again an hour later (no request was made then).
+  - **One request per article per day** (owner rule). This also applies to your own **Request indexing**, to **Request now**, and to a retry after an error. Such a request waits until a day after the last one, and the keyword says when.
+  - **Is it on Google?** 24 hours after the request, Google search is asked through the search API (Serper: `site:` + the post's address; needs `SERPER_API_KEY` in `.env`). Search Console is not asked.
+    - Found → **Indexed** (“Google: found in Google search …”).
+    - Not found → indexing is requested again, and searched again 24 hours after that request.
+    - After 14 days without it, requests and searches stop.
+    - Each search uses one Serper credit. Without the key, nothing is searched and the keyword says what to add.
   - **Is Automation Chrome signed in?** The Workflow and Automation Chrome pages have an **Indexing in Search Console** panel:
     - it shows whether Google is signed in there and what was requested or waits;
     - **Sign in to Google in Automation Chrome** opens Google's sign-in there (you type the password yourself);

@@ -76,7 +76,7 @@ interface Connection {
   detectedFrom?: string | null;
 }
 
-/** Live Search Console data through the owner's service account (Google's official API; read-only data and URL Inspection proof). */
+/** Live Search Console data through the owner's service account (Google's official API; read-only data). */
 function LiveConnection({ websiteId, property, liveSync, onSynced }: { websiteId: string; property: string; liveSync: Data['liveSync']; onSynced: () => Promise<void> }) {
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -400,7 +400,7 @@ export function SearchPerformance({ websites, initialSite }: { websites: { id: s
                   <dd className="text-lg font-semibold tabular-nums">{data.indexing.requested}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted text-xs">Indexed (Google says, URL Inspection)</dt>
+                  <dt className="text-muted text-xs">Indexed (found in Google search)</dt>
                   <dd className="text-lg font-semibold tabular-nums">{data.indexing.indexedByGoogle ?? 0}</dd>
                 </div>
                 <div>

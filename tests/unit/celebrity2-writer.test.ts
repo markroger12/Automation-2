@@ -285,3 +285,77 @@ describe('Celebrity 2 in the workflow', () => {
     expect(waiting.lastError).toBe('No Celebs Here has no “Celebrity” category. Celebrity articles always go into “Celebrity” (English websites: “Celebrity”, German websites: “Prominente”). Create it in WordPress, then Websites → No Celebs Here → Sync categories.');
   });
 });
+
+/**
+ * Owner report (Celebrity 2, “Ricardo Joel Gomez”): “SEO Title: …”, “Meta Description: …” and “URL Slug: …” stood at the
+ * top of the WordPress article. The owner's prompt asks for the label on its own line and the value on the next; the
+ * extension turns that line break into a newline (its toMarkdown: <br> → “\n”), and the parser read only a value on
+ * the label's own line, so the lines went into the article (and the meta description was taken from them).
+ */
+const TOP = ANSWER.slice(0, ANSWER.indexOf('# Who Is'));
+const REST = ANSWER.slice(ANSWER.indexOf('# Who Is'));
+const nextLine = (bold: boolean, nbsp: boolean) => {
+  const sp = nbsp ? ' ' : ' ';
+  const l = (label: string) => (bold ? `**${label}:**` : `${label}:`);
+  return `${l(`SEO${sp}Title`)}\nAndrea Soros: George Soros' Daughter and Her Philanthropy\n${l('Meta Description')}\nMeet Andrea Soros, George Soros' daughter, and learn about her education, husband Eric Colombel, family, and philanthropic work.\n${l('URL Slug')}\nandrea-soros\n\n${REST}`;
+};
+
+describe('owner report: the SEO lines were in the article (value on the line after its label)', () => {
+  it('reads the value on the next line, bold or plain, with a non-breaking space, after the writing block’s title', async () => {
+    expect(TOP).toContain('**SEO Title:** Andrea Soros');
+    const { parseCelebrity2Article } = await import('@/modules/celebrity2-writer/parsers');
+    for (const text of [nextLine(true, false), nextLine(false, false), nextLine(false, true), `Who Is Andrea Soros? All About George Soros' Daughter\n\n${nextLine(true, true)}`]) {
+      const p = parseCelebrity2Article(text, 'en', TITLE);
+      expect(p.problems).toEqual([]);
+      expect(p).toMatchObject({ seoTitle: "Andrea Soros: George Soros' Daughter and Her Philanthropy", slug: 'andrea-soros' });
+      expect(p.metaDescription).toMatch(/^Meet Andrea Soros, George Soros' daughter/);
+      expect(p.html).not.toMatch(/SEO\s*Title|Meta Description|URL Slug/);
+      expect(load(`<body>${p.html}</body>`)('body > p').first().text()).toMatch(/^Andrea Soros is an American philanthropist/);
+    }
+    // Tigram reads the same forms.
+    const { parseTigramArticle } = await import('@/modules/tigram-writer/parsers');
+    expect(parseTigramArticle(nextLine(false, false), 'en')).toMatchObject({ seoTitle: "Andrea Soros: George Soros' Daughter and Her Philanthropy", slug: 'andrea-soros', problems: [] });
+  });
+
+  it('an article saved with the lines: Regenerate → Assembly takes them out and uses them as the SEO fields', async () => {
+    const answers = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string) => {
+      if (stageKey === 'TITLES') return `1. ${TITLE}\n2. Andrea Soros: George Soros' Daughter and Philanthropist\n\nRecommended Title: ${TITLE}`;
+      if (stageKey === 'ARTICLE') return ANSWER;
+      return cannedAnswer(stageKey, prompt, language, keyword);
+    };
+    const { drive } = makeDriver(client, answers);
+    const create = await import('@/lib/tasks/create');
+    const { task } = await create.createArticleTask({ moduleKey: 'celebrity2-writer', keyword: 'Andrea Soros philanthropy', websiteId: siteEn, idempotencyKey: 'c2:broken-draft' }, { source: 'SINGLE' });
+    expect((await drive(task.id)).status).toBe('LOGIN_REQUIRED');
+    // As the owner's article was saved: the three lines (one paragraph each, label and value on two lines) on top,
+    // and the SEO fields filled in without them.
+    const broken = `<p>SEO Title:\nAndrea Soros: George Soros' Daughter and Her Philanthropy</p><p>Meta Description:\nMeet Andrea Soros, George Soros' daughter, and learn about her education, husband Eric Colombel, family, and philanthropic work.</p><p>URL Slug:\nandrea-soros</p>`;
+    const links = await client.articleStage.findFirstOrThrow({ where: { taskId: task.id, key: 'EXTERNAL_LINKS' } });
+    await client.articleStage.update({ where: { id: links.id }, data: { outputHtml: broken + links.outputHtml } });
+    await client.articleTask.update({ where: { id: task.id }, data: { seoTitle: TITLE, metaDescription: "SEO Title: Andrea Soros: George Soros' Daughter and Her Philanthropy Meta Description: Meet Andrea Soros", slug: 'andrea-soros-colombel' } });
+    const actions = await import('@/lib/tasks/actions');
+    await actions.regenerateStage(task.id, 'ASSEMBLY');
+    expect((await drive(task.id)).status).toBe('LOGIN_REQUIRED');
+    const t = await client.articleTask.findUniqueOrThrow({ where: { id: task.id } });
+    expect(t.assembledHtml).not.toMatch(/SEO Title|Meta Description:|URL Slug/);
+    expect(t).toMatchObject({ seoTitle: "Andrea Soros: George Soros' Daughter and Her Philanthropy", slug: 'andrea-soros' });
+    expect(t.metaDescription).toMatch(/^Meet Andrea Soros, George Soros' daughter/);
+    expect(load(`<body>${t.assembledHtml}</body>`)('body > p').first().text()).toMatch(/^Andrea Soros is an American philanthropist/);
+    const asm = await client.articleStage.findFirstOrThrow({ where: { taskId: task.id, key: 'ASSEMBLY' } });
+    expect(asm.message).toContain('The SEO title, meta description, URL slug line(s) were taken out of the article text and used as the SEO fields.');
+  });
+
+  it('an SEO line left anywhere in a person article stops it before WordPress', async () => {
+    const { evaluateQuality } = await import('@/lib/quality/gate');
+    const { runSeoChecks } = await import('@/lib/seo/checks');
+    const { parseCelebrity2Article } = await import('@/modules/celebrity2-writer/parsers');
+    const html = parseCelebrity2Article(ANSWER, 'en', TITLE).html.replace('<h2>Conclusion</h2>', '<p>SEO Title: Andrea Soros Again</p><h2>Conclusion</h2>');
+    const input = { html, moduleKey: 'celebrity2-writer', language: 'en', keyword: 'Andrea Soros', title: TITLE, seoTitle: 'x', metaDescription: 'y', slug: 'andrea-soros', categoryName: 'Celebrity', tags: [], expectedFaqCount: 5, quickBioRows: 12, maxWords: 1300, wordRange: null, minKeywordOccurrences: 3, maxKeywordOccurrences: 8, densityCeilingPct: 2.5, externalLinksEnabled: true, internalLinksEnabled: true, imagesExpected: false };
+    const seo = runSeoChecks(input);
+    const q = evaluateQuality({ html, moduleKey: 'celebrity2-writer', language: 'en', keyword: 'Andrea Soros', seo, reviewThreshold: 0, densityCeilingPct: 2.5, expectedFaqCount: 5, categoryValid: true, assemblyWarnings: [], imagesRequired: false, imagesPresent: 0 });
+    expect(q.hardStops.map((h) => h.code)).toContain('SEO_LINES_IN_TEXT');
+    // A Tigram article about SEO may quote a meta description in its text.
+    const t = evaluateQuality({ html, moduleKey: 'tigram-writer', language: 'en', keyword: 'Andrea Soros', seo, reviewThreshold: 0, densityCeilingPct: 2.5, expectedFaqCount: 5, categoryValid: true, assemblyWarnings: [], imagesRequired: false, imagesPresent: 0 });
+    expect(t.hardStops.map((h) => h.code)).not.toContain('SEO_LINES_IN_TEXT');
+  });
+});

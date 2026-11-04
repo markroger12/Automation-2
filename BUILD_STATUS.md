@@ -4069,3 +4069,29 @@ npx tsc --noEmit                                          # 0 errors
 npx next build                                            # compiled
 node tests/.tmp/c2-smoke.mjs                              # Chromium check above (scratch data, port 3100)
 ```
+
+## Owner report (2026-11-04): “SEO Title / Meta Description / URL Slug” at the top of a Celebrity 2 article
+
+Screenshot of the WordPress article “Who Is Ricardo Joel Gomez? All About Selena Gomez's Father”: the body started with “SEO Title: …”, “Meta Description: …” and “URL Slug: …”.
+- **Cause:** the owner's prompt asks for each label on its own line and the value on the next (“**SEO Title:**  ↵ [title]”).
+  - The extension's `toMarkdown` turns that line break into a newline.
+  - The parser (`parseTigramArticle`, used by Celebrity 2) read a value only on the label's own line, and only in the first 12 lines.
+  - So the three lines stayed in the article, and the meta description was taken from them (“SEO Title: …”). The owner's pasted answer had them on one line, so the first tests missed this form.
+- **Fix:**
+  1. **Parser:** `extractMetaLines` (`src/lib/content/meta-lines.ts`) reads the value on the label's line or on the next line. It also handles bold, plain, a heading or list mark before the label, and non-breaking spaces, and searches up to the first “## ” section. It leaves out a short lead-in before the lines. Tigram uses it too.
+  2. **Assembly:** paragraphs of the introduction that are such lines are taken out, and their values become the SEO title, meta description and slug. This also cleans an article saved before the fix: open it → Regenerate → **Assembly**. The WordPress draft and Rank Math fields are then updated by the following stages.
+  3. **Quality gate:** an SEO line left anywhere in a person article is a hard stop (`SEO_LINES_IN_TEXT`) before WordPress. Tigram is not checked, because a how-to about SEO may quote one.
+- **Tests (unit `celebrity2-writer` +3; all three fail on the previous code):**
+  - the owner's answer with the values on the next line (bold, plain, a non-breaking space, the writing block's title before them) is parsed, and Tigram reads the same forms;
+  - a saved article with the three paragraphs → Regenerate Assembly takes them out and sets the SEO fields from them;
+  - a line left in the text → hard stop for Celebrity 2, none for Tigram.
+- **Checked:** unit 61 files / 427 tests; `tsc` 0 errors; integration `wordpress-drafts` + `workflow-publish` 19/19.
+- **Not verified:** the owner's Ricardo Joel Gomez answer itself. The form was inferred from the screenshot (label and value in one paragraph, no bold) and from the extension's `<br>` → newline.
+
+**Commands run**
+```
+npx vitest run tests/unit/celebrity2-writer.test.ts -t "owner report"   # on the previous parser/assembly/gate: 3 fail; after the fix: pass
+npx vitest run                                                            # 61 files, 427 tests pass
+npx tsc --noEmit                                                          # 0 errors
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 19 pass
+```

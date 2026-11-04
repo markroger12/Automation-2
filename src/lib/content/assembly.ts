@@ -1,6 +1,7 @@
 import { load, type CheerioAPI } from 'cheerio';
 import { sanitizeArticleHtml } from '../html/sanitize';
 import { dedupeBlocks, sameTitle, WRITING_LABEL_RE } from './markdown';
+import { matchMetaLine, type MetaLines } from './meta-lines';
 
 export interface FaqItem {
   question: string;
@@ -31,6 +32,8 @@ export interface AssemblyInput {
 export interface AssemblyResult {
   html: string;
   warnings: string[];
+  /** SEO lines found in the article's introduction and taken out of it (an article saved before the parser read them). */
+  meta: MetaLines;
   structure: { introParagraphs: number; h2: string[]; hasConclusion: boolean; removedDuplicates: number; removedSections: string[] };
 }
 
@@ -83,6 +86,17 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
   // Owner report: “Writing” (the label of ChatGPT's writing block) stood under the title, the title was repeated as
   // the first H2, and so the Quick Bio landed before the introduction. Drafts saved before the fix are cleaned here too.
   $('p, div').filter((_, el) => WRITING_LABEL_RE.test($(el).text().trim()) && !$(el).find('p, h2, h3, table, ul, ol').length).remove();
+  // Owner report (“Ricardo Joel Gomez”): “SEO Title: …”, “Meta Description: …” and “URL Slug: …” stood at the top of
+  // the article. They are never article text: taken out of the introduction, their values go to the SEO fields.
+  const meta: MetaLines = { seoTitle: null, metaDescription: null, slug: null };
+  for (const el of $('body').children().toArray()) {
+    if ($(el).is('h2')) break;
+    if (!$(el).is('p')) continue;
+    const hit = matchMetaLine($(el).text().replace(/\s+/g, ' ').trim());
+    if (!hit) continue;
+    if (hit.value && meta[hit.kind] === null) meta[hit.kind] = hit.value;
+    $(el).remove();
+  }
   if (input.title) {
     const first = $('body > h1, body > h2').first();
     if (first.length && sameTitle(first.text(), input.title)) first.remove();
@@ -171,6 +185,7 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
   return {
     html,
     warnings,
+    meta,
     structure: {
       introParagraphs: load(`<body>${intro}</body>`)('p').length,
       h2: $$('h2')

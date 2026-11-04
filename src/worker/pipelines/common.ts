@@ -172,8 +172,24 @@ export function assembly(manifest: StageManifest): PipelineStage {
         updates.focusKeyword = ctx.task.keyword;
         if (stringArray(ctx.task.tags).length === 0) updates.tags = JSON.stringify([ctx.task.keyword, ...stringArray(ctx.task.secondaryKeywords)].slice(0, 6));
       }
+      // SEO lines found at the top of the article text (saved before the parser read them): their values are
+      // ChatGPT's own, and replace the ones filled in for it.
+      const found: string[] = [];
+      if (result.meta.seoTitle) {
+        updates.seoTitle = result.meta.seoTitle;
+        found.push('SEO title');
+      }
+      if (result.meta.metaDescription) {
+        updates.metaDescription = result.meta.metaDescription;
+        found.push('meta description');
+      }
+      if (result.meta.slug) {
+        updates.slug = makeSlug(result.meta.slug.replace(/^\/+|\/+$/g, '').split('/').pop() ?? result.meta.slug, ctx.task.language, 12);
+        found.push('URL slug');
+      }
       await ctx.updateTask(updates);
-      return { outcome: 'completed', outputHtml: result.html, data: { warnings: result.warnings, structure: result.structure }, message: result.warnings.length ? `${result.warnings.length} assembly note(s)` : 'Assembled' };
+      const notes = found.length ? [`The ${found.join(', ')} line(s) were taken out of the article text and used as the SEO fields.`] : [];
+      return { outcome: 'completed', outputHtml: result.html, data: { warnings: result.warnings, notes, structure: result.structure }, message: [result.warnings.length ? `${result.warnings.length} assembly note(s)` : 'Assembled', ...notes].join(' · ') };
     },
   });
 }

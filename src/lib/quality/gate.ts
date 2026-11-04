@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 import { detectLanguage, stripTags, wordCount } from '../content/text';
 import type { SeoReport } from '../seo/checks';
 import { isCelebrityModule } from '../domain';
+import { matchMetaLine } from '../content/meta-lines';
 
 export interface QualityInput {
   html: string;
@@ -80,6 +81,15 @@ export function evaluateQuality(input: QualityInput): QualityResult {
   if (!input.categoryValid) hardStops.push({ code: 'CATEGORY_INVALID', message: 'The category is not one of the website’s synchronized categories.', source: 'PRECHECK' });
   const $ = load(`<body>${input.html}</body>`);
   if ($('script, iframe, style').length) hardStops.push({ code: 'UNSAFE_HTML', message: 'Executable or embedded markup survived assembly.', source: 'ASSEMBLY' });
+  // Owner report (“Ricardo Joel Gomez”): the answer's “SEO Title: …” lines reached the WordPress article. Assembly
+  // takes them out of the introduction; one left anywhere in a person article stops it before WordPress.
+  if (isCelebrityModule(input.moduleKey)) {
+    const left = $('p, li')
+      .toArray()
+      .map((el) => $(el).text().replace(/\s+/g, ' ').trim())
+      .find((t) => matchMetaLine(t));
+    if (left) hardStops.push({ code: 'SEO_LINES_IN_TEXT', message: `The article text contains an SEO line that belongs in the SEO fields: “${left.slice(0, 80)}”.`, source: 'ARTICLE' });
+  }
 
   if (input.seo.score < input.reviewThreshold) {
     const failed = input.seo.checks.filter((c) => !c.passed && c.severity === 'error').map((c) => c.label);

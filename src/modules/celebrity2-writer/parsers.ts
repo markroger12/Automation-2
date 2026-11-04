@@ -48,10 +48,9 @@ function unwrapFencedTables(md: string): string {
 export function parseCelebrity2Article(text: string, language: string, title?: string | null): Celebrity2Parse {
   const problems: string[] = [];
   const warnings: string[] = [];
+  // The SEO lines (value on the label's line or on the next one); the rest is the article.
   const meta = parseTigramArticle(text, language);
-  const hasMeta = Boolean(meta.seoTitle || meta.metaDescription || meta.slug);
-  // Without any metadata line the whole answer is the article.
-  let body = hasMeta ? meta.body : text.replace(/\r\n/g, '\n').trim();
+  let body = meta.body;
   if (!meta.seoTitle) warnings.push('The answer had no “SEO Title:” line; the approved title is used.');
   if (!meta.metaDescription) warnings.push('The answer had no “Meta Description:” line; one is taken from the introduction.');
   if (!meta.slug) warnings.push('The answer had no “URL Slug:” line; the slug is made from the keyword.');

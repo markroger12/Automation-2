@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.5.2');
+    expect(ext?.version).toBe('3.5.1');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -529,7 +529,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.2', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.1', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;
@@ -744,7 +744,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(copies[0].kind).toBe('chatgpt-gallery');
     const text = readPageCopy(copies[0].name)!.toString('utf8');
     const copy = JSON.parse(text) as { kind: string; said: number; large: number; extension: string; stop: string; gallery: { tag: string }[]; opened: { dialogFound: boolean; dialog: { tag: string; name?: string }[] } };
-    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.2' });
+    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.1' });
     expect(copy.stop).toMatch(/step \d+: /);
     expect(copy.gallery.some((e) => e.tag === 'img')).toBe(true);
     expect(copy.opened.dialogFound).toBe(true);
@@ -756,29 +756,6 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'Gallery:' } }, orderBy: { createdAt: 'desc' } });
     expect(saved?.message).toContain(`Page structure copies → ${copies[0].name}`);
   }, 200_000);
-
-  // Owner report (2026-11-01, chassidy celeste blackstock): ChatGPT had finished the titles, the app still said
-  // “generating (770 chars so far)” for minutes. A streaming marker or a “Stop …” button elsewhere on the page kept the
-  // answer counted as unfinished.
-  it('owner report: a hidden streaming marker left on the page does not keep a finished text answer “generating”', async () => {
-    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', staleStreaming: true, answers: ['1. Who Is Chassidy Celeste Blackstock?\n\nRecommended Title: Who Is Chassidy Celeste Blackstock?'] };
-    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
-    const req = await request('Suggest titles for chassidy celeste blackstock (hidden marker).');
-    const done = await responseDone(req.responseId, 45_000);
-    expect(done.status).toBe('COMPLETED');
-    expect(done.resultText).toContain('Recommended Title: Who Is Chassidy Celeste Blackstock?');
-    expect((await fakeStats()).sends).toBe(1);
-  }, 120_000);
-
-  it('owner report: a streaming marker on screen and a “Stop reading aloud” outside the composer: the answer with its Copy button is taken once it stops changing', async () => {
-    fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', stuckStreamingShown: true, answers: ['1. Who Is Chassidy Celeste Blackstock?\n\nRecommended Title: Who Is Chassidy Celeste Blackstock?'] };
-    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
-    const req = await request('Suggest titles for chassidy celeste blackstock (marker on screen).');
-    const done = await responseDone(req.responseId, 60_000);
-    expect(done.status).toBe('COMPLETED');
-    expect(done.resultText).toContain('Recommended Title: Who Is Chassidy Celeste Blackstock?');
-    expect((await fakeStats()).sends).toBe(1);
-  }, 120_000);
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {
     fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 10 };

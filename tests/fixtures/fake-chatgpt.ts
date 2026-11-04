@@ -38,12 +38,6 @@ export interface FakeChatGptConfig {
   imageMarkup?: 'default' | 'unknown';
   /** A page-wide “streaming” marker stays after the picture is finished (owner report: 600 s “generating”). */
   staleStreaming?: boolean;
-  /**
-   * Owner report (2026-11-01: the titles were finished in ChatGPT, the app said “generating (770 chars so far)” for
-   * minutes): a streaming marker that stays ON SCREEN after the answer is finished, and a “Stop …” button outside the
-   * composer (e.g. read aloud in an earlier answer).
-   */
-  stuckStreamingShown?: boolean;
   /** Image-search answers (prompt mentions an “image gallery”): show this many gallery thumbnails with a viewer. */
   galleryCount?: number;
   /** Extra gallery pictures on other hosts (the extension reports these as links). */

@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.5.2';
+  const EXTENSION_VERSION = '3.5.1';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -199,9 +199,6 @@
     let continues = 0;
     let lastProgress = 0;
     let lastFront = 0;
-    // When the answer's text last changed (a finished answer with its Copy button that stops changing is taken even if a
-    // stray streaming marker stays on the page).
-    let lastChangeAt = Date.now();
     while (true) {
       checkCancelled();
       const elapsed = Date.now() - started - current.pausedMs;
@@ -216,7 +213,7 @@
         continue;
       }
       const limit = A.limitInfo();
-      let generating = A.isGenerating();
+      const generating = A.isGenerating();
       const userEl = await A.sentPromptTurn(anchor.job.promptHash, anchor.job.prompt, anchor);
       const assistants = userEl ? A.assistantAfter(userEl) : [];
       let answerEl = null;
@@ -231,11 +228,6 @@
         else if (generic) answerEl = A.finalAnswerElement(generic) || generic;
       }
       const text = answerEl ? A.toMarkdown(answerEl) : '';
-      if (text !== lastText) lastChangeAt = Date.now();
-      // Owner report (titles finished in ChatGPT, “generating (770 chars so far)” for minutes): the answer shows its own
-      // Copy button and has not changed for 8 seconds, so it is finished whatever else the page still shows.
-      const finishedAnyway = !expectImages && generating && Boolean(text) && Date.now() - lastChangeAt >= 8000 && A.answerFinishedMarks(answerEl);
-      if (finishedAnyway) generating = false;
       const limitInAnswer = limit && text && A.normalizeForHash(text).toLowerCase().includes(A.normalizeForHash(limit.message).toLowerCase().slice(0, 40));
       if (limit && !generating && (!text || limitInAnswer)) throw new JobError('USAGE_LIMIT', limit.message, { retryAfterSec: limit.retryAfterSec });
       if (errorTurn && !generating) {
@@ -274,7 +266,7 @@
         lastProgress = Date.now();
         progress(expectImages ? (drawing ? 'ChatGPT is creating the image' : images.length ? `checking that the image is finished (${images.length} found)` : 'waiting for the image') : generating ? `generating (${text.length} chars so far)` : text ? 'checking that the answer is complete' : 'waiting for the answer to start');
       }
-      const composerReady = Boolean(A.findComposer()) && (expectImages ? !drawing : finishedAnyway || !A.findStopButton());
+      const composerReady = Boolean(A.findComposer()) && (expectImages ? !drawing : !A.findStopButton());
       if (stable >= (expectImages && imagesReady ? 6 : 3) && composerReady) return { text, html: answerEl ? answerEl.innerHTML : null, images: imagesReady ? images : [] };
       await sleep(1000);
     }

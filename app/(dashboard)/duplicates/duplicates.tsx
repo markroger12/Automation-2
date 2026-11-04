@@ -24,7 +24,7 @@ function ReviewCard({ r, onChanged }: { r: Review; onChanged: () => Promise<void
   const toast = useToast();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const writingStage = r.task.moduleKey === 'tigram-writer' ? 'ARTICLE' : 'LONG_ARTICLE';
+  const writingStage = r.task.moduleKey === 'celebrity-writer' ? 'LONG_ARTICLE' : 'ARTICLE';
   async function act(kind: string, fn: () => Promise<void>) {
     setBusy(kind);
     try {

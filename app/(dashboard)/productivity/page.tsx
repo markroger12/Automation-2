@@ -13,7 +13,7 @@ const CLAIM: Record<BenchmarkClaim, { tone: 'success' | 'danger' | 'warning' | '
   SUSPENDED: { tone: 'warning', text: 'claim suspended' },
   NO_WORK: { tone: 'neutral', text: 'no work to measure' },
 };
-const WRITER: Record<string, string> = { 'celebrity-writer': 'Celebrity Article Writer', 'tigram-writer': 'Tigram Article Writer', 'celebrity-writer-2': 'Celebrity Writer 2.0 (retired)' };
+const WRITER: Record<string, string> = { 'celebrity-writer': 'Celebrity Article Writer', 'celebrity2-writer': 'Celebrity 2 Article Writer', 'tigram-writer': 'Tigram Article Writer', 'celebrity-writer-2': 'Celebrity Writer 2.0 (retired)' };
 const sec = (ms: number | null) => (ms == null ? '—' : ms >= 120_000 ? `${(ms / 60_000).toFixed(1)} min` : `${Math.round(ms / 1000)} s`);
 
 export default async function ProductivityPage() {

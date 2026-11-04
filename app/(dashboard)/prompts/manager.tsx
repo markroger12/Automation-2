@@ -46,6 +46,7 @@ interface PromptDetail {
 
 const GROUPS: { key: string; label: string }[] = [
   { key: 'celebrity-writer', label: 'Celebrity Article Writer' },
+  { key: 'celebrity2-writer', label: 'Celebrity 2 Article Writer (titles and photos: the Celebrity writer’s prompts)' },
   { key: 'tigram-writer', label: 'Tigram Article Writer' },
   { key: 'shared', label: 'Shared stages' },
 ];

@@ -119,7 +119,9 @@ export function createContext(deps: ContextDeps): PipelineContext {
         );
       }
       let prompt = rendered.text;
-      if (briefText && SEO_BRIEF_STAGES.includes(promptStageKey) && !template.content.includes('{{seo_brief}}')) prompt = `${prompt}\n\n${briefText}`;
+      // Not to the owner's own Celebrity 2 prompt: it sets its own search intent and structure (owner: use this prompt).
+      const appendBrief = SEO_BRIEF_STAGES.includes(promptStageKey) && task.moduleKey !== 'celebrity2-writer';
+      if (briefText && appendBrief && !template.content.includes('{{seo_brief}}')) prompt = `${prompt}\n\n${briefText}`;
       if (template.kind === 'text') prompt = `${prompt}\n\n${languageInstruction(task.language, task.targetCountry)}`;
 
       const part = options.part ? `:${options.part}` : '';

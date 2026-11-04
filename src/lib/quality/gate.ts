@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 import { detectLanguage, stripTags, wordCount } from '../content/text';
 import type { SeoReport } from '../seo/checks';
+import { isCelebrityModule } from '../domain';
 
 export interface QualityInput {
   html: string;
@@ -63,13 +64,16 @@ export function evaluateQuality(input: QualityInput): QualityResult {
   if (lang.language !== 'unknown' && lang.language !== input.language && lang.confidence > 0.7) {
     hardStops.push({ code: 'WRONG_LANGUAGE', message: `The article reads as ${lang.language === 'de' ? 'German' : 'English'} but the task language is ${input.language === 'de' ? 'German' : 'English'}.`, source: 'FINAL_ARTICLE' });
   }
+  // Celebrity 2 writes its FAQs and Family Profile table in its ARTICLE answer.
+  const c2 = input.moduleKey === 'celebrity2-writer';
   if (m.faqCount === 0) hardStops.push({ code: 'FAQ_MISSING', message: 'The FAQ section is missing.', source: input.moduleKey === 'celebrity-writer' ? 'FAQS' : 'ARTICLE' });
-  else if (input.moduleKey === 'celebrity-writer' && m.faqCount !== input.expectedFaqCount) {
-    warnings.push({ code: 'FAQ_COUNT', message: `${m.faqCount} FAQs instead of exactly ${input.expectedFaqCount}.`, source: 'FAQS' });
+  else if (isCelebrityModule(input.moduleKey) && m.faqCount !== input.expectedFaqCount) {
+    warnings.push({ code: 'FAQ_COUNT', message: `${m.faqCount} FAQs instead of exactly ${input.expectedFaqCount}.`, source: c2 ? 'ARTICLE' : 'FAQS' });
   }
-  if (input.moduleKey === 'celebrity-writer') {
-    if (m.quickBioRows === null) hardStops.push({ code: 'BIO_MISSING', message: 'The Quick Bio table is missing.', source: 'QUICK_BIO' });
-    else if (m.quickBioColumnsOk === false) hardStops.push({ code: 'BIO_MALFORMED', message: 'The Quick Bio table does not have exactly two columns.', source: 'QUICK_BIO' });
+  if (isCelebrityModule(input.moduleKey)) {
+    const table = c2 ? 'Family Profile' : 'Quick Bio';
+    if (m.quickBioRows === null) hardStops.push({ code: 'BIO_MISSING', message: `The ${table} table is missing.`, source: c2 ? 'ARTICLE' : 'QUICK_BIO' });
+    else if (m.quickBioColumnsOk === false) hardStops.push({ code: 'BIO_MALFORMED', message: `The ${table} table does not have exactly two columns.`, source: c2 ? 'ARTICLE' : 'QUICK_BIO' });
   }
   if (m.densityPct > input.densityCeilingPct * 1.4) hardStops.push({ code: 'KEYWORD_STUFFING', message: `Keyword density ${m.densityPct}% is far above the ${input.densityCeilingPct}% ceiling (keyword stuffing).`, source: 'FINAL_ARTICLE' });
   else if (m.densityPct > input.densityCeilingPct) warnings.push({ code: 'KEYWORD_DENSITY', message: `Keyword density ${m.densityPct}% is above the ${input.densityCeilingPct}% ceiling.`, source: 'FINAL_ARTICLE' });

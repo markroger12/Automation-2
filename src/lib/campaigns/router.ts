@@ -9,7 +9,7 @@ import { ACTIVE_MODULE_KEYS, type ActiveModuleKey } from '../domain';
  * here. Every decision records its version, confidence and rationale.
  */
 
-export const ROUTER_VERSION = 'rules-2026.10-1';
+export const ROUTER_VERSION = 'rules-2026.11-1';
 
 export interface RouteDecision {
   writer: ActiveModuleKey | null;
@@ -17,6 +17,8 @@ export interface RouteDecision {
   rationale: string;
   version: string;
   source: 'RULE' | 'OVERRIDE' | 'CAMPAIGN' | 'SITE_RULE';
+  /** What the classifier saw when it leaves the choice to the owner: a person keyword (Celebrity or Celebrity 2). */
+  detected?: 'celebrity' | null;
 }
 
 const w = (s: string) => s.split(/\s*,\s*/);
@@ -144,7 +146,8 @@ export function parseRoutingRules(json: string | null | undefined): SiteRoutingR
 /**
  * Writer for a keyword. Precedence: the row's own choice, the campaign
  * default, the website's routing rules, then the classifier (UNKNOWN when
- * unsure — the owner chooses). Only the two active writers are ever returned.
+ * unsure — the owner chooses). The classifier picks only Tigram by itself; for a
+ * person keyword the owner chooses Celebrity or Celebrity 2 (`detected: 'celebrity'`).
  */
 export function resolveWriter(input: { keyword: string; language?: string | null; override?: string | null; campaignDefault?: string | null; siteRules?: SiteRoutingRule[] | null; minConfidence?: number }): RouteDecision {
   const override = normalizeWriter(input.override);
@@ -155,15 +158,19 @@ export function resolveWriter(input: { keyword: string; language?: string | null
   if (siteRule) return { writer: siteRule.writer, confidence: 1, rationale: `Website rule: keyword contains “${siteRule.contains}”.`, version: ROUTER_VERSION, source: 'SITE_RULE' };
   const rule = classifyKeyword(input.keyword, input.language ?? 'en');
   if (rule.writer && rule.confidence < (input.minConfidence ?? 0.7)) return { ...rule, writer: null, rationale: `${rule.rationale} Confidence ${Math.round(rule.confidence * 100)} % is below the automatic threshold.` };
+  // Owner decision (2026-11-04, two celebrity writers): a person keyword is never given a celebrity writer
+  // automatically — the owner chooses Celebrity or Celebrity 2.
+  if (rule.writer === 'celebrity-writer') return { ...rule, writer: null, detected: 'celebrity', rationale: `${rule.rationale} Choose Celebrity or Celebrity 2.` };
   return rule;
 }
 
-/** Accept writer names from imports (celebrity/tigram/general…); anything else (incl. 2.0) is not a writer. */
+/** Accept writer names from imports (celebrity / celebrity 2 / tigram / general…); anything else (incl. 2.0) is not a writer. */
 export function normalizeWriter(value: string | null | undefined): ActiveModuleKey | null {
   if (!value) return null;
   const v = value.trim().toLowerCase();
   if ((ACTIVE_MODULE_KEYS as readonly string[]).includes(v)) return v as ActiveModuleKey;
   if (['celebrity', 'celeb', 'person', 'people', 'promi', 'celebrity article writer'].includes(v)) return 'celebrity-writer';
+  if (['celebrity 2', 'celebrity2', 'celebrity-2', 'celeb 2', 'celeb2', 'promi 2', 'celebrity 2 article writer'].includes(v)) return 'celebrity2-writer';
   if (['tigram', 'general', 'topic', 'allgemein', 'tigram article writer'].includes(v)) return 'tigram-writer';
   return null;
 }

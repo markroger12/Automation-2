@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, RotateCcw, Sparkles, X } from 'lucide-react';
 import { api, ApiClientError } from '@/lib/client/api';
-import { PRESET_COUNTRIES } from '@/lib/domain';
+import { PRESET_COUNTRIES, isCelebrityModule } from '@/lib/domain';
+import { CELEBRITY_CATEGORY_LABEL, findCelebrityCategory, missingCelebrityCategoryMessage } from '@/lib/celebrity-category';
 import { Button, ConfirmDialog, CopyButton, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, cx } from '@/components/ui';
@@ -157,6 +158,10 @@ export function SingleArticleForm({
   }, [form, loaded]);
 
   const site = sites.find((s) => s.id === form.websiteId) ?? null;
+  // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”).
+  const celebrity = isCelebrityModule(form.moduleKey);
+  const articleLanguage = form.language || site?.language || 'en';
+  const celebrityCategory = site ? findCelebrityCategory(site.categories, articleLanguage) : null;
   const writer = writers.find((w) => w.key === form.moduleKey) ?? null;
   const secondary = useMemo(() => parseSecondary(form.secondaryKeywords), [form.secondaryKeywords]);
   const dirty = Boolean(form.keyword || form.secondaryKeywords || form.exampleTitle);
@@ -219,8 +224,7 @@ export function SingleArticleForm({
     if (form.keyword.trim().length < 2) e.keyword = ['Primary keyword is required (at least 2 characters)'];
     if (form.keyword.trim().length > 160) e.keyword = ['Primary keyword must be at most 160 characters'];
     if (!form.websiteId) e.websiteId = ['Choose a website'];
-    if (form.moduleKey === 'celebrity-writer' && site && !form.categoryId && site.categories.length > 0) e.categoryId = ['Choose a category'];
-    if (form.moduleKey === 'celebrity-writer' && site && site.categories.length === 0) e.categoryId = ['Sync categories for this website first'];
+    if (celebrity && site && !celebrityCategory) e.categoryId = [missingCelebrityCategoryMessage(site.name, articleLanguage)];
     if (form.exampleTitle.length > 200) e.exampleTitle = ['At most 200 characters'];
     if (secondary.length > 20) e.secondaryKeywords = ['At most 20 secondary keywords'];
     setErrors(e);
@@ -295,7 +299,7 @@ export function SingleArticleForm({
   return (
     <form onSubmit={generate} className="grid gap-6 xl:grid-cols-3" noValidate>
       <div className="space-y-6 xl:col-span-2">
-        <Card title="Article Writer" description="Exactly two active writers. Your last choice is remembered.">
+        <Card title="Article Writer" description="Celebrity, Celebrity 2 or Tigram. Your last choice is remembered.">
           <div role="radiogroup" aria-label="Article writer" className="grid gap-3 md:grid-cols-2">
             {writers.map((w) => (
               <label
@@ -359,10 +363,19 @@ export function SingleArticleForm({
                 ))}
               </Select>
             </Field>
+            {celebrity ? (
+              <Field label="Category" htmlFor="sa-category" error={errors.categoryId} help="Celebrity articles always go into “Celebrity” (German websites: “Prominente”).">
+                <Input id="sa-category" readOnly value={!site ? 'Choose a website first' : (celebrityCategory?.name ?? `No “${CELEBRITY_CATEGORY_LABEL[articleLanguage === 'de' ? 'de' : 'en']}” category on ${site.name}`)} invalid={Boolean(errors.categoryId)} />
+                {site && !celebrityCategory ? (
+                  <Link className="text-xs font-semibold link" href={`/websites/${site.id}`}>
+                    Sync categories for {site.name} →
+                  </Link>
+                ) : null}
+              </Field>
+            ) : (
             <Field
               label="Category"
               htmlFor="sa-category"
-              required={form.moduleKey === 'celebrity-writer'}
               error={errors.categoryId}
               help={form.moduleKey === 'tigram-writer' ? 'Optional for Tigram: leave empty to let the CATEGORY stage pick one existing category.' : 'Real categories synchronized from WordPress.'}
             >
@@ -381,6 +394,7 @@ export function SingleArticleForm({
                 </Link>
               ) : null}
             </Field>
+            )}
             <Field label="Language" htmlFor="sa-lang" help={site ? `Site default: ${site.language === 'de' ? 'German' : 'English'}` : undefined}>
               <Select id="sa-lang" value={form.language} onChange={(e) => set('language', e.target.value as FormState['language'])}>
                 <option value="">Site default{site ? ` (${site.language === 'de' ? 'German' : 'English'})` : ''}</option>
@@ -420,9 +434,11 @@ export function SingleArticleForm({
                 <Input id="sa-words" type="number" min={300} max={5000} value={form.maxWords} onChange={(e) => set('maxWords', e.target.value)} placeholder={String(defaults.maxWords)} />
               </Field>
             ) : null}
-            <Field label="FAQ count" htmlFor="sa-faq" help={`Default ${form.moduleKey === 'tigram-writer' ? defaults.tigramFaqCount : defaults.faqCount}`}>
-              <Input id="sa-faq" type="number" min={1} max={15} value={form.faqCount} onChange={(e) => set('faqCount', e.target.value)} placeholder={String(form.moduleKey === 'tigram-writer' ? defaults.tigramFaqCount : defaults.faqCount)} />
-            </Field>
+            {form.moduleKey !== 'celebrity2-writer' ? (
+              <Field label="FAQ count" htmlFor="sa-faq" help={`Default ${form.moduleKey === 'tigram-writer' ? defaults.tigramFaqCount : defaults.faqCount}`}>
+                <Input id="sa-faq" type="number" min={1} max={15} value={form.faqCount} onChange={(e) => set('faqCount', e.target.value)} placeholder={String(form.moduleKey === 'tigram-writer' ? defaults.tigramFaqCount : defaults.faqCount)} />
+              </Field>
+            ) : null}
             {form.moduleKey === 'celebrity-writer' ? (
               <Field label="Quick Bio rows" htmlFor="sa-bio" help={`Default ${defaults.quickBioRows}`}>
                 <Input id="sa-bio" type="number" min={6} max={20} value={form.quickBioRows} onChange={(e) => set('quickBioRows', e.target.value)} placeholder={String(defaults.quickBioRows)} />

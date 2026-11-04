@@ -3,6 +3,7 @@ import type { Website } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getSettings } from '@/lib/settings';
 import { parseJson, stringArray } from '@/lib/json';
+import { expectedFaqCount } from '@/lib/writer-config';
 import { LoginRequiredError, NeedsReviewError } from '@/lib/pipeline-errors';
 import { cleanModelMarkdown, markdownToHtml } from '@/lib/content/markdown';
 import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
@@ -321,7 +322,7 @@ async function runRankMath(ctx: PipelineContext): Promise<StageResult> {
         seo,
         reviewThreshold: ctx.config.reviewThreshold,
         densityCeilingPct: ctx.config.keywordDensityCeilingPct,
-        expectedFaqCount: ctx.task.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount,
+        expectedFaqCount: expectedFaqCount(ctx.task.moduleKey, ctx.config),
         categoryValid: true,
         assemblyWarnings: assembled.warnings,
         imagesRequired: false,

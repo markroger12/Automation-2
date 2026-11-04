@@ -96,6 +96,9 @@ export default function HelpPage() {
               <strong>Bulk Campaigns → New</strong>: paste keywords or load a CSV, check the preview (writer, category, duplicates), fix what it flags and create. One article is queued per ready row. Campaigns never publish.
             </li>
             <li>
+              <strong>Writers</strong>: Celebrity, <strong>Celebrity 2</strong> (your own one-prompt celebrity article, with the Celebrity writer’s title step and photos) and Tigram. For a person keyword you choose Celebrity or Celebrity 2. A celebrity article always goes into the website’s <strong>“Celebrity”</strong> category (German websites: <strong>“Prominente”</strong>).
+            </li>
+            <li>
               <strong>Workflow</strong>: pick a website, add publishing slots in Pakistan time (for example <Code>9:00 AM</Code>), switch it on and add keywords. Articles start ahead of their slot; one that is late moves to the next free slot.
             </li>
             <li>

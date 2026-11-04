@@ -11,6 +11,7 @@ import { ensureArticleRun } from './lifecycle';
 import { runSeoChecks } from '../seo/checks';
 import { getSettings, parseSiteOverrides } from '../settings';
 import { effectiveTaskConfig, taskOptionsSchema, type EffectiveTaskConfig } from '../settings-schema';
+import { expectedFaqCount, wordRangeFor } from '../writer-config';
 
 async function loadTask(id: string) {
   const task = await db.articleTask.findUnique({ where: { id } });
@@ -121,7 +122,8 @@ const REGEN_RESETS: Record<string, Record<string, unknown>> = {
   TITLE_APPROVAL: { titleApprovedAt: null },
   RESEARCH: { researchNotes: null },
   FINAL_ARTICLE: { bodyHtml: null },
-  ARTICLE: { bodyHtml: null, seoTitle: null, metaDescription: null, slug: null },
+  // Celebrity 2's ARTICLE answer also holds its Family Profile table and FAQs.
+  ARTICLE: { bodyHtml: null, seoTitle: null, metaDescription: null, slug: null, quickBio: '[]', quickBioHtml: null, faqs: '[]' },
   FAQS: { faqs: '[]' },
   QUICK_BIO: { quickBio: '[]', quickBioHtml: null },
   ASSEMBLY: { assembledHtml: null },
@@ -223,7 +225,6 @@ export async function rerunSeo(taskId: string) {
   const html = task.editedHtml ?? task.assembledHtml;
   if (!html) throw new AppError(409, 'NOT_READY', 'There is no assembled article yet.');
   const config = await taskConfig(task);
-  const range = config.tigramWordRange.split(/\s*[-–]\s*/).map(Number) as [number, number];
   const report = runSeoChecks({
     html,
     moduleKey: task.moduleKey,
@@ -235,10 +236,10 @@ export async function rerunSeo(taskId: string) {
     slug: task.slug,
     categoryName: task.categoryName,
     tags: stringArray(task.tags),
-    expectedFaqCount: task.moduleKey === 'tigram-writer' ? config.tigramFaqCount : config.faqCount,
+    expectedFaqCount: expectedFaqCount(task.moduleKey, config),
     quickBioRows: config.quickBioRows,
     maxWords: config.maxWords,
-    wordRange: task.moduleKey === 'tigram-writer' ? range : null,
+    wordRange: wordRangeFor(task.moduleKey, config),
     minKeywordOccurrences: config.minKeywordOccurrences,
     maxKeywordOccurrences: config.maxKeywordOccurrences,
     densityCeilingPct: config.keywordDensityCeilingPct,

@@ -3959,3 +3959,113 @@ npx tsc --noEmit                                                           # 0 e
 npx vitest run                                                             # 60 files, 413 tests pass (the Retry test left with its code)
 npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 56 pass (as on the 3.5.0 head)
 ```
+
+## Owner request (2026-11-04): a new writer “Celebrity 2” with the owner's own prompt
+
+Owner: “ek or celebrity writer ka module add kr celebrity 2 ke name sa”, with the full prompt, a video of ChatGPT's answer and the answer pasted (Andrea Soros).
+- **Images:** “images vala prompt apni use krle” (use the app's own image prompts).
+- **Owner's answers to the questions:**
+  - Title: “title ka step rakhna ha” — with or without a title, a title is generated.
+  - Category: celebrity writers always use “Celebrity”; German websites use “Prominente”. This applies to both celebrity writers.
+  - Writer: for a person keyword the owner chooses which writer writes it.
+
+**The writer (`celebrity2-writer`, a new key; the retired 2.0 stays `celebrity-writer-2`)**
+- **Stages:** PRECHECK, DUPLICATE_PRECHECK, TITLES, TITLE_APPROVAL, CATEGORY (local), ARTICLE, link check, INTERNAL_LINKS, IMAGES, HUMANIZE, ASSEMBLY, SEO_CHECK, QUALITY_GATE, ARTICLE_APPROVAL, WORDPRESS_DRAFT, RANKMATH, VERIFIED_COMPLETE.
+- **Titles:** TITLES is the Celebrity writer's own prompt (the example title only guides it).
+- **Image prompts:** IMAGE_SEARCH and PHOTO_CHECK are the Celebrity writer's prompts, through `promptModuleFor`, which borrows from `celebrity-writer`.
+- **ARTICLE:** the owner's prompt (`src/modules/celebrity2-writer/prompt.ts`), as sent. Only its inputs became variables:
+  - the approved title → `{{selected_title}}`;
+  - `{{KEY}}` → `{{keyword}}`;
+  - the secondary keywords → `{{secondary_keywords}}`, and “Use {{SKEYWORDS}} selectively” reads “Use the secondary keywords from INPUTS selectively”;
+  - “US English” → `{{language_variant}}` (German websites: German).
+  - Doubled quotation marks became single ones, and “tablr” became “table”.
+- **No SEO brief:** the app's SEO brief is not appended to this prompt. Without that rule it was, and for Andrea Soros it read “SEO brief (search intent: Net worth (estimate))”, against the owner's own intent rules.
+- **Parser** (`parseCelebrity2Article`):
+  - reads SEO title, meta description and URL slug; when any is missing, it is filled as for the Celebrity writer;
+  - drops the H1 (the post keeps the approved title);
+  - turns a table in a code block back into a table, and rebuilds the Family Profile table as the clean two-column table;
+  - reads the five FAQs.
+  - A missing table or FAQ section sends the prompt again.
+- **Link check (EXTERNAL_LINKS):** no link prompt is sent.
+  - Every source link of the answer is checked as candidate links are: allowed site, reachable, not a 404 or disambiguation page.
+  - The page has to be about the anchor or about the article's person. `verifyLink` gained `alsoIdentifies` for this.
+  - A failing link keeps its text and loses the link. With external links switched off, all links become text.
+- **Assembly:** the article keeps ChatGPT's order (… Conclusion, then the FAQs). The SEO check and quality gate count its table and its five FAQs (`expectedFaqCount`, `wordRangeFor` in `src/lib/writer-config.ts`).
+
+**Category always “Celebrity” (both celebrity writers)**
+- **Matching:** `findCelebrityCategory` matches “Celebrity”, “Celebrities” and “Celebs” on English websites, and “Prominente”, “Promis” and “Promi” on German ones. It matches by name or slug, the website's language first.
+- **Where it is applied:** at creation (a chosen category is not used), in PRECHECK (also for articles queued before), and in the CATEGORY stage (no prompt). It is also applied in Bulk preview and row actions and in the workflow scheduler.
+- **Without the category:** the owner gets the message “<site> has no “Celebrity” category … Create it in WordPress, then Websites → <site> → Sync categories”.
+- **Celebrity CATEGORY prompt:** removed from the defaults. A stored copy stays in the database but is no longer listed in Prompt Manager.
+- **Single Article:** for celebrity writers the category field is read-only, showing “Celebrity” or the missing message.
+- **Tigram:** unchanged.
+
+**The owner chooses the writer of person keywords**
+- **Router:** `resolveWriter` no longer gives a celebrity writer by itself. A person keyword returns `writer: null, detected: 'celebrity'`, with the reason “Choose Celebrity or Celebrity 2.” Tigram detection is unchanged.
+- **Workflow → Add keywords:**
+  - person keywords show “(person)” and “Choose: Celebrity or Celebrity 2”;
+  - a new **Person keywords** choice sets all of them, and **Writer for all** sets every line;
+  - More → Writer → **Celebrity 2**; the Settings writer can also be Celebrity 2 for every keyword.
+- **Bulk:**
+  - person rows are “choose writer”;
+  - Celebrity 2 is available in the writer choices, the buttons and the summary;
+  - the category column shows the celebrity category.
+- **Also updated:** routing rules, Prompt Manager, the task filter, productivity and duplicates labels, the Writers and Help pages, and the README.
+
+**Tests**
+- **New: unit `celebrity2-writer`, 9 tests, with the owner's real answer** (`tests/fixtures/chatgpt/celebrity2-andrea-soros.md`).
+- **Parsing:**
+  - SEO title, meta description and slug;
+  - no H1 and no code;
+  - the Family Profile table, 14 rows;
+  - the FAQs as Conclusion → FAQ, 5 of them;
+  - 8 links;
+  - a fenced table becomes a table;
+  - a missing table or FAQ section → asked again;
+  - no metadata lines still give the article.
+- **The prompt:**
+  - the exact text with the inputs;
+  - German → “German”;
+  - all 17 sections are kept;
+  - Prompt Manager lists ARTICLE and hides the old Celebrity CATEGORY prompt.
+- **Category:** by name or slug in both languages, and a chosen category is not used (both writers). A website without the category gets the message; Tigram keeps its choice.
+- **End to end (real engine, scripted ChatGPT):**
+  - TITLES, then the ARTICLE prompt exactly as the owner's template plus the language line (no SEO brief);
+  - category Celebrity;
+  - assembled with Conclusion before the FAQs and the 14-row table;
+  - 8 links opened, the 404 one became text;
+  - SEO check: FAQ 5/5, the table, the category and the word count pass (1,564 words, SEO 94).
+- **Workflow:** a CELEBRITY2 keyword starts a `celebrity2-writer` article in “Celebrity”. A website without the category leaves the keyword waiting with the message.
+- **Updated for the owner's decisions:**
+  - category tests: celebrity always “Celebrity”, ChatGPT choosing only for Tigram;
+  - router matrix: detection is measured, and a celebrity writer is never given automatically;
+  - Bulk preview: person rows NEED_WRITER, and the Celebrity 2 override → READY with the celebrity category;
+  - retirement: three writers, “celebrity-writer-2” is still no writer;
+  - fixtures that named the celebrity category “Stars” now use “Celebrity”.
+- **Workflow Add keywords:** person keywords are undecided; CELEBRITY2 is saved, and `writerFor` and More → Writer → Celebrity 2 work.
+
+**Checked**
+- `tsc` 0 errors.
+- Unit: 61 files, 424 tests.
+- Integration: `wordpress-drafts`, `workflow-publish`, `links`, `images`, `image-tools` and `content-refresh`, 52 passed and 1 skipped (real MediaPipe).
+- `next build` compiled.
+- **Chromium on the production build** (scratch data: an English site with “Celebrity”, a German one with “Prominente”, one without):
+  - Single Article shows three writer cards. For Celebrity 2 the category field reads “Celebrity”, “Prominente”, or “No “Celebrity” category on No Celebs” with the message on Generate. The FAQ count field is hidden.
+  - Workflow → Add keywords: “Andrea Soros” shows “Choose: Celebrity or Celebrity 2” with “(person)” options, and the keyboard keyword shows Tigram.
+  - **Person keywords → Celebrity 2** set both person lines and left Tigram. The queue shows “celebrity 2”. The Settings writer offers Celebrity 2. No page errors.
+
+**Not verified**
+- The real ChatGPT page with this prompt (the extension's writing-block reading was not run against it here). The parser was tested on the owner's pasted answer, and the extension turns tables and links into the same Markdown.
+- The owner's websites' real category names: a name other than Celebrity/Celebrities/Celebs or Prominente/Promis/Promi is not matched, and the article then waits with the message.
+- A real WordPress draft and Rank Math score for a Celebrity 2 article (the draft step is shared and was not run with this writer).
+- The real source pages: the link check was tested with stubbed pages.
+
+**Commands run**
+```
+npx vitest run tests/unit/celebrity2-writer.test.ts       # 9 pass; without the brief rule the prompt carried “SEO brief (search intent: Net worth (estimate))”
+npx vitest run                                            # first run 25 failures (old category/router expectations), updated for the owner's decisions; then 61 files, 424 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts tests/integration/links.test.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts tests/integration/content-refresh.test.ts   # 52 pass, 1 skipped
+npx tsc --noEmit                                          # 0 errors
+npx next build                                            # compiled
+node tests/.tmp/c2-smoke.mjs                              # Chromium check above (scratch data, port 3100)
+```

@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 import { countExact, countNormalized, normalizeText, sentences, stripTags, wordCount, words } from '../content/text';
 import { CONCLUSION_RE, FAQ_RE } from '../content/assembly';
 import { briefCoverage, INTENT_LABEL, type SeoBrief } from './intent';
+import { isCelebrityModule } from '../domain';
 
 export interface SeoInput {
   html: string;
@@ -154,7 +155,7 @@ export function runSeoChecks(input: SeoInput): SeoReport {
   const internalLinkLine = $('p[data-bas-internal-link]').length === 1;
   const imgs = $('img').toArray();
   const imagesWithAlt = imgs.filter((i) => ($(i).attr('alt') ?? '').trim().length >= 5).length;
-  const listsInNarrative = input.moduleKey === 'celebrity-writer' ? $('ul,ol').length : 0;
+  const listsInNarrative = isCelebrityModule(input.moduleKey) ? $('ul,ol').length : 0;
   const emptyHeadings = [...h2, ...h3].filter((e) => !$(e).text().trim()).length;
   const sentenceList = sentences(text).map((s) => normalizeText(s)).filter((s) => s.split(' ').length >= 6);
   const duplicateSentences = sentenceList.length - new Set(sentenceList).size;
@@ -182,7 +183,21 @@ export function runSeoChecks(input: SeoInput): SeoReport {
     { id: 'heading-hierarchy', label: 'No empty headings; H3 only under H2', passed: emptyHeadings === 0 && !($('body').children().first().is('h3')), severity: 'error', weight: 3, detail: `${emptyHeadings} empty`, fix: 'Remove empty headings and keep H3 under an H2.' },
     { id: 'paragraph-length', label: 'Paragraph lengths readable', passed: longParagraphs === 0 && shortParagraphs <= Math.max(2, paragraphs.length * 0.15), severity: 'warning', weight: 4, detail: `${shortParagraphs} very short, ${longParagraphs} very long of ${paragraphs.length}`, fix: 'Split very long paragraphs; merge one-line fragments.' },
     { id: 'duplicates', label: 'No duplicated sentences', passed: duplicateSentences === 0, severity: 'error', weight: 4, detail: `${duplicateSentences} duplicated`, fix: 'Remove repeated sentences.' },
-    { id: 'faq-count', label: input.moduleKey === 'celebrity-writer' ? `Exactly ${input.expectedFaqCount} FAQs` : `About ${input.expectedFaqCount} FAQ questions`, passed: input.moduleKey === 'celebrity-writer' ? faqCount === input.expectedFaqCount : Math.abs(faqCount - input.expectedFaqCount) <= 2 && faqCount > 0, severity: 'error', weight: 6, detail: `${faqCount} found`, fix: 'Regenerate the FAQ stage.' },
+    { id: 'faq-count', label: isCelebrityModule(input.moduleKey) ? `Exactly ${input.expectedFaqCount} FAQs` : `About ${input.expectedFaqCount} FAQ questions`, passed: isCelebrityModule(input.moduleKey) ? faqCount === input.expectedFaqCount : Math.abs(faqCount - input.expectedFaqCount) <= 2 && faqCount > 0, severity: 'error', weight: 6, detail: `${faqCount} found`, fix: input.moduleKey === 'celebrity-writer' ? 'Regenerate the FAQ stage.' : 'Regenerate the article stage.' },
+    ...(input.moduleKey === 'celebrity2-writer'
+      ? [
+          {
+            id: 'quick-bio',
+            label: 'Two-column Family Profile table',
+            passed: quickBioColumnsOk === true && quickBioRows !== null && quickBioRows >= 5,
+            severity: 'error' as const,
+            weight: 6,
+            detail: quickBioRows === null ? 'Missing' : `${quickBioRows} rows${quickBioColumnsOk ? '' : ', wrong column count'}`,
+            fix: 'Regenerate the article stage.',
+          },
+          { id: 'no-lists', label: 'No bullet/numbered lists in the narrative', passed: listsInNarrative === 0, severity: 'warning' as const, weight: 3, detail: `${listsInNarrative} list(s)`, fix: 'Rewrite lists as prose paragraphs.' },
+        ]
+      : []),
     ...(input.moduleKey === 'celebrity-writer'
       ? [
           {

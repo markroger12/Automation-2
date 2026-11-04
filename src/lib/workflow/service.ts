@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '../db';
 import { audit } from '../audit';
 import { AppError, badRequest, notFound } from '../errors';
-import { normalizeKeyword } from '../domain';
+import { moduleToWriterType, normalizeKeyword } from '../domain';
 import { parseJson } from '../json';
 import { parseImport } from '../campaigns/parse';
 import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/router';
@@ -26,7 +26,7 @@ import { requestIndexingNow, requestProperty } from '../gsc/request-indexing';
 export const workflowSettingsInput = z.object({
   name: z.string().trim().max(80).optional(),
   active: z.boolean(),
-  writerPreference: z.enum(['AUTO', 'celebrity-writer', 'tigram-writer']),
+  writerPreference: z.enum(['AUTO', 'celebrity-writer', 'celebrity2-writer', 'tigram-writer']),
   slots: z.array(z.string().max(12)).max(24),
   weekdays: z.array(z.number().int().min(0).max(6)).max(7),
   slotTimezone: z.string().max(64).default(DEFAULT_SLOT_TIMEZONE),
@@ -71,7 +71,9 @@ export interface KeywordPreview {
   keyword: string;
   secondaryKeywords: string[];
   exampleTitle: string | null;
-  writerType: 'CELEBRITY' | 'TIGRAM' | 'UNKNOWN';
+  writerType: 'CELEBRITY' | 'CELEBRITY2' | 'TIGRAM' | 'UNKNOWN';
+  /** A person keyword the owner has to give Celebrity or Celebrity 2 (owner decision 2026-11-04). */
+  detected: 'CELEBRITY' | null;
   detectionReason: string;
   detectionConfidence: number;
   /** RULE | OVERRIDE | SITE_RULE — where the writer choice came from. */
@@ -80,7 +82,7 @@ export interface KeywordPreview {
   errors: string[];
 }
 
-const typeOf = (w: string | null): KeywordPreview['writerType'] => (w === 'celebrity-writer' ? 'CELEBRITY' : w === 'tigram-writer' ? 'TIGRAM' : 'UNKNOWN');
+const typeOf = (w: string | null): KeywordPreview['writerType'] => moduleToWriterType(w);
 
 /** Parse and route keywords for a workflow; flags duplicates of keywords already in it (nothing is written). */
 export async function previewKeywords(websiteId: string, text: string) {
@@ -93,7 +95,7 @@ export async function previewKeywords(websiteId: string, text: string) {
     const norm = normalizeKeyword(r.keyword);
     const duplicateOf = seen.get(norm) ?? null;
     if (!duplicateOf && r.keyword) seen.set(norm, `${r.keyword} (line ${r.line})`);
-    return { line: r.line, keyword: r.keyword, secondaryKeywords: r.secondaryKeywords, exampleTitle: r.exampleTitle, writerType: typeOf(decision.writer), detectionReason: decision.rationale, detectionConfidence: decision.confidence, detectionSource: decision.source, duplicateOf, errors: r.errors };
+    return { line: r.line, keyword: r.keyword, secondaryKeywords: r.secondaryKeywords, exampleTitle: r.exampleTitle, writerType: typeOf(decision.writer), detected: decision.detected === 'celebrity' ? 'CELEBRITY' : null, detectionReason: decision.rationale, detectionConfidence: decision.confidence, detectionSource: decision.source, duplicateOf, errors: r.errors };
   });
   return { problems: parsed.problems, rows };
 }
@@ -107,7 +109,7 @@ export async function addKeywords(websiteId: string, raw: unknown) {
     .object({
       text: z.string().max(2_000_000),
       keepDuplicates: z.array(z.number().int()).default([]),
-      writers: z.record(z.string().regex(/^\d+$/), z.enum(['CELEBRITY', 'TIGRAM', 'UNKNOWN'])).default({}),
+      writers: z.record(z.string().regex(/^\d+$/), z.enum(['CELEBRITY', 'CELEBRITY2', 'TIGRAM', 'UNKNOWN'])).default({}),
     })
     .parse(raw);
   const preview = await previewKeywords(websiteId, input.text);
@@ -265,7 +267,7 @@ export async function keywordAction(websiteId: string, raw: unknown) {
     switch (input.action) {
       case 'writer': {
         const w = normalizeWriter(input.writer);
-        if (!w) throw badRequest('Choose the Celebrity Article Writer or the Tigram Article Writer.');
+        if (!w) throw badRequest('Choose the Celebrity, Celebrity 2 or Tigram Article Writer.');
         if (kw.status !== 'WAITING') {
           notes.push(`“${kw.keyword}” already started; its writer stays as approved.`);
           continue;

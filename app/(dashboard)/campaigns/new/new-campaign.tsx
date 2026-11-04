@@ -8,6 +8,7 @@ import { Button, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, cx } from '@/components/ui';
 import { RowStatusChip, WRITER_LABEL } from '../shared';
+import { isCelebrityModule } from '@/lib/domain';
 
 interface Site {
   id: string;
@@ -49,7 +50,7 @@ interface Preview {
 interface Template {
   name: string;
   websiteId: string;
-  defaultWriter: 'AUTO' | 'celebrity-writer' | 'tigram-writer';
+  defaultWriter: 'AUTO' | 'celebrity-writer' | 'celebrity2-writer' | 'tigram-writer';
   options: Record<string, unknown>;
 }
 type Override = { include?: boolean; writer?: string | null; categoryId?: string | null; confirmVariant?: boolean };
@@ -230,10 +231,11 @@ export function NewCampaign() {
                 ))}
               </Select>
             </Field>
-            <Field label="Writer" htmlFor="c-writer" help="Automatic routing leaves unclear keywords for you to choose. A writer column or your correction always wins.">
+            <Field label="Writer" htmlFor="c-writer" help="Automatic routing chooses Tigram for clear topics; person keywords and unclear ones wait for you (Celebrity or Celebrity 2). A writer column or your correction always wins.">
               <Select id="c-writer" value={defaultWriter} onChange={(e) => { setDefaultWriter(e.target.value as Template['defaultWriter']); setPreview(null); }}>
                 <option value="AUTO">Automatic (Smart Router)</option>
                 <option value="celebrity-writer">Celebrity Article Writer for every row</option>
+                <option value="celebrity2-writer">Celebrity 2 Article Writer for every row</option>
                 <option value="tigram-writer">Tigram Article Writer for every row</option>
               </Select>
             </Field>
@@ -287,6 +289,7 @@ export function NewCampaign() {
             <Chip>{s!.rows} rows</Chip>
             <Chip tone="success">{s!.ready} ready</Chip>
             <Chip tone="brand">{s!.celebrity} celebrity</Chip>
+            <Chip tone="brand">{s!.celebrity2 ?? 0} celebrity 2</Chip>
             <Chip tone="brand">{s!.tigram} tigram</Chip>
             {s!.needsWriter ? <Chip tone="warning">{s!.needsWriter} need a writer</Chip> : null}
             {s!.needsCategory ? <Chip tone="warning">{s!.needsCategory} need a category</Chip> : null}
@@ -304,6 +307,7 @@ export function NewCampaign() {
               <span className="ml-auto flex flex-wrap items-center gap-1 text-xs">
                 <span className="text-muted">{sel.length} selected:</span>
                 <Button size="sm" onClick={() => override(sel, { writer: 'celebrity-writer' })}>Celebrity</Button>
+                <Button size="sm" onClick={() => override(sel, { writer: 'celebrity2-writer' })}>Celebrity 2</Button>
                 <Button size="sm" onClick={() => override(sel, { writer: 'tigram-writer' })}>Tigram</Button>
                 {selSite?.categories.length ? (
                   <span className="inline-block w-44"><Select aria-label="Category for the selected rows" className="px-2 py-1 text-xs" value="" onChange={(e) => { if (e.target.value) override(sel, { categoryId: e.target.value }); }}>
@@ -362,6 +366,7 @@ export function NewCampaign() {
                           <Select aria-label={`Writer for line ${r.line}`} className="w-36 px-2 py-1 text-xs" value={r.writer ?? ''} onChange={(e) => override([r.line], { writer: e.target.value || null })}>
                             <option value="">Choose…</option>
                             <option value="celebrity-writer">Celebrity</option>
+                            <option value="celebrity2-writer">Celebrity 2</option>
                             <option value="tigram-writer">Tigram</option>
                           </Select>
                         )}
@@ -372,17 +377,11 @@ export function NewCampaign() {
                         ) : null}
                       </td>
                       <td>
-                        {r.writer === 'celebrity-writer' && site ? (
-                          <Select aria-label={`Category for line ${r.line}`} className="w-36 px-2 py-1 text-xs" value={r.categoryId ?? ''} onChange={(e) => override([r.line], { categoryId: e.target.value || null })}>
-                            <option value="">Choose…</option>
-                            {site.categories.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </Select>
+                        {isCelebrityModule(r.writer) ? (
+                          // Celebrity articles always go into “Celebrity” (German: “Prominente”); nothing to choose.
+                          <span className="text-xs" title="Celebrity articles always go into “Celebrity” (German websites: “Prominente”).">{r.categoryName ?? '—'}</span>
                         ) : (
-                          <span className="text-muted text-xs">{r.writer === 'tigram-writer' ? 'chosen by the writer' : '—'}</span>
+                          <span className="text-muted text-xs">{r.writer === 'tigram-writer' ? (r.categoryName ?? 'chosen by the writer') : '—'}</span>
                         )}
                       </td>
                       <td>

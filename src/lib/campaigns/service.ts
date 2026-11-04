@@ -3,7 +3,8 @@ import type { Category, Website } from '@prisma/client';
 import { db } from '../db';
 import { audit } from '../audit';
 import { AppError, badRequest, notFound } from '../errors';
-import { normalizeKeyword } from '../domain';
+import { isCelebrityModule, normalizeKeyword } from '../domain';
+import { findCelebrityCategory, missingCelebrityCategoryMessage } from '../celebrity-category';
 import { parseJson } from '../json';
 import { enqueue } from '../queue';
 import { taskOptionsSchema } from '../settings-schema';
@@ -41,7 +42,7 @@ export const campaignInputSchema = z.object({
   name: z.string().trim().max(120).default(''),
   text: z.string().max(2_000_000),
   websiteId: z.string().min(1, 'Choose a website').max(40),
-  defaultWriter: z.enum(['AUTO', 'celebrity-writer', 'tigram-writer']).default('AUTO'),
+  defaultWriter: z.enum(['AUTO', 'celebrity-writer', 'celebrity2-writer', 'tigram-writer']).default('AUTO'),
   options: taskOptionsSchema.prefault({}),
   /** Owner corrections by input line number (preview never changes the input text). */
   overrides: z.record(z.string(), rowOverrideSchema).default({}),
@@ -92,21 +93,23 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
     if (!site) issues.push({ kind: 'ERROR', message: `Unknown website “${r.website}”.` });
     else if (!site.active) issues.push({ kind: 'ERROR', message: `${site.name} is inactive.` });
     const language = r.language ?? site?.language ?? null;
-    if (r.writer && !normalizeWriter(r.writer)) issues.push({ kind: 'WRITER', message: `“${r.writer}” is not an active writer (use celebrity or tigram).` });
+    if (r.writer && !normalizeWriter(r.writer)) issues.push({ kind: 'WRITER', message: `“${r.writer}” is not an active writer (use celebrity, celebrity 2 or tigram).` });
     const decision = resolveWriter({ keyword: r.keyword, language, override: o.writer !== undefined ? o.writer : r.writer, campaignDefault: input.defaultWriter === 'AUTO' ? null : input.defaultWriter, siteRules: site ? parseRoutingRules(site.routingRules) : null });
     let category: Category | undefined;
-    if (site) {
+    if (site && isCelebrityModule(decision.writer)) {
+      // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”).
+      category = findCelebrityCategory(site.categories, language ?? site.language) ?? undefined;
+    } else if (site) {
       const wanted = o.categoryId !== undefined ? o.categoryId : null;
       category = wanted ? site.categories.find((c) => c.id === wanted) : r.category ? site.categories.find((c) => c.name.toLowerCase() === r.category!.toLowerCase()) : undefined;
       if (r.category && !category && !wanted) issues.push({ kind: 'CATEGORY', message: `Category “${r.category}” is not synchronized for ${site.name}.` });
       // A Tigram row without a category is left to the writer's CATEGORY stage (“chosen by the writer”).
-      if (!category && site.defaultCategoryId && decision.writer !== 'tigram-writer') category = site.categories.find((c) => c.id === site.defaultCategoryId);
     }
     let status: RowStatus = 'READY';
     if (issues.some((i) => i.kind === 'ERROR')) status = 'INVALID';
     else if (!decision.writer) status = 'NEEDS_WRITER';
-    else if (decision.writer === 'celebrity-writer' && !category) status = 'NEEDS_CATEGORY';
-    if (status === 'NEEDS_CATEGORY') issues.push({ kind: 'CATEGORY', message: site?.categories.length ? 'Choose a category for this celebrity article.' : `${site?.name ?? 'This website'} has no synchronized categories yet.` });
+    else if (isCelebrityModule(decision.writer) && !category) status = 'NEEDS_CATEGORY';
+    if (status === 'NEEDS_CATEGORY') issues.push({ kind: 'CATEGORY', message: missingCelebrityCategoryMessage(site?.name ?? 'This website', language ?? site?.language ?? 'en') });
     if (o.include === false) status = 'SKIPPED';
     return {
       line: r.line,
@@ -175,6 +178,7 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
       invalid: count('INVALID'),
       skipped: count('SKIPPED'),
       celebrity: rows.filter((r) => r.status === 'READY' && r.writer === 'celebrity-writer').length,
+      celebrity2: rows.filter((r) => r.status === 'READY' && r.writer === 'celebrity2-writer').length,
       tigram: rows.filter((r) => r.status === 'READY' && r.writer === 'tigram-writer').length,
     },
   };
@@ -382,7 +386,7 @@ export async function campaignRowAction(campaignId: string, raw: unknown) {
     let excluded = row.status === 'SKIPPED';
     if (input.action === 'writer') {
       const w = normalizeWriter(input.writer);
-      if (!w) throw badRequest('Choose the Celebrity Article Writer or the Tigram Article Writer.');
+      if (!w) throw badRequest('Choose the Celebrity, Celebrity 2 or Tigram Article Writer.');
       writer = w;
       writerSource = 'OVERRIDE';
     } else if (input.action === 'category') {
@@ -393,7 +397,10 @@ export async function campaignRowAction(campaignId: string, raw: unknown) {
     else if (input.action === 'exclude') excluded = true;
     else if (input.action === 'include') excluded = false;
     const duplicate = issues.some((i) => ['DUPLICATE', 'NEAR_DUPLICATE', 'EXISTING_TASK', 'EXISTING_POST'].includes(i.kind)) && !confirmed;
-    const status: RowStatus = excluded ? 'SKIPPED' : duplicate ? 'DUPLICATE' : !writer ? 'NEEDS_WRITER' : writer === 'celebrity-writer' && !categoryId && !(row.websiteId && (await db.website.findUnique({ where: { id: row.websiteId } }))?.defaultCategoryId) ? 'NEEDS_CATEGORY' : 'READY';
+    const rowSite = row.websiteId ? await db.website.findUnique({ where: { id: row.websiteId }, include: { categories: true } }) : null;
+    const celebrityCategory = rowSite && isCelebrityModule(writer) ? findCelebrityCategory(rowSite.categories, row.language ?? rowSite.language) : null;
+    if (celebrityCategory) categoryId = celebrityCategory.id;
+    const status: RowStatus = excluded ? 'SKIPPED' : duplicate ? 'DUPLICATE' : !writer ? 'NEEDS_WRITER' : isCelebrityModule(writer) && !celebrityCategory ? 'NEEDS_CATEGORY' : 'READY';
     await db.campaignRow.update({ where: { id: row.id }, data: { writer, writerSource, categoryId, confirmedVariant: confirmed, status } });
     changed++;
   }
@@ -488,7 +495,7 @@ export async function exportCampaignCsv(id: string): Promise<string> {
 export const templateSchema = z.object({
   name: z.string().trim().min(1).max(80),
   websiteId: z.string().max(40),
-  defaultWriter: z.enum(['AUTO', 'celebrity-writer', 'tigram-writer']),
+  defaultWriter: z.enum(['AUTO', 'celebrity-writer', 'celebrity2-writer', 'tigram-writer']),
   options: taskOptionsSchema.prefault({}),
 });
 export type CampaignTemplate = z.output<typeof templateSchema>;

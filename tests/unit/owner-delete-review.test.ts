@@ -169,7 +169,8 @@ describe('owner requests: delete, duplicate approval, no review hold', () => {
   it('celebrity photo check on by default (earlier tool): saved “off” and unfinished articles are switched on once', async () => {
     const { updateSettings, getSettings } = await import('@/lib/settings');
     await updateSettings({ seo: { celebrityPhotoReview: false } });
-    const categoryId = (await client.category.findFirstOrThrow({ where: { websiteId: site } })).id;
+    // Celebrity articles always go into the website's “Celebrity” category (owner decision 2026-11-04).
+    const categoryId = (await client.category.create({ data: { websiteId: site, externalId: 6, name: 'Celebrity' } })).id;
     const t = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Photo Check Person', websiteId: site, categoryId, idempotencyKey: 'photo-check:open' }, { source: 'SINGLE' });
     const done = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Photo Check Done', websiteId: site, categoryId, idempotencyKey: 'photo-check:done' }, { source: 'SINGLE' });
     await client.articleTask.update({ where: { id: t.task.id }, data: { status: 'FAILED', configSnapshot: JSON.stringify({ celebrityPhotoReview: false, images: true }) } });

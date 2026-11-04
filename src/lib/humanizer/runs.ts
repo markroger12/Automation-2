@@ -6,7 +6,7 @@ import { AppError, badRequest, notFound } from '../errors';
 import { parseJson } from '../json';
 import { getSettings } from '../settings';
 import { enqueue } from '../queue';
-import { isActiveModuleKey } from '../domain';
+import { isActiveModuleKey, isCelebrityModule } from '../domain';
 import { sanitizeArticleHtml } from '../html/sanitize';
 import { languageInstruction } from '../chatgpt/language';
 import { createRunChatGPTRequest } from '../chatgpt/jobs';
@@ -126,7 +126,7 @@ export async function processHumanizerRun(runId: string): Promise<{ state: 'wait
     await db.humanizerRun.update({ where: { id: run.id }, data: { status: 'WAITING', message } });
     return { state: 'waiting', message };
   }
-  const lock = { keyword: run.keyword, language: run.language, names: run.keyword && /\p{Lu}/u.test(run.keyword) && run.task?.moduleKey === 'celebrity-writer' ? [run.keyword] : [], tolerancePct: settings.content.humanizerLengthTolerancePct };
+  const lock = { keyword: run.keyword, language: run.language, names: run.keyword && /\p{Lu}/u.test(run.keyword) && isCelebrityModule(run.task?.moduleKey) ? [run.keyword] : [], tolerancePct: settings.content.humanizerLengthTolerancePct };
   const results: ParagraphResult[] = [];
   answers.forEach((a, i) => results.push(...evaluateBatch(plan, i, a!, lock)));
   results.push(...skippedResults(plan));

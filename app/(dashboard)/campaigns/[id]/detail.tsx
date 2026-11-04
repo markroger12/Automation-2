@@ -180,6 +180,7 @@ export function CampaignDetail({ id }: { id: string }) {
               <Input aria-label="Priority" type="number" min={-10} max={10} value={priority} onChange={(e) => setPriority(e.target.value)} className="w-16 px-2 py-1 text-xs" />
               <Button size="sm" onClick={() => void rowAction('priority', { priority: Number(priority) || 0 })}>Set priority</Button>
               <Button size="sm" onClick={() => void rowAction('writer', { writer: 'celebrity-writer' })}>Celebrity</Button>
+              <Button size="sm" onClick={() => void rowAction('writer', { writer: 'celebrity2-writer' })}>Celebrity 2</Button>
               <Button size="sm" onClick={() => void rowAction('writer', { writer: 'tigram-writer' })}>Tigram</Button>
               {(() => {
                 // Bulk category (owner request): for rows of one website that are not queued yet.

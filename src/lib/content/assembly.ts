@@ -68,7 +68,7 @@ function splitSections($: CheerioAPI): { intro: string; sections: Section[] } {
 
 /**
  * Assemble in the required order: Introduction → Quick Bio (celebrity) →
- * main body (H2/H3) → FAQs → Conclusion → one final internal-link line.
+ * main body (H2/H3) → FAQs → Conclusion → one final internal-link line (Celebrity 2: … → Conclusion → FAQs → line).
  * Removes duplicate sections/paragraphs and model-added FAQ/Quick Bio
  * sections, keeps tables, marks, verified links and image positions.
  */
@@ -89,7 +89,10 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
   }
   const { intro, sections } = splitSections($);
   const removedSections: string[] = [];
+  // The Celebrity writer's Quick Bio and FAQs come from their own stages. Celebrity 2 writes both into its article:
+  // its table stays where ChatGPT put it, and its FAQs follow the conclusion, as the owner's prompt orders them.
   const isCelebrity = input.moduleKey === 'celebrity-writer';
+  const faqAfterConclusion = input.moduleKey === 'celebrity2-writer';
   const body: Section[] = [];
   let conclusion: Section | null = null;
   let modelFaq: Section | null = null;
@@ -152,8 +155,13 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
     if (parts.length > 1) parts[parts.length - 1] = injectBeforeLastParagraph(parts[parts.length - 1], img2.html);
     else warnings.push('Body image 2 could not be placed.');
   }
-  if (faqHtml) parts.push(faqHtml);
-  if (conclusion) parts.push(conclusion.html);
+  if (faqAfterConclusion) {
+    if (conclusion) parts.push(conclusion.html);
+    if (faqHtml) parts.push(faqHtml);
+  } else {
+    if (faqHtml) parts.push(faqHtml);
+    if (conclusion) parts.push(conclusion.html);
+  }
   if (input.internalLink) {
     parts.push(`<p data-bas-internal-link="1"><strong>${esc(input.internalLink.line)}</strong> <a href="${esc(input.internalLink.url)}">${esc(input.internalLink.title)}</a></p>`);
   }

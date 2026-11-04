@@ -9,7 +9,7 @@ import { promptHash } from './seed';
 
 /** Prompts of a retired writer (Celebrity Writer 2.0) stay readable as an archive and are never edited or used. */
 export function isArchivedPromptModule(moduleKey: string): boolean {
-  return !['celebrity-writer', 'tigram-writer', 'shared'].includes(moduleKey);
+  return !['celebrity-writer', 'celebrity2-writer', 'tigram-writer', 'shared'].includes(moduleKey);
 }
 
 function assertEditable(row: { moduleKey: string }) {
@@ -18,7 +18,9 @@ function assertEditable(row: { moduleKey: string }) {
 
 export async function listPrompts() {
   const rows = await db.promptTemplate.findMany({ orderBy: [{ moduleKey: 'asc' }, { stageKey: 'asc' }] });
-  return rows.map((r) => {
+  // A prompt no writer sends any more is left out of the list (kept in the database): the Celebrity writer's CATEGORY
+  // prompt, since celebrity articles always go into “Celebrity” (owner decision 2026-11-04).
+  return rows.filter((r) => isArchivedPromptModule(r.moduleKey) || findPromptDefault(r.moduleKey, r.stageKey)).map((r) => {
     const def = findPromptDefault(r.moduleKey, r.stageKey);
     return {
       id: r.id,

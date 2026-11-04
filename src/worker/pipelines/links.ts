@@ -1,3 +1,4 @@
+import { load } from 'cheerio';
 import { db } from '@/lib/db';
 import { getSettings } from '@/lib/settings';
 import { parseJson, stringArray } from '@/lib/json';
@@ -119,6 +120,60 @@ export function externalLinks(manifest: StageManifest): PipelineStage {
         output: res.text,
         data: { candidates: candidates.length, accepted, rejected: decisions.filter((d) => !d.accepted), warnings: [], notes },
         message: `${accepted.length} verified link(s) added${decisions.length - accepted.length ? `, ${decisions.length - accepted.length} rejected` : ''}`,
+      };
+    },
+  });
+}
+
+/**
+ * Celebrity 2's link check (its EXTERNAL_LINKS stage): the owner's prompt has ChatGPT put its source links into the
+ * article itself, so no link prompt is sent. Every link is opened and checked as the Celebrity writer's suggestions
+ * are (allowed site, reachable, not a “not found” or disambiguation page, about the anchor or the article's person);
+ * a failing link becomes its plain text. With external links switched off in Settings, every link becomes text.
+ */
+export function articleLinkCheck(manifest: StageManifest): PipelineStage {
+  return bind(manifest, {
+    run: async (ctx) => {
+      const body = ctx.task.bodyHtml ?? '';
+      if (!body.trim()) throw new NeedsReviewError('There is no article body to check links in.', ['Article body missing'], 'Regenerate the article stage, then Retry.');
+      const $ = load(`<body>${stripTrackingHrefs(body)}</body>`);
+      const anchors = $('a[href]')
+        .toArray()
+        .filter((a) => /^https?:\/\//i.test($(a).attr('href') ?? '') && !($(a).attr('data-bas-link') ?? '').startsWith('int'));
+      const unlink = (a: (typeof anchors)[number]) => $(a).replaceWith($(a).html() ?? $(a).text());
+      if (!ctx.config.externalLinks) {
+        anchors.forEach(unlink);
+        return { outcome: 'completed', outputHtml: $('body').html() ?? body, data: { checked: 0, accepted: [], rejected: [], warnings: [], notes: ['External links are switched off in Settings; the article’s links were kept as text.'] }, message: `External links off: ${anchors.length} link(s) kept as text` };
+      }
+      const settings = await getSettings();
+      const keyword = ctx.task.focusKeyword ?? ctx.task.keyword;
+      const people = [...new Set([keyword, ctx.task.keyword])];
+      const items = anchors.map((a) => ({ a, phrase: $(a).text().replace(/\s+/g, ' ').trim(), url: $(a).attr('href')!.trim() }));
+      await ctx.progress(`Checking ${items.length} source link(s) of the article…`);
+      const results = await pool(items, 3, async (it) => {
+        if (normalizeText(it.phrase) === normalizeText(keyword)) return { it, ok: false, reason: 'anchor is the primary focus keyword', finalUrl: undefined as string | undefined, kind: undefined as LinkKind | undefined };
+        const v = await verifyLink({ phrase: it.phrase, url: it.url }, ctx.task.language, { timeoutMs: settings.advanced.linkCheckTimeoutSec * 1000 }, { alsoIdentifies: people });
+        return { it, ok: v.ok, reason: v.reason, finalUrl: v.finalUrl, kind: v.kind };
+      });
+      const accepted: ExternalDecision[] = [];
+      const rejected: ExternalDecision[] = [];
+      for (const r of results) {
+        const decision = { phrase: r.it.phrase, url: r.it.url, finalUrl: r.finalUrl, kind: r.kind, accepted: r.ok, reason: r.reason };
+        if (r.ok) {
+          $(r.it.a).attr('href', r.finalUrl ?? r.it.url).attr('data-bas-link', 'ext').attr('rel', 'noopener');
+          accepted.push(decision);
+        } else {
+          unlink(r.it.a);
+          rejected.push(decision);
+        }
+        await ctx.log(`Link ${r.ok ? 'kept' : 'removed (text kept)'}: “${r.it.phrase}” → ${r.it.url} — ${r.reason}`, r.ok ? 'info' : 'debug');
+      }
+      const notes = items.length === 0 ? ['ChatGPT put no source links into the article.'] : accepted.length === 0 ? [`None of the article’s ${items.length} source links passed the check; the article was kept without external links.`] : [];
+      return {
+        outcome: 'completed',
+        outputHtml: $('body').html() ?? body,
+        data: { checked: items.length, accepted, rejected, warnings: [], notes },
+        message: `${accepted.length} of ${items.length} source link(s) kept${rejected.length ? `, ${rejected.length} turned into text` : ''}`,
       };
     },
   });

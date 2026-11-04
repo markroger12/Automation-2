@@ -28,9 +28,17 @@ export async function loadPromptTemplate(moduleKey: string, stageKey: string, we
   throw new FatalError(`No prompt template exists for ${moduleKey}/${stageKey}. Restore it in Prompt Manager.`);
 }
 
-/** Which module owns a prompt stage key (module-specific first, then shared). */
+/**
+ * Celebrity 2 uses the Celebrity writer's prompts it has none of its own for (owner: the title step as it is, and the
+ * app's own image prompts).
+ */
+const BORROWS: Record<string, string> = { 'celebrity2-writer': 'celebrity-writer' };
+
+/** Which module owns a prompt stage key (module-specific first, then the module it borrows from, then shared). */
 export function promptModuleFor(moduleKey: string, stageKey: string): string {
   if (findPromptDefault(moduleKey, stageKey)) return moduleKey;
+  const lender = BORROWS[moduleKey];
+  if (lender && findPromptDefault(lender, stageKey)) return lender;
   if (findPromptDefault('shared', stageKey)) return 'shared';
   return moduleKey;
 }

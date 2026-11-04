@@ -189,6 +189,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
         <select aria-label="Writer" value={filters.moduleKey} onChange={(e) => set('moduleKey', e.target.value)} className="surface rounded-lg border px-2 py-2 text-sm">
           <option value="">All writers</option>
           <option value="celebrity-writer">Celebrity Article Writer</option>
+          <option value="celebrity2-writer">Celebrity 2 Article Writer</option>
           <option value="tigram-writer">Tigram Article Writer</option>
           <option value="celebrity-writer-2">Celebrity Writer 2.0 (retired, history)</option>
         </select>

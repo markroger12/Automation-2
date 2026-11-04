@@ -129,6 +129,22 @@ npm run test:e2e:wordpress
 
 The test types these credentials itself (simulating you in the login window); the app never stores them.
 
+## Writers
+
+- **Celebrity Article Writer**: six prompts in one ChatGPT chat (titles, research, long article, final article, FAQs, Quick Bio).
+- **Celebrity 2 Article Writer** (owner request): your own celebrity prompt (Prompt Manager → Celebrity 2 → Article).
+  - The title step is the Celebrity writer's: with or without a title from you, ChatGPT suggests titles. Your title only guides it.
+  - The approved title goes into the prompt, and the post keeps it.
+  - One answer gives the whole article: SEO title, meta description, URL slug, introduction, the direct answer (no heading), the **Family Profile** table, the sections with their source links, the conclusion and five FAQs.
+  - A table ChatGPT puts into a code block is turned back into a table.
+  - Every source link is opened and checked. A link that fails (for example a 404) keeps its text and loses the link.
+  - Photos: the Celebrity writer's photo search and your uploads. The article keeps ChatGPT's order: conclusion, then the FAQs.
+- **Tigram Article Writer**: general topics, one article prompt.
+- **Category:** a celebrity article (Celebrity and Celebrity 2) always goes into the website's **“Celebrity”** category (German websites: **“Prominente”**; “Celebrities” and “Promis” count too). Nothing to choose, and ChatGPT is not asked.
+  - Without such a category the article waits with a message: create it in WordPress, then Websites → the website → Sync categories.
+  - Tigram articles keep the category you choose, or ChatGPT picks one.
+- **Choosing the writer:** for a person keyword the app no longer chooses by itself. You choose **Celebrity** or **Celebrity 2**: in Add keywords per line, with **Person keywords** for all of them at once, or with **Writer for all**. Clear general topics still go to Tigram.
+
 ## Images
 
 - **Image Template** (sidebar) — a per-website designer on a true 1920×1080 canvas for the featured image and, optionally, body images, with a **Celebrity** and a **Tigram** template set (**Copy from Celebrity / Tigram** copies one into the other). Photo places can be rectangles or **circles with a coloured ring** (*Circle photo slot*, preset *Photo with circle photo*), or any shape you draw with the **pen** (*Pen photo slot*: the photo is cut to it). **Pen shape** (key P) draws your own shapes and lines like Illustrator's pen: click for corner points, click and drag for a curve, click the first point to close (Enter or a double click finishes, Backspace removes the last point, Esc cancels). On a selected pen layer, drag the squares to move points and the round handles to bend curves (Alt: one side only); double-click a point to switch corner ↔ curve, double-click the line to add a point, Alt-click a point to remove it. *Use as photo slot* turns a closed pen shape into a photo place. Tigram's featured picture goes into the Tigram featured design (ChatGPT draws it without text; the design writes the title) unless *Use the featured design for Tigram featured images* is off. Drag/resize/rotate, layers, undo/redo (Ctrl+Z / Ctrl+Shift+Z), snapping (hold Alt to bypass), arrow-key nudge, zoom/fit, presets (single photo with corner logo, split photo with centre logo), logo upload (PNG/JPEG/WebP or SVG, which is sanitized and rasterized), fixed photos, accent colour, and Polotno-style JSON import (image URLs are never fetched; nothing in the file is executed). **Text fonts:**
@@ -236,9 +252,9 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
 
 ## Campaigns and workflow
 
-- **Bulk Campaigns** (sidebar → Bulk Campaigns → New): paste keywords (one per line, `keyword | secondary1, secondary2 | example title`, CSV or tab-separated columns from a spreadsheet; up to 1,000 rows) or load a file. The preview checks every row before anything is created: the writer (the Smart Router picks Celebrity or Tigram and asks you when unsure), website and category, exact and near duplicates, existing tasks and already-published posts. Fix rows in the preview, then create; one article is queued per ready row and nothing is ever duplicated, even after a restart. Pause, resume, cancel, per-row retry/corrections and CSV export are on the campaign page. **Campaigns never publish.**
+- **Bulk Campaigns** (sidebar → Bulk Campaigns → New): paste keywords (one per line, `keyword | secondary1, secondary2 | example title`, CSV or tab-separated columns from a spreadsheet; up to 1,000 rows) or load a file. The preview checks every row before anything is created: the writer (the Smart Router picks Tigram for clear topics; for person keywords and unclear ones you choose Celebrity, Celebrity 2 or Tigram), website and category, exact and near duplicates, existing tasks and already-published posts. Fix rows in the preview, then create; one article is queued per ready row and nothing is ever duplicated, even after a restart. Pause, resume, cancel, per-row retry/corrections and CSV export are on the campaign page. **Campaigns never publish.**
 - **Workflow** (sidebar → Workflow): a keyword queue per website. **Settings** and **Add keywords** (top right, next to the website) open in a window; the queue fills the page:
-  - **Add keywords → Preview** lists the keywords with a **writer** each (Celebrity, Tigram or Choose later; the detected one is marked “(detected)”), and **Writer for all** sets every line at once; a writer chosen there is saved as yours (the queue's “Chosen by you”);
+  - **Add keywords → Preview** lists the keywords with a **writer** each (Celebrity, Celebrity 2, Tigram or Choose later). A person keyword is marked “(person)” and waits for your choice. **Person keywords** sets the writer of all of them, and **Writer for all** sets every line. A writer chosen there is saved as yours (the queue's “Chosen by you”);
   - **Keyword ideas** (next to Add keywords): **Search Console** lists searches that showed the website (impressions, clicks, average position, from the latest live or imported data) and that no keyword or article of the website has yet, most impressions first; **Google suggestions** finds Google's “related searches” and “People also ask” for a keyword you type or pick from the queue (one Serper search per Find; needs `SERPER_API_KEY` in `.env`). Tick ideas and **Add to queue**: they go through Add keywords (duplicates left out, writer detected); ones already in the queue or written are marked;
   - **newest first** by default (the keyword added last on top); **View → Order → Queue order** shows the order the articles are written in (remembered);
   - **pages** of 10–50 keywords (“Results per page”, “Page 1 of N”; the size is remembered), a **search**, a **Filter** by status, and **View** to hide columns;

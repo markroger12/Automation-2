@@ -74,12 +74,15 @@ interface PreviewRow {
   line: number;
   keyword: string;
   writerType: string;
+  /** A person keyword: the owner chooses Celebrity or Celebrity 2. */
+  detected: 'CELEBRITY' | null;
   detectionReason: string;
   duplicateOf: string | null;
   errors: string[];
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WRITER_WORD: Record<string, string> = { CELEBRITY: 'celebrity', CELEBRITY2: 'celebrity 2', TIGRAM: 'tigram' };
 const KW_TONE: Record<string, ChipTone> = { WAITING: 'neutral', WRITING: 'info', READY: 'brand', SCHEDULED: 'brand', PUBLISHED: 'success', INDEXING_REQUESTED: 'success', INDEXED: 'success', FAILED: 'danger', SKIPPED: 'neutral', DONE: 'neutral' };
 const COLUMNS = [
   { id: 'writer', label: 'Writer' },
@@ -409,6 +412,9 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                   <MenuItem icon={<PenLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('writer', { writer: 'celebrity-writer' }); }}>
                     Celebrity
                   </MenuItem>
+                  <MenuItem icon={<PenLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('writer', { writer: 'celebrity2-writer' }); }}>
+                    Celebrity 2
+                  </MenuItem>
                   <MenuItem icon={<PenLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('writer', { writer: 'tigram-writer' }); }}>
                     Tigram
                   </MenuItem>
@@ -495,7 +501,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                     </td>
                     {shows('writer') ? (
                       <td className="text-muted text-xs whitespace-nowrap" title={k.detectionReason ?? undefined}>
-                        {k.writerType === 'UNKNOWN' ? <Chip tone="warning">choose</Chip> : k.writerType.toLowerCase()}
+                        {k.writerType === 'UNKNOWN' ? <Chip tone="warning">choose</Chip> : (WRITER_WORD[k.writerType] ?? k.writerType.toLowerCase())}
                       </td>
                     ) : null}
                     <td>
@@ -597,8 +603,9 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
         <DialogSection icon={<PenLine className="h-3.5 w-3.5" />} title="Writer">
           <Field label="Writer" htmlFor="wf-writer">
             <Select id="wf-writer" value={form.writerPreference} onChange={(e) => setForm({ ...form, writerPreference: e.target.value })}>
-              <option value="AUTO">Per keyword (Smart Router; unclear ones wait for you)</option>
+              <option value="AUTO">Per keyword (you choose the writer of person keywords and unclear ones)</option>
               <option value="celebrity-writer">Celebrity Article Writer for every keyword</option>
+              <option value="celebrity2-writer">Celebrity 2 Article Writer for every keyword</option>
               <option value="tigram-writer">Tigram Article Writer for every keyword</option>
             </Select>
           </Field>
@@ -703,7 +710,25 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
               <span className="text-muted text-xs">
                 {preview.filter((r) => (writers[r.line] ?? r.writerType) === 'UNKNOWN').length ? `${preview.filter((r) => (writers[r.line] ?? r.writerType) === 'UNKNOWN').length} without a writer` : 'every keyword has a writer'}
               </span>
-              <label className="ml-auto flex items-center gap-2 text-xs">
+              {preview.some((r) => r.detected === 'CELEBRITY') ? (
+                <label className="ml-auto flex items-center gap-2 text-xs">
+                  <span className="text-muted">Person keywords</span>
+                  <Select
+                    aria-label="Writer for the person keywords"
+                    className="h-8 w-40! py-0 text-xs"
+                    value=""
+                    onChange={(e) => {
+                      const w = e.target.value;
+                      if (w) setWriters((cur) => ({ ...cur, ...Object.fromEntries(preview.filter((r) => r.detected === 'CELEBRITY').map((r) => [r.line, w])) }));
+                    }}
+                  >
+                    <option value="">Set to…</option>
+                    <option value="CELEBRITY">Celebrity</option>
+                    <option value="CELEBRITY2">Celebrity 2</option>
+                  </Select>
+                </label>
+              ) : null}
+              <label className={cx('flex items-center gap-2 text-xs', !preview.some((r) => r.detected === 'CELEBRITY') && 'ml-auto')}>
                 <span className="text-muted">Writer for all</span>
                 <Select
                   aria-label="Writer for all keywords"
@@ -716,6 +741,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                 >
                   <option value="">Set all to…</option>
                   <option value="CELEBRITY">Celebrity</option>
+                  <option value="CELEBRITY2">Celebrity 2</option>
                   <option value="TIGRAM">Tigram</option>
                   <option value="UNKNOWN">Choose later</option>
                 </Select>
@@ -738,9 +764,10 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                         value={writer}
                         onChange={(e) => setWriters((w) => ({ ...w, [r.line]: e.target.value }))}
                       >
-                        <option value="CELEBRITY">Celebrity{r.writerType === 'CELEBRITY' ? ' (detected)' : ''}</option>
+                        <option value="CELEBRITY">Celebrity{r.detected === 'CELEBRITY' ? ' (person)' : ''}</option>
+                        <option value="CELEBRITY2">Celebrity 2{r.detected === 'CELEBRITY' ? ' (person)' : ''}</option>
                         <option value="TIGRAM">Tigram{r.writerType === 'TIGRAM' ? ' (detected)' : ''}</option>
-                        <option value="UNKNOWN">Choose later</option>
+                        <option value="UNKNOWN">{r.detected === 'CELEBRITY' ? 'Choose: Celebrity or Celebrity 2' : 'Choose later'}</option>
                       </Select>
                     )}
                     {r.duplicateOf ? (

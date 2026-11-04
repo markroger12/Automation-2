@@ -29,4 +29,4 @@ export function RowStatusChip({ status }: { status: string }) {
   return <Chip tone={tone}>{label}</Chip>;
 }
 
-export const WRITER_LABEL: Record<string, string> = { 'celebrity-writer': 'Celebrity', 'tigram-writer': 'Tigram' };
+export const WRITER_LABEL: Record<string, string> = { 'celebrity-writer': 'Celebrity', 'celebrity2-writer': 'Celebrity 2', 'tigram-writer': 'Tigram' };

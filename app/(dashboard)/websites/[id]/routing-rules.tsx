@@ -8,7 +8,7 @@ import { Input, Select } from '@/components/form';
 import { Chip } from '@/components/ui';
 import { resolveWriter, type SiteRoutingRule } from '@/lib/campaigns/router';
 
-const WRITER_LABEL: Record<string, string> = { 'celebrity-writer': 'Celebrity Article Writer', 'tigram-writer': 'Tigram Article Writer' };
+const WRITER_LABEL: Record<string, string> = { 'celebrity-writer': 'Celebrity Article Writer', 'celebrity2-writer': 'Celebrity 2 Article Writer', 'tigram-writer': 'Tigram Article Writer' };
 
 /** Per-website writer rules for bulk campaigns and the workflow (a row's own writer choice still wins). */
 export function RoutingRules({ websiteId, language, initial }: { websiteId: string; language: string; initial: SiteRoutingRule[] }) {
@@ -42,6 +42,7 @@ export function RoutingRules({ websiteId, language, initial }: { websiteId: stri
             <span className="text-muted">→</span>
             <Select aria-label={`Rule ${i + 1} writer`} className="w-56" value={r.writer} onChange={(e) => setRules(rules.map((x, j) => (j === i ? { ...x, writer: e.target.value as SiteRoutingRule['writer'] } : x)))}>
               <option value="celebrity-writer">{WRITER_LABEL['celebrity-writer']}</option>
+              <option value="celebrity2-writer">{WRITER_LABEL['celebrity2-writer']}</option>
               <option value="tigram-writer">{WRITER_LABEL['tigram-writer']}</option>
             </Select>
             <Button size="sm" variant="ghost" aria-label={`Remove rule ${i + 1}`} onClick={() => setRules(rules.filter((_, j) => j !== i))}>
@@ -65,7 +66,7 @@ export function RoutingRules({ websiteId, language, initial }: { websiteId: stri
         <Input id={`probe-${websiteId}`} value={probe} onChange={(e) => setProbe(e.target.value)} placeholder="e.g. best vpn apps" />
         {decision ? (
           <p className="mt-2" role="status">
-            {decision.writer ? <Chip tone="brand">{WRITER_LABEL[decision.writer]}</Chip> : <Chip tone="warning">You choose (unclear)</Chip>} <span className="text-muted">{decision.rationale}</span>
+            {decision.writer ? <Chip tone="brand">{WRITER_LABEL[decision.writer]}</Chip> : <Chip tone="warning">{decision.detected === 'celebrity' ? 'You choose: Celebrity or Celebrity 2' : 'You choose (unclear)'}</Chip>} <span className="text-muted">{decision.rationale}</span>
           </p>
         ) : null}
       </div>

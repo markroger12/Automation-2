@@ -103,10 +103,13 @@ describe('Smart Article Router', () => {
     const confidentMisroutes: string[] = [];
     for (const [kw, lang, expected] of DATASET) {
       const r = resolveWriter({ keyword: kw, language: lang });
-      const got = r.writer ?? 'UNKNOWN';
+      // Owner decision (2026-11-04, two celebrity writers): a person keyword is detected but never given a celebrity
+      // writer by itself — the owner chooses Celebrity or Celebrity 2. The detection is what is measured here.
+      expect(r.writer).not.toBe('celebrity-writer');
+      const got = r.writer ?? (r.detected === 'celebrity' ? 'celebrity-writer' : 'UNKNOWN');
       matrix[expected ?? 'UNKNOWN'][got]++;
-      if (r.writer && expected && r.writer !== expected) confidentMisroutes.push(`${kw} → ${r.writer} (${r.rationale})`);
-      if (r.writer && !expected) confidentMisroutes.push(`${kw} → ${r.writer} but should ask (${r.rationale})`);
+      if (got !== 'UNKNOWN' && expected && got !== expected) confidentMisroutes.push(`${kw} → ${got} (${r.rationale})`);
+      if (got !== 'UNKNOWN' && !expected) confidentMisroutes.push(`${kw} → ${got} but should ask (${r.rationale})`);
     }
     expect(confidentMisroutes).toEqual([]);
     // Most clear cases are routed automatically; the rest safely ask.

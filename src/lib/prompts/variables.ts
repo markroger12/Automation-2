@@ -1,6 +1,7 @@
 import type { EffectiveTaskConfig } from '../settings-schema';
 import type { TemplateVars } from './template';
 import { languageName, wikipediaSite } from '../chatgpt/language';
+import { expectedFaqCount } from '../writer-config';
 
 export interface VariableInput {
   moduleKey: string;
@@ -25,10 +26,11 @@ export function baseVariables(input: VariableInput): TemplateVars {
     secondary_keywords: input.secondaryKeywords,
     example_title: input.exampleTitle ?? '',
     language: languageName(input.language),
+    language_variant: input.language === 'de' ? 'German' : 'US English',
     country: input.country,
     selected_title: input.selectedTitle ?? '',
     max_words: input.config.maxWords,
-    faq_count: input.moduleKey === 'tigram-writer' ? input.config.tigramFaqCount : input.config.faqCount,
+    faq_count: expectedFaqCount(input.moduleKey, input.config),
     bio_rows_range: `${rows - 1}–${rows + 1}`,
     min_keyword_occurrences: input.config.minKeywordOccurrences,
     max_keyword_occurrences: input.config.maxKeywordOccurrences,

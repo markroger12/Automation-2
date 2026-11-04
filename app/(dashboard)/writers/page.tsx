@@ -12,7 +12,7 @@ export default async function WritersPage() {
     <>
       <PageHeader
         title="Writers"
-        description="Exactly two active writers. This page is an overview — start an article from Single Article or Bulk Campaigns."
+        description="Three active writers: Celebrity, Celebrity 2 and Tigram. This page is an overview — start an article from Single Article or Bulk Campaigns."
         actions={<LinkButton href="/single-article" variant="primary">Write a single article</LinkButton>}
       />
       <div className="grid gap-6 lg:grid-cols-2">

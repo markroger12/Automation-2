@@ -1,6 +1,8 @@
 import type { Website, Workflow, WorkflowKeyword } from '@prisma/client';
 import { db } from '../db';
 import { log } from '../log';
+import { isActiveModuleKey, isCelebrityModule, writerTypeToModule, type ActiveModuleKey } from '../domain';
+import { findCelebrityCategory, missingCelebrityCategoryMessage } from '../celebrity-category';
 import { parseJson } from '../json';
 import { enqueue } from '../queue';
 import { createArticleTask } from '../tasks/create';
@@ -26,11 +28,9 @@ const SLOT_HORIZON_DAYS = 60;
 
 export type WorkflowWithSite = Workflow & { website: Website };
 
-export function writerFor(wf: Pick<Workflow, 'writerPreference'>, kw: Pick<WorkflowKeyword, 'writerType'>): 'celebrity-writer' | 'tigram-writer' | null {
-  if (wf.writerPreference === 'celebrity-writer' || wf.writerPreference === 'tigram-writer') return wf.writerPreference;
-  if (kw.writerType === 'CELEBRITY') return 'celebrity-writer';
-  if (kw.writerType === 'TIGRAM') return 'tigram-writer';
-  return null;
+export function writerFor(wf: Pick<Workflow, 'writerPreference'>, kw: Pick<WorkflowKeyword, 'writerType'>): ActiveModuleKey | null {
+  if (isActiveModuleKey(wf.writerPreference)) return wf.writerPreference;
+  return writerTypeToModule(kw.writerType);
 }
 
 export const slotRules = (wf: Pick<Workflow, 'slots' | 'weekdays' | 'slotTimezone'>) => ({ slots: parseJson<string[]>(wf.slots, []), weekdays: parseJson<number[]>(wf.weekdays, []), timezone: wf.slotTimezone });
@@ -192,8 +192,9 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       if (kw.lastError !== msg) await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: msg } });
       continue;
     }
-    if (writer === 'celebrity-writer' && !wf.website.defaultCategoryId) {
-      const msg = 'Celebrity articles need a default category for this website (Websites → edit → default category).';
+    if (isCelebrityModule(writer) && !findCelebrityCategory(await db.category.findMany({ where: { websiteId: wf.websiteId } }), wf.website.language)) {
+      // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”).
+      const msg = missingCelebrityCategoryMessage(wf.website.name, wf.website.language);
       if (kw.lastError !== msg) await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: msg } });
       continue;
     }

@@ -2,7 +2,8 @@ import { defaultSeoBrief } from '@/lib/seo/intent';
 import { z } from 'zod';
 import type { ArticleTask } from '@prisma/client';
 import { db, type Tx } from '../db';
-import { activeModuleKeySchema, countrySchema, languageSchema, normalizeKeyword, type TaskSource } from '../domain';
+import { activeModuleKeySchema, countrySchema, isCelebrityModule, languageSchema, normalizeKeyword, type TaskSource } from '../domain';
+import { findCelebrityCategory, missingCelebrityCategoryMessage } from '../celebrity-category';
 import { taskOptionsSchema } from '../settings-schema';
 import { parseSecondaryKeywords } from '../content/text';
 import { AppError } from '../errors';
@@ -65,21 +66,19 @@ export async function createArticleTask(raw: unknown, ctx: CreateContext, client
   if (!site) throw new AppError(400, 'VALIDATION', 'The selected website does not exist.', { websiteId: ['Unknown website'] });
   if (!site.active) throw new AppError(400, 'VALIDATION', `${site.name} is inactive. Activate it on the Websites page first.`, { websiteId: ['Website is inactive'] });
 
-  let category = input.categoryId ? site.categories.find((c) => c.id === input.categoryId) : undefined;
-  if (input.categoryId && !category) throw new AppError(400, 'VALIDATION', 'That category does not belong to the selected website.', { categoryId: ['Not a synchronized category of this site'] });
-  // Tigram without a chosen category: its CATEGORY stage chooses one (with the default as the fallback). Celebrity
-  // articles need one from the start: the website's default, which their CATEGORY stage replaces for workflow articles.
-  if (!category && site.defaultCategoryId && input.moduleKey !== 'tigram-writer') category = site.categories.find((c) => c.id === site.defaultCategoryId);
-  if (!category && input.moduleKey === 'celebrity-writer') {
-    throw new AppError(
-      400,
-      'VALIDATION',
-      site.categories.length ? 'Choose a category for this article.' : `${site.name} has no synchronized categories yet. Open Websites → ${site.name} → Sync categories.`,
-      { categoryId: ['Category is required'] },
-    );
+  const language = input.language ?? (site.language as 'en' | 'de');
+  let category: (typeof site.categories)[number] | undefined;
+  if (isCelebrityModule(input.moduleKey)) {
+    // Owner decision (2026-11-04): celebrity articles always go into the website's “Celebrity” category (German
+    // websites: “Prominente”); a chosen category is not used.
+    category = findCelebrityCategory(site.categories, language) ?? undefined;
+    if (!category) throw new AppError(400, 'VALIDATION', missingCelebrityCategoryMessage(site.name, language), { categoryId: ['No Celebrity category on this website'] });
+  } else {
+    category = input.categoryId ? site.categories.find((c) => c.id === input.categoryId) : undefined;
+    if (input.categoryId && !category) throw new AppError(400, 'VALIDATION', 'That category does not belong to the selected website.', { categoryId: ['Not a synchronized category of this site'] });
+    // Tigram without a chosen category: its CATEGORY stage chooses one (with the default as the fallback).
   }
 
-  const language = input.language ?? (site.language as 'en' | 'de');
   const country = input.targetCountry ?? site.targetCountry;
   try {
     const task = await client.articleTask.create({

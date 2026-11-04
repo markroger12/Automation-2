@@ -15,7 +15,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.5.3';
+const EXTENSION_VERSION = '3.5.2';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -639,7 +639,6 @@ chrome.runtime.onConnect.addListener((port) => {
           imageLinks: Array.isArray(msg.imageLinks) && msg.imageLinks.length ? msg.imageLinks.slice(0, 20) : undefined,
           galleryReport: typeof msg.galleryReport === 'string' ? msg.galleryReport.slice(0, 400) : undefined,
           pageCopy: pageCopyOf(msg),
-          notice: typeof msg.notice === 'string' ? msg.notice.slice(0, 400) : undefined,
           conversationUrl: msg.conversationUrl || null,
           recovered: Boolean(msg.recovered),
           elapsedMs: msg.elapsedMs,

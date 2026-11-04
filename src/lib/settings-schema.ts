@@ -12,12 +12,6 @@ export const browserSettingsSchema = z.object({
   mode: z.enum(['headless', 'headed']).default('headless'),
   navigationTimeoutSec: z.number().int().min(10).max(300).default(60),
   generationTimeoutSec: z.number().int().min(60).max(3600).default(600),
-  /**
-   * Owner report (Jelena Djokovic: the research answer had stopped at 20,094 characters, but ChatGPT kept its Stop button
-   * for hours): an answer with no new text for this long while Stop is still shown is taken — the extension presses Stop
-   * first, as you would.
-   */
-  stallStopSec: z.number().int().min(10).max(1800).default(180),
   screenshots: z.boolean().default(true),
   chatgptUrl: z.url().default('https://chatgpt.com/'),
   chatgptChromeMode: z.enum(['separate']).default('separate'),

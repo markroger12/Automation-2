@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.5.3');
+    expect(ext?.version).toBe('3.5.2');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -529,7 +529,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.3', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.2', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;
@@ -744,7 +744,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(copies[0].kind).toBe('chatgpt-gallery');
     const text = readPageCopy(copies[0].name)!.toString('utf8');
     const copy = JSON.parse(text) as { kind: string; said: number; large: number; extension: string; stop: string; gallery: { tag: string }[]; opened: { dialogFound: boolean; dialog: { tag: string; name?: string }[] } };
-    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.3' });
+    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.2' });
     expect(copy.stop).toMatch(/step \d+: /);
     expect(copy.gallery.some((e) => e.tag === 'img')).toBe(true);
     expect(copy.opened.dialogFound).toBe(true);
@@ -779,32 +779,6 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(done.resultText).toContain('Recommended Title: Who Is Chassidy Celeste Blackstock?');
     expect((await fakeStats()).sends).toBe(1);
   }, 120_000);
-
-  // Owner report (Jelena Djokovic article report): the research answer stood at 20,094 characters for hours while
-  // ChatGPT kept its Stop button (no Send, no Copy): every wait ran into the 600 s limit. Now: no new text for the
-  // set time (here 12 s, 180 s by default) while Stop is shown → Stop is pressed and the answer is taken, once.
-  it('owner report: an answer that stops changing while ChatGPT keeps its Stop button is taken after the stall time (Stop pressed once)', async () => {
-    const { updateSettings } = await import('@/lib/settings');
-    await updateSettings({ browser: { stallStopSec: 12 } });
-    try {
-      const research = `Recherche-Notizen zu Jelena Djokovic.\n\n${'Belegte Fakten mit Quelle und Datum. '.repeat(20)}\n\nUnsichere Angaben: keine.`;
-      fake = { variant: 'standard', mode: 'normal', turnMarkup: 'units', stallStream: true, answers: [research] };
-      browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
-      const started = Date.now();
-      const req = await request('Research Jelena Djokovic (stalled answer).');
-      const done = await responseDone(req.responseId, 90_000);
-      expect(done.status).toBe('COMPLETED');
-      expect(done.resultText).toContain('Unsichere Angaben: keine.');
-      // Not before the stall time.
-      expect(Date.now() - started).toBeGreaterThan(12_000);
-      expect(await chatPage()!.evaluate(() => (window as unknown as { __stopClicked?: number }).__stopClicked ?? 0)).toBe(1);
-      const saved = await client.log.findFirst({ where: { taskId: req.taskId, message: { contains: 'ChatGPT answer saved' } }, orderBy: { createdAt: 'desc' } });
-      expect(saved?.message).toMatch(/no new text for 12 s but kept showing its Stop button; the extension pressed Stop and took the answer as it stood/);
-      expect((await fakeStats()).sends).toBe(1);
-    } finally {
-      await updateSettings({ browser: { stallStopSec: 180 } });
-    }
-  }, 150_000);
 
   it('a reload into a new chat: the recorded conversation is opened and the answer recovered (sent once)', async () => {
     fake = { variant: 'standard', mode: 'normal', chunkMs: 500, chunkSize: 10 };

@@ -317,41 +317,6 @@ describe('stage engine', () => {
     expect(await client.chatGPTResponse.count({ where: { taskId: task.id } })).toBe(2);
   });
 
-  // Owner report (Jelena Djokovic): RESEARCH failed after 3 attempts (“No complete answer within 600s.”); Retry then
-  // failed three times within a minute and sent nothing — attempts restart at 1, and the failed answers of attempts 1–3
-  // were found again.
-  it('Retry after a ChatGPT stage failed for good sends a new prompt (the failed attempts are not found again)', async () => {
-    const site = await createWebsite(client);
-    const task = await createTask(client, site.id);
-    await lifecycle.ensureArticleRun(task.id, 'test');
-    const failPending = async () => {
-      const r = await client.chatGPTResponse.findFirstOrThrow({ where: { taskId: task.id, status: 'PENDING' } });
-      await client.chatGPTResponse.update({ where: { id: r.id }, data: { status: 'FAILED', error: 'No complete answer within 600s.' } });
-      await client.queueJob.updateMany({ where: { relatedId: r.id }, data: { status: 'FAILED', finishedAt: new Date(), error: 'No complete answer within 600s.' } });
-    };
-    expect(await runNext(task.id)).toBe('waiting');
-    await failPending();
-    expect(await runNext(task.id)).toBe('retry');
-    expect(await runNext(task.id)).toBe('waiting');
-    await failPending();
-    expect(await runNext(task.id)).toBe('retry');
-    expect(await runNext(task.id)).toBe('waiting');
-    await failPending();
-    expect(await runNext(task.id)).toBe('failed');
-    expect(await client.chatGPTResponse.count({ where: { taskId: task.id, status: 'FAILED' } })).toBe(3);
-
-    await lifecycle.retryTask(task.id);
-    expect(await runNext(task.id)).toBe('waiting');
-    const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
-    expect(responses.map((r) => r.status)).toEqual(['SUPERSEDED', 'SUPERSEDED', 'SUPERSEDED', 'PENDING']);
-    // A new prompt is really sent, fresh (the stuck answer on the page is not taken again).
-    const job = await client.queueJob.findFirstOrThrow({ where: { relatedId: responses[3].id } });
-    expect(job.status).toBe('WAITING');
-    expect(JSON.parse(job.payload).fresh).toBe(true);
-    await answerChatGPT();
-    expect(await runNext(task.id)).toBe('paused');
-  });
-
   it('after a rejected answer, the next attempt sends the same prompt fresh (never “recovers” the rejected answer)', async () => {
     // The owner's first live run: FAQS answers failed to parse; each retry recovered the same rejected answer from the page.
     rejectAnswers = 1;

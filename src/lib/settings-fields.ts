@@ -136,7 +136,6 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'mode', label: 'WordPress browser mode', type: 'select', options: [{ value: 'headless', label: 'Headless' }, { value: 'headed', label: 'Visible' }] },
       { key: 'navigationTimeoutSec', label: 'Navigation timeout (s)', type: 'number', min: 10, max: 300 },
       { key: 'generationTimeoutSec', label: 'ChatGPT generation timeout (s)', type: 'number', min: 60, max: 3600 },
-      { key: 'stallStopSec', label: 'Take a stalled answer after (s)', type: 'number', min: 10, max: 1800, help: 'When ChatGPT writes no new text for this long but still shows its Stop button, the extension presses Stop and takes the answer (the task log says so).' },
       { key: 'screenshots', label: 'Failure screenshots', type: 'boolean' },
       { key: 'chatgptUrl', label: 'ChatGPT URL', type: 'text' },
       { key: 'chatgptTabs', label: 'ChatGPT tabs', type: 'number', min: 1, max: 5, warnAbove: { value: 3, message: 'More tabs can cause account-wide rate limiting.' } },

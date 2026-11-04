@@ -76,8 +76,6 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
     galleryReport: z.string().max(500).optional(),
     /** A copy of the gallery's and viewer's structure (no chat text) when fewer pictures were taken than it has. */
     pageCopy: z.string().max(400_000).optional(),
-    /** Something the task log should say about how the answer was taken (e.g. Stop pressed on a stalled answer). */
-    notice: z.string().max(400).optional(),
   }),
   z.object({
     action: z.literal('fail'),

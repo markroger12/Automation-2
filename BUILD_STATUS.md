@@ -3937,3 +3937,25 @@ Screenshot of the Workflow queue: 42 keywords, the newest on “Page 5 of 5”.
 - **Tests:** unit `sortKeywords` in `tests/unit/workflow-move.test.ts`: newest first, queue order, input unchanged.
 - **Checked:** `tsc` 0 errors, unit 60 files / 414 tests, `next build` compiled.
 - **Not verified:** a browser check. The container's disk was full: `next build` first failed with ENOSPC, and the project's `.next/cache` was deleted to make room.
+
+## Owner request (2026-11-04): back to the code before the gallery fix (extension 3.5.4)
+
+Owner: “is fix ke baad se pura tool kharab hogya ha … is sa phale vala code hi laga da again”. Images were sometimes not taken, and ChatGPT had problems before the research stage completed.
+- **Reverted:** `git revert` of 1b6a9d2 (Retry with a fresh prompt, extension 3.5.3 stall rule), cbb593b (extension 3.5.2) and c3501a8 (extension 3.5.1). The three sections above stay as history; their code is gone.
+- **Version 3.5.4:** the extension code is 3.5.0's again under a new number. An extension on 3.5.1–3.5.3 then sees a version mismatch and reloads itself from the folder when idle; the Automation Chrome page shows 3.5.4.
+- **Kept:** the keyword queue newest first, and everything before 3.5.1.
+- **Checked:** `git diff 98b901b` (the commit before 3.5.1) shows only the version numbers, the README note, the newest-first change and this file.
+- **What comes back with the old code:**
+  - galleries can again give only the first 3 photos;
+  - an answer can again stay on “generating”;
+  - after a ChatGPT stage failed for good, Retry can again fail at once without sending a prompt.
+- **Not changed:** the black parts of the Mary Joan Schutz images. They most likely come from the image enhancement (Upscayl, before 3.5.1), so they can still happen. The owner will say how images should be fixed.
+- **Not verified:** the restored code on the owner's PC and the real ChatGPT page.
+
+**Commands run**
+```
+git revert --no-commit 1b6a9d2 cbb593b c3501a8                             # BUILD_STATUS.md conflicts kept ours (history); 3 revert commits
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run                                                             # 60 files, 413 tests pass (the Retry test left with its code)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 56 pass (as on the 3.5.0 head)
+```

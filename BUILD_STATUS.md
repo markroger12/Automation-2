@@ -4493,3 +4493,30 @@ node scripts/ensure-prisma-client.mjs                                # regenerat
 npx vitest run tests/unit/ensure-prisma-client.test.ts tests/unit/app-update.test.ts   # pass
 npx vitest run                                                       # 65 files, 453 tests pass
 ```
+
+### Follow-up: the check did not see the owner's half-made client
+
+After `git pull` (c01df41) the owner's `npm run start:all` ran `ensure-prisma-client.mjs`. It found nothing to do, and `next build` failed again at `writers/[key]/page.tsx:18:38`.
+- **Cause:** the client's schema copy (`node_modules/.prisma/client/schema.prisma`) was already the new one, but its types were still the old ones.
+  - A `prisma generate` that stopped half-way leaves this state. On Windows that happens when a running or stuck app process keeps the engine file locked (EPERM), or when the disk is full.
+  - **Reproduced here:** a client generated from 8ae01f5's schema, then the new `schema.prisma` copied over its copy → the owner's exact error; the earlier check said “matches”.
+  - **Ruled out:** Next's incremental type-check cache (`.next/cache/.tsbuildinfo`). The same incremental program with the new client reports 0 errors.
+- **Fix:**
+  - A finished `prisma generate` now writes a stamp with the schema's fingerprint (`node_modules/.prisma/client/bas-schema.sha256`). Without the stamp, or with one of another schema, the client is generated again before start. The first start after `npm install` generates once more (a few seconds).
+  - The one-click update's build step uses the same stamped generate (`ensure-prisma-client.mjs --force`).
+  - On Windows the “run directly” check of the script ignores the case of the path.
+  - When generate fails, the message says to close every app window or restart the PC, and to free disk space.
+- **Tests:** unit `ensure-prisma-client`:
+  - the owner's state (new schema copy, no stamp) → generate;
+  - with the stamp → nothing;
+  - a changed schema or no client → generate;
+  - the npm scripts and the update's build use it.
+  - **Manual:** the owner's state reproduced → the script generates → `tsc` 0 errors.
+- **Checked:** unit 65 files / 453 tests.
+
+**Commands run**
+```
+npx prisma generate --schema <8ae01f5 schema>; cp prisma/schema.prisma node_modules/.prisma/client/   # the owner's state: TS7006 at writers/[key]/page.tsx:18:38
+node scripts/ensure-prisma-client.mjs                                                                 # generates; tsc 0 errors
+npx vitest run                                                                                        # 65 files, 453 tests pass
+```

@@ -212,7 +212,8 @@ function npm(args) {
 }
 
 const nextBuild = async () => {
-  await node([path.join(root, 'node_modules', 'prisma', 'build', 'index.js'), 'generate'], 'prisma generate');
+  // prisma generate, stamped (scripts/ensure-prisma-client.mjs): the next start knows the client is complete.
+  await node([path.join(root, 'scripts', 'ensure-prisma-client.mjs'), '--force'], 'prisma generate');
   await node([path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], 'next build');
   await node(['--import', 'tsx', path.join(root, 'scripts', 'preflight.ts'), '--mark-build'], 'record the build');
 };

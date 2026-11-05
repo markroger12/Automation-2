@@ -462,6 +462,64 @@ describe('Image Studio (IMAGES stage)', () => {
     }
   });
 
+  it('owner report (Fausto Xavier Aguilera): with two uploads, ChatGPT’s photo was not used; it is used until “Don’t use”', async () => {
+    const { updateSettings } = await import('@/lib/settings');
+    const { defaultSiteImageSettings, presetSplit } = await import('@/lib/image-template');
+    const { addOwnerImages, removeTaskImage } = await import('@/lib/tasks/images');
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt', celebrityPhotoReview: true } });
+    try {
+      const site = await offlineSite('Celeb Uploads Plus ChatGPT');
+      await addLogo(site.id);
+      const settings = { ...defaultSiteImageSettings('#0b5fff'), featured: { ...presetSplit('#0b5fff'), name: 'Imported' } };
+      await client.website.update({ where: { id: site.id }, data: { imageSettings: JSON.stringify(settings) } });
+      const chatgptPhoto = await solid(90, 140, 70, 1135, 860);
+      let searches = 0;
+      const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
+        if (/show them as an image gallery/.test(prompt)) {
+          searches++;
+          // ChatGPT gives one photo once, then none.
+          return searches === 1 ? { text: 'One photo.', images: [chatgptPhoto] } : { text: 'I could not find more photos of this person.' };
+        }
+        // The photo check describes it as “side by side” (a word it takes for a collage of another site).
+        if (/watermark/i.test(prompt) && /collage/i.test(prompt)) return 'Photo 1: watermark=no, collage=no, alt=father and young daughter standing side by side outdoors';
+        return cannedAnswer(stageKey, prompt, language, kw);
+      };
+      const driver = makeDriver(client, answer);
+      const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
+      const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Fausto Xavier Aguilera', websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'img:uploads-plus-chatgpt' }, { source: 'SINGLE' });
+      let t = await driver.drive(task.id);
+      const gallery = await client.mediaAsset.findMany({ where: { taskId: t.id, role: 'GALLERY', status: { not: 'REJECTED' }, width: { gte: 400 } } });
+      expect(gallery).toHaveLength(1);
+      const chatgptId = gallery[0].id;
+      // The owner uploads two photos (ChatGPT gave too few) and regenerates the images.
+      const added = await addOwnerImages(t.id, [
+        { name: 'pasted-1.png', bytes: await solid(200, 60, 60, 767, 967) },
+        { name: 'pasted-2.png', bytes: await solid(60, 60, 200, 461, 712) },
+      ]);
+      const uploadIds = (await client.mediaAsset.findMany({ where: { taskId: t.id, role: 'UPLOAD' }, orderBy: { createdAt: 'asc' } })).map((u) => u.id);
+      expect(uploadIds).toHaveLength(2);
+      expect(added).toBeTruthy();
+      await actions.regenerateStage(t.id, 'IMAGES');
+      t = await driver.drive(t.id);
+      let data = await stageData(t.id, 'IMAGES');
+      const slot = (name: string) => data.slots.find((s: { slot: string }) => s.slot === name);
+      // The uploads in the featured image, in upload order; ChatGPT's photo in body 1 (before: not used at all).
+      expect(slot('FEATURED').sourceAssetIds).toEqual(uploadIds);
+      expect(slot('BODY1')?.sourceAssetIds).toEqual([chatgptId]);
+      expect(data.gallery.find((g: { id: string }) => g.id === chatgptId)).toMatchObject({ used: true });
+      expect(data.notes.join(' | ')).toMatch(/1 photo\(s\) the checks had put last fill a body image that was still free/);
+      // “Don't use”: then it is left out.
+      await removeTaskImage(t.id, chatgptId);
+      await actions.regenerateStage(t.id, 'IMAGES');
+      t = await driver.drive(t.id);
+      data = await stageData(t.id, 'IMAGES');
+      expect(data.slots.flatMap((s: { sourceAssetIds: string[] }) => s.sourceAssetIds)).not.toContain(chatgptId);
+      expect(slot('FEATURED').sourceAssetIds).toEqual(uploadIds);
+    } finally {
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons' } });
+    }
+  });
+
   it('degrades safely: no photos → text-only with a note, or review when images are required', async () => {
     commonsPages = [];
     const site = await offlineSite('No Photos');

@@ -11,7 +11,7 @@ import { Alert, Card, Chip, EmptyState, StatusChip, buttonClasses, cx } from '@/
 
 interface ImagesData {
   slots: { slot: 'FEATURED' | 'BODY1' | 'BODY2'; mediaAssetId: string; alt: string; sourceAssetIds: string[]; width: number; height: number; bytes: number }[];
-  gallery: { id: string; source: string; sourceUrl: string | null; title: string; used: boolean }[];
+  gallery: { id: string; source: string; sourceUrl: string | null; title: string; used: boolean; note?: string }[];
   plan?: { slot: string; direction: string; alt: string }[];
   notes: string[];
   warnings: string[];
@@ -248,7 +248,7 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
       {gallery.length ? (
         <Card title="Collected photos" description="Searched or generated source images. Source URLs are stored as technical provenance only.">
           <PhotoGrid
-            items={gallery.map((g) => ({ id: g.id, title: (g.notes ?? g.origin).replace(/^File:/, ''), sub: `${g.origin === 'WIKIMEDIA' ? 'Wikimedia Commons' : g.origin === 'CHATGPT' ? 'ChatGPT image' : g.origin} · ${g.width}×${g.height}`, used: usedIds.has(g.id), sourceUrl: g.sourceUrl }))}
+            items={gallery.map((g) => ({ id: g.id, title: (g.notes ?? g.origin).replace(/^File:/, ''), sub: `${g.origin === 'WIKIMEDIA' ? 'Wikimedia Commons' : g.origin === 'CHATGPT' ? 'ChatGPT image' : g.origin} · ${g.width}×${g.height}`, used: usedIds.has(g.id), sourceUrl: g.sourceUrl, note: usedIds.has(g.id) ? undefined : data?.gallery.find((x) => x.id === g.id)?.note }))}
             onRemove={remove}
           />
         </Card>
@@ -275,7 +275,7 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
   );
 }
 
-function PhotoGrid({ items, onRemove }: { items: { id: string; title: string; sub: string; used: boolean; sourceUrl: string | null }[]; onRemove: (id: string) => void }) {
+function PhotoGrid({ items, onRemove }: { items: { id: string; title: string; sub: string; used: boolean; sourceUrl: string | null; note?: string }[]; onRemove: (id: string) => void }) {
   return (
     <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {items.map((p) => (
@@ -291,6 +291,8 @@ function PhotoGrid({ items, onRemove }: { items: { id: string; title: string; su
                 {p.sourceUrl.replace(/^https?:\/\//, '')}
               </p>
             ) : null}
+            {/* Why a collected photo was not used (owner: they are used until “Don't use”). */}
+            {p.note ? <p className="text-amber-700 dark:text-amber-400">{p.note}</p> : null}
             <div className="flex items-center justify-between">
               {p.used ? <Chip tone="success">used</Chip> : <span />}
               <button type="button" className="text-muted inline-flex items-center gap-1 hover:text-rose-600" onClick={() => onRemove(p.id)}>

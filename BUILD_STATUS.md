@@ -4147,3 +4147,33 @@ npx vitest run --config vitest.integration.config.ts tests/integration/extension
 npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 9 pass
 npx next build                                                                           # compiled
 ```
+
+## Owner report (2026-11-05): two uploads, and ChatGPT's photo was not used
+
+Screenshot (Fausto Xavier Aguilera, Images tab): the two-photo featured image used the owner's two uploads. The one ChatGPT photo under “Collected photos” was not used anywhere. Owner: “jab tek me chatgpt ki images ki don't use nai krun jab tek use krni ha”.
+- **Cause (reproduced):** on Regenerate images, the uploads were too few for the 4 places, so the run searched ChatGPT again.
+  - That search brought nothing, so the stage came back to ask once more in a new chat.
+  - On that second pass, the photos collected before for the article (the ChatGPT photo) were not added to the gallery any more: the code skipped them after an empty search.
+  - Also, a photo the photo check calls a collage (it takes “side by side” in the description for one) was never a body image, and a photo that looked like a cropped copy of another was dropped.
+- **Fix:**
+  1. The photos collected before stay in the gallery on every pass, without being added twice.
+  2. Owner rule: a collected photo is used until “Don't use”.
+     - A likely cropped copy is no longer dropped: it comes last, for a place still free (also the featured image, after the extra search).
+     - A collage still never takes half of the featured image while there is another photo, but it fills a body image that is still free.
+  3. The Images tab says why an unused collected photo was not used (the same photo as another one, a likely cropped copy, a collage, or every place taken).
+- **Test (integration `images`, new):** the owner's case with real stages.
+  - Run 1: ChatGPT gives one photo, then none.
+  - The owner uploads two photos (767×967 and 461×712) and regenerates. ChatGPT gives none again, and the photo check describes the photo as “side by side”.
+  - Result: featured = the two uploads in upload order, body 1 = ChatGPT's photo (used), with a note. After “Don't use” it is left out.
+  - On the previous code: BODY1 missing, the photo unused. With only the first fix: still unused (the collage rule).
+- **Updated (integration `image-tools`):** the two collage tests now expect the collage in a free body image (never in the featured image while there is another photo).
+- **Checked:** unit 61 files / 428 tests; `tsc` 0 errors; integration `images` 13/13 and `image-tools` 10 + 1 skipped; `next build` compiled.
+- **Not verified:** the owner's article itself; its stage notes were not seen, so which rule left the photo out there was inferred from the reproduction.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "Fausto"   # previous code: fail (BODY1 undefined); after both fixes: pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 13 + 10 pass, 1 skipped
+npx vitest run                                                                                       # 61 files, 428 tests pass
+npx tsc --noEmit                                                                                     # 0 errors
+```

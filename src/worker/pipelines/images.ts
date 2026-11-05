@@ -475,13 +475,17 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     // Owner report (Regenerate images used only the new search's two photos, and no body image was made): the photos
     // collected for this article before are used again, unless removed on the Images tab; a new search only when they
     // are not enough.
-    if (!state.emptySearches && !ownFill) {
+    // Owner report (Fausto Xavier Aguilera: two uploads, ChatGPT's photo not used): also after a search that brought
+    // nothing (the stage comes back here to ask again in a new chat), the photos collected before stay in the gallery;
+    // they had been left out on that second pass.
+    if (!ownFill) {
       // Not the small thumbnails the gallery also saved (the search left them out too), and not the photos this run's
       // own search brought (they arrive while the stage waits for ChatGPT, and are collected below).
-      const earlier = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' }, width: { gte: GALLERY_MIN_SIDE }, height: { gte: GALLERY_MIN_SIDE }, createdAt: { lt: ctx.stage.startedAt ?? new Date() } }, orderBy: { createdAt: 'asc' }, take: 10 });
+      const earlier = (await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' }, width: { gte: GALLERY_MIN_SIDE }, height: { gte: GALLERY_MIN_SIDE }, createdAt: { lt: ctx.stage.startedAt ?? new Date() } }, orderBy: { createdAt: 'asc' }, take: 10 })).filter((e) => !ids.includes(e.id));
       if (earlier.length) {
         ids.push(...earlier.map((e) => e.id));
-        galleryNotes.push(`${earlier.length} photo(s) collected before for this article are used again (“Don't use” on the Images tab leaves one out).`);
+        const note = `${earlier.length} photo(s) collected before for this article are used again (“Don't use” on the Images tab leaves one out).`;
+        if (!galleryNotes.includes(note)) galleryNotes.push(note);
       }
     }
     const source = ctx.config.celebrityPhotoSource ?? 'chatgpt';
@@ -530,9 +534,13 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const uploadOrder = new Map(gallery.map((g, i) => [g.id, i]));
   const byUploadOrder = (a: MediaAsset, b: MediaAsset) => (uploadOrder.get(a.id) ?? 0) - (uploadOrder.get(b.id) ?? 0);
   const distinct: MediaAsset[] = [];
+  /** Why a collected photo was not used (shown on the Images tab next to it). */
+  const why = new Map<string, string>();
   for (const g of [...gallery].sort((a, b) => Number(uploaded(b)) - Number(uploaded(a)) || (uploaded(a) && uploaded(b) ? byUploadOrder(a, b) : (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0)))) {
-    if (g.phash && distinct.some((d) => d.phash && hammingDistance(d.phash, g.phash!) <= 6)) notes.push('A near-duplicate photo was skipped.');
-    else distinct.push(g);
+    if (g.phash && distinct.some((d) => d.phash && hammingDistance(d.phash, g.phash!) <= 6)) {
+      notes.push('A near-duplicate photo was skipped.');
+      why.set(g.id, 'the same photo as another one (the bigger copy is used)');
+    } else distinct.push(g);
   }
   if (!distinct.length) {
     notes.push(`No usable photo of ${name} was found.`);
@@ -544,15 +552,19 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   //    the order you uploaded them.
   const { facts } = await measurePhotos(ctx, distinct, notes);
   let usable: MediaAsset[] = [];
-  let crops = 0;
+  // Owner request (2026-11-05: “until I press Don't use, ChatGPT's photos are used”): a photo the checks find to be a
+  // cropped copy of another one is no longer left out; it comes after every other photo and fills a place only when
+  // one is still free. Only “Don't use” on the Images tab leaves a photo out.
+  const twins: MediaAsset[] = [];
   for (const a of distinct) {
     const f = facts[a.id];
     const limit = (f?.n ?? 0) >= 2 ? SAME_FACES_BITS.several : SAME_FACES_BITS.one;
     const twin = f?.faceprint && usable.some((k) => facts[k.id]?.faceprint && facts[k.id].n === f.n && fingerprintDistance(facts[k.id].faceprint!, f.faceprint!) <= limit);
-    if (twin) crops++;
+    if (twin && !uploaded(a)) twins.push(a);
     else usable.push(a);
   }
-  if (crops) notes.push(`${crops} photo(s) left out as cropped copies of another one (the same faces in the same moment).`);
+  for (const t of twins) why.set(t.id, 'looks like a cropped copy of another photo (the same faces in the same moment); used only when a place is still free');
+  if (twins.length) notes.push(`${twins.length} photo(s) look like cropped copies of another one (the same faces in the same moment): used last, only for a place still free.`);
   const levels = usable.map((a) => facts[a.id]?.sharpness ?? 0).sort((x, y) => x - y);
   const middle = levels[Math.floor(levels.length / 2)] ?? 0;
   const soft = (a: MediaAsset) => usable.length >= 3 && (facts[a.id]?.sharpness ?? 0) < middle * SOFT_SHARE;
@@ -591,7 +603,8 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     });
     usable = usable.map((a, i) => ({ a, i })).sort((x, y) => (flag.get(x.a.id) ?? 0) - (flag.get(y.a.id) ?? 0) || x.i - y.i).map((x) => x.a);
     const marked = [...flag.values()].filter((v) => v === 1).length;
-    if (res) notes.push(verdicts.size ? `Photo check: ${verdicts.size} of ${sample.length} described${marked ? `, ${marked} with a watermark or site name (used last)` : ''}${collages.size ? `, ${collages.size} collage(s) of other sites (left out)` : ''}.` : 'The photo check answer could not be read; the photos were used in their order.');
+    if (res) notes.push(verdicts.size ? `Photo check: ${verdicts.size} of ${sample.length} described${marked ? `, ${marked} with a watermark or site name (used last)` : ''}${collages.size ? `, ${collages.size} collage(s) of other sites (never in the featured image while there is another photo; a body image only when a place is still free)` : ''}.` : 'The photo check answer could not be read; the photos were used in their order.');
+    for (const id of collages) why.set(id, 'the photo check took it for another site’s collage; used only for a body image still free');
   }
 
   // 4. Your featured template takes its photos first (as in the earlier tool); the body images get the rest. Another
@@ -610,6 +623,8 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     await ctx.setPrivateState({ galleryIds: [...galleryIds, ...g.assets.map((a) => a.id)], galleryNotes, moreSearched: true });
     return celebrityImages(ctx);
   }
+  // Cropped copies come after every other photo, also for the featured image (after the extra search above).
+  if (single.length < featuredNeeds) single.push(...twins.slice(0, featuredNeeds - single.length));
   const featuredPlaces = placeSizes(siteSettings.featured);
   const bodyPlace = placeSizes(siteSettings.body)[0] ?? { width: CANVAS.width, height: CANVAS.height };
   // Owner report (a group photo in the narrow half of the featured design had the faces at both edges cut): each place
@@ -624,8 +639,13 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   if (!single.length && featuredPhotos.length) notes.push('Every photo found is a collage of another site; the featured image uses one of them. Upload photos on the Images tab to replace it.');
   if (featuredSlots.length >= 2 && forFeatured.mostPeople > 2) notes.push(`Not enough photos with at most 2 people for the ${featuredSlots.length}-photo featured design; it uses one with ${forFeatured.mostPeople} people.`);
   if (forFeatured.skippedGroups) notes.push(`The ${featuredSlots.length}-photo featured design uses photos with at most ${Math.max(2, forFeatured.mostPeople)} people; ${forFeatured.skippedGroups} photo(s) with more people went to the body images.`);
-  const forBody = photosForPlaces(forFeatured.rest, [bodyPlace, bodyPlace], fits, tier);
+  // The body images: the photos the featured image left, then (owner request) the cropped copies and other sites'
+  // collages, for a place that is still free.
+  const lastResort = [...twins.filter((t) => !forFeatured.picked.includes(t)), ...usable.filter((a) => collages.has(a.id) && !forFeatured.picked.includes(a))];
+  const forBody = photosForPlaces([...forFeatured.rest, ...lastResort], [bodyPlace, bodyPlace], fits, tier);
   const rest = [...forBody.picked, ...forBody.rest];
+  const usedLate = forBody.picked.filter((a) => lastResort.includes(a)).length;
+  if (usedLate) notes.push(`${usedLate} photo(s) the checks had put last fill a body image that was still free (“Don't use” on the Images tab leaves one out).`);
   if (forFeatured.moved + forBody.moved) notes.push(`${forFeatured.moved + forBody.moved} photo(s) chosen for a place their faces fit whole; a group photo too wide for its place was used further down.`);
   if (rest.length < 2) notes.push(`${usable.length} usable photo(s): the featured design took ${featuredPhotos.length}, ${rest.length} left for the body image(s); none is used twice.`);
   // The earlier tool's alt text: the name, then what the photo shows.
@@ -655,7 +675,8 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
     notes,
   );
   const used = new Set(slots.flatMap((s) => s.sourceAssetIds));
-  return finish(ctx, { slots, gallery: gallery.map((g) => ({ id: g.id, source: sourceLabel(g.origin), sourceUrl: g.sourceUrl, title: g.notes ?? '', used: used.has(g.id) })), notes, warnings: [] });
+  const placesNote = `every place was taken (featured ${featuredPhotos.length}, body ${[rest[0], rest[1]].filter(Boolean).length})`;
+  return finish(ctx, { slots, gallery: gallery.map((g) => ({ id: g.id, source: sourceLabel(g.origin), sourceUrl: g.sourceUrl, title: g.notes ?? '', used: used.has(g.id), ...(used.has(g.id) ? {} : { note: `Not used: ${why.get(g.id) ?? placesNote}.` }) })), notes, warnings: [] });
 }
 
 function sourceLabel(origin: string): string {

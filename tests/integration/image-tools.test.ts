@@ -120,13 +120,14 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
     expect(last.channels[2].mean).toBeGreaterThan(last.channels[0].mean);
   });
 
-  it('photo check (on by default): watermarked photos go last, a collage is left out, alt text is “Name – what it shows”', async () => {
+  it('photo check (on by default): watermarked photos go last, a collage only fills a body image still free, alt text is “Name – what it shows”', async () => {
     const pics = [await plain(200, 40, 40, 1600, 1000), await plain(40, 160, 60, 1600, 1000), await plain(40, 60, 200, 1600, 1000)];
     const check = '1: watermark=yes | collage=no | alt=standing at a press wall\n2: watermark=no | collage=yes | alt=two photos side by side\n3: watermark=no | collage=no | alt=smiling on a red carpet';
     const { data } = await runCeleb('jane checker', pics, check);
     const notes = data.notes.join(' | ');
-    expect(notes).toMatch(/Photo check: 3 of 3 described, 1 with a watermark or site name \(used last\), 1 collage\(s\) of other sites \(left out\)/);
-    expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1']);
+    expect(notes).toMatch(/Photo check: 3 of 3 described, 1 with a watermark or site name \(used last\), 1 collage\(s\) of other sites \(never in the featured image while there is another photo; a body image only when a place is still free\)/);
+    // Owner request (2026-11-05): ChatGPT's photos are used until “Don't use”: the collage fills the body image left.
+    expect(data.slots.map((s: { slot: string }) => s.slot)).toEqual(['FEATURED', 'BODY1', 'BODY2']);
     // The name is the Quick Bio's full name (the scripted answers describe Tom Kaulitz), then what the photo shows.
     expect(data.slots[0].alt).toBe('Tom Kaulitz – smiling on a red carpet');
     expect(data.slots[1].alt).toBe('Tom Kaulitz – standing at a press wall');
@@ -146,12 +147,14 @@ sharp(arg('-i')).metadata().then((m) => sharp(arg('-i')).resize(m.width * 4, m.h
     const featured = await sourceOf(data, 'FEATURED');
     expect(featured).toHaveLength(2);
     expect(featured.some(green)).toBe(false);
-    expect(data.notes.join(' | ')).toMatch(/1 collage\(s\) of other sites \(left out\)/);
-    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED']);
+    expect(data.notes.join(' | ')).toMatch(/1 collage\(s\) of other sites \(never in the featured image while there is another photo/);
+    // Owner request (2026-11-05): until “Don't use”, the collage fills the body image that is still free.
+    expect(data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1']);
+    expect((await sourceOf(data, 'BODY1')).every(green)).toBe(true);
 
-    // Only collages found: the featured image takes one (single-photo design) and says so; nothing else uses them.
+    // Only collages found: the featured image takes one (single-photo design) and says so; the other one fills body 1.
     const only = await runCeleb('only collages', [pics[1], await plain(120, 200, 90, 1600, 1000)], '1: watermark=no | collage=yes | alt=two photos side by side\n2: watermark=no | collage=yes | alt=a photo grid', true);
-    expect(only.data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED']);
+    expect(only.data.slots.map((x: { slot: string }) => x.slot)).toEqual(['FEATURED', 'BODY1']);
     expect(await sourceOf(only.data, 'FEATURED')).toHaveLength(1);
     expect(only.data.notes.join(' | ')).toMatch(/Every photo found is a collage of another site; the featured image uses one of them/);
   });

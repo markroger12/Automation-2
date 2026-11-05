@@ -5,7 +5,7 @@ import { db, type Tx } from '../db';
 import { activeModuleKeySchema, countrySchema, isCelebrityModule, languageSchema, normalizeKeyword, type TaskSource } from '../domain';
 import { findCelebrityCategory, missingCelebrityCategoryMessage } from '../celebrity-category';
 import { taskOptionsSchema } from '../settings-schema';
-import { parseSecondaryKeywords } from '../content/text';
+import { MAX_SECONDARY_KEYWORDS, parseSecondaryKeywords } from '../content/text';
 import { AppError } from '../errors';
 import { ensureArticleRun } from './lifecycle';
 import { log } from '../log';
@@ -27,11 +27,11 @@ export const articleTaskInputSchema = z.object({
     .transform((v) => v.replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim())
     .pipe(z.string().min(2, 'Primary keyword must be at least 2 characters').max(160, 'Primary keyword must be at most 160 characters')),
   secondaryKeywords: z
-    .union([z.string().max(4000), z.array(z.string().max(160)).max(40)])
+    .union([z.string().max(6000), z.array(z.string().max(160)).max(60)])
     .optional()
     .nullable()
     .transform((v) => parseSecondaryKeywords(v ?? []))
-    .refine((v) => v.length <= 20, 'At most 20 secondary keywords'),
+    .refine((v) => v.length <= MAX_SECONDARY_KEYWORDS, `At most ${MAX_SECONDARY_KEYWORDS} secondary keywords`),
   exampleTitle: optionalTrimmed(200),
   websiteId: z.string({ error: 'Choose a website' }).min(1, 'Choose a website').max(40),
   categoryId: z.string().max(40).optional().nullable(),

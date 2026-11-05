@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_IMPORT_ROWS, parseImport, splitRecords } from '@/lib/campaigns/parse';
+import { articleTaskInputSchema } from '@/lib/tasks/create';
 import { classifyKeyword, normalizeWriter, resolveWriter } from '@/lib/campaigns/router';
 
 describe('bulk import parser', () => {
@@ -52,6 +53,21 @@ describe('bulk import parser', () => {
     expect(big.rows.at(-1)!.keyword).toBe('keyword number 1000');
     expect(big.problems[0]).toMatch(/1005 rows found; at most 1000/);
     expect(parseImport('   \n').problems).toEqual(['No keywords found.']);
+  });
+
+  it('allows up to 30 secondary keywords (owner: it was 20), in imports and for one article', () => {
+    const list = (n: number) => Array.from({ length: n }, (_, i) => `secondary keyword ${i + 1}`).join(', ');
+    const r = parseImport(`Main keyword one | ${list(30)}\nMain keyword two | ${list(31)}\nMain keyword three | ${list(21)}`);
+    expect(r.rows[0].secondaryKeywords).toHaveLength(30);
+    expect(r.rows[0].errors).toEqual([]);
+    expect(r.rows[1].errors).toEqual(['More than 30 secondary keywords.']);
+    expect(r.rows[2].errors).toEqual([]);
+    const base = { moduleKey: 'celebrity-writer', keyword: 'Main keyword', websiteId: 'site1', idempotencyKey: 'test-key-123' };
+    expect(articleTaskInputSchema.parse({ ...base, secondaryKeywords: list(30) }).secondaryKeywords).toHaveLength(30);
+    expect(articleTaskInputSchema.parse({ ...base, secondaryKeywords: list(30).split(', ') }).secondaryKeywords).toHaveLength(30);
+    const tooMany = articleTaskInputSchema.safeParse({ ...base, secondaryKeywords: list(31) });
+    expect(tooMany.success).toBe(false);
+    expect(tooMany.error?.issues[0].message).toBe('At most 30 secondary keywords');
   });
 });
 

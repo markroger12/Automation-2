@@ -4208,3 +4208,23 @@ npx vitest run --config vitest.integration.config.ts tests/integration/wordpress
 npx tsc --noEmit                                                                                                   # 0 errors
 npx next build                                                                                                     # compiled
 ```
+
+## Owner request (2026-11-05): 30 secondary keywords instead of 20
+
+Screenshot: a workflow/import row was **invalid**: “More than 20 secondary keywords.” The owner: “30 krde isko bhi”.
+- **Change:** one limit, `MAX_SECONDARY_KEYWORDS = 30` (`src/lib/content/text.ts`), used by both checks:
+  - the import / workflow keyword parser (`src/lib/campaigns/parse.ts`): “More than 30 secondary keywords.”;
+  - the article input (`src/lib/tasks/create.ts`, Single Article, bulk rows, workflow tasks): “At most 30 secondary keywords”.
+- **Size limits raised with it:** the pasted text may be 6,000 characters (was 4,000) and the list 60 items before de-duplication (was 40). The prompt preview was raised to 6,000 characters too.
+- **Unchanged:** every secondary keyword still reaches the prompt as before (no other cap). Tags still take the keyword and the first 5 secondary keywords.
+- **Test:** unit `campaigns` gets a new test (30 pass, 31 refused, 21 pass, in both checks). It fails on the previous code with “More than 20 secondary keywords.”.
+- **Checked:** unit 61 files / 430 tests; `tsc` 0 errors.
+- **Not verified:** `next build` (not run for this change); the owner's own keyword list.
+- **Already-invalid rows:** a row marked invalid before updating stays as it was imported. Import it again after updating.
+
+**Commands run**
+```
+npx vitest run tests/unit/campaigns.test.ts   # previous code: the new test fails; after: 8 pass
+npx vitest run                                # 61 files, 430 tests pass
+npx tsc --noEmit                              # 0 errors
+```

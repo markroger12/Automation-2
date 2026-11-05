@@ -202,7 +202,10 @@ The overall status is *healthy*, *needs attention*, *failing* or *no data yet*, 
   - the stored draft is reopened, never duplicated;
   - a draft edited in WordPress still stops for your decision;
   - it is refused while the site is paused or logged out.
-- **Edited in WordPress?** The article's WordPress tab shows **Changes made in WordPress**: the text only in the WordPress version (what an overwrite would replace) next to the text only in the app version. Read it before choosing “Overwrite WordPress draft”.
+- **Edited in WordPress?** When a draft was changed in WordPress after the app saved it, the app never overwrites it by itself, and the article stops for a choice of version.
+  - **Approve** does not help here: it cannot decide which version to keep, so it says so. The same goes for the queue's Approve selected and the workflow's Force continue.
+  - The article page offers **Keep the WordPress version** (the WordPress text becomes the article's text in the app, the app's version is kept as a revision, and the WordPress steps finish) or **Overwrite with the app version**.
+  - **See what changed** opens the WordPress tab's **Changes made in WordPress**: the text only in the WordPress version next to the text only in the app version.
 - WordPress's own “session expired” pop-up counts as logged out. An account that may not write posts stops with that reason instead of a generic error.
 
 ## Humanizer per website

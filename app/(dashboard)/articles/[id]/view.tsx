@@ -31,6 +31,23 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Owner report (Willie Beir): a draft changed in WordPress waits for a choice of version, not for an approval.
+  const [wpChoice, setWpChoice] = useState<'keep-remote' | 'overwrite-remote' | null>(null);
+  const wpEdited = task.group === 'review' && /has edits made in WordPress|edited in WordPress after the app saved it/.test(`${task.message ?? ''} ${task.reviewReasonList.join(' ')}`);
+  async function chooseVersion() {
+    if (!wpChoice) return;
+    setBusy(wpChoice);
+    try {
+      await api(`/api/tasks/${task.id}/wordpress`, { body: { mode: wpChoice } });
+      toast('success', wpChoice === 'keep-remote' ? 'The WordPress version is kept; the WordPress steps finish now.' : 'The app version replaces the WordPress draft now.');
+      await reload();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(null);
+      setWpChoice(null);
+    }
+  }
   const live = !['COMPLETED', 'CANCELLED', 'FAILED'].includes(task.status);
 
   const reload = useCallback(async () => {
@@ -204,9 +221,23 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
                       Allow duplicate and continue
                     </Button>
                   ) : null}
-                  <Button size="sm" onClick={() => void reviewAction('override-quality')}>
-                    Approve despite review reasons…
-                  </Button>
+                  {wpEdited ? (
+                    <>
+                      <Button size="sm" variant="primary" onClick={() => setWpChoice('keep-remote')}>
+                        Keep the WordPress version…
+                      </Button>
+                      <Button size="sm" variant="danger" onClick={() => setWpChoice('overwrite-remote')}>
+                        Overwrite with the app version…
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setTab('wordpress')}>
+                        See what changed
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="sm" onClick={() => void reviewAction('override-quality')}>
+                      Approve despite review reasons…
+                    </Button>
+                  )}
                 </>
               ) : undefined
             }
@@ -228,6 +259,19 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
         {(EXTRA_TABS as readonly string[]).includes(tab) ? <ArticleExtraTabs tab={tab as (typeof EXTRA_TABS)[number]} task={task} onChanged={reload} /> : null}
       </div>
 
+      <ConfirmDialog
+        open={Boolean(wpChoice)}
+        title={wpChoice === 'keep-remote' ? 'Keep the WordPress version?' : 'Overwrite the WordPress draft?'}
+        confirmLabel={wpChoice === 'keep-remote' ? 'Keep WordPress version' : 'Overwrite draft'}
+        tone={wpChoice === 'overwrite-remote' ? 'danger' : undefined}
+        busy={busy === wpChoice}
+        onCancel={() => setWpChoice(null)}
+        onConfirm={() => void chooseVersion()}
+      >
+        {wpChoice === 'keep-remote'
+          ? `The text edited in WordPress (draft #${task.wpPostId ?? ''}) becomes this article's text in the app and stays in WordPress; the app's version is kept as a revision. The WordPress steps then finish (featured image, Rank Math, check).`
+          : `The edits made in WordPress after the app saved draft #${task.wpPostId ?? ''} are replaced by the app's version. WordPress keeps a revision of the replaced text.`}
+      </ConfirmDialog>
       <ConfirmDialog open={confirmDelete} title="Delete this article?" confirmLabel="Delete" tone="danger" busy={busy === 'delete'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()}>
         The article is removed from this app with its stages, prompts and answers. The WordPress draft or post stays as it is. A report of the article is saved in data\backups\deleted-articles first.
       </ConfirmDialog>

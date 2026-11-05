@@ -7,7 +7,7 @@ import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Alert, Card, Chip, EmptyState, KeyValue, formatDateTime } from '@/components/ui';
 
-type Mode = 'resave' | 'overwrite-remote' | 'recreate' | 'adopt';
+type Mode = 'resave' | 'overwrite-remote' | 'keep-remote' | 'recreate' | 'adopt';
 
 interface Candidate {
   id: number;
@@ -23,6 +23,11 @@ const MODE_TEXT: Record<Mode, { title: string; body: string; confirm: string }> 
     title: 'Overwrite the WordPress draft?',
     body: 'Edits made in WordPress after the app saved this draft will be replaced by the version shown in the Editor tab. WordPress keeps a revision of the replaced text.',
     confirm: 'Overwrite draft',
+  },
+  'keep-remote': {
+    title: 'Keep the WordPress version?',
+    body: 'The text edited in WordPress becomes this article’s text in the app and stays in WordPress (the app’s version is kept as a revision). The WordPress steps then finish: featured image, Rank Math and the final check.',
+    confirm: 'Keep WordPress version',
   },
   recreate: { title: 'Create a new draft?', body: 'A NEW WordPress draft is created for this article. Use this only when the old draft is gone or none of the found posts is the right one.', confirm: 'Create new draft' },
   adopt: { title: 'Use this post?', body: 'The app links this article to the chosen post and updates that draft. No new post is created.', confirm: 'Use this post' },
@@ -101,9 +106,14 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
         {!task.legacy && (remoteEdited || gone) ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {remoteEdited ? (
-              <Button size="sm" variant="danger" onClick={() => setPending({ mode: 'overwrite-remote' })}>
-                Overwrite WordPress draft…
-              </Button>
+              <>
+                <Button size="sm" variant="primary" onClick={() => setPending({ mode: 'keep-remote' })}>
+                  Keep the WordPress version…
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => setPending({ mode: 'overwrite-remote' })}>
+                  Overwrite with the app version…
+                </Button>
+              </>
             ) : null}
             {gone ? (
               <Button size="sm" onClick={() => setPending({ mode: 'recreate' })}>

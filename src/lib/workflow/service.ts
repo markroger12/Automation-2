@@ -8,7 +8,7 @@ import { parseJson } from '../json';
 import { parseImport } from '../campaigns/parse';
 import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/router';
 import { retryTask } from '../tasks/lifecycle';
-import { overrideQuality } from '../tasks/actions';
+import { heldForWordPressEdits, overrideQuality } from '../tasks/actions';
 import { deleteTask } from '../tasks/delete';
 import { DEFAULT_SLOT_TIMEZONE, formatInZone, isValidTimeZone, parseSlot, formatSlot, upcomingSlots, zonedParts, zonedTimeToUtc } from './time';
 import { reserveSlot, slotRules, SCHEDULE_LEAD_MS } from './scheduler';
@@ -330,6 +330,11 @@ export async function keywordAction(websiteId: string, raw: unknown) {
           await db.duplicateMatch.updateMany({ where: { taskId: task.id, status: 'OPEN' }, data: { status: 'OVERRIDDEN' } });
           await audit('task.force-continue', 'ArticleTask', task.id, { keyword: kw.keyword, wpPostId: task.wpPostId, problems: publishBlocked });
         } else if (task?.status === 'NEEDS_REVIEW') {
+          // A draft changed in WordPress waits for the owner's choice of version (approving cannot decide it).
+          if (heldForWordPressEdits(task)) {
+            notes.push(`“${kw.keyword}”: its draft #${task.wpPostId ?? ''} was changed in WordPress after the app saved it. Open the article and choose “Keep the WordPress version” or “Overwrite with the app version”.`);
+            continue;
+          }
           await overrideQuality(task.id, { reason: 'Force continue from the workflow keyword queue' });
         } else {
           notes.push(`“${kw.keyword}”: its article failed (${(task?.message ?? 'no article').slice(0, 120)}). Use Retry.`);

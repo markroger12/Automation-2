@@ -4177,3 +4177,34 @@ npx vitest run --config vitest.integration.config.ts tests/integration/images.te
 npx vitest run                                                                                       # 61 files, 428 tests pass
 npx tsc --noEmit                                                                                     # 0 errors
 ```
+
+## Owner report (2026-11-05): “approved 100 times, it is not approved” (Willie Beir)
+
+Article report and screenshot: Celebrity 2 article, NEEDS_REVIEW at WORDPRESS_DRAFT. “Draft #8098 was edited in WordPress after the app saved it (modified 2026-11-04T23:46:21 UTC). The app did not overwrite those edits.” The quality gate ran 6 times (“All quality checks passed”).
+- **Cause:** the content of draft #8098 changed in WordPress at 23:46 UTC.
+  - The draft was saved at 23:08 and scheduled by the workflow at 23:09. Who changed it at 23:46 (the owner, or a plugin) is not in the report.
+  - After Regenerate images (23:55), the draft step found that change and stopped, as designed, without overwriting it.
+  - The card offered only **Approve despite review reasons**. That approves quality reasons: it re-ran the quality gate (“continuing”) and the draft step stopped again at the same place, every time.
+  - **Overwrite** was only on the WordPress tab, and **keep the WordPress version** had no button at all.
+- **Fix:**
+  - **The card:** for this stop it offers **Keep the WordPress version…**, **Overwrite with the app version…** and **See what changed**, instead of Approve. The next action names the two choices.
+  - **Keep the WordPress version** (`resaveToWordPress` mode `keep-remote`):
+    - the captured WordPress text becomes the article's text in the app (`editedHtml`), and the app's version is saved as a revision;
+    - the stored content hash is that of the WordPress text, so the draft step finds nothing to overwrite;
+    - the WordPress steps then finish.
+    - If no WordPress version was captured, it says to press Save again first (nothing is overwritten).
+  - **Approve refuses this stop:** “Approve despite review reasons” and the queue's “Approve selected” answer that approving does not decide which version to keep. The workflow's “Force continue” leaves the keyword with a note saying the same.
+- **Tests (all failing on the previous code):**
+  - integration `wordpress-drafts`: a draft edited in the fake WordPress, then re-assembly → the stop with both choices named; Approve refused; Keep → completed with the owner's paragraph in WordPress and in the app, and one revision; then an edit, Save again → the stop; Overwrite → completed with the app version;
+  - unit `workflow-force-continue`: Force continue and Approve selected on such a task.
+- **Checked:** unit 61 files / 429 tests; `tsc` 0 errors; integration `wordpress-drafts` + `workflow-publish` 20/20; `next build` compiled.
+- **Not verified:** the owner's real draft #8098, and what changed it at 23:46. For it, choose **Keep the WordPress version** (or Overwrite) on the article page after updating.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts -t "Willie Beir"   # previous code: fail; after: pass
+npx vitest run                                                                                                     # 61 files, 429 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 20 pass
+npx tsc --noEmit                                                                                                   # 0 errors
+npx next build                                                                                                     # compiled
+```

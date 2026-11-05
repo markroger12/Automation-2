@@ -4463,3 +4463,33 @@ npx tsc --noEmit                                                                
 npx next build                                                                          # compiled
 node scratchpad/img-smoke.mjs                                                           # Chromium: Auto/Featured/Body on the Images tab
 ```
+
+## Owner report (2026-11-05): the disk was full during an update; now `npm run start:all` fails
+
+On the owner's PC (`F:\claude\Automation-2`):
+- `npm run start:all`: the two new migrations applied (with a backup), then `next build` failed with “Type error: Parameter 'c' implicitly has an 'any' type” in `app/(dashboard)/writers/[key]/page.tsx:18`.
+- `git pull` (8ae01f5..5227f14) refused: the files of the new version are there as local changes and untracked files.
+- **Cause:**
+  - The one-click update ran out of disk space. The code was left half-way: the working tree has the new files, but git is still on the old commit, and going back could not finish.
+  - Its build step, which runs `prisma generate`, did not complete. The Prisma client is still made from the old schema (no `CustomWriter`, no `usePlace`).
+  - `npm run start:all` never runs `prisma generate` itself; only `npm install` (postinstall) and the update's build step do.
+  - **Reproduced here:** a client generated from 8ae01f5's schema gives exactly the owner's first error (`writers/[key]/page.tsx(18,38)` TS7006); with the current client, `tsc` has 0 errors.
+  - The same would happen after a manual `git pull` that changes the schema but no package.
+- **Fix:**
+  - **`scripts/ensure-prisma-client.mjs`:** runs first in `prestart:all`, `predev:all` and `setup`. It compares `prisma/schema.prisma` with the copy in the generated client (`node_modules/.prisma/client/schema.prisma`, line ends ignored). When they differ it runs `prisma generate` in its own process, before anything has loaded the Prisma engine (Windows cannot replace a loaded engine). When generate fails, it says to close other app windows and free space.
+  - **Settings → App updates:** an update does not start with less than 1.5 GB free on the app's disk (`UPDATE_MIN_FREE_BYTES`, `fs.statfsSync`). The card says how much is free; the bell's update note gives the same reason.
+  - **README troubleshooting:** how to recover a half-finished update — free space, `git stash push --include-untracked`, `git pull`, `npm run start:all`.
+- **Tests:**
+  - unit `ensure-prisma-client`: same schema with Windows line ends → nothing; changed or missing → generate; the three npm scripts run it;
+  - unit `app-update`: below 1.5 GB → the message; enough or unknown → no block.
+  - **Manual:** a client generated from the old schema → the script reports a mismatch, runs `prisma generate`, and `tsc` is clean again.
+- **Checked:** unit 65 files / 453 tests; `tsc` 0 errors.
+- **Not verified:** on the owner's Windows PC.
+
+**Commands run**
+```
+npx prisma generate --schema <8ae01f5 schema> && npx tsc --noEmit   # the owner's error, reproduced
+node scripts/ensure-prisma-client.mjs                                # regenerated; tsc 0 errors
+npx vitest run tests/unit/ensure-prisma-client.test.ts tests/unit/app-update.test.ts   # pass
+npx vitest run                                                       # 65 files, 453 tests pass
+```

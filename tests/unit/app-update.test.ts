@@ -29,6 +29,10 @@ describe('app update: what GitHub has and whether the button may start it', () =
     expect(updateBlocker({ ...ok, ahead: 2 })).toMatch(/2 changes .* GitHub does not have/);
     // The owner's own edits are never overwritten.
     expect(updateBlocker({ ...ok, localChanges: ['src/lib/a.ts'] })).toMatch(/1 file was changed on this computer; the update would overwrite it/);
+    // Owner report (2026-11-05): an update on a full disk stopped half-way. Below 1.5 GB free it does not start.
+    expect(updateBlocker({ ...ok, freeBytes: 500 * 1024 ** 2 })).toBe('Only 500 MB free on the disk with the app. An update needs about 1.5 GB (the new version\'s packages and its build). Free some space, then check again.');
+    expect(updateBlocker({ ...ok, freeBytes: 3 * 1024 ** 3 })).toBeNull();
+    expect(updateBlocker({ ...ok, freeBytes: null })).toBeNull();
   });
 });
 

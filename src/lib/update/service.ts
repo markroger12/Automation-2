@@ -56,6 +56,8 @@ export interface UpdateCheck {
   localChanges: string[];
   /** Steps of articles running now; they are stopped and continue after the restart. */
   running: number;
+  /** Free space on the app's disk (null when it cannot be read). */
+  freeBytes: number | null;
   canUpdate: boolean;
   reason: string | null;
 }
@@ -116,14 +118,31 @@ export function changeKinds(files: string[]): UpdateCheck['changes'] {
   };
 }
 
+/**
+ * Owner report (2026-11-05): an update started on a full disk stopped half-way — the code half on the new version,
+ * the Prisma client on the old one — and the app no longer built. An update needs room for the new version's packages
+ * and its build, so it does not start below this.
+ */
+export const UPDATE_MIN_FREE_BYTES = 1.5 * 1024 ** 3;
+
+export function freeDiskBytes(dir = projectRoot()): number | null {
+  try {
+    const s = fs.statfsSync(dir);
+    return Number(s.bavail) * Number(s.bsize);
+  } catch {
+    return null;
+  }
+}
+
 /** Why the update cannot start, in the owner's words; null when it can. */
-export function updateBlocker(c: { supervised: boolean; desktop: boolean; behind: number; ahead: number; localChanges: string[]; updating: boolean }): string | null {
+export function updateBlocker(c: { supervised: boolean; desktop: boolean; behind: number; ahead: number; localChanges: string[]; updating: boolean; freeBytes?: number | null }): string | null {
   if (c.desktop) return 'The desktop app is updated with its own installer.';
   if (!c.supervised) return 'The app was not started with `npm run start:all`, so it cannot restart itself. Update in a terminal: git pull, then npm run start:all.';
   if (c.updating) return 'An update is running.';
   if (c.behind === 0) return null;
   if (c.ahead > 0) return `This computer has ${c.ahead} change${c.ahead === 1 ? '' : 's'} (commits) that GitHub does not have, so the new version cannot simply be added. Update in a terminal with git.`;
   if (c.localChanges.length) return `${c.localChanges.length} file${c.localChanges.length === 1 ? ' was' : 's were'} changed on this computer; the update would overwrite ${c.localChanges.length === 1 ? 'it' : 'them'}. Undo or commit ${c.localChanges.length === 1 ? 'that change' : 'those changes'} first (git status shows them).`;
+  if (c.freeBytes != null && c.freeBytes < UPDATE_MIN_FREE_BYTES) return `Only ${Math.round(c.freeBytes / 1024 ** 2).toLocaleString('en')} MB free on the disk with the app. An update needs about 1.5 GB (the new version's packages and its build). Free some space, then check again.`;
   return null;
 }
 
@@ -177,7 +196,8 @@ export async function checkForUpdates(): Promise<UpdateCheck> {
     next = null;
   }
   const changes = changeKinds(behind > 0 ? diff.out.split(/\r?\n/).filter(Boolean) : []);
-  const reason = updateBlocker({ supervised: supervised(), desktop: desktop(), behind, ahead, localChanges, updating: readStatus()?.state === 'running' });
+  const freeBytes = freeDiskBytes();
+  const reason = updateBlocker({ supervised: supervised(), desktop: desktop(), behind, ahead, localChanges, updating: readStatus()?.state === 'running', freeBytes });
   return {
     checkedAt: new Date().toISOString(),
     branch: branch.out,
@@ -191,6 +211,7 @@ export async function checkForUpdates(): Promise<UpdateCheck> {
     extension: { now: EXPECTED_EXTENSION_VERSION, next },
     localChanges,
     running,
+    freeBytes,
     canUpdate: behind > 0 && reason === null,
     reason,
   };

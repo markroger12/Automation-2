@@ -35,6 +35,7 @@ const check = (latest: string, behind: number, over: Partial<UpdateCheck> = {}):
   extension: { now: '3.5.4', next: '3.5.4' },
   localChanges: [],
   running: 0,
+  freeBytes: 10 * 1024 ** 3,
   canUpdate: behind > 0,
   reason: null,
   ...over,

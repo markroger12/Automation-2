@@ -146,6 +146,19 @@ The test types these credentials itself (simulating you in the login window); th
 - **Category:** a celebrity article (Celebrity and Celebrity 2) always goes into the website's **“Celebrity”** category (German websites: **“Prominente”**; “Celebrities” and “Promis” count too). Nothing to choose, and ChatGPT is not asked.
   - Without such a category the article waits with a message: create it in WordPress, then Websites → the website → Sync categories.
   - Tigram articles keep the category you choose, or ChatGPT picks one.
+- **Your own writers (Writers → New writer):** build a writer without code.
+  1. Give it a name and choose where it starts: Celebrity 2 (its prompt copied), Celebrity, Tigram, an empty person writer, an empty general writer, or a copy of one of your writers.
+  2. On its page:
+     - **Basics:** about a person (photos of the person, a facts table, family-claim checks) or any topic (generated images).
+     - **Title step:** the app's title step, your own title prompt, or none (the example title, else the article's own title).
+     - **Article prompt:** buttons insert `{{keyword}}`, `{{selected_title}}`, `{{secondary_keywords}}`, `{{language_variant}}`, `{{word_range}}`, `{{faq_count}}`, `{{table_heading}}` …; a preview shows it with example values; every save keeps the earlier version.
+     - **Answer rules:** words, FAQs (exactly or about; 0 = none), conclusion, SEO lines, no lists, and for person writers the facts table (required, optional or none) and its H2 heading.
+     - **Category:** always “Celebrity”, always one category by name (with its German name), or chosen per article (else ChatGPT chooses).
+     - **Photos & links:** photos, the link check, internal links, the app's SEO brief (off: the prompt is sent as written).
+     - **Keywords:** phrases that send a keyword to this writer by themselves; person writers can be offered for person keywords.
+     - **Test:** paste one ChatGPT answer to your prompt and see what the article would get (words, FAQs, table rows, SEO lines, sections, the article itself), or why it would be asked again. Nothing is sent to ChatGPT or WordPress.
+  3. **Make active** when the checklist on the side is complete: the writer is then offered in Single Article, Workflow, Bulk Campaigns and website routing rules, and runs with the same steps and quality gate as the built-in writers (drafts only unless the website allows publishing).
+  - **Back to draft / Archive** hide it again; its articles still finish. A writer no article used can be deleted.
 - **Choosing the writer:** for a person keyword the app no longer chooses by itself. You choose **Celebrity** or **Celebrity 2**: in Add keywords per line, with **Person keywords** for all of them at once, or with **Writer for all**. Clear general topics still go to Tigram.
 
 ## Images

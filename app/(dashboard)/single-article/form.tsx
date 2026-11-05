@@ -305,7 +305,7 @@ export function SingleArticleForm({
   return (
     <form onSubmit={generate} className="grid gap-6 xl:grid-cols-3" noValidate>
       <div className="space-y-6 xl:col-span-2">
-        <Card title="Article Writer" description="Celebrity, Celebrity 2 or Tigram. Your last choice is remembered.">
+        <Card title="Article Writer" description="Celebrity, Celebrity 2, Tigram or one of your own writers (Writers → New writer). Your last choice is remembered.">
           <div role="radiogroup" aria-label="Article writer" className="grid gap-3 md:grid-cols-2">
             {writers.map((w) => (
               <label

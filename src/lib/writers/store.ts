@@ -5,7 +5,7 @@ import { AppError } from '../errors';
 import { audit } from '../audit';
 import { parseJson } from '../json';
 import { getSettings } from '../settings';
-import { referencedVariables, parseTemplate, TemplateSyntaxError } from '../prompts/template';
+import { checkPrompt, EXTRA_PROMPT_VARIABLES } from './prompt-check';
 import { promptHash } from '../prompts/seed';
 import { findPromptDefault, type PromptVariableDoc } from '@/modules/prompt-defaults';
 import { parseCustomArticle, type CustomArticleParse } from '@/modules/custom/parsers';
@@ -68,39 +68,13 @@ export async function ensureCustomWriters(opts: { force?: boolean } = {}): Promi
 
 /** Variable notes stored with a custom prompt (all optional: an empty one never blocks sending). */
 function promptVariables(): PromptVariableDoc[] {
-  const extra = ['max_words', 'bio_rows_range', 'min_keyword_occurrences', 'max_keyword_occurrences', 'link_count', 'wikipedia_site', 'seo_brief'];
   return [
     ...CUSTOM_PROMPT_VARIABLES.map((v) => ({ name: v.name, description: v.label, required: false, source: 'input' as const })),
-    ...extra.map((name) => ({ name, description: name.replace(/_/g, ' '), required: false, source: 'settings' as const })),
+    ...EXTRA_PROMPT_VARIABLES.map((name) => ({ name, description: name.replace(/_/g, ' '), required: false, source: 'settings' as const })),
   ];
 }
-const KNOWN_VARIABLES = new Set(promptVariables().map((v) => v.name));
 
-export interface PromptCheck {
-  errors: string[];
-  warnings: string[];
-  used: string[];
-}
-
-/** Template syntax, unknown placeholders and the inputs a writer's prompt should use. */
-export function checkPrompt(content: string, stage: 'ARTICLE' | 'TITLES'): PromptCheck {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  if (!content.trim()) errors.push('The prompt is empty.');
-  try {
-    parseTemplate(content);
-  } catch (e) {
-    if (e instanceof TemplateSyntaxError) errors.push(`Template: ${e.message}`);
-    else throw e;
-  }
-  if (errors.length) return { errors, warnings, used: [] };
-  const used = referencedVariables(content);
-  for (const v of used) if (!KNOWN_VARIABLES.has(v)) errors.push(`{{${v}}} is not a variable the app fills in (use the buttons above the prompt).`);
-  if (!used.includes('keyword') && !used.includes('selected_title')) warnings.push('The prompt uses neither {{keyword}} nor {{selected_title}}: ChatGPT will not know what to write about.');
-  if (stage === 'ARTICLE' && !used.includes('secondary_keywords')) warnings.push('{{secondary_keywords}} is not used: secondary keywords you add will not reach ChatGPT.');
-  if (stage === 'TITLES' && !/recommended title/i.test(content)) warnings.push('Ask for a final line “Recommended Title: …” — the app reads the title from it.');
-  return { errors, warnings, used };
-}
+export { checkPrompt };
 
 const nameSchema = z.string().trim().min(2, 'At least 2 characters.').max(60, 'At most 60 characters.');
 const BUILT_IN_NAMES = new Set([...Object.values(MODULE_DISPLAY_NAMES), ...Object.values(MODULE_SHORT_NAMES), 'celebrity', 'celebrity 2', 'tigram'].map((n) => n.toLowerCase()));

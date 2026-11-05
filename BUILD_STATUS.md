@@ -4359,3 +4359,67 @@ npx vitest run                                        # 441 pass
 npx tsc --noEmit                                      # 0 errors
 npx next build                                        # compiled
 ```
+
+## Owner request (2026-11-05): writers built in the app (Writers → New writer), “fully advanced + user friendly”
+
+The owner: “ab mujhe agher koi new write add krna ha toh tujhe bolna parta ha … me jab chaon module add krlon” — then chose Option 1 (a writer builder in the app).
+- **Data:**
+  - `CustomWriter` (new migration `20261105150000_custom_writers`, a new table only). The writer's prompts are `PromptTemplate` rows under its key `custom-…`, so every save is a version and Prompt Manager lists them under the writer's name.
+  - Settings (`src/lib/writers/types.ts`):
+    - title step: the app's / own prompt / off;
+    - answer rules: words, FAQs exact or about, facts table and its H2 heading in English and German, conclusion, SEO lines, no lists;
+    - category: celebrity / a fixed category by name with a German name / chosen-else-ChatGPT;
+    - photos, link check, internal links, SEO brief;
+    - routing: phrases, and offered for person keywords.
+- **One place for writer rules** (`src/lib/writers/rules.ts`): category rule, image kind and designs, answer order, facts table, prompt-as-written, FAQ count and word range. The built-in writers' rules are unchanged; pipelines, assembly, the SEO check, the quality gate, the category stage, pre-check, task creation, the scheduler and campaigns ask there instead of comparing keys.
+- **Running:**
+  - A custom writer runs Celebrity 2's steps (`src/worker/pipelines/custom.ts`, manifest `src/modules/custom/manifest.ts`). Its settings decide which steps run; a skipped step shows as skipped.
+  - Its answer is read by `parseCustomArticle`, using the writer's rules.
+  - Photo, category and title prompts are borrowed: person writers from Celebrity, general writers from Tigram.
+  - The worker loads the writers at start and every 15 s, and on an unknown `custom-…` article. Drafts and archived writers' articles still run.
+- **Known everywhere:**
+  - an in-process catalog (`src/lib/writers/catalog.ts`), filled by the API wrapper, the pages and the worker, and handed to the browser by `WritersHydrator`;
+  - active writers appear in Single Article, Workflow (per line, Person keywords, Writer for all, the More menu, the workflow writer), Bulk Campaigns, website routing rules, Prompt Manager and the article filters;
+  - imports accept their name;
+  - their phrases route keywords (`WRITER_RULE`).
+- **UI:**
+  - **Writers page:** your writers (status, kind, last test, articles), **New writer** (start from Celebrity 2, Celebrity, Tigram, empty person/general, or a copy), and “Use as a start” on the built-in writers.
+  - **The writer's page:** 8 sections — Basics, Title step, Article prompt (variable buttons, live checks, a preview with example values), Answer rules, Category, Photos & links, Keywords, Test with a ChatGPT answer.
+  - **The Test section:** words, FAQs, table rows and SEO lines against the rules; notes; SEO fields; the H2 outline; the article in a sandboxed frame. It says whether the answer would be used or asked again.
+  - **The side panel:** a “ready” checklist and the steps of an article, with the ones that are off greyed out.
+  - **Actions:** save (with an unsaved-changes bar), make active, back to draft, archive, duplicate, delete (only when unused).
+- **Also fixed:** the Single Article form still refused more than 20 secondary keywords in the browser after the 30-keyword change; it now uses the same limit (30).
+- **Tests:**
+  - unit `custom-writers` (8 tests):
+    - created from Celebrity 2 as a draft, not usable or offered;
+    - names unique and never a built-in name;
+    - bad placeholders and template syntax refused;
+    - test with the owner's real Andrea Soros answer (1,564 words, 5 FAQs, 14 table rows) saved in the checklist, and an answer without the table would be asked again;
+    - active: offered everywhere, found by name, routing phrase;
+    - end to end with scripted ChatGPT: the title step, then the owner's prompt as written; the Family Profile H2 and table, 5 FAQs, the SEO checks pass;
+    - a general writer from Tigram with a fixed category and no title step: no TITLES or CATEGORY prompt, its title from the answer, a website without the category gets a clear message;
+    - archived: hidden, its articles still run, not deletable while used; an unused writer is deleted with its prompts;
+    - the built-in rules are unchanged.
+  - `single-article-e2e`: the expected text of the retired-writer message changed; it is still refused.
+- **Checked:**
+  - unit 62 files / 449 tests; `tsc` 0 errors; `next build` compiled;
+  - integration `images` 13/13; `workflow-publish` 11/11 and `wordpress-drafts` 11/11, each run alone (run together with `images`, the shared browser made one login wait time out);
+  - Chromium against a scratch database, with no page errors and no sideways scrolling at 390 px:
+    - Writers → New writer → Create and open → set FAQs → paste the Andrea Soros answer → “This answer would be used” → Make active;
+    - the writer then appears on Writers, Single Article, the Workflow page and Prompt Manager;
+    - a fixed category without a name shows in the checklist, and Discard clears the unsaved bar.
+- **Not verified:**
+  - a real ChatGPT run of a custom writer, and its images and WordPress draft on the owner's sites;
+  - the owner's own prompts.
+
+**Commands run**
+```
+npx vitest run tests/unit/custom-writers.test.ts                         # 8 pass
+npx vitest run                                                           # 62 files, 449 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts            # 13 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts  # 11 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts  # 11 pass
+npx tsc --noEmit                                                         # 0 errors
+npx next build                                                           # compiled
+node scratchpad/cw-smoke.mjs, cw-smoke2.mjs                              # Chromium: builder flow, lists, Prompt Manager
+```

@@ -168,7 +168,11 @@ export function resolveWriter(input: { keyword: string; language?: string | null
   if (rule.writer && rule.confidence < (input.minConfidence ?? 0.7)) return { ...rule, writer: null, rationale: `${rule.rationale} Confidence ${Math.round(rule.confidence * 100)} % is below the automatic threshold.` };
   // Owner decision (2026-11-04, two celebrity writers): a person keyword is never given a celebrity writer
   // automatically — the owner chooses Celebrity or Celebrity 2.
-  if (rule.writer === 'celebrity-writer') return { ...rule, writer: null, detected: 'celebrity', rationale: `${rule.rationale} Choose Celebrity or Celebrity 2.` };
+  if (rule.writer === 'celebrity-writer') {
+    // The owner's person writers are offered with them (Writers → a writer → Offer it for person keywords).
+    const names = ['Celebrity', 'Celebrity 2', ...activeCustomWriters().filter((w) => w.base === 'person' && w.config.routing.personKeywords).map((w) => w.shortName)];
+    return { ...rule, writer: null, detected: 'celebrity', rationale: `${rule.rationale} Choose ${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}.` };
+  }
   return rule;
 }
 

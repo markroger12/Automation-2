@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import type { InputHTMLAttributes, ReactNode, Ref, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import { cx } from './ui';
 
 const controlBase =
@@ -51,7 +51,8 @@ export function Input({ className, invalid, ...props }: InputHTMLAttributes<HTML
   return <input {...props} aria-invalid={invalid || undefined} className={cx(controlBase, invalid && 'border-rose-400', className)} />;
 }
 
-export function Textarea({ className, invalid, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean }) {
+/** React 19: `ref` is a plain prop and reaches the textarea (the writer page inserts variables at the cursor). */
+export function Textarea({ className, invalid, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean; ref?: Ref<HTMLTextAreaElement> }) {
   return <textarea {...props} aria-invalid={invalid || undefined} className={cx(controlBase, 'min-h-[80px]', invalid && 'border-rose-400', className)} />;
 }
 

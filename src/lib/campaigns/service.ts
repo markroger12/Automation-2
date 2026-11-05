@@ -395,7 +395,7 @@ export async function campaignRowAction(campaignId: string, raw: unknown) {
     let excluded = row.status === 'SKIPPED';
     if (input.action === 'writer') {
       const w = normalizeWriter(input.writer);
-      if (!w) throw badRequest('Choose the Celebrity, Celebrity 2 or Tigram Article Writer.');
+      if (!w) throw badRequest('Choose one of the active writers.');
       writer = w;
       writerSource = 'OVERRIDE';
     } else if (input.action === 'category') {

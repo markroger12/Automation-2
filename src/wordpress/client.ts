@@ -207,13 +207,33 @@ export class WpClient {
   }
 
   /**
-   * Schedule a draft for a future time (the ONLY status change this client
-   * sends). The publish guard refuses it unless the caller holds a permit
-   * from withPublishPermit for this site and post (canPublish + acknowledgement).
+   * Schedule a draft for a future time (with publishMissedSchedule below, the
+   * only status changes this client sends). The publish guard refuses it unless
+   * the caller holds a permit from withPublishPermit for this site and post
+   * (canPublish + acknowledgement).
    */
   async scheduleFuture(id: number, at: Date): Promise<WpPost> {
     const dateGmt = at.toISOString().replace(/\.\d+Z$/, '');
     const { data } = await this.call<WpPost>('POST', `/wp/v2/posts/${id}`, { json: { status: 'future', date_gmt: dateGmt } });
+    return data;
+  }
+
+  /**
+   * Let WordPress run its due scheduled jobs (WP-Cron), as any visit to the site does: a scheduled post whose time has
+   * come is then published by WordPress itself. A plain request to wp-cron.php changes nothing else.
+   */
+  async runCron(): Promise<void> {
+    const url = `${this.siteBase}wp-cron.php`;
+    await assertRequestAllowed(this.site.id, { method: 'GET', url, body: null, contentType: null }, this.taskId);
+    await this.request.get(url, { timeout: 30_000, failOnStatusCode: false, maxRedirects: 3 }).catch(() => null);
+  }
+
+  /**
+   * A scheduled post whose time has passed and that WordPress did not publish (“Missed schedule”): published with its
+   * scheduled date kept. Like scheduleFuture, the publish guard refuses it outside withPublishPermit for this post.
+   */
+  async publishMissedSchedule(id: number, dateGmt: string): Promise<WpPost> {
+    const { data } = await this.call<WpPost>('POST', `/wp/v2/posts/${id}`, { json: { status: 'publish', date_gmt: dateGmt.replace(/Z$/, '') } });
     return data;
   }
 

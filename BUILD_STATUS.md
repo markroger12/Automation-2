@@ -4280,3 +4280,49 @@ npx tsc --noEmit                                      # 0 errors
 npx next build                                        # compiled
 node scratchpad/upd-smoke.mjs                         # Chromium: bell, Settings card, setting (1440 light, 390 dark)
 ```
+
+## Owner report (2026-11-05): “7:15 and still scheduled” (morgan carey, slot 7:00 pm)
+
+Screenshot: Workflow, Celebrity 2 keyword “morgan carey”, status **scheduled**, slot Thu 5 Nov 7:00 pm, no note, at 7:15 pm.
+- **How publishing works:** the app schedules the verified draft in WordPress (“future”) for its slot. WordPress publishes it with its own scheduler (WP-Cron). After the slot, a check job reads the status back.
+- **Causes found:**
+  1. **Missed schedule:** on many hosts WP-Cron runs late or never, because it needs a visit and a working loopback. The post then stays “future” after its time, and the app only waited. Before: “WP-Cron may be delayed” every 30 min; after 24 h: “WP-Cron may not be running”.
+  2. **Silent failed check:** when the check could not reach WordPress (signed out, browser error), the keyword kept no note. The next check waited for the next half hour.
+  3. **Checks piling up:** a check waiting behind another browser job for the website was joined by a new one every window.
+  - Which one happened on the owner's PC is not known (no logs here). The empty note fits cause 2, or a check still waiting.
+- **Fix:**
+  - **Missed schedule handled** (`verifyKeywordPublished`, `src/wordpress/schedule.ts`), only when the post's own time has passed by 2 min and it is still “future”:
+    1. The app starts WordPress's scheduler (a plain request to `wp-cron.php`, as any visit does) and reads the status back up to 3 times. WordPress publishes the post itself.
+    2. If WP-Cron still does not run, the app publishes the post itself, with its scheduled date kept (`WpClient.publishMissedSchedule`). This is the approved path: only from the scheduler, only inside `withPublishPermit` (`canPublish` + acknowledgement re-read), audited as `workflow.published-missed-schedule`, with a log line that suggests a real cron job on the host.
+    - Nothing is ever published before its time.
+    - Publishing off for the website: not published, and the note says so.
+  - **Check cadence** (`schedulerTick`):
+    - the first check comes 2 min after the slot;
+    - then every 5 min for 2 h, then every 30 min;
+    - only one check job per keyword at a time.
+  - **Notes:**
+    - a failed check writes “Could not check WordPress after the slot: … Checked again in a few minutes.”;
+    - a post not yet due says “Scheduled in WordPress for … UTC”, or “(changed in WordPress)” when its time differs;
+    - a scheduled row whose time passed without a note shows “Its time has passed: the app is checking that WordPress published it …” in the Workflow table.
+  - **Guard test** (`tests/unit/wordpress.test.ts`): the client's only status changes are now “future” and “publish”. Each is called only by `schedule.ts`, once, inside `withPublishPermit`, and the publish only for an overdue post.
+- **Tests:**
+  - **Fake WordPress:** new `cron` option: 'visits' (as before), 'missed' (only `wp-cron.php` publishes) and 'never'.
+  - **Integration `workflow-publish`, new tests** (failing on the previous code):
+    - missed schedule 15 min after the slot: one check queued, not one per tick; WP-Cron started; published with the slot as its date;
+    - `wp-cron.php` blocked: the app publishes, date kept, audited;
+    - a post not yet due stays “future”;
+    - signed out: the note says why, and it is tried again in the next 5-minute window (not the next half hour).
+- **Checked:**
+  - integration `workflow-publish` 11/11;
+  - unit `wordpress` 15/15 and `workflow-scheduler` 9/9;
+  - full unit suite 438/438 (437/438 before the guard-test update, the one failure being that test);
+  - `tsc` 0 errors.
+- **Not verified:** the owner's site, and which cause it was. After updating, the next check (within 5 min) publishes “morgan carey” if WordPress still has it as “future”, or says why it cannot.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # previous code: 3 fail; after: 11 pass
+npx vitest run tests/unit/wordpress.test.ts tests/unit/workflow-scheduler.test.ts                  # 15 + 9 pass
+npx vitest run                                                                                     # 438 pass (437 before the guard-test update)
+npx tsc --noEmit                                                                                   # 0 errors
+```

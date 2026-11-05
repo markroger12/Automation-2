@@ -479,7 +479,9 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                 </tr>
               ) : null}
               {shown.map((k) => {
-                const note = k.lastError ?? k.indexingStatus ?? '';
+                // Its time has passed and WordPress has not been confirmed yet: say what happens (owner report: “why still scheduled?”).
+                const slotPassed = k.status === 'SCHEDULED' && k.scheduledAt && Date.parse(k.scheduledAt) < Date.now();
+                const note = k.lastError ?? k.indexingStatus ?? (slotPassed ? 'Its time has passed: the app is checking that WordPress published it (every few minutes; if WordPress missed it, the app publishes it).' : '');
                 const open = expanded.has(k.id);
                 const indexingLink = k.publishedUrl && view.workflow?.requestIndexing && ['PUBLISHED', 'INDEXING_REQUESTED'].includes(k.status);
                 return (

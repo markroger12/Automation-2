@@ -16,7 +16,8 @@ import { upcomingSlots } from './time';
  *  2. moves keywords whose slot passed before they were ready to the next
  *     free slot (bounded by maxRetries, then FAILED with the reason);
  *  3. READY keywords on sites with publishing allowed → one wp.schedule job;
- *     scheduled ones past their time → one wp.verify-published job;
+ *     scheduled ones past their time → one wp.verify-published job at a time
+ *     (every 5 min for 2 h, then every 30; a missed schedule is published);
  *  4. starts new articles: next WAITING keyword (by position), next free
  *     slot (unique per website and time), within the write-ahead horizon and
  *     the backlog cap. A keyword the owner moved to a later day keeps its
@@ -24,6 +25,14 @@ import { upcomingSlots } from './time';
  */
 
 export const SCHEDULE_LEAD_MS = 5 * 60_000;
+/**
+ * Owner report (morgan carey, slot 7:00 pm, still “scheduled” at 7:15): WordPress publishes a scheduled post with its
+ * own scheduler (WP-Cron), which on many hosts runs late or never (“Missed schedule”). This long after its time, the
+ * check starts WP-Cron and, if WordPress still has not published it, publishes it itself (src/wordpress/schedule.ts).
+ */
+export const MISSED_SCHEDULE_GRACE_MS = 2 * 60_000;
+/** After the slot the publication is checked every 5 minutes for 2 hours (a failed check is soon tried again), then every 30. */
+const verifyWindowMs = (slot: Date, now: Date) => (now.getTime() - slot.getTime() < 2 * 3_600_000 ? 5 * 60_000 : 30 * 60_000);
 const SLOT_HORIZON_DAYS = 60;
 
 export type WorkflowWithSite = Workflow & { website: Website };
@@ -161,9 +170,12 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       if (created) report.scheduleJobs++;
     }
   }
-  const due = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'SCHEDULED', scheduledAt: { lte: new Date(now.getTime() - 60_000) } } });
+  const due = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'SCHEDULED', scheduledAt: { lte: new Date(now.getTime() - MISSED_SCHEDULE_GRACE_MS) } } });
   for (const kw of due) {
-    const bucket = Math.floor(now.getTime() / (30 * 60_000));
+    // One check at a time (a waiting one is not joined by another every window).
+    if (await db.queueJob.count({ where: { kind: 'wp.verify-published', relatedId: kw.id, status: { in: ['WAITING', 'ACTIVE'] } } })) continue;
+    const width = verifyWindowMs(kw.scheduledAt!, now);
+    const bucket = `${width / 60_000}m${Math.floor(now.getTime() / width)}`;
     const { created } = await enqueue({ queue: 'control', kind: 'wp.verify-published', idempotencyKey: `wp-verify:${kw.id}:${bucket}`, websiteId: wf.websiteId, relatedId: kw.id, payload: { keywordId: kw.id, websiteId: wf.websiteId } });
     if (created) report.verifyJobs++;
   }

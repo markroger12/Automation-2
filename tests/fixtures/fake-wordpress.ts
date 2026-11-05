@@ -45,6 +45,12 @@ export interface FakeWpOptions {
   twoFactor?: string;
   /** A CAPTCHA box on the login page; the form is taken only with g-recaptcha-response=ok (the owner's tick). */
   captcha?: boolean;
+  /**
+   * WordPress's scheduler (WP-Cron) for posts whose time has come. 'visits' (default): any request publishes them;
+   * 'missed' (“Missed schedule”, as on hosts where WP-Cron's loopback does not run): only a request to wp-cron.php does;
+   * 'never': nothing does (wp-cron.php blocked).
+   */
+  cron?: 'visits' | 'missed' | 'never';
 }
 
 const ROLE_CAPS: Record<NonNullable<FakeWpOptions['role']>, string[]> = {
@@ -247,6 +253,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     password: opts.password ?? '',
     twoFactor: opts.twoFactor ?? '',
     captcha: opts.captcha ?? false,
+    cron: opts.cron ?? 'visits',
     categories: opts.categories ?? [
       { id: 1, name: opts.language === 'de' ? 'Allgemein' : 'Uncategorized', slug: opts.language === 'de' ? 'allgemein' : 'uncategorized', count: 3 },
       { id: 7, name: 'Celebrities', slug: 'celebrities', count: 12 },
@@ -324,6 +331,12 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       res.end();
     };
     const p = url.pathname;
+
+    if (p === '/wp-cron.php') {
+      // WordPress runs its due jobs: scheduled posts whose time has come are published.
+      if (options.cron !== 'never') for (const post of posts.values()) if (post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
+      return send(200, '', 'text/html');
+    }
 
     if (p === '/wp-login.php') {
       const esc = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -427,7 +440,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
         const post = posts.get(Number(one[1]));
         if (!post) return json(404, { code: 'rest_post_invalid_id', message: 'Invalid post ID.' });
         // Like WordPress cron: a scheduled post whose time has come is published.
-        if (post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
+        if (options.cron === 'visits' && post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
         if (method === 'GET') return json(200, restPost(post));
         if (method === 'DELETE') {
           post.status = 'trash';

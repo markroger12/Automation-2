@@ -111,7 +111,7 @@ describe('approved publishing path', () => {
     const t = await client.articleTask.findFirstOrThrow({ where: { idempotencyKey: 'pub:draft-1' } });
     const kw = await client.workflowKeyword.findFirstOrThrow({ where: { taskId: t.id } });
     expect(await schedule.verifyKeywordPublished(kw.id)).toEqual({ published: false, status: 'future' });
-    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).lastError).toMatch(/still shows “future”/);
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).lastError).toMatch(/^Scheduled in WordPress for .* UTC; checked after that time\.$/);
     // WordPress's own scheduler publishes when the time comes (the fixture mimics WP-Cron).
     wp.posts.get(t.wpPostId!)!.date_gmt = new Date(Date.now() - 60_000).toISOString().slice(0, 19);
     const res = await schedule.verifyKeywordPublished(kw.id);
@@ -119,6 +119,85 @@ describe('approved publishing path', () => {
     const after = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
     expect(after.status).toBe('PUBLISHED');
     expect(after.publishedUrl).toContain(`?p=${t.wpPostId}`);
+  });
+
+  it('owner report (morgan carey, 7:00 pm still “scheduled” at 7:15): WordPress missed the schedule — WP-Cron is started, else the app publishes it at its slot', async () => {
+    await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date() } });
+    const { schedulerTick, MISSED_SCHEDULE_GRACE_MS } = await import('@/lib/workflow/scheduler');
+    // A host where WordPress's loopback cron does not run: the post stays “future” after its time (“Missed schedule”).
+    wp.options.cron = 'missed';
+    try {
+      const t = await draftTask('How to Fix Missed Schedule in WordPress', 'pub:missed-1');
+      const kw = await readyKeyword('How to Fix Missed Schedule in WordPress', t.id, new Date(Math.floor((Date.now() + 11 * 3_600_000) / 60_000) * 60_000));
+      expect(await schedule.scheduleKeywordPost(kw.id)).toMatchObject({ scheduled: true });
+      // 15 minutes after its slot (WordPress kept it “future”).
+      const slot = new Date(Math.floor((Date.now() - 15 * 60_000) / 1000) * 1000);
+      wp.posts.get(t.wpPostId!)!.date_gmt = slot.toISOString().slice(0, 19);
+      await client.workflowKeyword.update({ where: { id: kw.id }, data: { scheduledAt: slot } });
+      await client.slotReservation.updateMany({ where: { workflowKeywordId: kw.id }, data: { scheduledAt: slot } });
+      expect(wp.posts.get(t.wpPostId!)!.status).toBe('future');
+      // The scheduler queues one check (not one per tick while it waits).
+      expect((await schedulerTick(new Date())).verifyJobs).toBe(1);
+      expect((await schedulerTick(new Date())).verifyJobs).toBe(0);
+      expect(Date.now() - slot.getTime()).toBeGreaterThan(MISSED_SCHEDULE_GRACE_MS);
+      // The check starts WordPress's own scheduler (as a visit to the site would), and WordPress publishes it.
+      expect(await schedule.verifyKeywordPublished(kw.id)).toMatchObject({ published: true, via: 'wp-cron' });
+      expect(wp.requests.some((r) => r.path.startsWith('/wp-cron.php'))).toBe(true);
+      const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+      expect(row.status).toBe('PUBLISHED');
+      expect(row.publishedAt?.toISOString()).toBe(slot.toISOString());
+      expect(row.scheduledAt?.toISOString()).toBe(slot.toISOString());
+
+      // wp-cron.php blocked too: the app publishes it as scheduled (approved path, its slot kept as the date).
+      wp.options.cron = 'never';
+      const t2 = await draftTask('How to Publish a Missed WordPress Post', 'pub:missed-2');
+      const kw2 = await readyKeyword('How to Publish a Missed WordPress Post', t2.id, new Date(Math.floor((Date.now() + 12 * 3_600_000) / 60_000) * 60_000));
+      expect(await schedule.scheduleKeywordPost(kw2.id)).toMatchObject({ scheduled: true });
+      const slot2 = new Date(Math.floor((Date.now() - 5 * 60_000) / 1000) * 1000);
+      wp.posts.get(t2.wpPostId!)!.date_gmt = slot2.toISOString().slice(0, 19);
+      await client.workflowKeyword.update({ where: { id: kw2.id }, data: { scheduledAt: slot2 } });
+      expect(await schedule.verifyKeywordPublished(kw2.id)).toMatchObject({ published: true, via: 'app' });
+      const post2 = wp.posts.get(t2.wpPostId!)!;
+      expect(post2.status).toBe('publish');
+      expect(post2.date_gmt).toBe(slot2.toISOString().slice(0, 19));
+      expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw2.id } })).status).toBe('PUBLISHED');
+      expect(await client.auditLog.count({ where: { action: 'workflow.published-missed-schedule', entityId: kw2.id } })).toBe(1);
+
+      // Not before its time: a post whose slot has not come stays scheduled (nothing is published early).
+      const t3 = await draftTask('How to Schedule WordPress Posts', 'pub:missed-3');
+      const kw3 = await readyKeyword('How to Schedule WordPress Posts', t3.id, new Date(Math.floor((Date.now() + 13 * 3_600_000) / 60_000) * 60_000));
+      expect(await schedule.scheduleKeywordPost(kw3.id)).toMatchObject({ scheduled: true });
+      expect(await schedule.verifyKeywordPublished(kw3.id)).toEqual({ published: false, status: 'future' });
+      expect(wp.posts.get(t3.wpPostId!)!.status).toBe('future');
+    } finally {
+      wp.options.cron = 'visits';
+    }
+  });
+
+  it('a check that cannot reach WordPress says why on the keyword, and is tried again within minutes', async () => {
+    const t = await draftTask('How to Check WordPress Login', 'pub:verify-fail');
+    const kw = await readyKeyword('How to Check WordPress Login', t.id, new Date(Math.floor((Date.now() + 14 * 3_600_000) / 60_000) * 60_000));
+    await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date() } });
+    expect(await schedule.scheduleKeywordPost(kw.id)).toMatchObject({ scheduled: true });
+    const slot = new Date(Date.now() - 10 * 60_000);
+    await client.workflowKeyword.update({ where: { id: kw.id }, data: { scheduledAt: slot } });
+    const profileId = site.wordpressProfileId!;
+    await client.browserProfile.update({ where: { id: profileId }, data: { sessionState: 'LOGIN_REQUIRED' } });
+    try {
+      await expect(schedule.verifyKeywordPublished(kw.id)).rejects.toThrow(/not logged in/);
+      const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+      expect(row.status).toBe('SCHEDULED');
+      expect(row.lastError).toMatch(/Could not check WordPress after the slot: .*not logged in.*Checked again in a few minutes/);
+    } finally {
+      await client.browserProfile.update({ where: { id: profileId }, data: { sessionState: 'ACTIVE' } });
+    }
+    // A failed check is tried again in the next 5-minute window (it used to wait for the next half hour).
+    const { schedulerTick } = await import('@/lib/workflow/scheduler');
+    const window = Math.ceil(Date.now() / (30 * 60_000)) * 30 * 60_000 + 60_000; // just after a half hour
+    expect((await schedulerTick(new Date(window))).verifyJobs).toBe(1);
+    await client.queueJob.updateMany({ where: { kind: 'wp.verify-published', relatedId: kw.id }, data: { status: 'FAILED' } });
+    expect((await schedulerTick(new Date(window + 60_000))).verifyJobs).toBe(0);
+    expect((await schedulerTick(new Date(window + 5 * 60_000))).verifyJobs).toBe(1);
   });
 
   it('a scheduled post trashed in WordPress is left alone: the keyword fails with the reason and checks stop', async () => {

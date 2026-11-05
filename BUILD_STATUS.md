@@ -4349,7 +4349,7 @@ Screenshot: a Celebrity 2 article (Maison Thomas). “Family Profile” above th
   - Assembly of an article saved before gives the H2, with the image in the same place and the same HTML as the new form;
   - the prompt asks for the H2, and the seed upgrades v1 but keeps an edited prompt.
   - The parser tests and the end-to-end test failed on the previous code.
-- **Checked:** unit 441/441; `tsc` 0 errors.
+- **Checked:** unit 441/441; `tsc` 0 errors; `next build` compiled (this head, with the missed-schedule change).
 - **Not verified:** a real ChatGPT answer to the new prompt; the owner's Maison Thomas draft. For that draft: Regenerate → Assembly, then the draft is saved again.
 
 **Commands run**
@@ -4357,4 +4357,5 @@ Screenshot: a Celebrity 2 article (Maison Thomas). “Family Profile” above th
 npx vitest run tests/unit/celebrity2-writer.test.ts   # previous code: 3 fail; after: 15 pass
 npx vitest run                                        # 441 pass
 npx tsc --noEmit                                      # 0 errors
+npx next build                                        # compiled
 ```

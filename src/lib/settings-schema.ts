@@ -123,6 +123,8 @@ export const notificationSettingsSchema = z.object({
   review: z.boolean().default(true),
   chatgptSignedOut: z.boolean().default(true),
   campaignFinished: z.boolean().default(true),
+  /** A new app version on GitHub (the worker looks every hour; src/lib/update/auto-check.ts). */
+  appUpdate: z.boolean().default(true),
 });
 
 export const settingsSchema = z.object({

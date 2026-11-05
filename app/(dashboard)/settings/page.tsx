@@ -5,19 +5,20 @@ import { Card, PageHeader } from '@/components/ui';
 import { ExtensionPairing } from '@/components/extension-pairing';
 import { AppUpdates } from '@/components/app-updates';
 import { updateInfo } from '@/lib/update/service';
+import { readAutoCheck } from '@/lib/update/auto-check';
 import { SettingsForm } from './settings-form';
 
 export const metadata = { title: 'Settings' };
 
 export default async function SettingsPage() {
-  const [settings, key, update] = await Promise.all([getSettings(), connectionKeyInfo(), updateInfo()]);
+  const [settings, key, update, autoCheck] = await Promise.all([getSettings(), connectionKeyInfo(), updateInfo(), readAutoCheck().catch(() => null)]);
   return (
     <>
       <PageHeader
         title="Settings"
         description="Global defaults. Website pages can override content/SEO/workflow values for their own tasks only. Each task freezes its effective configuration when it starts."
       />
-      <AppUpdates initial={update} />
+      <AppUpdates initial={update} auto={autoCheck} />
       <Card
         title="ChatGPT extension connection key"
         className="mb-6"

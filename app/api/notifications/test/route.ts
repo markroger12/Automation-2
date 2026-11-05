@@ -4,5 +4,5 @@ import { showToast } from '@/lib/notify/windows';
 
 /** Settings → Notifications → Send a test notification: shown right away by this computer's Windows. */
 export const POST = route({}, async () =>
-  showToast({ title: 'Test notification', body: 'Windows notifications work. Articles to review, a signed-out ChatGPT and finished campaigns appear like this.', url: `${appOrigin()}/settings` }),
+  showToast({ title: 'Test notification', body: 'Windows notifications work. Articles to review, a signed-out ChatGPT, finished campaigns and new app versions appear like this.', url: `${appOrigin()}/settings` }),
 );

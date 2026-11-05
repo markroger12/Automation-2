@@ -30,16 +30,18 @@ export function PageHeader({
   );
 }
 
-export function Card({ children, className, title, description, actions, padded = true }: {
+export function Card({ children, className, title, description, actions, padded = true, id }: {
   children?: ReactNode;
   className?: string;
   title?: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
   padded?: boolean;
+  /** Anchor for links to this card (e.g. /settings#app-updates). */
+  id?: string;
 }) {
   return (
-    <section className={cx('surface min-w-0 rounded-xl border', className)}>
+    <section id={id} className={cx('surface min-w-0 rounded-xl border', className)}>
       {title || actions ? (
         <header className="border-app flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
           <div className="min-w-[min(100%,240px)] flex-1 basis-0">

@@ -59,11 +59,14 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 **Settings → Notifications** (on by default): Windows itself shows a notification at the bottom right (and keeps it in the notification centre) when
 - an article needs review or approval — also one from the workflow (“Workflow: article needs review”); more than 3 at once come as one notification with the count;
 - ChatGPT is signed out in Automation Chrome (the articles wait and go on after you sign in);
-- a bulk campaign finished.
+- a bulk campaign finished;
+- a new app version is on GitHub (“App update available”, once per new version; see Updating below).
 
 A click opens the page. The worker shows them while it runs (Windows PowerShell's own notification, nothing is installed and nothing goes to an outside service); what was already waiting when they were turned on is not notified again. **Send a test notification** shows one right away; when it does not appear, Windows Focus assist / Do not disturb may be holding it back.
 
 ## Updating
+
+**You are told when there is a new version:** the worker looks at GitHub every hour (and right after it starts). When your branch has new changes, a Windows notification “App update available” appears once per new version, and the bell (and the banner) shows “App update available” with an **Update** link to Settings → App updates until you update. Nothing is installed by itself. Turn the Windows notification off in Settings → Notifications → “A new app version is available”; the bell still shows it.
 
 **With one click (Settings → App updates):** **Check for updates** asks GitHub (`git fetch`) what is new on your branch and lists the changes, with a note when new packages, database changes or a new extension come with them. **Update now** then stops the dashboard and the worker, brings the code to exactly the version shown (`git merge --ff-only`), runs `npm install` only when the packages changed, builds, runs the migrations (backup first) and starts both again. The page shows each step — while the dashboard is stopped, the same address shows a small “updating” page — and opens the new version by itself (usually 2–5 minutes). If installing or building fails, the code goes back to the version you had and that one starts again; the card says so and “Show steps” has the details. Articles, settings, websites and sign-ins are never touched.
 

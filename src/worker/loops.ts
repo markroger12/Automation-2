@@ -14,6 +14,7 @@ import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
 import { notifyTick } from '@/lib/notify/events';
 import { autoLoginTick } from '@/wordpress/auto-login-loop';
+import { autoCheckTick } from '@/lib/update/auto-check';
 
 let dispatcher: ArticleDispatcher | null = null;
 
@@ -53,6 +54,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'windows-notifications', intervalMs: 15_000, run: async () => void (await notifyTick()) });
   // A WordPress session that ended: sign in again with the saved sign-in (owner request), so paused articles go on.
   registerLoop({ name: 'wordpress-auto-login', intervalMs: 5 * 60_000, run: async () => void (await autoLoginTick()) });
+  // A new app version on GitHub: looked at every hour (and at start); Windows notification once per version, and the bell.
+  registerLoop({ name: 'app-update-check', intervalMs: 5 * 60_000, run: async () => void (await autoCheckTick()) });
 }
 
 /** Let in-flight article work reach a safe point before exit. */

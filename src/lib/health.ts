@@ -1,5 +1,7 @@
 import { db } from './db';
 import { parseJson } from './json';
+import { readAutoCheck, updateNotice } from './update/auto-check';
+import { readStatus } from './update/service';
 
 export const WORKER_HEARTBEAT_MS = 10_000;
 /** A worker is considered alive only if its heartbeat is fresh. */
@@ -63,7 +65,7 @@ export interface HealthWarning {
 
 /** Actionable warnings shown on every page. Never invents state. */
 export async function getHealthWarnings(): Promise<HealthWarning[]> {
-  const [worker, extension, loginSites, loginTasks, siteCount] = await Promise.all([
+  const [worker, extension, loginSites, loginTasks, siteCount, autoCheck] = await Promise.all([
     getWorkerHealth(),
     getExtensionHealth(),
     db.website.findMany({
@@ -73,6 +75,7 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
     }),
     db.articleTask.count({ where: { status: 'LOGIN_REQUIRED' } }),
     db.website.count({ where: { active: true } }),
+    readAutoCheck().catch(() => null),
   ]);
   const warnings: HealthWarning[] = [];
   if (worker.state !== 'online') {
@@ -105,5 +108,8 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
   if (loginTasks > 0 && loginSites.length === 0) {
     warnings.push({ tone: 'warning', title: `${loginTasks} task(s) waiting for a login`, detail: 'ChatGPT or WordPress asked for sign-in or a human check.', href: '/queue?group=paused', action: 'Open queue' });
   }
+  // A new app version on GitHub (owner request: tell me when the tool has an update). Last, after what blocks work.
+  const update = updateNotice(autoCheck, readStatus());
+  if (update) warnings.push(update);
   return warnings;
 }

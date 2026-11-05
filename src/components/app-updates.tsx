@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Check, Database, Download, GitBranch, Loader2, Minus, Package, Puzzle, RefreshCw, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { UpdateCheck, UpdateInfo, UpdateStatus, UpdateStep } from '@/lib/update/service';
+import type { AutoCheckState } from '@/lib/update/auto-check';
 import { Alert, Card, Chip, cx } from './ui';
 import { Button, Modal, useToast } from './client';
 
@@ -15,8 +16,10 @@ const FIRST = 6;
  * Settings → App updates (owner request: one click instead of `git pull`, `npm run start:all` and reloading the
  * extension by hand). Check shows what GitHub has; Update asks npm run start:all to stop, update and restart the app,
  * and this card follows each step — also while the dashboard itself is stopped — then reloads the page.
+ * The worker also looks every hour by itself (`auto`); when it found a new version, this card checks again on opening,
+ * so the Update button is there at once (the bell's “Update” link leads here).
  */
-export function AppUpdates({ initial }: { initial: UpdateInfo }) {
+export function AppUpdates({ initial, auto = null }: { initial: UpdateInfo; auto?: AutoCheckState | null }) {
   const toast = useToast();
   const [info, setInfo] = useState(initial);
   const [check, setCheck] = useState<UpdateCheck | null>(null);
@@ -29,6 +32,13 @@ export function AppUpdates({ initial }: { initial: UpdateInfo }) {
   const [offline, setOffline] = useState(false);
   const [allCommits, setAllCommits] = useState(false);
   const [showLog, setShowLog] = useState(false);
+
+  // The automatic look found a new version: check again now, so the changes and the Update button show at once.
+  useEffect(() => {
+    if (since === null && auto && !auto.error && auto.behind > 0) void runCheck();
+    // Once, on opening the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (since === null) return;
@@ -95,9 +105,10 @@ export function AppUpdates({ initial }: { initial: UpdateInfo }) {
 
   return (
     <Card
+      id="app-updates"
       title="App updates"
-      className="mb-6"
-      description="Get the newest version from GitHub with one click. The app stops for a few minutes, installs it and starts again; articles, settings, websites and sign-ins stay as they are."
+      className="mb-6 scroll-mt-20"
+      description="Get the newest version from GitHub with one click. The app stops for a few minutes, installs it and starts again; articles, settings, websites and sign-ins stay as they are. The app also looks every hour by itself and tells you when there is a new version (the bell, and a Windows notification)."
       actions={
         <Button size="sm" variant="secondary" loading={checking} disabled={following} onClick={runCheck}>
           <RefreshCw className="h-3.5 w-3.5" /> Check for updates
@@ -124,6 +135,12 @@ export function AppUpdates({ initial }: { initial: UpdateInfo }) {
             <span className="text-muted">unknown (git did not answer)</span>
           )}
         </div>
+
+        {auto && !check && !checking && !following && !info.desktop ? (
+          <p className="text-muted text-xs" suppressHydrationWarning>
+            Last automatic look {when(auto.checkedAt)}: {auto.error ? `could not check (${auto.error})` : auto.behind > 0 ? `${auto.behind} new change${auto.behind === 1 ? '' : 's'} on GitHub` : 'this was the newest version'}.
+          </p>
+        ) : null}
 
         {info.desktop ? <Alert tone="info">The desktop app is updated with its own installer.</Alert> : !info.supervised ? <Alert tone="info">The Update button works when the app is started with <code>npm run start:all</code> (it can then restart itself). You can still check what is new.</Alert> : null}
 

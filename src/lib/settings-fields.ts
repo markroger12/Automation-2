@@ -152,6 +152,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'review', label: 'An article needs review or approval', type: 'boolean', help: 'Also articles from the workflow. More than 3 at once come as one notification with the count.' },
       { key: 'chatgptSignedOut', label: 'ChatGPT is signed out', type: 'boolean', help: 'In Automation Chrome; the articles wait and go on after you sign in.' },
       { key: 'campaignFinished', label: 'A bulk campaign finished', type: 'boolean' },
+      { key: 'appUpdate', label: 'A new app version is available', type: 'boolean', help: 'The app looks at GitHub every hour; one notification per new version. The bell shows it too, with a link to Settings → App updates.' },
     ],
   },
   {

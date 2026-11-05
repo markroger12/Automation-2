@@ -4228,3 +4228,55 @@ npx vitest run tests/unit/campaigns.test.ts   # previous code: the new test fail
 npx vitest run                                # 61 files, 430 tests pass
 npx tsc --noEmit                              # 0 errors
 ```
+
+## Owner request (2026-11-05): a notification when the tool has an update
+
+The owner: “tool update ko notification vagera kuch asa set krde”. Before, a new version was only seen after pressing **Check for updates** in Settings → App updates.
+- **The worker looks by itself** (`src/lib/update/auto-check.ts`, loop `app-update-check`, a tick every 5 min):
+  - It looks at GitHub every hour, and at once after it starts, so a finished update or a `git pull` is seen right away. The look is the same `git fetch` comparison as Check for updates.
+  - It does not look in the desktop app (that updates with its installer) or while an update runs.
+  - Nothing is installed by itself.
+- **Windows notification:** “App update available”, with the number of changes and the newest change title. A click opens Settings → App updates.
+  - It comes once per new GitHub version; an even newer version is notified again.
+  - It is not shown again for a version the owner already saw with Check for updates.
+  - New setting: Settings → Notifications → “A new app version is available” (on by default). Off means no Windows notification; the bell still shows it.
+- **The bell and the banner:** “App update available” with an **Update** link to `/settings#app-updates`, until updated.
+  - When the button cannot update (for example, not started with `npm run start:all`), it says why.
+  - It is listed after the warnings that block work. It is hidden while an update runs and once an update finished after the look.
+  - If GitHub cannot be reached, nothing is shown, and the failure is logged once per kind.
+- **Settings → App updates:**
+  - the card has an anchor (`#app-updates`);
+  - it shows the last automatic look;
+  - when that look found a new version, it checks again on opening, so the changes and **Update now** are there at once;
+  - a manual check also refreshes the bell.
+- **Tests:** new unit file `app-update-notify` (8 tests), covering:
+  - the notification and bell texts;
+  - a look at start, then hourly;
+  - one notification per version, and again for a newer one;
+  - nothing after updating;
+  - the setting off (no Windows notification, the bell still shows it);
+  - a version seen in Settings not notified again;
+  - GitHub not reached;
+  - no look in the desktop app or during an update;
+  - the setting is on by default.
+- **Checked:**
+  - unit 62 files / 438 tests;
+  - `tsc` 0 errors;
+  - `next build` compiled;
+  - Chromium against a scratch database with an available update, light 1440 px and dark 390 px, with no page errors and no sideways scrolling:
+    - the bell lists “App update available”, and its **Update** link opens Settings at the card;
+    - the card checks again (here: newest version);
+    - the setting shows under Notifications.
+- **Not verified:**
+  - a real Windows notification for an update (Windows only);
+  - a real new version arriving on the owner's PC.
+  - With three other warnings (as on the scratch database), the banner shows only the first three and the update is in the bell.
+
+**Commands run**
+```
+npx vitest run tests/unit/app-update-notify.test.ts   # 8 pass
+npx vitest run                                        # 62 files, 438 tests pass
+npx tsc --noEmit                                      # 0 errors
+npx next build                                        # compiled
+node scratchpad/upd-smoke.mjs                         # Chromium: bell, Settings card, setting (1440 light, 390 dark)
+```

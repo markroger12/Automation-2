@@ -224,6 +224,26 @@ function defaultImagePlan(keyword: string, imageTitle: string, featuredDesign = 
 
 const sha = async (a: MediaAsset) => createHash('sha256').update(await readAsset(a)).digest('hex');
 
+/**
+ * The places your images take (general writers): those marked “Use in featured” / “Use in body” first, then the other
+ * uploads in upload order for the places left. A picture ChatGPT made earlier is kept only when marked.
+ */
+export function assignOwnedSlots<T extends { usePlace?: string | null; role: string }>(photos: T[]): Map<ImageSlotName, T> {
+  const owned = new Map<ImageSlotName, T>();
+  const featured = photos.filter((p) => p.usePlace === 'FEATURED');
+  const body = [...photos.filter((p) => p.usePlace === 'BODY'), ...featured.slice(1)];
+  if (featured[0]) owned.set('FEATURED', featured[0]);
+  for (const p of body) {
+    const slot = (['BODY1', 'BODY2'] as const).find((s) => !owned.has(s));
+    if (slot) owned.set(slot, p);
+  }
+  for (const p of photos.filter((x) => !x.usePlace && x.role === 'UPLOAD')) {
+    const slot = (['FEATURED', 'BODY1', 'BODY2'] as const).find((s) => !owned.has(s));
+    if (slot) owned.set(slot, p);
+  }
+  return owned;
+}
+
 async function generalImages(ctx: PipelineContext): Promise<StageResult> {
   const notes: string[] = [];
   const imageTitle = featuredImageTitle((ctx.task.selectedTitle ?? ctx.task.seoTitle ?? ctx.task.keyword).trim());
@@ -241,10 +261,13 @@ async function generalImages(ctx: PipelineContext): Promise<StageResult> {
     return { slot, direction: slot === 'FEATURED' && featuredDesign && p ? withoutTitleText(direction, fallback.FEATURED.direction) : direction, alt: p?.alt || fallback[slot].alt };
   });
   if (parsed.length < 3) notes.push(`The image plan had ${parsed.length} of 3 usable lines; the earlier tool's default description was used for the rest.`);
-  // Owner uploads (Images tab) fill the slots first, in upload order; only the rest is generated.
-  const uploads = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'UPLOAD', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' }, take: 3 });
-  const owned = new Map<ImageSlotName, MediaAsset>((['FEATURED', 'BODY1', 'BODY2'] as const).slice(0, uploads.length).map((slot, i) => [slot, uploads[i]]));
-  if (owned.size) notes.push(`${owned.size} of your uploaded image(s) used for ${[...owned.keys()].join(', ')}.`);
+  // Owner uploads (Images tab) fill the slots first, in upload order; only the rest is generated. Owner request
+  // (2026-11-05): a photo marked “Use in featured” / “Use in body” (an upload, or a picture ChatGPT made earlier) takes
+  // that place first.
+  const uploads = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'UPLOAD', status: { not: 'REJECTED' } }, orderBy: { createdAt: 'asc' } });
+  const marked = await db.mediaAsset.findMany({ where: { taskId: ctx.taskId, role: 'GALLERY', status: { not: 'REJECTED' }, usePlace: { not: null } }, orderBy: { createdAt: 'asc' } });
+  const owned = assignOwnedSlots([...uploads, ...marked]);
+  if (owned.size) notes.push(`${owned.size} of your image(s) used for ${[...owned.keys()].join(', ')}${[...owned.values()].some((a) => a.usePlace) ? ' (your choice on the Images tab first)' : ''}.`);
   // One picture at a time in the article's chat, as in the owner's earlier tool (owner report: three pictures at once
   // in three new chats ran in background tabs, where ChatGPT does not draw; two prompts became uncertain). Only a
   // second try goes to a new chat.
@@ -635,16 +658,33 @@ async function celebrityImages(ctx: PipelineContext): Promise<StageResult> {
   const fits = (a: MediaAsset, place: { width: number; height: number }) => a.origin === 'UPLOADED' || fitsPlace(facts[a.id], place);
   const featuredSlots = Array.from({ length: featuredNeeds }, (_, i) => featuredPlaces[i] ?? featuredPlaces[0] ?? { width: CANVAS.width, height: CANVAS.height });
   const people = (a: MediaAsset) => facts[a.id]?.faces?.length;
-  const forFeatured = single.length ? chooseFeatured(single, featuredSlots, { fits, tier, people, upload: (a) => a.origin === 'UPLOADED' }) : { picked: usable.slice(0, 1), rest: [], moved: 0, mostPeople: 0, skippedGroups: 0 };
+  // Owner request (2026-11-05): “Use in featured / Use in body” on the Images tab come first — an upload or a collected
+  // ChatGPT photo, also one the checks had put last — and the app chooses only for the places left. A photo chosen for
+  // the featured image that does not fit its places (more chosen than places) goes to a body image.
+  const choices = [...usable, ...twins.filter((t) => !usable.includes(t))].sort(byUploadOrder);
+  const pinnedFeatured = choices.filter((a) => a.usePlace === 'FEATURED').slice(0, featuredSlots.length);
+  const pinnedBody = choices.filter((a) => a.usePlace === 'BODY' || (a.usePlace === 'FEATURED' && !pinnedFeatured.includes(a))).slice(0, 2);
+  const pinned = new Set([...pinnedFeatured, ...pinnedBody].map((a) => a.id));
+  for (const a of choices) if (a.usePlace && !pinned.has(a.id)) why.set(a.id, `more photos were chosen for the ${a.usePlace === 'FEATURED' ? 'featured image' : 'body'} than it has places`);
+  if (pinned.size) notes.push(`Your choice on the Images tab: ${pinnedFeatured.length} photo(s) in the featured image, ${pinnedBody.length} in the body images; the app chose the rest.`);
+  const notPinned = (a: MediaAsset) => !pinned.has(a.id);
+  const freeFeatured = featuredSlots.slice(pinnedFeatured.length);
+  const freeSingle = single.filter(notPinned);
+  const chosenFeatured = !freeFeatured.length
+    ? { picked: [] as MediaAsset[], rest: freeSingle, moved: 0, mostPeople: 0, skippedGroups: 0 }
+    : freeSingle.length
+      ? chooseFeatured(freeSingle, freeFeatured, { fits, tier, people, upload: (a) => a.origin === 'UPLOADED' })
+      : { picked: pinnedFeatured.length ? [] : usable.filter(notPinned).slice(0, 1), rest: [] as MediaAsset[], moved: 0, mostPeople: 0, skippedGroups: 0 };
+  const forFeatured = { ...chosenFeatured, picked: [...pinnedFeatured, ...chosenFeatured.picked] };
   const featuredPhotos = forFeatured.picked;
   if (!single.length && featuredPhotos.length) notes.push('Every photo found is a collage of another site; the featured image uses one of them. Upload photos on the Images tab to replace it.');
   if (featuredSlots.length >= 2 && forFeatured.mostPeople > 2) notes.push(`Not enough photos with at most 2 people for the ${featuredSlots.length}-photo featured design; it uses one with ${forFeatured.mostPeople} people.`);
   if (forFeatured.skippedGroups) notes.push(`The ${featuredSlots.length}-photo featured design uses photos with at most ${Math.max(2, forFeatured.mostPeople)} people; ${forFeatured.skippedGroups} photo(s) with more people went to the body images.`);
   // The body images: the photos the featured image left, then (owner request) the cropped copies and other sites'
   // collages, for a place that is still free.
-  const lastResort = [...twins.filter((t) => !forFeatured.picked.includes(t)), ...usable.filter((a) => collages.has(a.id) && !forFeatured.picked.includes(a))];
-  const forBody = photosForPlaces([...forFeatured.rest, ...lastResort], [bodyPlace, bodyPlace], fits, tier);
-  const rest = [...forBody.picked, ...forBody.rest];
+  const lastResort = [...twins.filter((t) => !forFeatured.picked.includes(t)), ...usable.filter((a) => collages.has(a.id) && !forFeatured.picked.includes(a))].filter(notPinned);
+  const forBody = photosForPlaces([...forFeatured.rest.filter(notPinned), ...lastResort], Array.from({ length: 2 - pinnedBody.length }, () => bodyPlace), fits, tier);
+  const rest = [...pinnedBody, ...forBody.picked, ...forBody.rest];
   const usedLate = forBody.picked.filter((a) => lastResort.includes(a)).length;
   if (usedLate) notes.push(`${usedLate} photo(s) the checks had put last fill a body image that was still free (“Don't use” on the Images tab leaves one out).`);
   if (forFeatured.moved + forBody.moved) notes.push(`${forFeatured.moved + forBody.moved} photo(s) chosen for a place their faces fit whole; a group photo too wide for its place was used further down.`);

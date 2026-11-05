@@ -712,6 +712,8 @@ model MediaAsset {
   uploadStartedAt DateTime?
   status          String       @default("READY") // READY | UPLOADED | REJECTED | FAILED
   notes           String?
+  /// The owner's choice on the Images tab for a source photo: FEATURED | BODY (null: the app chooses).
+  usePlace        String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 

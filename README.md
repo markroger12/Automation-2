@@ -176,6 +176,14 @@ The test types these credentials itself (simulating you in the login window); th
   - Colours use the app's own colour picker (area, hue bar, hex / R G B, eyedropper in Chrome, swatches including the accent).
   - Workflow slot times use the app's own time picker.
 - **Article → Images tab** — rendered images with alt text, the photos that were collected, your own uploads (used before anything searched or generated) and “Don’t use” for any source photo. **Regenerate images** re-renders and updates the same WordPress draft.
+  - **Auto / Featured / Body** on every upload and collected photo (owner request):
+    - **Featured** puts it in the featured image (a two-photo design takes your featured photos first);
+    - **Body** puts it in a body image;
+    - **Auto** lets the app choose.
+    - Your choice comes before the app's own order and its checks (also for a photo the checks had put last). More photos chosen than places: the extra featured ones go to the body; an extra body one is left out, and the tab says why.
+    - The chip on a photo says where it is used (*used: featured*, *used: body 1* …).
+    - **General writers** (Tigram and your general writers): a picture ChatGPT made earlier is kept for its place when you choose one; only the other places are drawn again.
+    - The choice applies at the next Images run (Regenerate images).
   - **Adding your photos:** **Upload photos**, or drop picture files anywhere on the Images tab, or copy a picture (right-click → *Copy image*) and press **Ctrl+V** on the tab. PNG, JPEG, WebP or GIF, up to 12 MB each, 8 at a time.
   - They are added in the order you add them, and that is their order in the article. A pasted picture is named after the time it was pasted.
   - A picture dragged straight from another web page arrives only as a link. The tab then says to copy the picture and paste it instead.

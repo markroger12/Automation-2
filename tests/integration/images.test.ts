@@ -520,6 +520,58 @@ describe('Image Studio (IMAGES stage)', () => {
     }
   });
 
+  it('owner request: “Use in featured / Use in body” on an upload or a ChatGPT photo puts it there; Auto gives the choice back', async () => {
+    const { updateSettings } = await import('@/lib/settings');
+    const { addOwnerImages, setTaskImagePlace } = await import('@/lib/tasks/images');
+    await updateSettings({ seo: { celebrityPhotoSource: 'chatgpt', celebrityPhotoReview: false } });
+    try {
+      const site = await offlineSite('Celeb Photo Places');
+      await addLogo(site.id);
+      const chatgptPhoto = await solid(40, 150, 90, 1024, 1024);
+      let searches = 0;
+      const answer = (stageKey: string, prompt: string, language: 'en' | 'de', kw: string): ScriptedAnswer => {
+        if (/show them as an image gallery/.test(prompt)) return ++searches === 1 ? { text: 'One photo.', images: [chatgptPhoto] } : { text: 'I could not find more photos of this person.' };
+        return cannedAnswer(stageKey, prompt, language, kw);
+      };
+      const driver = makeDriver(client, answer);
+      const cat = await client.category.findFirstOrThrow({ where: { websiteId: site.id } });
+      const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Alma Rivera', websiteId: site.id, categoryId: cat.id, options: { saveToWordPress: false }, idempotencyKey: 'img:places-1' }, { source: 'SINGLE' });
+      let t = await driver.drive(task.id);
+      const chatgptId = (await client.mediaAsset.findFirstOrThrow({ where: { taskId: t.id, role: 'GALLERY', status: { not: 'REJECTED' }, width: { gte: 400 } } })).id;
+      // The owner's screenshot: an upload of the person, and the ChatGPT photo. Two uploads here.
+      await addOwnerImages(t.id, [
+        { name: 'pasted-a.png', bytes: await solid(210, 80, 80, 1280, 720) },
+        { name: 'pasted-b.png', bytes: await solid(80, 80, 210, 900, 900) },
+      ]);
+      const [a, b] = (await client.mediaAsset.findMany({ where: { taskId: t.id, role: 'UPLOAD' }, orderBy: { createdAt: 'asc' } })).map((u) => u.id);
+      const run = async () => {
+        await actions.regenerateStage(t.id, 'IMAGES');
+        t = await driver.drive(t.id);
+        const data = await stageData(t.id, 'IMAGES');
+        return { data, at: (slot: string) => data.slots.find((s: { slot: string }) => s.slot === slot)?.sourceAssetIds ?? [] };
+      };
+      // Without a choice: the uploads first (featured, body 1), then ChatGPT's photo.
+      let r = await run();
+      expect([r.at('FEATURED'), r.at('BODY1'), r.at('BODY2')]).toEqual([[a], [b], [chatgptId]]);
+      // ChatGPT's photo → featured, the first upload → body.
+      await setTaskImagePlace(t.id, chatgptId, 'FEATURED');
+      await setTaskImagePlace(t.id, a, 'BODY');
+      r = await run();
+      expect([r.at('FEATURED'), r.at('BODY1'), r.at('BODY2')]).toEqual([[chatgptId], [a], [b]]);
+      expect(r.data.notes.join(' | ')).toMatch(/Your choice on the Images tab: 1 photo\(s\) in the featured image, 1 in the body images/);
+      // Auto again: back to the app's own order.
+      await setTaskImagePlace(t.id, chatgptId, null);
+      await setTaskImagePlace(t.id, a, null);
+      r = await run();
+      expect(r.at('FEATURED')).toEqual([a]);
+      // A rendered image cannot be given a place.
+      const rendered = await client.mediaAsset.findFirstOrThrow({ where: { taskId: t.id, role: 'FEATURED', status: { not: 'REJECTED' } } });
+      await expect(setTaskImagePlace(t.id, rendered.id, 'BODY')).rejects.toThrow(/Only a photo the article may use/);
+    } finally {
+      await updateSettings({ seo: { celebrityPhotoSource: 'commons', celebrityPhotoReview: true } });
+    }
+  });
+
   it('degrades safely: no photos → text-only with a note, or review when images are required', async () => {
     commonsPages = [];
     const site = await offlineSite('No Photos');

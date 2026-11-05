@@ -4423,3 +4423,43 @@ npx tsc --noEmit                                                         # 0 err
 npx next build                                                           # compiled
 node scratchpad/cw-smoke.mjs, cw-smoke2.mjs                              # Chromium: builder flow, lists, Prompt Manager
 ```
+
+## Owner request (2026-11-05): “Use in featured / Use in body” on uploaded and ChatGPT photos
+
+Screenshot: the Images tab of an article, with one upload (Your photos) and one ChatGPT photo (Collected photos), each offering only “Don't use”. The owner: “images me ek option hi add krde … use in featured use in body … uploaded images me bhi or chatgpt vali images me bhi”.
+- **Data:** `MediaAsset.usePlace` (FEATURED | BODY | null), new migration `20261105170000_media_use_place` (ADD COLUMN, no data change).
+  - It is set with `setTaskImagePlace` through `PATCH /api/tasks/[id]/images/[assetId]` (`{ place }`).
+  - Only an upload or a collected photo the article may use can be given a place.
+- **Images tab:** every upload and collected photo has **Auto · Featured · Body**.
+  - The “used” chip says where the photo is used (*used: featured / body 1 / body 2*).
+  - After a choice a message says it is applied at the next Images run.
+- **Celebrity photos** (`celebrityImages`):
+  - Photos chosen for Featured fill the featured design's places first, in their order on the tab. Photos chosen for Body take the body images first.
+  - This also applies to a photo the checks had put last (a cropped copy, another site's collage).
+  - The app chooses only for the places left, with its usual rules.
+  - More chosen than places: extra featured ones go to the body; an extra body one is not used, with the reason shown.
+  - A note says what was chosen.
+- **General writers** (`generalImages`, `assignOwnedSlots`): marked uploads and marked pictures ChatGPT made earlier take their places first. Unmarked uploads fill the rest in upload order, and only the remaining places are drawn again.
+- **Tests:**
+  - integration `images`, new test: two uploads plus a ChatGPT photo.
+    - Without a choice: featured = upload 1, body 1 = upload 2, body 2 = ChatGPT.
+    - ChatGPT → Featured and upload 1 → Body: featured = ChatGPT, body 1 = upload 1, body 2 = upload 2.
+    - Auto again: back to the app's order.
+    - A rendered image cannot be given a place.
+  - unit `image-places` (general writers' assignment).
+- **Checked:**
+  - integration `images` 14/14;
+  - unit 64 files / 451 tests; `tsc` 0 errors; `next build` compiled;
+  - Chromium against a scratch article (1440 dark and 390 light, no page errors, no sideways scrolling): the two photos show the selector; ChatGPT's photo as Featured; a click on Body for the upload saves and highlights it.
+- **Disk:** the build first failed with “no space left”. Old scratch folders of this session were removed. Deleting the test runs' leftover folders in the shared `/tmp` was not allowed here.
+- **Not verified:** the owner's own article; real ChatGPT photos.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts   # 14 pass
+npx vitest run tests/unit/image-places.test.ts                                          # 2 pass
+npx vitest run                                                                          # 64 files, 451 tests pass
+npx tsc --noEmit                                                                        # 0 errors
+npx next build                                                                          # compiled
+node scratchpad/img-smoke.mjs                                                           # Chromium: Auto/Featured/Body on the Images tab
+```

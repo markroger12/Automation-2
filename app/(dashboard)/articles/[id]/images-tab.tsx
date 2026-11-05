@@ -32,6 +32,10 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
   const uploads = task.mediaAssets.filter((m) => m.role === 'UPLOAD' && m.status !== 'REJECTED');
   const gallery = task.mediaAssets.filter((m) => m.role === 'GALLERY' && m.status !== 'REJECTED');
   const usedIds = new Set(data?.slots.flatMap((s) => s.sourceAssetIds) ?? []);
+  // Where each source photo is used now (owner request: choose “featured” or “body” per photo).
+  const usedAs = new Map<string, string>();
+  for (const s of data?.slots ?? []) for (const id of s.sourceAssetIds) usedAs.set(id, s.slot === 'FEATURED' ? 'featured' : s.slot === 'BODY1' ? 'body 1' : 'body 2');
+  const placeOf = (id: string) => ((assets.get(id) as { usePlace?: string | null } | undefined)?.usePlace ?? null) as Place;
   const imagesOff = task.config && (task.config as { images?: boolean }).images === false;
   const running = task.group === 'queued' || task.group === 'running';
   // Before the Images step has run, uploads are simply used when it runs; afterwards a regeneration applies them.
@@ -117,6 +121,16 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
     try {
       await api(`/api/tasks/${task.id}/images/${id}`, { method: 'DELETE' });
       toast('success', `This photo will not be used for this article.${ran ? ' Regenerate images to apply.' : ''}`);
+      await onChanged();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    }
+  }
+
+  async function setPlace(id: string, place: Place) {
+    try {
+      await api(`/api/tasks/${task.id}/images/${id}`, { method: 'PATCH', body: { place } });
+      toast('success', `${place === 'FEATURED' ? 'Used in the featured image' : place === 'BODY' ? 'Used in a body image' : 'The app chooses its place again'}.${ran ? ' Regenerate images to apply.' : ' Applied when the Images step runs.'}`);
       await onChanged();
     } catch (e) {
       toast('error', (e as Error).message);
@@ -214,7 +228,7 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
 
       <Card
         title="Your photos"
-        description="Uploaded photos are used before any searched or generated image (in upload order: featured, body 1, body 2). Max 12 MB each."
+        description="Uploaded photos are used before any searched or generated image (in upload order: featured, body 1, body 2), unless you choose a place: Featured or Body on a photo. Max 12 MB each."
         actions={
           <>
             <input ref={fileRef} type="file" multiple accept={PHOTO_TYPES.join(',')} className="hidden" onChange={(e) => onFiles(Array.from(e.target.files ?? []), 'chosen')} />
@@ -225,7 +239,7 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
         }
       >
         <div className="space-y-3">
-          {uploads.length ? <PhotoGrid items={uploads.map((u) => ({ id: u.id, title: u.notes ?? 'Upload', sub: `${u.width}×${u.height}`, used: usedIds.has(u.id), sourceUrl: null }))} onRemove={remove} /> : null}
+          {uploads.length ? <PhotoGrid items={uploads.map((u) => ({ id: u.id, title: u.notes ?? 'Upload', sub: `${u.width}×${u.height}`, used: usedIds.has(u.id), usedAs: usedAs.get(u.id) ?? null, place: placeOf(u.id), sourceUrl: null }))} onRemove={remove} onPlace={setPlace} /> : null}
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -247,10 +261,11 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
       </Card>
 
       {gallery.length ? (
-        <Card title="Collected photos" description="Searched or generated source images. Source URLs are stored as technical provenance only.">
+        <Card title="Collected photos" description="Searched or generated source images; choose Featured or Body on one to put it there. Source URLs are stored as technical provenance only.">
           <PhotoGrid
-            items={gallery.map((g) => ({ id: g.id, title: (g.notes ?? g.origin).replace(/^File:/, ''), sub: `${g.origin === 'WIKIMEDIA' ? 'Wikimedia Commons' : g.origin === 'CHATGPT' ? 'ChatGPT image' : g.origin} · ${g.width}×${g.height}`, used: usedIds.has(g.id), sourceUrl: g.sourceUrl, note: usedIds.has(g.id) ? undefined : data?.gallery.find((x) => x.id === g.id)?.note }))}
+            items={gallery.map((g) => ({ id: g.id, title: (g.notes ?? g.origin).replace(/^File:/, ''), sub: `${g.origin === 'WIKIMEDIA' ? 'Wikimedia Commons' : g.origin === 'CHATGPT' ? 'ChatGPT image' : g.origin} · ${g.width}×${g.height}`, used: usedIds.has(g.id), usedAs: usedAs.get(g.id) ?? null, place: placeOf(g.id), sourceUrl: g.sourceUrl, note: usedIds.has(g.id) ? undefined : data?.gallery.find((x) => x.id === g.id)?.note }))}
             onRemove={remove}
+            onPlace={setPlace}
           />
         </Card>
       ) : null}
@@ -276,7 +291,14 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
   );
 }
 
-function PhotoGrid({ items, onRemove }: { items: { id: string; title: string; sub: string; used: boolean; sourceUrl: string | null; note?: string }[]; onRemove: (id: string) => void }) {
+type Place = 'FEATURED' | 'BODY' | null;
+const PLACES: { value: Place; label: string; tip: string }[] = [
+  { value: null, label: 'Auto', tip: 'The app chooses where this photo goes' },
+  { value: 'FEATURED', label: 'Featured', tip: 'Use this photo in the featured image' },
+  { value: 'BODY', label: 'Body', tip: 'Use this photo in a body image' },
+];
+
+function PhotoGrid({ items, onRemove, onPlace }: { items: { id: string; title: string; sub: string; used: boolean; usedAs: string | null; place: Place; sourceUrl: string | null; note?: string }[]; onRemove: (id: string) => void; onPlace: (id: string, place: Place) => void }) {
   return (
     <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {items.map((p) => (
@@ -294,8 +316,24 @@ function PhotoGrid({ items, onRemove }: { items: { id: string; title: string; su
             ) : null}
             {/* Why a collected photo was not used (owner: they are used until “Don't use”). */}
             {p.note ? <p className="text-amber-700 dark:text-amber-400">{p.note}</p> : null}
+            {/* Owner request: use this photo in the featured image or a body image (Auto: the app chooses). */}
+            <div role="radiogroup" aria-label={`Where to use ${p.title}`} className="border-app flex overflow-hidden rounded-md border">
+              {PLACES.map((o) => (
+                <button
+                  key={o.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={p.place === o.value}
+                  title={o.tip}
+                  onClick={() => p.place !== o.value && onPlace(p.id, o.value)}
+                  className={cx('flex-1 px-2 py-1 text-[11px] font-medium transition', p.place === o.value ? (o.value ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'bg-[var(--surface-2)] text-[var(--text)]') : 'text-muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]')}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center justify-between">
-              {p.used ? <Chip tone="success">used</Chip> : <span />}
+              {p.used ? <Chip tone="success">{p.usedAs ? `used: ${p.usedAs}` : 'used'}</Chip> : <span />}
               <button type="button" className="text-muted inline-flex items-center gap-1 hover:text-rose-600" onClick={() => onRemove(p.id)}>
                 <Trash2 className="h-3.5 w-3.5" /> Don’t use
               </button>

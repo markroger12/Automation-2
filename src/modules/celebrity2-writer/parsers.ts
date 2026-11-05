@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 import { cleanModelMarkdown, markdownToHtml } from '@/lib/content/markdown';
 import { stripTags, wordCount } from '@/lib/content/text';
 import { FAQ_RE } from '@/lib/content/assembly';
+import { profileHeadingAsH2 } from '@/lib/content/profile-heading';
 import { parseTigramArticle } from '../tigram-writer/parsers';
 import { parseQuickBio, type BioRow, type FaqItem } from '../celebrity-writer/parsers';
 
@@ -39,7 +40,8 @@ function unwrapFencedTables(md: string): string {
  *
  *   **SEO Title:** … / **Meta Description:** … / **URL Slug:** …
  *   # Title
- *   introduction, the direct answer (no heading), **Family Profile** + table, ## sections, ## Conclusion,
+ *   introduction, the direct answer (no heading), ## Family Profile + table (a bold “Family Profile” line becomes that
+ *   H2, owner report), ## sections, ## Conclusion,
  *   ## Frequently Asked Questions with ### 1. … questions.
  *
  * Missing metadata lines are not a reason to ask again (the app fills them as for the Celebrity writer); a missing
@@ -72,6 +74,8 @@ export function parseCelebrity2Article(text: string, language: string, title?: s
   let bioRows: BioRow[] = [];
   let bioHtml: string | null = null;
   if (table.length) {
+    // Owner report: “Family Profile” is an H2 (ChatGPT writes it as a bold line, with a colon, as an H3 — or leaves it out).
+    profileHeadingAsH2($, language);
     const parsed = parseQuickBio($.html(table), language, 12);
     const structural = parsed.problems.filter((p) => /columns|No table rows/.test(p));
     if (parsed.rows.length && !structural.length) {

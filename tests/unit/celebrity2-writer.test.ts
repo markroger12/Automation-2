@@ -79,17 +79,19 @@ describe('Celebrity 2: the owner’s ChatGPT answer is read completely', () => {
     // The H1 is the post's title in WordPress, not a heading in the body.
     expect($('h1').length).toBe(0);
     expect(p.html).not.toContain('SEO Title');
-    // A real two-column table (not code), the app's clean table, after the “Family Profile” label.
+    // A real two-column table (not code), the app's clean table, under the H2 “Family Profile” (owner: an H2, not a bold line).
     expect($('pre, code').length).toBe(0);
     expect($('table.bas-quick-bio').length).toBe(1);
     expect(p.bioRows).toHaveLength(14);
     expect(p.bioRows[0]).toEqual({ attribute: 'Full Name', details: 'Andrea E. Soros Colombel' });
+    expect($('table.bas-quick-bio').prev().is('h2')).toBe(true);
     expect($('table.bas-quick-bio').prev().text()).toBe('Family Profile');
-    // Introduction and the direct answer (no heading of its own) come before the table.
+    expect($('p').filter((_, e) => $(e).text().trim() === 'Family Profile').length).toBe(0);
+    // Introduction and the direct answer (no heading of its own) come before it.
     expect($('body > p').first().text()).toMatch(/^Andrea Soros is an American philanthropist/);
-    expect($('table').prevAll('p').length).toBe(3);
+    expect($('table').prevAll('p').length).toBe(2);
     const h2 = $('h2').toArray().map((e) => $(e).text());
-    expect(h2[0]).toBe('Who Is Andrea Soros Colombel?');
+    expect(h2.slice(0, 2)).toEqual(['Family Profile', 'Who Is Andrea Soros Colombel?']);
     expect(h2.slice(-2)).toEqual(['Conclusion', 'Frequently Asked Questions']);
     expect(p.faqs).toHaveLength(5);
     expect(p.faqs[0]).toEqual({ question: "Who is Andrea Soros' mother?", answer: 'Her mother is Annaliese Witschak, George Soros\' first wife and the mother of Robert and Jonathan Soros.' });
@@ -98,6 +100,48 @@ describe('Celebrity 2: the owner’s ChatGPT answer is read completely', () => {
     expect(p.warnings.filter((w) => !/Meta description has/.test(w))).toEqual([]);
     expect(p.words).toBeGreaterThan(1300);
     expect(p.words).toBeLessThan(1700);
+  });
+
+  it('owner report: “Family Profile” is an H2 however ChatGPT writes it (bold line, with a colon, H3, German, or left out)', async () => {
+    const { parseCelebrity2Article } = await import('@/modules/celebrity2-writer/parsers');
+    const headingBeforeTable = (answer: string, language = 'en') => {
+      const p = parseCelebrity2Article(answer, language, TITLE);
+      expect(p.problems).toEqual([]);
+      const $ = load(`<body>${p.html}</body>`);
+      const prev = $('table.bas-quick-bio').prev();
+      // The direct answer above it stays a paragraph.
+      expect(prev.prev().is('p')).toBe(true);
+      expect(prev.prev().text()).toMatch(/^Andrea Soros Colombel is the daughter/);
+      return `${prev.prop('tagName')} ${prev.text()}`;
+    };
+    expect(headingBeforeTable(ANSWER)).toBe('H2 Family Profile');
+    expect(headingBeforeTable(ANSWER.replace('**Family Profile**', '**Family Profile:**'))).toBe('H2 Family Profile');
+    expect(headingBeforeTable(ANSWER.replace('**Family Profile**', '### Family Profile'))).toBe('H2 Family Profile');
+    expect(headingBeforeTable(ANSWER.replace('**Family Profile**', '## Family Profile'))).toBe('H2 Family Profile');
+    expect(headingBeforeTable(ANSWER.replace('**Family Profile**', '**Familienprofil**'), 'de')).toBe('H2 Familienprofil');
+    expect(headingBeforeTable(ANSWER.replace('**Family Profile**\n', ''))).toBe('H2 Family Profile');
+    expect(headingBeforeTable(ANSWER.replace('**Family Profile**\n', ''), 'de')).toBe('H2 Familienprofil');
+  });
+
+  it('an article saved before (bold “Family Profile” line): Assembly makes it the H2; body image 1 keeps its place', async () => {
+    const { parseCelebrity2Article } = await import('@/modules/celebrity2-writer/parsers');
+    const { assembleArticle } = await import('@/lib/content/assembly');
+    const fresh = parseCelebrity2Article(ANSWER, 'en', TITLE).html;
+    const old = fresh.replace('<h2>Family Profile</h2>', '<p><strong>Family Profile</strong></p>');
+    expect(old).toContain('<p><strong>Family Profile</strong></p>');
+    const img = { slot: 'BODY1', html: '<figure class="bas-body-1"><img src="x.jpg" alt=""></figure>' };
+    const a = assembleArticle({ moduleKey: 'celebrity2-writer', language: 'en', title: TITLE, bodyHtml: old, images: [img] } as Parameters<typeof assembleArticle>[0]);
+    const $ = load(`<body>${a.html}</body>`);
+    expect($('table.bas-quick-bio').prev().is('h2')).toBe(true);
+    expect($('table.bas-quick-bio').prev().text()).toBe('Family Profile');
+    expect($('p').filter((_, e) => $(e).text().trim() === 'Family Profile').length).toBe(0);
+    // The image stays between the article's first and second sections (not right under the table).
+    const h2 = $('h2').toArray().map((e) => $(e).text());
+    expect(h2.slice(0, 3)).toEqual(['Family Profile', 'Who Is Andrea Soros Colombel?', h2[2]]);
+    expect($('figure.bas-body-1').next().is('h2')).toBe(true);
+    expect($('figure.bas-body-1').next().text()).toBe(h2[2]);
+    // Assembling the new form gives the same article.
+    expect(assembleArticle({ moduleKey: 'celebrity2-writer', language: 'en', title: TITLE, bodyHtml: fresh, images: [img] } as Parameters<typeof assembleArticle>[0]).html).toBe(a.html);
   });
 
   it('a table ChatGPT put into a code block becomes a table; an answer without the table or the FAQs is asked again', async () => {
@@ -180,6 +224,31 @@ describe('Celebrity 2: the owner’s prompt', () => {
       '# 17. FINAL OUTPUT INSTRUCTIONS',
     ]);
   });
+
+  it('owner report: asks for “Family Profile” as an H2; a saved prompt still as shipped is upgraded, an edited one is kept', async () => {
+    const { CELEBRITY2_ARTICLE_PROMPT } = await import('@/modules/celebrity2-writer/prompt');
+    expect(CELEBRITY2_ARTICLE_PROMPT).toContain('\n## Family Profile\n\n[Clean two-column HTML-compatible table');
+    expect(CELEBRITY2_ARTICLE_PROMPT).toContain('add the H2 heading `## Family Profile` (an H2 heading, not bold text)');
+    expect(CELEBRITY2_ARTICLE_PROMPT).not.toContain('**Family Profile**');
+    const { findPromptDefault } = await import('@/modules/prompt-defaults');
+    const { promptHash, seedPrompt } = await import('@/lib/prompts/seed');
+    const def = findPromptDefault('celebrity2-writer', 'ARTICLE')!;
+    // The text shipped before (v1): a bold “Family Profile” line.
+    const v1 = CELEBRITY2_ARTICLE_PROMPT.replace('## Family Profile\n\n[Clean', '**Family Profile**\n\n[Clean').replace(
+      'add the H2 heading `## Family Profile` (an H2 heading, not bold text), then include one clean, two-column HTML-compatible family profile table directly under it.',
+      'include one clean, two-column HTML-compatible family profile table.',
+    );
+    expect(def.version).toBe(2);
+    expect(def.previousHashes).toContain(promptHash(v1));
+    const where = { moduleKey_stageKey: { moduleKey: 'celebrity2-writer', stageKey: 'ARTICLE' } };
+    await client.promptTemplate.update({ where, data: { content: v1, defaultVersion: 1, customized: false } });
+    expect(await seedPrompt(client, def)).toBe('upgraded');
+    expect((await client.promptTemplate.findUniqueOrThrow({ where })).content).toBe(CELEBRITY2_ARTICLE_PROMPT);
+    // The owner's own edit is never overwritten.
+    await client.promptTemplate.update({ where, data: { content: `${v1}\nMy own line.`, defaultVersion: 1, customized: true } });
+    expect(await seedPrompt(client, def)).toBe('kept-customized');
+    await client.promptTemplate.update({ where, data: { content: CELEBRITY2_ARTICLE_PROMPT, defaultVersion: 2, customized: false } });
+  });
 });
 
 describe('Celebrity articles always go into the “Celebrity” category (German: “Prominente”)', () => {
@@ -249,6 +318,9 @@ describe('Celebrity 2 end to end (scripted ChatGPT, the owner’s real answer)',
     const h2 = $('h2').toArray().map((e) => $(e).text());
     expect(h2.slice(-2)).toEqual(['Conclusion', 'Frequently Asked Questions']);
     expect($('table.bas-quick-bio tbody tr').length).toBe(14);
+    // The assembled article keeps “Family Profile” as the H2 right above its table.
+    expect($('table.bas-quick-bio').prev().is('h2')).toBe(true);
+    expect($('table.bas-quick-bio').prev().text()).toBe('Family Profile');
     expect($('h1').length).toBe(0);
     // Every source link was opened; the one answering 404 became its text.
     expect(new Set(fetched.filter((u) => !u.startsWith('https://soros.example/'))).size).toBe(8);

@@ -196,9 +196,10 @@ Do not write an article; one short caption line is enough.`,
     stageKey: 'ARTICLE',
     name: 'Celebrity 2 — Article',
     description: 'The owner’s one-prompt celebrity article: SEO title, meta description, URL slug, introduction, direct answer, Family Profile table, sourced sections, conclusion and five FAQs.',
-    version: 1,
+    // v2 (owner report): “Family Profile” is asked for as an H2 heading (it was a bold line).
+    version: 2,
     kind: 'text',
-    previousHashes: [],
+    previousHashes: ['870eff1cd3416a9b86d091d9bc0770bffa41c1dd4fd1c7942949052f5dc5725b'],
     variables: [
       v('selected_title', 'The approved title from the title step (kept exactly)', true, 'stage'),
       KEYWORD,

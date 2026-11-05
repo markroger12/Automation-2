@@ -4326,3 +4326,35 @@ npx vitest run tests/unit/wordpress.test.ts tests/unit/workflow-scheduler.test.t
 npx vitest run                                                                                     # 438 pass (437 before the guard-test update)
 npx tsc --noEmit                                                                                   # 0 errors
 ```
+
+## Owner report (2026-11-05): Celebrity 2 “Family Profile” is not an H2
+
+Screenshot: a Celebrity 2 article (Maison Thomas). “Family Profile” above the person table is bold text, not an H2 heading. The owner asked to fix the prompt.
+- **Cause:** the owner's prompt shows the output as `**Family Profile**` (a bold line), and the parser kept that line as a paragraph.
+- **Fix:**
+  - **Prompt** (`CELEBRITY2_ARTICLE_PROMPT`, default v2):
+    - the output format now has `## Family Profile`;
+    - the “Family Profile Table” section asks for the H2 heading `## Family Profile` (“an H2 heading, not bold text”) with the table directly under it.
+    - A saved prompt still as shipped (v1, not edited) is upgraded at the next start or update (seed, `previousHashes`). An edited one is kept.
+  - **Parser** (`profileHeadingAsH2`, `src/lib/content/profile-heading.ts`, used by `parseCelebrity2Article`):
+    - the line right above the table becomes an H2 with its own words, whether it was bold, bold with a colon, an H3, or German “Familienprofil”;
+    - with no such line, “Family Profile” (German “Familienprofil”) is added;
+    - the direct answer above it stays a paragraph.
+  - **Assembly:**
+    - **Older Celebrity 2 articles:** the bold line becomes the H2, so **Regenerate → Assembly** fixes an article saved before.
+    - **Body images:** the Family Profile section stays after the introduction, and body image 1 keeps its place between the article's first and second own sections.
+- **Tests** (unit `celebrity2-writer`, 15 tests):
+  - the owner's sample answer gives an H2 above the table;
+  - six variants (colon, H3, H2, German, missing, missing German);
+  - Assembly of an article saved before gives the H2, with the image in the same place and the same HTML as the new form;
+  - the prompt asks for the H2, and the seed upgrades v1 but keeps an edited prompt.
+  - The parser tests and the end-to-end test failed on the previous code.
+- **Checked:** unit 441/441; `tsc` 0 errors.
+- **Not verified:** a real ChatGPT answer to the new prompt; the owner's Maison Thomas draft. For that draft: Regenerate → Assembly, then the draft is saved again.
+
+**Commands run**
+```
+npx vitest run tests/unit/celebrity2-writer.test.ts   # previous code: 3 fail; after: 15 pass
+npx vitest run                                        # 441 pass
+npx tsc --noEmit                                      # 0 errors
+```

@@ -368,7 +368,7 @@ Do not claim that providing this block guarantees a Google featured snippet.
 
 ## Family Profile Table
 
-After the quick answer, include one clean, two-column HTML-compatible family profile table.
+After the quick answer, add the H2 heading \`## Family Profile\` (an H2 heading, not bold text), then include one clean, two-column HTML-compatible family profile table directly under it.
 
 Columns:
 
@@ -705,7 +705,7 @@ Provide only the finished deliverables in the exact following order.
 
 [40–60-word direct answer as a plain paragraph — no heading, title, or label]
 
-**Family Profile**
+## Family Profile
 
 [Clean two-column HTML-compatible table containing supported facts only]
 

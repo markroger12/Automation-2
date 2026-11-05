@@ -7,8 +7,9 @@ import { api } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, cx } from '@/components/ui';
-import { RowStatusChip, WRITER_LABEL } from '../shared';
-import { isCelebrityModule } from '@/lib/domain';
+import { RowStatusChip } from '../shared';
+import { categoryRuleFor } from '@/lib/writers/rules';
+import { writerChoices } from '@/lib/writers/options';
 
 interface Site {
   id: string;
@@ -50,7 +51,7 @@ interface Preview {
 interface Template {
   name: string;
   websiteId: string;
-  defaultWriter: 'AUTO' | 'celebrity-writer' | 'celebrity2-writer' | 'tigram-writer';
+  defaultWriter: string;
   options: Record<string, unknown>;
 }
 type Override = { include?: boolean; writer?: string | null; categoryId?: string | null; confirmVariant?: boolean };
@@ -234,9 +235,11 @@ export function NewCampaign() {
             <Field label="Writer" htmlFor="c-writer" help="Automatic routing chooses Tigram for clear topics; person keywords and unclear ones wait for you (Celebrity or Celebrity 2). A writer column or your correction always wins.">
               <Select id="c-writer" value={defaultWriter} onChange={(e) => { setDefaultWriter(e.target.value as Template['defaultWriter']); setPreview(null); }}>
                 <option value="AUTO">Automatic (Smart Router)</option>
-                <option value="celebrity-writer">Celebrity Article Writer for every row</option>
-                <option value="celebrity2-writer">Celebrity 2 Article Writer for every row</option>
-                <option value="tigram-writer">Tigram Article Writer for every row</option>
+                {writerChoices().map((w) => (
+                  <option key={w.key} value={w.key}>
+                    {w.name} for every row
+                  </option>
+                ))}
               </Select>
             </Field>
             <div className="grid grid-cols-3 gap-2">
@@ -306,9 +309,11 @@ export function NewCampaign() {
             {sel.length ? (
               <span className="ml-auto flex flex-wrap items-center gap-1 text-xs">
                 <span className="text-muted">{sel.length} selected:</span>
-                <Button size="sm" onClick={() => override(sel, { writer: 'celebrity-writer' })}>Celebrity</Button>
-                <Button size="sm" onClick={() => override(sel, { writer: 'celebrity2-writer' })}>Celebrity 2</Button>
-                <Button size="sm" onClick={() => override(sel, { writer: 'tigram-writer' })}>Tigram</Button>
+                {writerChoices().map((w) => (
+                  <Button key={w.key} size="sm" onClick={() => override(sel, { writer: w.key })}>
+                    {w.short}
+                  </Button>
+                ))}
                 {selSite?.categories.length ? (
                   <span className="inline-block w-44"><Select aria-label="Category for the selected rows" className="px-2 py-1 text-xs" value="" onChange={(e) => { if (e.target.value) override(sel, { categoryId: e.target.value }); }}>
                     <option value="">Category…</option>
@@ -365,9 +370,11 @@ export function NewCampaign() {
                         ) : (
                           <Select aria-label={`Writer for line ${r.line}`} className="w-36 px-2 py-1 text-xs" value={r.writer ?? ''} onChange={(e) => override([r.line], { writer: e.target.value || null })}>
                             <option value="">Choose…</option>
-                            <option value="celebrity-writer">Celebrity</option>
-                            <option value="celebrity2-writer">Celebrity 2</option>
-                            <option value="tigram-writer">Tigram</option>
+                            {writerChoices().map((w) => (
+                              <option key={w.key} value={w.key}>
+                                {w.short}
+                              </option>
+                            ))}
                           </Select>
                         )}
                         {r.routerRationale ? (
@@ -377,11 +384,12 @@ export function NewCampaign() {
                         ) : null}
                       </td>
                       <td>
-                        {isCelebrityModule(r.writer) ? (
-                          // Celebrity articles always go into “Celebrity” (German: “Prominente”); nothing to choose.
-                          <span className="text-xs" title="Celebrity articles always go into “Celebrity” (German websites: “Prominente”).">{r.categoryName ?? '—'}</span>
+                        {r.writer && categoryRuleFor(r.writer).mode !== 'chatgpt' ? (
+                          // Celebrity articles always go into “Celebrity” (German: “Prominente”); the owner's writers may
+                          // always use another category. Nothing to choose.
+                          <span className="text-xs" title="This writer always uses this category.">{r.categoryName ?? '—'}</span>
                         ) : (
-                          <span className="text-muted text-xs">{r.writer === 'tigram-writer' ? (r.categoryName ?? 'chosen by the writer') : '—'}</span>
+                          <span className="text-muted text-xs">{r.writer && r.writer !== 'celebrity-writer' ? (r.categoryName ?? 'chosen by the writer') : '—'}</span>
                         )}
                       </td>
                       <td>
@@ -427,7 +435,7 @@ export function NewCampaign() {
               </Button>
             </div>
           ) : null}
-          <p className="text-muted mt-3 text-xs">Writer labels: {Object.values(WRITER_LABEL).join(' / ')}. Rows that need a writer, a category or a duplicate decision are not created until you decide.</p>
+          <p className="text-muted mt-3 text-xs">Writer labels: {writerChoices().map((w) => w.short).join(' / ')}. Rows that need a writer, a category or a duplicate decision are not created until you decide.</p>
         </Card>
       ) : null}
     </div>

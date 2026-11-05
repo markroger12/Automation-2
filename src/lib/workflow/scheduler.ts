@@ -1,8 +1,10 @@
 import type { Website, Workflow, WorkflowKeyword } from '@prisma/client';
 import { db } from '../db';
 import { log } from '../log';
-import { isActiveModuleKey, isCelebrityModule, writerTypeToModule, type ActiveModuleKey } from '../domain';
-import { findCelebrityCategory, missingCelebrityCategoryMessage } from '../celebrity-category';
+import { isActiveModuleKey, moduleDisplayName, writerTypeToModule, type ActiveModuleKey } from '../domain';
+import { findRuleCategory, missingRuleCategoryMessage } from '../celebrity-category';
+import { categoryRuleFor } from '../writers/rules';
+import { ensureCustomWriters } from '../writers/store';
 import { parseJson } from '../json';
 import { enqueue } from '../queue';
 import { createArticleTask } from '../tasks/create';
@@ -99,6 +101,7 @@ export interface TickReport {
 
 export async function schedulerTick(now = new Date()): Promise<TickReport> {
   const report: TickReport = { workflows: 0, started: 0, ready: 0, kept: 0, moved: 0, failed: 0, scheduleJobs: 0, verifyJobs: 0 };
+  await ensureCustomWriters();
   const workflows = await db.workflow.findMany({ where: { active: true }, include: { website: true } });
   for (const wf of workflows) {
     report.workflows++;
@@ -204,9 +207,11 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       if (kw.lastError !== msg) await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: msg } });
       continue;
     }
-    if (isCelebrityModule(writer) && !findCelebrityCategory(await db.category.findMany({ where: { websiteId: wf.websiteId } }), wf.website.language)) {
-      // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”).
-      const msg = missingCelebrityCategoryMessage(wf.website.name, wf.website.language);
+    const rule = categoryRuleFor(writer);
+    if (rule.mode !== 'chatgpt' && !findRuleCategory(await db.category.findMany({ where: { websiteId: wf.websiteId } }), rule, wf.website.language)) {
+      // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”); the owner's
+      // writers may always use another fixed category.
+      const msg = missingRuleCategoryMessage(wf.website.name, rule, wf.website.language, moduleDisplayName(writer));
       if (kw.lastError !== msg) await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: msg } });
       continue;
     }

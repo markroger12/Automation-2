@@ -3,6 +3,7 @@ import { detectLanguage, stripTags, wordCount } from '../content/text';
 import type { SeoReport } from '../seo/checks';
 import { isCelebrityModule } from '../domain';
 import { matchMetaLine } from '../content/meta-lines';
+import { customFaqRule, keepsAnswerOrder, profileTableFor } from '../writers/rules';
 
 export interface QualityInput {
   html: string;
@@ -65,16 +66,20 @@ export function evaluateQuality(input: QualityInput): QualityResult {
   if (lang.language !== 'unknown' && lang.language !== input.language && lang.confidence > 0.7) {
     hardStops.push({ code: 'WRONG_LANGUAGE', message: `The article reads as ${lang.language === 'de' ? 'German' : 'English'} but the task language is ${input.language === 'de' ? 'German' : 'English'}.`, source: 'FINAL_ARTICLE' });
   }
-  // Celebrity 2 writes its FAQs and Family Profile table in its ARTICLE answer.
-  const c2 = input.moduleKey === 'celebrity2-writer';
-  if (m.faqCount === 0) hardStops.push({ code: 'FAQ_MISSING', message: 'The FAQ section is missing.', source: input.moduleKey === 'celebrity-writer' ? 'FAQS' : 'ARTICLE' });
-  else if (isCelebrityModule(input.moduleKey) && m.faqCount !== input.expectedFaqCount) {
-    warnings.push({ code: 'FAQ_COUNT', message: `${m.faqCount} FAQs instead of exactly ${input.expectedFaqCount}.`, source: c2 ? 'ARTICLE' : 'FAQS' });
+  // Celebrity 2 and the owner's writers write their FAQs and their facts table in the ARTICLE answer.
+  const oneAnswer = keepsAnswerOrder(input.moduleKey);
+  const faqRule = customFaqRule(input.moduleKey);
+  const exactFaqs = faqRule ? faqRule.exact : isCelebrityModule(input.moduleKey);
+  if (input.expectedFaqCount > 0 && m.faqCount === 0) hardStops.push({ code: 'FAQ_MISSING', message: 'The FAQ section is missing.', source: input.moduleKey === 'celebrity-writer' ? 'FAQS' : 'ARTICLE' });
+  else if (input.expectedFaqCount > 0 && (exactFaqs ? m.faqCount !== input.expectedFaqCount : Math.abs(m.faqCount - input.expectedFaqCount) > 2) && (exactFaqs || faqRule)) {
+    warnings.push({ code: 'FAQ_COUNT', message: `${m.faqCount} FAQs instead of ${exactFaqs ? 'exactly' : 'about'} ${input.expectedFaqCount}.`, source: oneAnswer ? 'ARTICLE' : 'FAQS' });
   }
-  if (isCelebrityModule(input.moduleKey)) {
-    const table = c2 ? 'Family Profile' : 'Quick Bio';
-    if (m.quickBioRows === null) hardStops.push({ code: 'BIO_MISSING', message: `The ${table} table is missing.`, source: c2 ? 'ARTICLE' : 'QUICK_BIO' });
-    else if (m.quickBioColumnsOk === false) hardStops.push({ code: 'BIO_MALFORMED', message: `The ${table} table does not have exactly two columns.`, source: c2 ? 'ARTICLE' : 'QUICK_BIO' });
+  // The person's facts table: Quick Bio (Celebrity), Family Profile (Celebrity 2), the owner's person writers' table.
+  const profile = input.moduleKey === 'celebrity-writer' ? { required: true, heading: 'Quick Bio' } : profileTableFor(input.moduleKey, input.language);
+  if (profile) {
+    if (m.quickBioRows === null) {
+      if (profile.required) hardStops.push({ code: 'BIO_MISSING', message: `The ${profile.heading} table is missing.`, source: oneAnswer ? 'ARTICLE' : 'QUICK_BIO' });
+    } else if (m.quickBioColumnsOk === false) hardStops.push({ code: 'BIO_MALFORMED', message: `The ${profile.heading} table does not have exactly two columns.`, source: oneAnswer ? 'ARTICLE' : 'QUICK_BIO' });
   }
   if (m.densityPct > input.densityCeilingPct * 1.4) hardStops.push({ code: 'KEYWORD_STUFFING', message: `Keyword density ${m.densityPct}% is far above the ${input.densityCeilingPct}% ceiling (keyword stuffing).`, source: 'FINAL_ARTICLE' });
   else if (m.densityPct > input.densityCeilingPct) warnings.push({ code: 'KEYWORD_DENSITY', message: `Keyword density ${m.densityPct}% is above the ${input.densityCeilingPct}% ceiling.`, source: 'FINAL_ARTICLE' });

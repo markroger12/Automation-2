@@ -5,8 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, RotateCcw, Sparkles, X } from 'lucide-react';
 import { api, ApiClientError } from '@/lib/client/api';
-import { PRESET_COUNTRIES, isCelebrityModule } from '@/lib/domain';
-import { CELEBRITY_CATEGORY_LABEL, findCelebrityCategory, missingCelebrityCategoryMessage } from '@/lib/celebrity-category';
+import { PRESET_COUNTRIES } from '@/lib/domain';
+import { CELEBRITY_CATEGORY_LABEL, findRuleCategory, missingRuleCategoryMessage } from '@/lib/celebrity-category';
+import { categoryRuleFor } from '@/lib/writers/rules';
+import { isCustomKey } from '@/lib/writers/types';
+import { MAX_SECONDARY_KEYWORDS } from '@/lib/content/text';
 import { Button, ConfirmDialog, CopyButton, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, cx } from '@/components/ui';
@@ -158,11 +161,14 @@ export function SingleArticleForm({
   }, [form, loaded]);
 
   const site = sites.find((s) => s.id === form.websiteId) ?? null;
-  // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”).
-  const celebrity = isCelebrityModule(form.moduleKey);
+  // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”); the owner's writers
+  // may always use another fixed category (Writers → a writer → Category).
+  const rule = categoryRuleFor(form.moduleKey);
+  const celebrity = rule.mode !== 'chatgpt';
   const articleLanguage = form.language || site?.language || 'en';
-  const celebrityCategory = site ? findCelebrityCategory(site.categories, articleLanguage) : null;
+  const celebrityCategory = site && rule.mode !== 'chatgpt' ? (findRuleCategory(site.categories, rule, articleLanguage) ?? null) : null;
   const writer = writers.find((w) => w.key === form.moduleKey) ?? null;
+  const ruleLabel = rule.mode === 'fixed' ? (articleLanguage === 'de' && rule.nameDe ? rule.nameDe : rule.name) : CELEBRITY_CATEGORY_LABEL[articleLanguage === 'de' ? 'de' : 'en'];
   const secondary = useMemo(() => parseSecondary(form.secondaryKeywords), [form.secondaryKeywords]);
   const dirty = Boolean(form.keyword || form.secondaryKeywords || form.exampleTitle);
   const effectiveLanguage = form.language || site?.language || 'en';
@@ -224,9 +230,9 @@ export function SingleArticleForm({
     if (form.keyword.trim().length < 2) e.keyword = ['Primary keyword is required (at least 2 characters)'];
     if (form.keyword.trim().length > 160) e.keyword = ['Primary keyword must be at most 160 characters'];
     if (!form.websiteId) e.websiteId = ['Choose a website'];
-    if (celebrity && site && !celebrityCategory) e.categoryId = [missingCelebrityCategoryMessage(site.name, articleLanguage)];
+    if (celebrity && site && !celebrityCategory) e.categoryId = [missingRuleCategoryMessage(site.name, rule, articleLanguage, writer?.name)];
     if (form.exampleTitle.length > 200) e.exampleTitle = ['At most 200 characters'];
-    if (secondary.length > 20) e.secondaryKeywords = ['At most 20 secondary keywords'];
+    if (secondary.length > MAX_SECONDARY_KEYWORDS) e.secondaryKeywords = [`At most ${MAX_SECONDARY_KEYWORDS} secondary keywords`];
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -364,8 +370,8 @@ export function SingleArticleForm({
               </Select>
             </Field>
             {celebrity ? (
-              <Field label="Category" htmlFor="sa-category" error={errors.categoryId} help="Celebrity articles always go into “Celebrity” (German websites: “Prominente”).">
-                <Input id="sa-category" readOnly value={!site ? 'Choose a website first' : (celebrityCategory?.name ?? `No “${CELEBRITY_CATEGORY_LABEL[articleLanguage === 'de' ? 'de' : 'en']}” category on ${site.name}`)} invalid={Boolean(errors.categoryId)} />
+              <Field label="Category" htmlFor="sa-category" error={errors.categoryId} help={rule.mode === 'fixed' ? `${writer?.name ?? 'This writer'} always puts its articles into “${ruleLabel}”.` : 'Celebrity articles always go into “Celebrity” (German websites: “Prominente”).'}>
+                <Input id="sa-category" readOnly value={!site ? 'Choose a website first' : (celebrityCategory?.name ?? `No “${ruleLabel}” category on ${site.name}`)} invalid={Boolean(errors.categoryId)} />
                 {site && !celebrityCategory ? (
                   <Link className="text-xs font-semibold link" href={`/websites/${site.id}`}>
                     Sync categories for {site.name} →
@@ -377,10 +383,10 @@ export function SingleArticleForm({
               label="Category"
               htmlFor="sa-category"
               error={errors.categoryId}
-              help={form.moduleKey === 'tigram-writer' ? 'Optional for Tigram: leave empty to let the CATEGORY stage pick one existing category.' : 'Real categories synchronized from WordPress.'}
+              help={rule.mode === 'chatgpt' && form.moduleKey !== 'celebrity-writer' ? `Optional for ${writer?.name ?? 'this writer'}: leave empty to let the CATEGORY stage pick one existing category.` : 'Real categories synchronized from WordPress.'}
             >
               <Select id="sa-category" value={form.categoryId} onChange={(e) => set('categoryId', e.target.value)} disabled={!site || site.categories.length === 0} invalid={Boolean(errors.categoryId)}>
-                <option value="">{site && site.categories.length === 0 ? 'No categories synced yet' : form.moduleKey === 'tigram-writer' ? 'Let the CATEGORY stage choose' : 'Choose a category…'}</option>
+                <option value="">{site && site.categories.length === 0 ? 'No categories synced yet' : rule.mode === 'chatgpt' && form.moduleKey !== 'celebrity-writer' ? 'Let the CATEGORY stage choose' : 'Choose a category…'}</option>
                 {site?.categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -434,7 +440,7 @@ export function SingleArticleForm({
                 <Input id="sa-words" type="number" min={300} max={5000} value={form.maxWords} onChange={(e) => set('maxWords', e.target.value)} placeholder={String(defaults.maxWords)} />
               </Field>
             ) : null}
-            {form.moduleKey !== 'celebrity2-writer' ? (
+            {form.moduleKey !== 'celebrity2-writer' && !isCustomKey(form.moduleKey) ? (
               <Field label="FAQ count" htmlFor="sa-faq" help={`Default ${form.moduleKey === 'tigram-writer' ? defaults.tigramFaqCount : defaults.faqCount}`}>
                 <Input id="sa-faq" type="number" min={1} max={15} value={form.faqCount} onChange={(e) => set('faqCount', e.target.value)} placeholder={String(form.moduleKey === 'tigram-writer' ? defaults.tigramFaqCount : defaults.faqCount)} />
               </Field>

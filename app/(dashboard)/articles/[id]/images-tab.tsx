@@ -8,6 +8,7 @@ import { MAX_PHOTOS_AT_ONCE, PHOTO_TYPES, pickPhotos } from '@/lib/client/image-
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Alert, Card, Chip, EmptyState, StatusChip, buttonClasses, cx } from '@/components/ui';
+import { imagesKindFor } from '@/lib/writers/rules';
 
 interface ImagesData {
   slots: { slot: 'FEATURED' | 'BODY1' | 'BODY2'; mediaAssetId: string; alt: string; sourceAssetIds: string[]; width: number; height: number; bytes: number }[];
@@ -269,7 +270,7 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
       <ConfirmDialog open={regen} title="Regenerate images?" confirmLabel="Regenerate" busy={busy} onCancel={() => setRegen(false)} onConfirm={() => void regenerate()}>
         Images are rendered again with your uploads and the current template, then the article is re-assembled and the same WordPress draft is updated.
         {task.editedHtml ? ' Your manual edits are kept in the revision history but the article is re-assembled from the generated text.' : ''}
-        {task.moduleKey === 'tigram-writer' ? ' Slots without an uploaded image are generated again through ChatGPT.' : ''}
+        {imagesKindFor(task.moduleKey) === 'general' ? ' Slots without an uploaded image are generated again through ChatGPT.' : ''}
       </ConfirmDialog>
     </div>
   );

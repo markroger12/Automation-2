@@ -5,10 +5,12 @@ import { getExtensionHealth, getWorkerHealth } from '@/lib/health';
 import { siteSummaries, taskGroupCounts } from '@/lib/stats';
 import { LANGUAGE_LABELS, moduleDisplayName, type Language } from '@/lib/domain';
 import { Card, Chip, EmptyState, LinkButton, PageHeader, ProgressBar, Stat, StatusChip, formatRelative } from '@/components/ui';
+import { ensureCustomWriters } from '@/lib/writers/store';
 
 export const metadata = { title: 'Overview' };
 
 export default async function OverviewPage() {
+  await ensureCustomWriters();
   // The health warnings are in the banner above every page (app/(dashboard)/layout.tsx), not repeated here.
   const [counts, worker, extension, sites, recent] = await Promise.all([
     taskGroupCounts(),

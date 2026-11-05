@@ -38,6 +38,8 @@ import { Card, Chip, PageHeader, StatusChip, cx, type ChipTone } from '@/compone
 import { formatInZone } from '@/lib/workflow/time';
 import { inspectionProperty, searchConsoleHome } from '@/lib/workflow/search-console';
 import { KEYWORD_LABEL as KW_LABEL, KEYWORD_STATUSES, filterKeywords, readableTimes, sortKeywords, statusCounts, type QueueOrder } from '@/lib/workflow/queue-view';
+import { moduleDisplayName, moduleShortName } from '@/lib/domain';
+import { personWriterChoices, writerChoices } from '@/lib/writers/options';
 
 interface Site {
   id: string;
@@ -77,12 +79,15 @@ interface PreviewRow {
   /** A person keyword: the owner chooses Celebrity or Celebrity 2. */
   detected: 'CELEBRITY' | null;
   detectionReason: string;
+  detectionSource?: string;
   duplicateOf: string | null;
   errors: string[];
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WRITER_WORD: Record<string, string> = { CELEBRITY: 'celebrity', CELEBRITY2: 'celebrity 2', TIGRAM: 'tigram' };
+/** A keyword's writer in the table: the built-in word, or the owner's writer's short name. */
+const writerWord = (type: string) => WRITER_WORD[type] ?? (type.startsWith('custom-') ? moduleShortName(type) : type.toLowerCase());
 const KW_TONE: Record<string, ChipTone> = { WAITING: 'neutral', WRITING: 'info', READY: 'brand', SCHEDULED: 'brand', PUBLISHED: 'success', INDEXING_REQUESTED: 'success', INDEXED: 'success', FAILED: 'danger', SKIPPED: 'neutral', DONE: 'neutral' };
 const COLUMNS = [
   { id: 'writer', label: 'Writer' },
@@ -409,15 +414,11 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
               {(close) => (
                 <>
                   <MenuLabel>Writer</MenuLabel>
-                  <MenuItem icon={<PenLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('writer', { writer: 'celebrity-writer' }); }}>
-                    Celebrity
-                  </MenuItem>
-                  <MenuItem icon={<PenLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('writer', { writer: 'celebrity2-writer' }); }}>
-                    Celebrity 2
-                  </MenuItem>
-                  <MenuItem icon={<PenLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('writer', { writer: 'tigram-writer' }); }}>
-                    Tigram
-                  </MenuItem>
+                  {writerChoices().map((w) => (
+                    <MenuItem key={w.key} icon={<PenLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('writer', { writer: w.key }); }}>
+                      {w.short}
+                    </MenuItem>
+                  ))}
                   <MenuLabel>Queue</MenuLabel>
                   <MenuItem icon={<ArrowUpToLine className="h-3.5 w-3.5" />} onClick={() => { close(); void action('top'); }}>
                     To top
@@ -503,7 +504,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                     </td>
                     {shows('writer') ? (
                       <td className="text-muted text-xs whitespace-nowrap" title={k.detectionReason ?? undefined}>
-                        {k.writerType === 'UNKNOWN' ? <Chip tone="warning">choose</Chip> : (WRITER_WORD[k.writerType] ?? k.writerType.toLowerCase())}
+                        {k.writerType === 'UNKNOWN' ? <Chip tone="warning">choose</Chip> : writerWord(k.writerType)}
                       </td>
                     ) : null}
                     <td>
@@ -606,9 +607,12 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
           <Field label="Writer" htmlFor="wf-writer">
             <Select id="wf-writer" value={form.writerPreference} onChange={(e) => setForm({ ...form, writerPreference: e.target.value })}>
               <option value="AUTO">Per keyword (you choose the writer of person keywords and unclear ones)</option>
-              <option value="celebrity-writer">Celebrity Article Writer for every keyword</option>
-              <option value="celebrity2-writer">Celebrity 2 Article Writer for every keyword</option>
-              <option value="tigram-writer">Tigram Article Writer for every keyword</option>
+              {writerChoices().map((w) => (
+                <option key={w.key} value={w.key}>
+                  {w.name} for every keyword
+                </option>
+              ))}
+              {form.writerPreference !== 'AUTO' && !writerChoices().some((w) => w.key === form.writerPreference) ? <option value={form.writerPreference}>{moduleDisplayName(form.writerPreference)} (not active)</option> : null}
             </Select>
           </Field>
         </DialogSection>
@@ -725,8 +729,11 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                     }}
                   >
                     <option value="">Set to…</option>
-                    <option value="CELEBRITY">Celebrity</option>
-                    <option value="CELEBRITY2">Celebrity 2</option>
+                    {personWriterChoices().map((w) => (
+                      <option key={w.key} value={w.type}>
+                        {w.short}
+                      </option>
+                    ))}
                   </Select>
                 </label>
               ) : null}
@@ -742,9 +749,11 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                   }}
                 >
                   <option value="">Set all to…</option>
-                  <option value="CELEBRITY">Celebrity</option>
-                  <option value="CELEBRITY2">Celebrity 2</option>
-                  <option value="TIGRAM">Tigram</option>
+                  {writerChoices().map((w) => (
+                    <option key={w.key} value={w.type}>
+                      {w.short}
+                    </option>
+                  ))}
                   <option value="UNKNOWN">Choose later</option>
                 </Select>
               </label>
@@ -766,10 +775,13 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
                         value={writer}
                         onChange={(e) => setWriters((w) => ({ ...w, [r.line]: e.target.value }))}
                       >
-                        <option value="CELEBRITY">Celebrity{r.detected === 'CELEBRITY' ? ' (person)' : ''}</option>
-                        <option value="CELEBRITY2">Celebrity 2{r.detected === 'CELEBRITY' ? ' (person)' : ''}</option>
-                        <option value="TIGRAM">Tigram{r.writerType === 'TIGRAM' ? ' (detected)' : ''}</option>
-                        <option value="UNKNOWN">{r.detected === 'CELEBRITY' ? 'Choose: Celebrity or Celebrity 2' : 'Choose later'}</option>
+                        {writerChoices().map((w) => (
+                          <option key={w.key} value={w.type}>
+                            {w.short}
+                            {r.detected === 'CELEBRITY' && w.person ? ' (person)' : r.writerType === w.type && r.detectionSource !== 'OVERRIDE' ? ' (detected)' : ''}
+                          </option>
+                        ))}
+                        <option value="UNKNOWN">{r.detected === 'CELEBRITY' ? `Choose: ${personWriterChoices().map((w) => w.short).join(' or ')}` : 'Choose later'}</option>
                       </Select>
                     )}
                     {r.duplicateOf ? (

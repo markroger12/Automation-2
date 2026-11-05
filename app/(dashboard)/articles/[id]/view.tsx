@@ -16,9 +16,8 @@ import { LinksTab } from './links-tab';
 import { HumanizerTab } from './humanizer-tab';
 import { OriginalityTab } from './originality-tab';
 import { OverviewTab } from './overview-tab';
-import { ACTIVE_MODULES } from '@/modules/registry';
+import { getManifest } from '@/modules/registry';
 
-const REGENERABLE: Record<string, string[]> = Object.fromEntries(ACTIVE_MODULES.map((m) => [m.key, m.stages.filter((s) => s.regenerable).map((s) => s.key)]));
 
 const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'links', 'images', 'humanizer', 'originality', 'wordpress', 'stages', 'prompts', 'logs', 'conversation'] as const;
 type TabId = (typeof BASE_TABS)[number];
@@ -287,7 +286,8 @@ function StagesTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged:
   const [plan, setPlan] = useState<{ stage: string; plan: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   if (task.stages.length === 0) return <Card><EmptyState title="No stages yet" description="Stages are created when the worker starts this task." /></Card>;
-  const regenerable = new Set(REGENERABLE[task.moduleKey] ?? []);
+  // The owner's writers too (their steps come from the writer's settings).
+  const regenerable = new Set((getManifest(task.moduleKey)?.stages ?? []).filter((s) => s.regenerable).map((s) => s.key));
   async function preview(stageKey: string) {
     try {
       setPlan(await api<{ stage: string; plan: string[] }>(`/api/tasks/${task.id}/regenerate`, { body: { stageKey, preview: true } }));

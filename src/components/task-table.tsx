@@ -10,6 +10,7 @@ import { Button, ConfirmDialog, usePersistentState, useToast, RelativeTime } fro
 import { Pagination, pageCount, usePageSize } from './data-table';
 import { DatePicker } from './date-picker';
 import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime } from './ui';
+import { allCustomWriters } from '@/lib/writers/catalog';
 
 type Group = 'all' | 'queued' | 'running' | 'review' | 'paused' | 'draft' | 'failed' | 'cancelled';
 const GROUPS: { id: Group; label: string }[] = [
@@ -191,6 +192,12 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
           <option value="celebrity-writer">Celebrity Article Writer</option>
           <option value="celebrity2-writer">Celebrity 2 Article Writer</option>
           <option value="tigram-writer">Tigram Article Writer</option>
+          {allCustomWriters().map((w) => (
+            <option key={w.key} value={w.key}>
+              {w.name}
+              {w.status === 'ACTIVE' ? '' : ` (${w.status.toLowerCase()})`}
+            </option>
+          ))}
           <option value="celebrity-writer-2">Celebrity Writer 2.0 (retired, history)</option>
         </select>
         {mode === 'history' ? (

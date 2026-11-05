@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { ACTIVE_MODULE_KEYS, type ActiveModuleKey } from '../domain';
+import { ACTIVE_MODULE_KEYS, isActiveModuleKey, type ActiveModuleKey } from '../domain';
+import { activeCustomWriters } from '../writers/catalog';
+import { isCustomKey } from '../writers/types';
 
 /**
  * Smart Article Router (client-safe, deterministic). Routes a keyword to the
@@ -16,7 +18,7 @@ export interface RouteDecision {
   confidence: number;
   rationale: string;
   version: string;
-  source: 'RULE' | 'OVERRIDE' | 'CAMPAIGN' | 'SITE_RULE';
+  source: 'RULE' | 'OVERRIDE' | 'CAMPAIGN' | 'SITE_RULE' | 'WRITER_RULE';
   /** What the classifier saw when it leaves the choice to the owner: a person keyword (Celebrity or Celebrity 2). */
   detected?: 'celebrity' | null;
 }
@@ -122,7 +124,7 @@ export interface SiteRoutingRule {
 }
 
 export const routingRulesSchema = z
-  .array(z.object({ contains: z.string().trim().min(2, 'Each rule needs a phrase of at least 2 characters.').max(80), writer: z.enum(ACTIVE_MODULE_KEYS) }))
+  .array(z.object({ contains: z.string().trim().min(2, 'Each rule needs a phrase of at least 2 characters.').max(80), writer: z.custom<ActiveModuleKey>((v) => typeof v === 'string' && ((ACTIVE_MODULE_KEYS as readonly string[]).includes(v) || isCustomKey(v)), { message: 'Choose a writer.' }) }))
   .max(50, 'At most 50 rules per website.');
 
 const words = (s: string) => ` ${s.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
@@ -154,8 +156,14 @@ export function resolveWriter(input: { keyword: string; language?: string | null
   if (override) return { writer: override, confidence: 1, rationale: 'Chosen for this row.', version: ROUTER_VERSION, source: 'OVERRIDE' };
   const campaignDefault = normalizeWriter(input.campaignDefault);
   if (campaignDefault) return { writer: campaignDefault, confidence: 1, rationale: 'Campaign default writer.', version: ROUTER_VERSION, source: 'CAMPAIGN' };
-  const siteRule = matchSiteRule(input.keyword, input.siteRules);
-  if (siteRule) return { writer: siteRule.writer, confidence: 1, rationale: `Website rule: keyword contains “${siteRule.contains}”.`, version: ROUTER_VERSION, source: 'SITE_RULE' };
+  // A website rule naming one of the owner's writers that is no longer active is passed over.
+  const siteRule = matchSiteRule(input.keyword, (input.siteRules ?? []).filter((r) => isActiveModuleKey(r.writer)));
+  if (siteRule) return { writer: siteRule.writer as ActiveModuleKey, confidence: 1, rationale: `Website rule: keyword contains “${siteRule.contains}”.`, version: ROUTER_VERSION, source: 'SITE_RULE' };
+  // The owner's writers' own phrases (Writers → a writer → Keywords for this writer).
+  for (const w of activeCustomWriters()) {
+    const hit = matchSiteRule(input.keyword, w.config.routing.contains.map((contains) => ({ contains, writer: w.key as ActiveModuleKey })));
+    if (hit) return { writer: w.key as ActiveModuleKey, confidence: 1, rationale: `${w.name}: keyword contains “${hit.contains}”.`, version: ROUTER_VERSION, source: 'WRITER_RULE' };
+  }
   const rule = classifyKeyword(input.keyword, input.language ?? 'en');
   if (rule.writer && rule.confidence < (input.minConfidence ?? 0.7)) return { ...rule, writer: null, rationale: `${rule.rationale} Confidence ${Math.round(rule.confidence * 100)} % is below the automatic threshold.` };
   // Owner decision (2026-11-04, two celebrity writers): a person keyword is never given a celebrity writer
@@ -168,9 +176,11 @@ export function resolveWriter(input: { keyword: string; language?: string | null
 export function normalizeWriter(value: string | null | undefined): ActiveModuleKey | null {
   if (!value) return null;
   const v = value.trim().toLowerCase();
-  if ((ACTIVE_MODULE_KEYS as readonly string[]).includes(v)) return v as ActiveModuleKey;
+  if ((ACTIVE_MODULE_KEYS as readonly string[]).includes(v) || (isCustomKey(v) && isActiveModuleKey(v))) return v as ActiveModuleKey;
   if (['celebrity', 'celeb', 'person', 'people', 'promi', 'celebrity article writer'].includes(v)) return 'celebrity-writer';
   if (['celebrity 2', 'celebrity2', 'celebrity-2', 'celeb 2', 'celeb2', 'promi 2', 'celebrity 2 article writer'].includes(v)) return 'celebrity2-writer';
   if (['tigram', 'general', 'topic', 'allgemein', 'tigram article writer'].includes(v)) return 'tigram-writer';
-  return null;
+  // The owner's active writers, by key, name or short name.
+  const custom = activeCustomWriters().find((w) => w.key === v || w.name.toLowerCase() === v || w.shortName.toLowerCase() === v);
+  return custom ? (custom.key as ActiveModuleKey) : null;
 }

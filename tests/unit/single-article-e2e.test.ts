@@ -244,7 +244,7 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
   });
 
   it('rejects the retired writer and invalid input at the API boundary', async () => {
-    await expect(create.createArticleTask({ moduleKey: 'celebrity-writer-2', keyword: 'X Y', websiteId: siteEn, idempotencyKey: 'single:retired-1' }, { source: 'SINGLE' })).rejects.toThrow(/Celebrity Article Writer, Celebrity 2 Article Writer or Tigram Article Writer/);
+    await expect(create.createArticleTask({ moduleKey: 'celebrity-writer-2', keyword: 'X Y', websiteId: siteEn, idempotencyKey: 'single:retired-1' }, { source: 'SINGLE' })).rejects.toThrow(/Choose one of the active writers \(Celebrity, Celebrity 2, Tigram or one of your own\)/);
     await expect(create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'a', websiteId: siteEn, categoryId: catEn, idempotencyKey: 'single:short-1' }, { source: 'SINGLE' })).rejects.toThrow(/at least 2/);
     await expect(create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'Valid Keyword', websiteId: siteEn, categoryId: catDe, idempotencyKey: 'single:wrongcat-1' }, { source: 'SINGLE' })).rejects.toThrow(/does not belong/);
     // A celebrity article always goes into the website's celebrity category; another category is not used (owner decision 2026-11-04).

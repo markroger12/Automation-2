@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { customWriter, isActiveCustomWriter, isPersonCustomWriter } from './writers/catalog';
+import { isCustomKey } from './writers/types';
 
 /**
  * Shared, client-safe domain vocabulary. Every status column in SQLite is a
@@ -139,21 +141,30 @@ export const countrySchema = z
  * one-prompt celebrity article) is a separate, new writer with its own key — never the retired 2.0.
  */
 export const ACTIVE_MODULE_KEYS = ['celebrity-writer', 'celebrity2-writer', 'tigram-writer'] as const;
-export type ActiveModuleKey = (typeof ACTIVE_MODULE_KEYS)[number];
-export const activeModuleKeySchema = z.enum(ACTIVE_MODULE_KEYS, {
-  error: 'Choose Celebrity Article Writer, Celebrity 2 Article Writer or Tigram Article Writer',
+/** The writers in the code. Writers the owner builds in the app have keys “custom-…” (src/lib/writers). */
+export type BuiltInModuleKey = (typeof ACTIVE_MODULE_KEYS)[number];
+export type ActiveModuleKey = BuiltInModuleKey | `custom-${string}`;
+export const isBuiltInModuleKey = (key: string | null | undefined): key is BuiltInModuleKey => Boolean(key) && (ACTIVE_MODULE_KEYS as readonly string[]).includes(key!);
+export const activeModuleKeySchema = z.custom<ActiveModuleKey>((v) => typeof v === 'string' && isActiveModuleKey(v), {
+  error: 'Choose one of the active writers (Celebrity, Celebrity 2, Tigram or one of your own).',
 });
 /** Archival identifier only — never queueable. */
 export const LEGACY_MODULE_KEYS = ['celebrity-writer-2'] as const;
 export type LegacyModuleKey = (typeof LEGACY_MODULE_KEYS)[number];
 
+/** A writer new articles may be started with: a built-in one, or one of the owner's that is active. */
 export function isActiveModuleKey(key: string): key is ActiveModuleKey {
-  return (ACTIVE_MODULE_KEYS as readonly string[]).includes(key);
+  return isBuiltInModuleKey(key) || isActiveCustomWriter(key);
 }
 
-/** Both celebrity writers: person articles (celebrity photos, the “Celebrity” category, family-claim checks). */
+/** A writer whose articles still run: also the owner's drafts and archived writers (their articles finish). */
+export function isRunnableModuleKey(key: string): key is ActiveModuleKey {
+  return isBuiltInModuleKey(key) || Boolean(customWriter(key));
+}
+
+/** Person articles (celebrity photos, the facts table, family-claim checks): both celebrity writers and the owner's person writers. */
 export function isCelebrityModule(key: string | null | undefined): boolean {
-  return key === 'celebrity-writer' || key === 'celebrity2-writer';
+  return key === 'celebrity-writer' || key === 'celebrity2-writer' || isPersonCustomWriter(key);
 }
 
 export const MODULE_DISPLAY_NAMES: Record<string, string> = {
@@ -167,21 +178,29 @@ export const MODULE_DISPLAY_NAMES: Record<string, string> = {
 export const MODULE_SHORT_NAMES: Record<string, string> = { 'celebrity-writer': 'Celebrity', 'celebrity2-writer': 'Celebrity 2', 'tigram-writer': 'Tigram' };
 
 export function moduleDisplayName(key: string): string {
-  return MODULE_DISPLAY_NAMES[key] ?? key;
+  return MODULE_DISPLAY_NAMES[key] ?? customWriter(key)?.name ?? key;
 }
 
+export function moduleShortName(key: string): string {
+  return MODULE_SHORT_NAMES[key] ?? customWriter(key)?.shortName ?? key;
+}
+
+/** Workflow keywords store their writer as a type; the owner's writers are stored by their key. */
 export const WRITER_TYPES = ['UNKNOWN', 'CELEBRITY', 'CELEBRITY2', 'TIGRAM'] as const;
-export type WriterType = (typeof WRITER_TYPES)[number];
+export type WriterType = (typeof WRITER_TYPES)[number] | `custom-${string}`;
+export const isWriterType = (v: string): v is WriterType => (WRITER_TYPES as readonly string[]).includes(v) || isCustomKey(v);
 export function writerTypeToModule(type: string): ActiveModuleKey | null {
   if (type === 'CELEBRITY') return 'celebrity-writer';
   if (type === 'CELEBRITY2') return 'celebrity2-writer';
   if (type === 'TIGRAM') return 'tigram-writer';
+  if (isActiveCustomWriter(type)) return type as ActiveModuleKey;
   return null;
 }
 export function moduleToWriterType(key: string | null | undefined): WriterType {
   if (key === 'celebrity-writer') return 'CELEBRITY';
   if (key === 'celebrity2-writer') return 'CELEBRITY2';
   if (key === 'tigram-writer') return 'TIGRAM';
+  if (isCustomKey(key)) return key as WriterType;
   return 'UNKNOWN';
 }
 

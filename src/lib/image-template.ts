@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FONT_IDS } from './fonts';
+import { imagesKindFor } from './writers/rules';
 
 /**
  * Branded image templates (client-safe). Coordinates are always in a true
@@ -136,7 +137,8 @@ export function withTemplateSet(s: SiteImageSettings, set: TemplateSet, t: Write
   return set === 'tigram' ? { ...s, tigram: t } : { ...s, featured: t.featured, body: t.body };
 }
 
-export const templateSetFor = (moduleKey: string): TemplateSet => (moduleKey === 'tigram-writer' ? 'tigram' : 'celebrity');
+/** The owner's general writers use the Tigram designs, their person writers the Celebrity designs. */
+export const templateSetFor = (moduleKey: string): TemplateSet => (imagesKindFor(moduleKey) === 'general' ? 'tigram' : 'celebrity');
 
 let counter = 0;
 const lid = (p: string) => `${p}${(counter++).toString(36)}`;

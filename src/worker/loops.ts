@@ -15,11 +15,15 @@ import { registerBuiltInControlHandlers } from './handlers';
 import { notifyTick } from '@/lib/notify/events';
 import { autoLoginTick } from '@/wordpress/auto-login-loop';
 import { autoCheckTick } from '@/lib/update/auto-check';
+import { ensureCustomWriters } from '@/lib/writers/store';
+import { registerCustomPipelines } from './pipelines/custom';
 
 let dispatcher: ArticleDispatcher | null = null;
 
 /** Registers the worker's processing loops. */
 export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
+  // The owner's writers (Writers → New writer): loaded before the built-in pipelines register theirs too.
+  await ensureCustomWriters({ force: true }).catch((e) => console.error('Could not load your writers:', (e as Error).message));
   registerBuiltInPipelines();
   registerBuiltInControlHandlers();
   await recoverOnStartup(ctx.workerId);
@@ -55,6 +59,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   // A WordPress session that ended: sign in again with the saved sign-in (owner request), so paused articles go on.
   registerLoop({ name: 'wordpress-auto-login', intervalMs: 5 * 60_000, run: async () => void (await autoLoginTick()) });
   // A new app version on GitHub: looked at every hour (and at start); Windows notification once per version, and the bell.
+  // A writer created, changed or archived in the dashboard: its pipeline is (re)registered within seconds.
+  registerLoop({ name: 'custom-writers', intervalMs: 15_000, run: async () => void (await ensureCustomWriters({ force: true }), registerCustomPipelines()) });
   registerLoop({ name: 'app-update-check', intervalMs: 5 * 60_000, run: async () => void (await autoCheckTick()) });
 }
 

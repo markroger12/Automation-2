@@ -1,5 +1,7 @@
 import { db } from '@/lib/db';
 import { isCelebrityModule } from '@/lib/domain';
+import { categoryIsAutomatic } from '@/lib/writers/rules';
+import { isCustomKey } from '@/lib/writers/types';
 import { parseJson, stringArray } from '@/lib/json';
 import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { assembleArticle, firstParagraphText, type AssemblyImage } from '@/lib/content/assembly';
@@ -64,7 +66,7 @@ export function precheck(manifest: StageManifest): PipelineStage {
       if (problems.length) throw new NeedsReviewError(problems.join(' '), problems, 'Fix the website, then Retry.');
       // Celebrity articles: always the website's “Celebrity” category (German: “Prominente”), also for articles
       // queued before that rule (owner decision 2026-11-04). Waits for the owner when the website has none.
-      if (isCelebrityModule(ctx.task.moduleKey) && !ctx.task.wpPostId) {
+      if (categoryIsAutomatic(ctx.task.moduleKey) && !ctx.task.wpPostId) {
         const { assignCelebrityCategory } = await import('./category');
         await assignCelebrityCategory(ctx);
       } else if (ctx.task.categoryId && !site.categories.some((c) => c.id === ctx.task.categoryId)) {
@@ -161,7 +163,8 @@ export function assembly(manifest: StageManifest): PipelineStage {
       // Celebrity metadata (Tigram sets its own from the ARTICLE lines; Celebrity 2 too, and these fill what its
       // answer left out).
       const updates: Record<string, unknown> = { assembledHtml: result.html };
-      if (isCelebrityModule(ctx.task.moduleKey)) {
+      // The owner's writers too: what their answer left out is filled in the same way.
+      if (isCelebrityModule(ctx.task.moduleKey) || isCustomKey(ctx.task.moduleKey)) {
         const title = ctx.task.selectedTitle ?? ctx.task.recommendedTitle ?? ctx.task.keyword;
         updates.seoTitle = ctx.task.seoTitle ?? title;
         updates.metaDescription = ctx.task.metaDescription ?? metaFromIntro(result.html, ctx.task.keyword, ctx.task.language);

@@ -33,3 +33,30 @@ export function missingCelebrityCategoryMessage(siteName: string, language: stri
   const name = CELEBRITY_CATEGORY_LABEL[language === 'de' ? 'de' : 'en'];
   return `${siteName} has no “${name}” category. Celebrity articles always go into “${name}” (English websites: “Celebrity”, German websites: “Prominente”). Create it in WordPress, then Websites → ${siteName} → Sync categories.`;
 }
+
+/**
+ * The category a writer always uses, for writers whose category is never chosen per article: the celebrity category,
+ * or (the owner's writers) a fixed category by name — the German name on German websites when one is set — matched by
+ * name or slug, ignoring case. `undefined`: the writer's category is chosen per article (or by ChatGPT).
+ */
+export function findRuleCategory<C extends { name: string; slug?: string | null }>(
+  categories: readonly C[],
+  rule: { mode: 'celebrity' } | { mode: 'fixed'; name: string; nameDe: string } | { mode: 'chatgpt' },
+  language: string,
+): C | null | undefined {
+  if (rule.mode === 'celebrity') return findCelebrityCategory(categories, language);
+  if (rule.mode !== 'fixed') return undefined;
+  const names = (language === 'de' && rule.nameDe ? [rule.nameDe, rule.name] : [rule.name, rule.nameDe]).map(norm).filter(Boolean);
+  for (const name of names) {
+    const hit = categories.find((c) => norm(c.name) === name || norm(c.slug) === name || norm(c.slug) === name.replace(/ /g, '-'));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** What to tell the owner when a website lacks the category a writer always uses. */
+export function missingRuleCategoryMessage(siteName: string, rule: { mode: 'celebrity' } | { mode: 'fixed'; name: string; nameDe: string } | { mode: 'chatgpt' }, language: string, writerName?: string): string {
+  if (rule.mode !== 'fixed') return missingCelebrityCategoryMessage(siteName, language);
+  const name = language === 'de' && rule.nameDe ? rule.nameDe : rule.name;
+  return `${siteName} has no “${name}” category. ${writerName ? `The writer “${writerName}”` : 'This writer'} always puts its articles there. Create it in WordPress, then Websites → ${siteName} → Sync categories.`;
+}

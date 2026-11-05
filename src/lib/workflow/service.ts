@@ -3,7 +3,9 @@ import { Prisma } from '@prisma/client';
 import { db } from '../db';
 import { audit } from '../audit';
 import { AppError, badRequest, notFound } from '../errors';
-import { moduleToWriterType, normalizeKeyword } from '../domain';
+import { isActiveModuleKey, isWriterType, moduleToWriterType, normalizeKeyword, type WriterType } from '../domain';
+import { isCustomKey } from '../writers/types';
+import { ensureCustomWriters } from '../writers/store';
 import { parseJson } from '../json';
 import { parseImport } from '../campaigns/parse';
 import { normalizeWriter, parseRoutingRules, resolveWriter } from '../campaigns/router';
@@ -26,7 +28,8 @@ import { requestIndexingNow, requestProperty } from '../gsc/request-indexing';
 export const workflowSettingsInput = z.object({
   name: z.string().trim().max(80).optional(),
   active: z.boolean(),
-  writerPreference: z.enum(['AUTO', 'celebrity-writer', 'celebrity2-writer', 'tigram-writer']),
+  // AUTO, a built-in writer, or one of the owner's active writers (custom-…).
+  writerPreference: z.string().refine((v) => v === 'AUTO' || isActiveModuleKey(v), { message: 'Choose AUTO or an active writer.' }),
   slots: z.array(z.string().max(12)).max(24),
   weekdays: z.array(z.number().int().min(0).max(6)).max(7),
   slotTimezone: z.string().max(64).default(DEFAULT_SLOT_TIMEZONE),
@@ -46,6 +49,7 @@ export async function getWorkflowForSite(websiteId: string) {
 }
 
 export async function saveWorkflow(websiteId: string, raw: unknown) {
+  await ensureCustomWriters();
   const input = workflowSettingsInput.parse(raw);
   const { site, workflow } = await getWorkflowForSite(websiteId);
   if (!isValidTimeZone(input.slotTimezone)) throw badRequest(`Unknown time zone “${input.slotTimezone}”.`);
@@ -71,7 +75,7 @@ export interface KeywordPreview {
   keyword: string;
   secondaryKeywords: string[];
   exampleTitle: string | null;
-  writerType: 'CELEBRITY' | 'CELEBRITY2' | 'TIGRAM' | 'UNKNOWN';
+  writerType: WriterType;
   /** A person keyword the owner has to give Celebrity or Celebrity 2 (owner decision 2026-11-04). */
   detected: 'CELEBRITY' | null;
   detectionReason: string;
@@ -86,6 +90,7 @@ const typeOf = (w: string | null): KeywordPreview['writerType'] => moduleToWrite
 
 /** Parse and route keywords for a workflow; flags duplicates of keywords already in it (nothing is written). */
 export async function previewKeywords(websiteId: string, text: string) {
+  await ensureCustomWriters();
   const { site, workflow } = await getWorkflowForSite(websiteId);
   const parsed = parseImport(text);
   const existing = workflow ? await db.workflowKeyword.findMany({ where: { workflowId: workflow.id, status: { notIn: ['SKIPPED', 'FAILED'] } }, select: { keyword: true, normalizedKeyword: true, status: true } }) : [];
@@ -105,11 +110,12 @@ export async function previewKeywords(websiteId: string, text: string) {
  * `writers` (owner request: choose the writer right in Add keywords) sets a line's writer, by line number.
  */
 export async function addKeywords(websiteId: string, raw: unknown) {
+  await ensureCustomWriters();
   const input = z
     .object({
       text: z.string().max(2_000_000),
       keepDuplicates: z.array(z.number().int()).default([]),
-      writers: z.record(z.string().regex(/^\d+$/), z.enum(['CELEBRITY', 'CELEBRITY2', 'TIGRAM', 'UNKNOWN'])).default({}),
+      writers: z.record(z.string().regex(/^\d+$/), z.string().refine((v) => isWriterType(v) && (!isCustomKey(v) || isActiveModuleKey(v)), { message: 'Not an active writer.' })).default({}),
     })
     .parse(raw);
   const preview = await previewKeywords(websiteId, input.text);
@@ -256,6 +262,7 @@ export async function moveKeywords(websiteId: string, raw: unknown, now = new Da
  * articles from the app); WordPress is never changed.
  */
 export async function keywordAction(websiteId: string, raw: unknown) {
+  await ensureCustomWriters();
   const input = keywordActionSchema.parse(raw);
   if (input.action === 'move') return moveKeywords(websiteId, { keywordIds: input.keywordIds, date: input.date, dryRun: input.dryRun });
   const wf = await ensureWorkflow(websiteId);
@@ -267,7 +274,7 @@ export async function keywordAction(websiteId: string, raw: unknown) {
     switch (input.action) {
       case 'writer': {
         const w = normalizeWriter(input.writer);
-        if (!w) throw badRequest('Choose the Celebrity, Celebrity 2 or Tigram Article Writer.');
+        if (!w) throw badRequest('Choose one of the active writers.');
         if (kw.status !== 'WAITING') {
           notes.push(`“${kw.keyword}” already started; its writer stays as approved.`);
           continue;

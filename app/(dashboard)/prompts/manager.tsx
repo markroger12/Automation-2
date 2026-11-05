@@ -8,6 +8,7 @@ import { renderTemplate, TemplateSyntaxError, referencedVariables } from '@/lib/
 import { Button, ConfirmDialog, CopyButton, Tabs, useToast } from '@/components/client';
 import { Field, Input, Select, Textarea } from '@/components/form';
 import { Alert, Card, Chip, EmptyState, cx, formatDateTime } from '@/components/ui';
+import { allCustomWriters } from '@/lib/writers/catalog';
 
 interface ListItem {
   id: string;
@@ -160,7 +161,7 @@ export function PromptManager({ initialId }: { initialId?: string }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[280px_1fr]">
       <nav aria-label="Prompts" className="surface h-fit rounded-xl border p-2">
-        {GROUPS.map((g) => (
+        {[...GROUPS.slice(0, 3), ...allCustomWriters().map((w) => ({ key: w.key, label: `${w.name} (your writer${w.status === 'ACTIVE' ? '' : `, ${w.status.toLowerCase()}`})` })), ...GROUPS.slice(3)].map((g) => (
           <div key={g.key} className="mb-2">
             <div className="text-muted px-2 py-1 text-[11px] font-semibold uppercase">{g.label}</div>
             {list

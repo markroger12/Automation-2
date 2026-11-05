@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
-import { isCelebrityModule } from '@/lib/domain';
-import { findCelebrityCategory, missingCelebrityCategoryMessage } from '@/lib/celebrity-category';
+import { moduleDisplayName } from '@/lib/domain';
+import { findCelebrityCategory, findRuleCategory, missingCelebrityCategoryMessage, missingRuleCategoryMessage } from '@/lib/celebrity-category';
+import { categoryIsAutomatic, categoryRuleFor } from '@/lib/writers/rules';
 import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { matchCategory } from '@/modules/tigram-writer/parsers';
 import type { PipelineContext, PipelineStage } from '../pipeline/types';
@@ -27,9 +28,11 @@ export function isUncategorized(c: { name: string; slug: string | null }): boole
  */
 export async function assignCelebrityCategory(ctx: PipelineContext): Promise<{ name: string; changed: boolean }> {
   const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId }, include: { categories: true } });
-  const cat = findCelebrityCategory(site.categories, ctx.task.language);
+  // The owner's writers may always use another category (Writers → a writer → Category).
+  const rule = categoryRuleFor(ctx.task.moduleKey);
+  const cat = rule.mode === 'chatgpt' ? findCelebrityCategory(site.categories, ctx.task.language) : findRuleCategory(site.categories, rule, ctx.task.language);
   if (!cat) {
-    const msg = missingCelebrityCategoryMessage(site.name, ctx.task.language);
+    const msg = rule.mode === 'chatgpt' ? missingCelebrityCategoryMessage(site.name, ctx.task.language) : missingRuleCategoryMessage(site.name, rule, ctx.task.language, moduleDisplayName(ctx.task.moduleKey));
     throw new NeedsReviewError(msg, [msg], `Create the category in WordPress, sync categories for ${site.name}, then Retry.`);
   }
   if (ctx.task.categoryId === cat.id) return { name: cat.name, changed: false };
@@ -41,15 +44,16 @@ export const categoryStage: Pick<PipelineStage, 'run' | 'shouldRun'> = {
   shouldRun: (ctx: PipelineContext) => {
     // Never once the WordPress draft exists: the saved post keeps its category (the draft checks compare the two).
     if (ctx.task.wpPostId) return false;
-    if (isCelebrityModule(ctx.task.moduleKey)) return true;
+    if (categoryIsAutomatic(ctx.task.moduleKey)) return true;
     // A category the owner chose (Single Article, a Bulk row) is kept. Workflow articles queued before this fix carry
     // the website's default in its place.
     return !ctx.task.categoryId || ctx.task.source === 'WORKFLOW';
   },
   run: async (ctx: PipelineContext) => {
-    if (isCelebrityModule(ctx.task.moduleKey)) {
+    if (categoryIsAutomatic(ctx.task.moduleKey)) {
       const c = await assignCelebrityCategory(ctx);
-      return { outcome: 'completed' as const, data: { category: c.name, how: 'always the celebrity category' }, message: `Category: ${c.name} (always for celebrity articles)` };
+      const celebrity = categoryRuleFor(ctx.task.moduleKey).mode === 'celebrity';
+      return { outcome: 'completed' as const, data: { category: c.name, how: celebrity ? 'always the celebrity category' : 'always the writer’s category' }, message: `Category: ${c.name} (${celebrity ? 'always for celebrity articles' : 'always for this writer'})` };
     }
     const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId }, include: { categories: { orderBy: { name: 'asc' } } } });
     const all = site.categories;

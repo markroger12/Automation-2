@@ -3,6 +3,7 @@ import { sanitizeArticleHtml } from '../html/sanitize';
 import { dedupeBlocks, sameTitle, WRITING_LABEL_RE } from './markdown';
 import { matchMetaLine, type MetaLines } from './meta-lines';
 import { profileHeadingAsH2 } from './profile-heading';
+import { keepsAnswerOrder, profileTableFor } from '../writers/rules';
 
 export interface FaqItem {
   question: string;
@@ -54,6 +55,13 @@ interface Section {
   html: string;
 }
 
+/** In the answer, the FAQ section comes after the conclusion. */
+function faqWrittenAfterConclusion(sections: Section[]): boolean {
+  const faq = sections.findIndex((s) => FAQ_RE.test(s.heading));
+  const conclusion = sections.findIndex((s) => CONCLUSION_RE.test(s.heading));
+  return faq >= 0 && conclusion >= 0 && faq > conclusion;
+}
+
 function splitSections($: CheerioAPI): { intro: string; sections: Section[] } {
   const nodes = $('body').contents().toArray();
   let intro = '';
@@ -102,8 +110,10 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
     const first = $('body > h1, body > h2').first();
     if (first.length && sameTitle(first.text(), input.title)) first.remove();
   }
-  // Celebrity 2 articles saved before the owner's report: their bold “Family Profile” line becomes the H2.
-  if (input.moduleKey === 'celebrity2-writer') profileHeadingAsH2($, lang, 'table.bas-quick-bio');
+  // Celebrity 2 articles saved before the owner's report: their bold “Family Profile” line becomes the H2 (the
+  // owner's person writers: their table's heading).
+  const profile = profileTableFor(input.moduleKey, lang);
+  if (profile) profileHeadingAsH2($, lang, 'table.bas-quick-bio', profile.heading);
   const split = splitSections($);
   let intro = split.intro;
   const sections = split.sections;
@@ -111,14 +121,16 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
   // The Celebrity writer's Quick Bio and FAQs come from their own stages. Celebrity 2 writes both into its article:
   // its table stays where ChatGPT put it, and its FAQs follow the conclusion, as the owner's prompt orders them.
   const isCelebrity = input.moduleKey === 'celebrity-writer';
-  const faqAfterConclusion = input.moduleKey === 'celebrity2-writer';
+  // Celebrity 2 and the owner's writers: the answer's own order (their FAQs after the conclusion when written there).
+  const ownOrder = keepsAnswerOrder(input.moduleKey);
+  const faqAfterConclusion = ownOrder && (input.moduleKey === 'celebrity2-writer' || faqWrittenAfterConclusion(sections));
   const body: Section[] = [];
   let conclusion: Section | null = null;
   let modelFaq: Section | null = null;
   for (const s of sections) {
     // Celebrity 2's “Family Profile” H2 with its table, right after the introduction: it stays there, and the body
     // images keep their places among the article's own sections.
-    if (faqAfterConclusion && !body.length && !conclusion && /\bbas-quick-bio\b/.test(s.html)) {
+    if (ownOrder && !body.length && !conclusion && /\bbas-quick-bio\b/.test(s.html)) {
       intro += s.html;
       continue;
     }

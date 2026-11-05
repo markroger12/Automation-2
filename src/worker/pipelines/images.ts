@@ -20,6 +20,7 @@ import { faceFingerprint, fingerprintDistance, pictureSharpness, SAME_FACES_BITS
 import type { StageManifest } from '@/modules/types';
 import type { PipelineContext, PipelineStage, StageResult } from '../pipeline/types';
 import { bind, waiting } from './common';
+import { imagesKindFor } from '@/lib/writers/rules';
 
 /**
  * IMAGES: a 16:9 featured image (site template: photo/illustration, title,
@@ -122,7 +123,7 @@ async function renderAll(ctx: PipelineContext, plan: RenderPlan, notes: string[]
     if (templatePhotoSlots(template) > plan.featuredPhotos.length && plan.featuredPhotos.length === 1) {
       // A two-photo design with one usable photo: never repeat a photo — use the single-photo preset.
       template = presetSingle(template.accent);
-      notes.push(ctx.task.moduleKey === 'tigram-writer' ? 'The Tigram featured design has more than one picture place, but a Tigram article has one featured picture; the single-photo preset was used (Image Template → Tigram: use a one-picture design).' : 'Only one photo was available for the two-photo featured design; the single-photo preset was used.');
+      notes.push(templateSetFor(ctx.task.moduleKey) === 'tigram' ? 'The Tigram featured design has more than one picture place, but a Tigram article has one featured picture; the single-photo preset was used (Image Template → Tigram: use a one-picture design).' : 'Only one photo was available for the two-photo featured design; the single-photo preset was used.');
     }
     const photos = await Promise.all(plan.featuredPhotos.map((p) => p.buffer ?? readAsset(p.asset)));
     const r = await renderTemplate({ template, photos, focus: plan.featuredPhotos.map((p) => p.focus ?? null), logo, fixedPhotos, vars: { title, site: site.name, keyword: ctx.task.keyword } }, opts);
@@ -686,6 +687,7 @@ function sourceLabel(origin: string): string {
 export function imagesStage(manifest: StageManifest): PipelineStage {
   return bind(manifest, {
     shouldRun: (ctx) => ctx.config.images,
-    run: (ctx) => (ctx.task.moduleKey === 'tigram-writer' ? generalImages(ctx) : celebrityImages(ctx)),
+    // Tigram and the owner's general writers: generated images; person writers: photos of the person.
+    run: (ctx) => (imagesKindFor(ctx.task.moduleKey) === 'general' ? generalImages(ctx) : celebrityImages(ctx)),
   });
 }

@@ -4,6 +4,8 @@ import { ToastProvider } from '@/components/client';
 import { getHealthWarnings, type HealthWarning } from '@/lib/health';
 import { ensurePragmas } from '@/lib/db';
 import { cx } from '@/components/ui';
+import { WritersHydrator } from '@/components/writers-hydrator';
+import { ensureCustomWriters } from '@/lib/writers/store';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,14 +55,16 @@ function HealthBanner({ warnings, dbError }: { warnings: HealthWarning[]; dbErro
 }
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const health = await loadHealth();
+  const [health, writers] = await Promise.all([loadHealth(), ensureCustomWriters().catch(() => [])]);
   const notices = health.dbError ? [{ tone: 'danger' as const, title: 'Database unavailable', detail: 'Run npm run setup to create/migrate data/app.db.' }] : health.warnings;
   return (
-    <ToastProvider>
-      <Shell notices={notices}>
-        <HealthBanner {...health} />
-        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</main>
-      </Shell>
-    </ToastProvider>
+    <WritersHydrator writers={writers}>
+      <ToastProvider>
+        <Shell notices={notices}>
+          <HealthBanner {...health} />
+          <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        </Shell>
+      </ToastProvider>
+    </WritersHydrator>
   );
 }

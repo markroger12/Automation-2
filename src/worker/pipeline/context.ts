@@ -9,6 +9,7 @@ import { createChatGPTRequest } from '@/lib/chatgpt/jobs';
 import { loadPromptTemplate, promptModuleFor } from '@/lib/prompts/load';
 import { getSettings } from '@/lib/settings';
 import { defaultSeoBrief, parseSeoBrief, seoBriefText } from '@/lib/seo/intent';
+import { sendsPromptAsWritten } from '@/lib/writers/rules';
 
 /** Writing prompts that receive the SEO brief when the template does not place {{seo_brief}} itself. */
 const SEO_BRIEF_STAGES = ['LONG_ARTICLE', 'ARTICLE'];
@@ -120,7 +121,8 @@ export function createContext(deps: ContextDeps): PipelineContext {
       }
       let prompt = rendered.text;
       // Not to the owner's own Celebrity 2 prompt: it sets its own search intent and structure (owner: use this prompt).
-      const appendBrief = SEO_BRIEF_STAGES.includes(promptStageKey) && task.moduleKey !== 'celebrity2-writer';
+      // Nor to the owner's own writers, unless their settings ask for it.
+      const appendBrief = SEO_BRIEF_STAGES.includes(promptStageKey) && !sendsPromptAsWritten(task.moduleKey);
       if (briefText && appendBrief && !template.content.includes('{{seo_brief}}')) prompt = `${prompt}\n\n${briefText}`;
       if (template.kind === 'text') prompt = `${prompt}\n\n${languageInstruction(task.language, task.targetCountry)}`;
 

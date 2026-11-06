@@ -4520,3 +4520,60 @@ npx prisma generate --schema <8ae01f5 schema>; cp prisma/schema.prisma node_modu
 node scripts/ensure-prisma-client.mjs                                                                 # generates; tsc 0 errors
 npx vitest run                                                                                        # 65 files, 453 tests pass
 ```
+
+## Owner request (2026-11-06): “writer import export ka option add kr”
+
+Your own writers can now be saved to a file and brought back, on this PC or another one.
+- **Export:**
+  - **Export** on a writer's page downloads that writer (`GET /api/writers/export?key=custom-…` → `writer-<name>.json`). It is disabled while the page has unsaved changes, because the file holds the saved version.
+  - **Export all** on Writers → Your writers downloads every writer (`writers-<date>.json`).
+  - The file (`format: "blog-automation-studio/writers"`, `version: 1`) holds each writer's key, name, short name, description, person/general, status, settings and current article and title prompts. It holds no test results, ids, websites, articles, passwords or keys.
+  - Only the owner's writers can be exported (built-in writers: 400). Like every dashboard request, it is answered only on localhost.
+- **Import** (Writers → Your writers → Import, also in the empty state):
+  - The page reads the file (at most 1.9 MB) and asks the server for a preview (`POST /api/writers/import` with `preview: true`). Nothing is written yet.
+  - Each writer of the file is checked as a save on its page would check it:
+    - its settings are checked with `customWriterConfigSchema`;
+    - its prompts are checked with `checkPrompt` (template syntax, unknown `{{variables}}`);
+    - its name must be free and not a built-in writer's.
+  - A broken writer is shown with the reason and can only be skipped. A file that is not a writer file, one made by a newer app version, an empty file, or a file with more than 50 writers is refused with a clear message.
+  - It is compared with the writers here: the same key means the same writer; the same name means another writer with that name. The dialog says whether the prompt and/or the settings differ.
+  - **The choice for each writer:**
+    - **Add as a new writer:** a draft, `startedFrom: 'import'`, prompt version 1. A name already used gets “Name 2”, which can be edited; a taken short name falls back to the new name.
+    - **Update the same writer:** through `updateCustomWriter`. The prompt becomes a new version with the note “Imported from the file …”, and the old one stays under Versions. Name and status stay. This is not offered while that writer's articles are running and the file changes person/general.
+    - **Skip.**
+  - **Defaults:** identical → Skip; the same key → Update; otherwise → Add.
+  - A tick box makes the writers that were active in the file active here, through `setWriterStatus`, so only with a complete checklist; otherwise the writer stays a draft with the reason.
+  - Every choice is checked before anything is written. If one cannot be done, nothing is written, and the dialog shows the reason under that writer.
+  - Audit entries: `writer.export` and `writer.import`.
+- **Files:**
+  - `src/lib/writers/file-format.ts` (client-safe shapes and limits) and `src/lib/writers/transfer.ts` (export, preview, import);
+  - `app/api/writers/export/route.ts` and `app/api/writers/import/route.ts`;
+  - `app/(dashboard)/writers/import-writers.tsx` (the dialog);
+  - Export buttons on `writers/page.tsx` and `writers/[key]/builder.tsx`;
+  - `nameProblem` in `store.ts`, which the import and `assertNameFree` share.
+- **Tests:** unit `writer-transfer` (9):
+  - export: the file's contents and the download route (localhost only, own writers only);
+  - the same file again → nothing to import;
+  - a backup restores a changed writer as a new prompt version;
+  - on another PC → new drafts (active when asked);
+  - name conflicts (“Name 2”, a taken or built-in name typed);
+  - broken files and writers → nothing written;
+  - an update blocked by running articles;
+  - the route's CSRF, origin and size checks.
+- **Chromium (production build, scratch database):**
+  - Export all and Export download their files; Export is disabled with unsaved changes;
+  - a non-writer file shows the reason;
+  - a file with a new writer, a changed one and a broken one shows Add / Update / Skip (disabled) and imports 2;
+  - the same file again → all Skip;
+  - phone 390 px in dark mode has no horizontal scroll.
+- **Checked:** unit 66 files / 462 tests; `tsc` 0 errors; `next build` compiled.
+- **Not verified:** on the owner's PC with their own writers.
+
+**Commands run**
+```
+npx vitest run tests/unit/writer-transfer.test.ts      # 9 pass
+npx vitest run                                         # 66 files, 462 tests pass
+npx tsc --noEmit                                       # 0 errors
+npx next build                                         # compiled (/api/writers/export, /api/writers/import)
+node scratchpad/transfer-smoke.mjs                     # Chromium: export, import preview, import, again, phone dark
+```

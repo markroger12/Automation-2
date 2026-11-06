@@ -160,6 +160,15 @@ The test types these credentials itself (simulating you in the login window); th
      - **Test:** paste one ChatGPT answer to your prompt and see what the article would get (words, FAQs, table rows, SEO lines, sections, the article itself), or why it would be asked again. Nothing is sent to ChatGPT or WordPress.
   3. **Make active** when the checklist on the side is complete: the writer is then offered in Single Article, Workflow, Bulk Campaigns and website routing rules, and runs with the same steps and quality gate as the built-in writers (drafts only unless the website allows publishing).
   - **Back to draft / Archive** hide it again; its articles still finish. A writer no article used can be deleted.
+  - **Export / Import** (to keep a backup, or to move your writers to another PC):
+    - **Export** on a writer's page downloads that writer as a file (`writer-<name>.json`). **Export all** (Writers → Your writers) downloads all of them (`writers-<date>.json`).
+    - The file holds each writer's name, settings and current prompts. It holds no passwords, keys, websites or articles.
+    - **Import** (Writers → Your writers) reads a file made with Export and first shows every writer in it. For each one you choose:
+      - **Add as a new writer:** it is added as a draft. If its name is already used here, it gets a free name, which you can change.
+      - **Update “…”:** used for the same writer here. Its prompt becomes a new version, and the old one stays under Versions. Its settings are replaced by the file's. Its name and status stay.
+      - **Skip.**
+    - A writer whose settings or prompt would be refused on its page (for example an unknown `{{variable}}`) is shown with the reason and can only be skipped.
+    - A tick box makes the writers that were active in the file active here too, each only when its checklist is complete.
 - **Choosing the writer:** for a person keyword the app no longer chooses by itself. You choose **Celebrity** or **Celebrity 2**: in Add keywords per line, with **Person keywords** for all of them at once, or with **Writer for all**. Clear general topics still go to Tigram.
 
 ## Images

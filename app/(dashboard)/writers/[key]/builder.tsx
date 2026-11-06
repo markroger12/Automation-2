@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Archive, ArrowLeft, CheckCircle2, Circle, CircleAlert, Eye, FlaskConical, Image as ImageIcon, KeyRound, ListChecks, PenLine, Rocket, Save, Sparkles, Tags, Trash2, Type, Undo2, User, X } from 'lucide-react';
+import { Archive, ArrowLeft, CheckCircle2, Circle, CircleAlert, Download, Eye, FlaskConical, Image as ImageIcon, KeyRound, ListChecks, PenLine, Rocket, Save, Sparkles, Tags, Trash2, Type, Undo2, User, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { moduleDisplayName } from '@/lib/domain';
 import { renderTemplate } from '@/lib/prompts/template';
@@ -15,7 +15,7 @@ import type { CustomArticleParse } from '@/modules/custom/parsers';
 import { customManifest } from '@/modules/custom/manifest';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Field, Input, Select, Switch, Textarea } from '@/components/form';
-import { Alert, Chip, cx, formatDateTime } from '@/components/ui';
+import { Alert, Chip, buttonClasses, cx, formatDateTime } from '@/components/ui';
 import { NewWriterButton, type StartOption } from '../new-writer';
 
 /**
@@ -169,6 +169,15 @@ export function WriterBuilder({ initial, categoryNames, own }: { initial: Custom
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <NewWriterButton own={[{ id: key, title: `Copy of ${saved.writer.name}`, kind: saved.writer.base, text: 'Its prompts and rules copied.' }, ...own]} initial={key} label="Duplicate" variant="secondary" size="sm" />
+          {dirty ? (
+            <Button size="sm" disabled tip="Save first: the file holds the saved settings and prompts">
+              <Download className="h-3.5 w-3.5" /> Export
+            </Button>
+          ) : (
+            <a className={buttonClasses('secondary', 'sm')} href={`/api/writers/export?key=${encodeURIComponent(key)}`} download title="This writer (its settings and prompts) as a file: a backup, or to import on another PC (Writers → Import)">
+              <Download className="h-3.5 w-3.5" aria-hidden /> Export
+            </a>
+          )}
           {saved.writer.status === 'ACTIVE' ? (
             <>
               <Button size="sm" loading={busy === 'status'} onClick={() => void setStatus('DRAFT')} tip="No longer offered; its articles still finish">
@@ -404,7 +413,7 @@ export function WriterBuilder({ initial, categoryNames, own }: { initial: Custom
 }
 
 const startedFromLabel = (from: string) =>
-  ({ 'celebrity-writer': 'Celebrity', 'celebrity2-writer': 'Celebrity 2', 'tigram-writer': 'Tigram', 'blank-person': 'an empty person writer', 'blank-general': 'an empty general writer' })[from] ?? moduleDisplayName(from);
+  ({ 'celebrity-writer': 'Celebrity', 'celebrity2-writer': 'Celebrity 2', 'tigram-writer': 'Tigram', 'blank-person': 'an empty person writer', 'blank-general': 'an empty general writer', import: 'a writer file (Import)' })[from] ?? moduleDisplayName(from);
 
 function Section({ id, n, title, description, children }: { id: string; n: number; title: string; description: string; children: ReactNode }) {
   return (

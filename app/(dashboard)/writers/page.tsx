@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { ArrowRight, CheckCircle2, CircleAlert, CircleDashed, User, Sparkles } from 'lucide-react';
+import { ArrowRight, CheckCircle2, CircleAlert, CircleDashed, Download, User, Sparkles } from 'lucide-react';
 import { ACTIVE_MODULES } from '@/modules/registry';
 import { db } from '@/lib/db';
 import { listCustomWriters } from '@/lib/writers/store';
-import { Card, Chip, EmptyState, LinkButton, PageHeader, cx, formatDateTime } from '@/components/ui';
+import { Card, Chip, EmptyState, LinkButton, PageHeader, buttonClasses, cx, formatDateTime } from '@/components/ui';
 import { NewWriterButton, type StartOption } from './new-writer';
+import { ImportWritersButton } from './import-writers';
 
 export const metadata = { title: 'Writers' };
 export const dynamic = 'force-dynamic';
@@ -37,13 +38,28 @@ export default async function WritersPage() {
         title="Your writers"
         description="Active writers appear in Single Article, Workflow, Bulk Campaigns and website routing rules, and run like the built-in ones (same quality gate, drafts only unless the website allows publishing)."
         padded={false}
+        actions={
+          <>
+            <ImportWritersButton size="sm" />
+            {custom.length ? (
+              <a className={buttonClasses('secondary', 'sm')} href="/api/writers/export" download title="All your writers (settings and prompts) in one file: a backup, or to import on another PC">
+                <Download className="h-3.5 w-3.5" aria-hidden /> Export all
+              </a>
+            ) : null}
+          </>
+        }
       >
         {custom.length === 0 ? (
           <EmptyState
             icon={<Sparkles className="h-5 w-5" />}
             title="No writer of your own yet"
-            description="Start from Celebrity 2 to keep its steps with your own prompt, or from an empty writer. It stays a draft until you test it and make it active."
-            action={<NewWriterButton own={own} />}
+            description="Start from Celebrity 2 to keep its steps with your own prompt, or from an empty writer. It stays a draft until you test it and make it active. Writers exported on another PC come in with Import."
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <NewWriterButton own={own} />
+                <ImportWritersButton />
+              </div>
+            }
           />
         ) : (
           <ul className="divide-y divide-[var(--border)]">

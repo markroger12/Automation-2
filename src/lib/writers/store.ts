@@ -31,7 +31,7 @@ import { PERSON_STARTER_PROMPT, GENERAL_STARTER_PROMPT, OWN_TITLES_STARTER_PROMP
  * catalog (src/lib/writers/catalog.ts) up to date; the API, the pages and the worker call it.
  */
 
-const toInfo = (row: CustomWriter): CustomWriterInfo => ({
+export const toInfo = (row: CustomWriter): CustomWriterInfo => ({
   key: row.key,
   name: row.name,
   shortName: row.shortName,
@@ -76,17 +76,22 @@ function promptVariables(): PromptVariableDoc[] {
 
 export { checkPrompt };
 
-const nameSchema = z.string().trim().min(2, 'At least 2 characters.').max(60, 'At most 60 characters.');
+export const nameSchema = z.string().trim().min(2, 'At least 2 characters.').max(60, 'At most 60 characters.');
 const BUILT_IN_NAMES = new Set([...Object.values(MODULE_DISPLAY_NAMES), ...Object.values(MODULE_SHORT_NAMES), 'celebrity', 'celebrity 2', 'tigram'].map((n) => n.toLowerCase()));
 
-async function assertNameFree(name: string, shortName: string, exceptKey?: string) {
+/** Why a name (and short name) cannot be used, or null. `others`: the other writers' names (default: read here). */
+export async function nameProblem(name: string, shortName: string, exceptKey?: string, others?: { name: string; shortName: string }[]): Promise<string | null> {
   for (const n of [name, shortName]) {
-    if (BUILT_IN_NAMES.has(n.toLowerCase())) throw new AppError(409, 'NAME_TAKEN', `“${n}” is the name of a built-in writer. Choose another name.`, { name: ['Choose another name.'] });
+    if (BUILT_IN_NAMES.has(n.toLowerCase())) return `“${n}” is the name of a built-in writer. Choose another name.`;
   }
-  const others = await db.customWriter.findMany({ where: exceptKey ? { key: { not: exceptKey } } : {}, select: { name: true, shortName: true } });
-  if (others.some((o) => [o.name, o.shortName].some((x) => [name, shortName].some((n) => x.toLowerCase() === n.toLowerCase())))) {
-    throw new AppError(409, 'NAME_TAKEN', `A writer named “${name}” already exists. Choose another name.`, { name: ['Already used by another writer.'] });
-  }
+  const list = others ?? (await db.customWriter.findMany({ where: exceptKey ? { key: { not: exceptKey } } : {}, select: { name: true, shortName: true } }));
+  if (list.some((o) => [o.name, o.shortName].some((x) => [name, shortName].some((n) => x.toLowerCase() === n.toLowerCase())))) return `A writer named “${name}” already exists. Choose another name.`;
+  return null;
+}
+
+async function assertNameFree(name: string, shortName: string, exceptKey?: string) {
+  const problem = await nameProblem(name, shortName, exceptKey);
+  if (problem) throw new AppError(409, 'NAME_TAKEN', problem, { name: [problem.includes('built-in') ? 'Choose another name.' : 'Already used by another writer.'] });
 }
 
 async function storedPrompt(moduleKey: string, stageKey: string): Promise<string | null> {
@@ -94,7 +99,7 @@ async function storedPrompt(moduleKey: string, stageKey: string): Promise<string
   return row?.content ?? findPromptDefault(moduleKey, stageKey)?.content ?? null;
 }
 
-async function writePrompt(key: string, writerName: string, stageKey: 'ARTICLE' | 'TITLES', content: string, note: string) {
+export async function writePrompt(key: string, writerName: string, stageKey: 'ARTICLE' | 'TITLES', content: string, note: string) {
   const text = content.replace(/\r\n/g, '\n');
   const existing = await db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey: key, stageKey } } });
   const name = `${writerName} — ${stageKey === 'ARTICLE' ? 'Article' : 'Titles'}`;

@@ -109,14 +109,35 @@ describe('Import', () => {
     ]);
     const kids = await store.getCustomWriter('custom-celebrity-kids');
     expect(kids.writer).toMatchObject({ shortName: 'Kids', startedFrom: 'import', base: 'person', config: other.writers[0].config });
-    expect(kids.prompts).toEqual(other.writers[0].prompts);
-    expect(kids.promptVersions).toEqual({ ARTICLE: 1, TITLES: 1 });
+    expect(kids.prompts).toEqual({ ...other.writers[0].prompts, IMAGE_PLAN: null, IMAGE_GENERATION: null, IMAGE_SEARCH: null });
+    expect(kids.promptVersions).toEqual({ ARTICLE: 1, TITLES: 1, IMAGE_PLAN: 0, IMAGE_GENERATION: 0, IMAGE_SEARCH: 0 });
     expect(kids.lastTest).toBeNull();
     // Offered where writers are chosen (active), the draft not.
     const { writerChoices } = await import('@/lib/writers/options');
     const keys = writerChoices().map((c) => c.key);
     expect(keys).toContain('custom-celebrity-kids');
     expect(keys).not.toContain('custom-how-to');
+  });
+
+  it('its own photo prompts travel with it: checked, added as version 1, and a change in them is an update', async () => {
+    const base = (await transfer.exportWriters(['custom-tech-guides'])).file;
+    const photo = clone(base);
+    photo.writers[0] = { ...photo.writers[0], key: 'custom-watercolour-guides', name: 'Watercolour Guides', shortName: 'Watercolour', config: { ...photo.writers[0].config, photoPrompts: 'own' }, prompts: { ...photo.writers[0].prompts, IMAGE_PLAN: 'Plan watercolour images for {{keyword}}.\nIMAGE 1 PROMPT: …', IMAGE_GENERATION: 'Paint: {{image_brief}}' } };
+    expect((await preview(photo)).preview[0]).toMatchObject({ error: null, defaultAction: 'new' });
+    const res = await run({ file: photo });
+    const w = await store.getCustomWriter(res.imported[0].key);
+    expect(w.prompts).toMatchObject({ IMAGE_PLAN: 'Plan watercolour images for {{keyword}}.\nIMAGE 1 PROMPT: …', IMAGE_GENERATION: 'Paint: {{image_brief}}' });
+    expect(w.promptVersions).toMatchObject({ IMAGE_PLAN: 1, IMAGE_GENERATION: 1 });
+    // Only the image prompt changed in the file: the same writer, “prompt differs”, updated as a new version.
+    const changed = clone(photo);
+    changed.writers[0].prompts.IMAGE_GENERATION = 'Paint softly: {{image_brief}}';
+    expect((await preview(changed)).preview[0]).toMatchObject({ match: { by: 'key', promptChanged: true, settingsChanged: false }, defaultAction: 'update' });
+    await run({ file: changed });
+    expect((await store.getCustomWriter(res.imported[0].key)).promptVersions.IMAGE_GENERATION).toBe(2);
+    // A broken photo prompt cannot come in.
+    const broken = clone(photo);
+    broken.writers[0] = { ...broken.writers[0], key: 'custom-broken-photos', name: 'Broken Photos', prompts: { ...broken.writers[0].prompts, IMAGE_GENERATION: 'Paint something nice.' } };
+    expect((await preview(broken)).preview[0].error).toMatch(/^Image generation prompt: Put \{\{image_brief\}\} in the prompt/);
   });
 
   it('a name already used here by another writer: added as “Name 2” (or the name typed); a typed name that is taken is refused', async () => {

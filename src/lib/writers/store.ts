@@ -17,7 +17,13 @@ import {
   defaultConfig,
   isCustomKey,
   keyFromName,
+  PHOTO_PROMPT_LENDER,
+  photoPromptStages,
+  PROMPT_STAGE_LABELS,
   WRITER_BASES,
+  WRITER_PROMPT_STAGES,
+  type PhotoPromptStage,
+  type WriterPromptStage,
   type CustomWriterConfig,
   type CustomWriterInfo,
   type WriterBase,
@@ -99,11 +105,19 @@ async function storedPrompt(moduleKey: string, stageKey: string): Promise<string
   return row?.content ?? findPromptDefault(moduleKey, stageKey)?.content ?? null;
 }
 
-export async function writePrompt(key: string, writerName: string, stageKey: 'ARTICLE' | 'TITLES', content: string, note: string) {
+const PROMPT_DESCRIPTIONS: Record<WriterPromptStage, string> = {
+  ARTICLE: 'The article prompt',
+  TITLES: 'The title prompt',
+  IMAGE_PLAN: 'The image plan prompt (the featured image and the body images)',
+  IMAGE_GENERATION: 'The prompt sent for each planned picture',
+  IMAGE_SEARCH: 'The photo search prompt',
+};
+
+export async function writePrompt(key: string, writerName: string, stageKey: WriterPromptStage, content: string, note: string) {
   const text = content.replace(/\r\n/g, '\n');
   const existing = await db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey: key, stageKey } } });
-  const name = `${writerName} — ${stageKey === 'ARTICLE' ? 'Article' : 'Titles'}`;
-  const description = stageKey === 'ARTICLE' ? `The article prompt of your writer “${writerName}”.` : `The title prompt of your writer “${writerName}”.`;
+  const name = `${writerName} — ${PROMPT_STAGE_LABELS[stageKey]}`;
+  const description = `${PROMPT_DESCRIPTIONS[stageKey]} of your writer “${writerName}”.`;
   if (!existing) {
     await db.promptTemplate.create({
       data: { moduleKey: key, stageKey, name, description, content: text, defaultHash: promptHash(text), defaultVersion: 0, customized: true, variables: JSON.stringify(promptVariables()), versions: { create: { version: 1, content: text, note } } },
@@ -139,6 +153,7 @@ export async function createCustomWriter(raw: unknown): Promise<CustomWriterInfo
   let config: CustomWriterConfig;
   let article: string;
   let titles: string | null = null;
+  const photos: Partial<Record<PhotoPromptStage, string>> = {};
   let description = input.description ?? '';
   const from = input.startFrom;
   if (from === 'celebrity2-writer') {
@@ -167,6 +182,10 @@ export async function createCustomWriter(raw: unknown): Promise<CustomWriterInfo
     config = info.config;
     article = (await storedPrompt(from, 'ARTICLE')) ?? (base === 'person' ? PERSON_STARTER_PROMPT : GENERAL_STARTER_PROMPT);
     titles = info.config.titles === 'own' ? await storedPrompt(from, 'TITLES') : null;
+    for (const stage of photoPromptStages(info.base)) {
+      const row = await db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey: from, stageKey: stage } } });
+      if (row) photos[stage] = row.content;
+    }
     description ||= `Copy of ${info.name}.`;
   } else {
     config = defaultConfig('person');
@@ -178,6 +197,7 @@ export async function createCustomWriter(raw: unknown): Promise<CustomWriterInfo
   const fromName = MODULE_DISPLAY_NAMES[from] ?? (from === 'blank-person' ? 'an empty person writer' : from === 'blank-general' ? 'an empty general writer' : from);
   await writePrompt(key, input.name.trim(), 'ARTICLE', article, `Created from ${fromName}`);
   if (titles) await writePrompt(key, input.name.trim(), 'TITLES', titles, `Created from ${fromName}`);
+  for (const [stage, text] of Object.entries(photos) as [PhotoPromptStage, string][]) await writePrompt(key, input.name.trim(), stage, text, `Created from ${fromName}`);
   await audit('writer.create', 'CustomWriter', key, { name: input.name, startFrom: from });
   await ensureCustomWriters({ force: true });
   return (await getCustomWriter(key)).writer;
@@ -202,15 +222,23 @@ export interface LastTest {
 
 const configHash = (config: CustomWriterConfig, article: string) => promptHash(JSON.stringify(config.rules) + config.titles + article).slice(0, 16);
 
-export function readiness(w: CustomWriterInfo, prompts: { ARTICLE: string | null; TITLES: string | null }, lastTest: LastTest | null): WriterReadiness {
+export type WriterPrompts = Record<WriterPromptStage, string | null>;
+
+/** The photo prompts the writer uses as its own (none while it uses the app's, or has no photos). */
+export const ownPhotoStages = (w: Pick<CustomWriterInfo, 'base' | 'config'>): PhotoPromptStage[] => (w.config.images === 'on' && w.config.photoPrompts === 'own' ? photoPromptStages(w.base) : []);
+
+export function readiness(w: CustomWriterInfo, prompts: Partial<WriterPrompts>, lastTest: LastTest | null): WriterReadiness {
   const article = prompts.ARTICLE ?? '';
   const a = checkPrompt(article, 'ARTICLE');
   const t = w.config.titles === 'own' ? checkPrompt(prompts.TITLES ?? '', 'TITLES') : null;
+  const photo = ownPhotoStages(w).map((stage) => ({ stage, check: checkPrompt(prompts[stage] ?? '', stage) }));
+  const photoError = photo.find((p) => p.check.errors.length);
   const tested = Boolean(lastTest && lastTest.ok && lastTest.configHash === configHash(w.config, article));
   const checks: WriterReadiness['checks'] = [
     { id: 'name', label: 'Name', passed: w.name.length >= 2, blocking: true },
     { id: 'article', label: 'Article prompt', passed: a.errors.length === 0, detail: a.errors[0] ?? a.warnings[0], blocking: true },
     ...(t ? [{ id: 'titles', label: 'Title prompt', passed: t.errors.length === 0, detail: t.errors[0] ?? t.warnings[0], blocking: true }] : []),
+    ...(photo.length ? [{ id: 'photos', label: 'Photo prompts', passed: !photoError, detail: photoError ? `${PROMPT_STAGE_LABELS[photoError.stage]}: ${photoError.check.errors[0]}` : photo.flatMap((p) => p.check.warnings)[0], blocking: true }] : []),
     { id: 'category', label: 'Category rule', passed: w.config.category.mode !== 'fixed' || w.config.category.name.length >= 2, detail: w.config.category.mode === 'fixed' ? `Always “${w.config.category.name || '…'}”` : undefined, blocking: true },
     { id: 'test', label: 'Tested with a ChatGPT answer', passed: tested, detail: tested ? `${lastTest!.words} words, ${lastTest!.faqs} FAQs` : lastTest && !lastTest.ok ? (lastTest.problems[0] ?? 'The last test found problems.') : lastTest ? 'Changed since the last test — test again.' : 'Paste one answer of your prompt and test it (recommended).', blocking: false },
   ];
@@ -221,14 +249,27 @@ export async function getCustomWriter(key: string) {
   const row = await db.customWriter.findUnique({ where: { key } });
   if (!row) throw new AppError(404, 'NOT_FOUND', 'Writer not found.');
   const writer = toInfo(row);
-  const [article, titles, tasks] = await Promise.all([
-    db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey: key, stageKey: 'ARTICLE' } }, select: { id: true, content: true, version: true, updatedAt: true } }),
-    db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey: key, stageKey: 'TITLES' } }, select: { id: true, content: true, version: true, updatedAt: true } }),
+  const [rows, tasks] = await Promise.all([
+    db.promptTemplate.findMany({ where: { moduleKey: key, stageKey: { in: [...WRITER_PROMPT_STAGES] } }, select: { id: true, stageKey: true, content: true, version: true } }),
     db.articleTask.count({ where: { moduleKey: key } }),
   ]);
+  const rowOf = (stage: WriterPromptStage) => rows.find((r) => r.stageKey === stage);
   const lastTest = parseJson<LastTest | null>(row.lastTest, null);
-  const prompts = { ARTICLE: article?.content ?? null, TITLES: titles?.content ?? null };
-  return { writer, prompts, promptIds: { ARTICLE: article?.id ?? null, TITLES: titles?.id ?? null }, promptVersions: { ARTICLE: article?.version ?? 0, TITLES: titles?.version ?? 0 }, tasks, lastTest, readiness: readiness(writer, prompts, lastTest), createdAt: row.createdAt, updatedAt: row.updatedAt };
+  const prompts = Object.fromEntries(WRITER_PROMPT_STAGES.map((stage) => [stage, rowOf(stage)?.content ?? null])) as WriterPrompts;
+  // The app's photo prompts (as edited in Prompt Manager): where the writer's own photo prompts start from.
+  const photoDefaults = Object.fromEntries(await Promise.all((Object.keys(PHOTO_PROMPT_LENDER) as PhotoPromptStage[]).map(async (stage) => [stage, (await storedPrompt(PHOTO_PROMPT_LENDER[stage], stage)) ?? '']))) as Record<PhotoPromptStage, string>;
+  return {
+    writer,
+    prompts,
+    photoDefaults,
+    promptIds: { ARTICLE: rowOf('ARTICLE')?.id ?? null, TITLES: rowOf('TITLES')?.id ?? null },
+    promptVersions: Object.fromEntries(WRITER_PROMPT_STAGES.map((stage) => [stage, rowOf(stage)?.version ?? 0])) as Record<WriterPromptStage, number>,
+    tasks,
+    lastTest,
+    readiness: readiness(writer, prompts, lastTest),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 export type CustomWriterDetail = Awaited<ReturnType<typeof getCustomWriter>>;
 
@@ -245,7 +286,9 @@ export const updateWriterSchema = z.object({
   description: z.string().trim().max(300).optional(),
   base: z.enum(WRITER_BASES).optional(),
   config: z.unknown().optional(),
-  prompts: z.object({ ARTICLE: z.string().max(100_000).optional(), TITLES: z.string().max(100_000).optional() }).optional(),
+  prompts: z
+    .object({ ARTICLE: z.string().max(100_000).optional(), TITLES: z.string().max(100_000).optional(), IMAGE_PLAN: z.string().max(100_000).optional(), IMAGE_GENERATION: z.string().max(100_000).optional(), IMAGE_SEARCH: z.string().max(100_000).optional() })
+    .optional(),
   note: z.string().trim().max(200).optional(),
 });
 
@@ -272,17 +315,25 @@ export async function updateCustomWriter(key: string, raw: unknown) {
   if (base !== current.base && (await db.articleTask.count({ where: { moduleKey: key, status: { notIn: ['COMPLETED', 'CANCELLED', 'FAILED'] } } }))) {
     throw new AppError(409, 'IN_USE', 'Articles of this writer are still running; person/general can be changed when they are done.');
   }
-  for (const stage of ['ARTICLE', 'TITLES'] as const) {
+  for (const stage of WRITER_PROMPT_STAGES) {
     const text = input.prompts?.[stage];
     if (text === undefined) continue;
+    // An empty photo prompt is simply not saved (the writer keeps the one it has).
+    if (stage !== 'ARTICLE' && stage !== 'TITLES' && !text.trim()) continue;
     const check = checkPrompt(text, stage);
-    if (check.errors.length) throw new AppError(400, 'VALIDATION', `${stage === 'ARTICLE' ? 'Article' : 'Title'} prompt: ${check.errors[0]}`, { [`prompts.${stage}`]: check.errors });
+    if (check.errors.length) throw new AppError(400, 'VALIDATION', `${stage === 'ARTICLE' ? 'Article' : stage === 'TITLES' ? 'Title' : PROMPT_STAGE_LABELS[stage]} prompt: ${check.errors[0]}`, { [`prompts.${stage}`]: check.errors });
   }
   if (current.status === 'ACTIVE' && config.titles === 'own' && !input.prompts?.TITLES && !(await db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey: key, stageKey: 'TITLES' } } }))) {
     throw new AppError(400, 'VALIDATION', 'Write the title prompt first (or use the app’s title step).', { 'prompts.TITLES': ['Write the title prompt.'] });
   }
+  if (current.status === 'ACTIVE') {
+    for (const stage of ownPhotoStages({ base, config })) {
+      if (input.prompts?.[stage]?.trim() || (await db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey: key, stageKey: stage } } }))) continue;
+      throw new AppError(400, 'VALIDATION', `Write the ${PROMPT_STAGE_LABELS[stage].toLowerCase()} prompt first (or use the app’s photo prompts).`, { [`prompts.${stage}`]: ['Write this prompt.'] });
+    }
+  }
   await db.customWriter.update({ where: { key }, data: { name, shortName, description: input.description ?? current.description, base, config: JSON.stringify(config) } });
-  for (const stage of ['ARTICLE', 'TITLES'] as const) {
+  for (const stage of WRITER_PROMPT_STAGES) {
     const text = input.prompts?.[stage];
     if (text !== undefined && text.trim()) await writePrompt(key, name, stage, text, input.note || 'Edited on the writer page');
   }

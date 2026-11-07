@@ -4,6 +4,7 @@ import { parseJson } from '../json';
 import { FatalError } from '../pipeline-errors';
 import { findPromptDefault, type PromptVariableDoc } from '@/modules/prompt-defaults';
 import { customWriter } from '../writers/catalog';
+import { photoPromptStages } from '../writers/types';
 
 export interface LoadedPrompt {
   moduleKey: string;
@@ -20,7 +21,8 @@ export async function loadPromptTemplate(moduleKey: string, stageKey: string, we
   const def = findPromptDefault(moduleKey, stageKey);
   const row = await db.promptTemplate.findUnique({ where: { moduleKey_stageKey: { moduleKey, stageKey } } });
   const variables = row ? parseJson<PromptVariableDoc[]>(row.variables, def?.variables ?? []) : (def?.variables ?? []);
-  const kind = def?.kind ?? 'text';
+  // A writer's own photo prompt is the same kind as the app's prompt it replaces (an image prompt gets no language line).
+  const kind = def?.kind ?? (moduleKey.startsWith('custom-') ? (findPromptDefault('tigram-writer', stageKey) ?? findPromptDefault('celebrity-writer', stageKey))?.kind : undefined) ?? 'text';
   const overrides = website ? parseJson<Record<string, string>>(website.promptOverrides, {}) : {};
   const override = overrides[`${moduleKey}:${stageKey}`];
   if (override && override.trim()) return { moduleKey, stageKey, content: override, version: `site-override:${website!.id}`, variables, kind, customized: true };
@@ -37,11 +39,13 @@ const BORROWS: Record<string, string> = { 'celebrity2-writer': 'celebrity-writer
 
 /** Which module owns a prompt stage key (module-specific first, then the module it borrows from, then shared). */
 export function promptModuleFor(moduleKey: string, stageKey: string): string {
-  // The owner's writers: their own article prompt (and title prompt, when they have one); the rest is borrowed —
-  // the photo prompts from Celebrity (person writers) or Tigram (general writers), the category prompt from Tigram.
+  // The owner's writers: their own article prompt (and title and photo prompts, when they have them); the rest is
+  // borrowed — the photo prompts from Celebrity (person writers) or Tigram (general writers), the category prompt from Tigram.
   const custom = customWriter(moduleKey);
   if (custom) {
     if (stageKey === 'ARTICLE' || (stageKey === 'TITLES' && custom.config.titles === 'own')) return moduleKey;
+    // Its own photo prompts (owner request 2026-11-07), when it uses them.
+    if (custom.config.images === 'on' && custom.config.photoPrompts === 'own' && (photoPromptStages(custom.base) as string[]).includes(stageKey)) return moduleKey;
     for (const lender of [stageKey === 'TITLES' || custom.base === 'person' ? 'celebrity-writer' : 'tigram-writer', 'tigram-writer', 'celebrity-writer', 'shared']) {
       if (findPromptDefault(lender, stageKey)) return lender;
     }

@@ -21,7 +21,8 @@ export interface WriterFileEntry {
   /** Its status where it was exported (an import makes new writers drafts unless asked otherwise). */
   status: WriterStatus;
   config: CustomWriterConfig;
-  prompts: { ARTICLE: string; TITLES: string | null };
+  /** The current prompts; the photo prompts when the writer has its own (files made before them have none). */
+  prompts: { ARTICLE: string; TITLES: string | null; IMAGE_PLAN?: string | null; IMAGE_GENERATION?: string | null; IMAGE_SEARCH?: string | null };
 }
 
 export interface WriterFile {

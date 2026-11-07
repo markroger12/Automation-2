@@ -156,6 +156,13 @@ The test types these credentials itself (simulating you in the login window); th
      - **Answer rules:** words, FAQs (exactly or about; 0 = none), conclusion, SEO lines, no lists, and for person writers the facts table (required, optional or none) and its H2 heading.
      - **Category:** always “Celebrity”, always one category by name (with its German name), or chosen per article (else ChatGPT chooses).
      - **Photos & links:** photos, the link check, internal links, the app's SEO brief (off: the prompt is sent as written).
+     - **Photo prompts** (with photos on): **the app's** (Tigram's image plan and image prompt, or Celebrity's photo search, as edited in Prompt Manager), or **my own** for this writer only.
+       - General writers get an **Image plan** prompt and an **Image generation** prompt.
+         - The plan's answer needs the lines `IMAGE 1 PROMPT: …` / `IMAGE 1 ALT: …` for images 1 to 3 (1 is the featured image). A missing line gets the app's default description.
+         - The image prompt needs `{{image_brief}}`, that picture's description from the plan.
+       - Person writers get a **Photo search** prompt; it needs `{{person_name}}` (or `{{keyword}}`). The photo check stays the app's.
+       - Your own prompts start as a copy of the app's. They are checked like the article prompt and keep their versions; you also find them in Prompt Manager under the writer.
+       - Duplicate, Export and Import carry them. Back to the app's: the app's prompts are used again, and yours stay saved.
      - **Keywords:** phrases that send a keyword to this writer by themselves; person writers can be offered for person keywords.
      - **Test:** paste one ChatGPT answer to your prompt and see what the article would get (words, FAQs, table rows, SEO lines, sections, the article itself), or why it would be asked again. Nothing is sent to ChatGPT or WordPress.
   3. **Make active** when the checklist on the side is complete: the writer is then offered in Single Article, Workflow, Bulk Campaigns and website routing rules, and runs with the same steps and quality gate as the built-in writers (drafts only unless the website allows publishing).

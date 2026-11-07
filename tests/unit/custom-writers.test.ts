@@ -185,6 +185,70 @@ describe('Writers → New writer', () => {
     expect(await client.promptTemplate.count({ where: { moduleKey: spare.key } })).toBe(0);
   });
 
+  it('owner request (2026-11-07): its own photo prompts — checked, started from the app’s, used instead of the app’s', async () => {
+    const { promptModuleFor, loadPromptTemplate } = await import('@/lib/prompts/load');
+    const { findPromptDefault } = await import('@/modules/prompt-defaults');
+    const w = await store.createCustomWriter({ name: 'Flat Guides', startFrom: 'tigram-writer' });
+    expect(w.config.photoPrompts).toBe('app');
+    let detail = await store.getCustomWriter(w.key);
+    // Where its own prompts start: the app's current ones.
+    expect(detail.photoDefaults.IMAGE_PLAN).toBe(findPromptDefault('tigram-writer', 'IMAGE_PLAN')!.content);
+    expect(detail.photoDefaults.IMAGE_GENERATION).toBe(findPromptDefault('tigram-writer', 'IMAGE_GENERATION')!.content);
+    expect(detail.photoDefaults.IMAGE_SEARCH).toBe(findPromptDefault('celebrity-writer', 'IMAGE_SEARCH')!.content);
+    // The app's prompts while it uses them.
+    expect(promptModuleFor(w.key, 'IMAGE_PLAN')).toBe('tigram-writer');
+    const own = { ...w.config, photoPrompts: 'own' as const };
+    // Checked like the article prompt; each picture needs its description.
+    await expect(store.updateCustomWriter(w.key, { config: own, prompts: { IMAGE_GENERATION: 'Draw a picture for {{keyword}}.' } })).rejects.toMatchObject({ fieldErrors: { 'prompts.IMAGE_GENERATION': [expect.stringMatching(/Put \{\{image_brief\}\} in the prompt/)] } });
+    await expect(store.updateCustomWriter(w.key, { config: own, prompts: { IMAGE_PLAN: 'Plan images for {{person_name}}.' } })).rejects.toMatchObject({ fieldErrors: { 'prompts.IMAGE_PLAN': ['{{person_name}} is not a variable the app fills in for this prompt (use the buttons above the prompt).'] } });
+    const plan = 'Plan 3 watercolour images about "{{keyword}}" (title text: "{{image_title}}").\nIMAGE 1 PROMPT: …\nIMAGE 1 ALT: …\nIMAGE 2 PROMPT: …\nIMAGE 2 ALT: …\nIMAGE 3 PROMPT: …\nIMAGE 3 ALT: …';
+    const draw = 'Paint this as a soft watercolour, landscape:\n\n{{image_brief}}';
+    detail = await store.updateCustomWriter(w.key, { config: own, prompts: { IMAGE_PLAN: plan, IMAGE_GENERATION: draw } });
+    expect(detail.prompts).toMatchObject({ IMAGE_PLAN: plan, IMAGE_GENERATION: draw, IMAGE_SEARCH: null });
+    expect(detail.readiness.checks.find((c) => c.id === 'photos')).toMatchObject({ passed: true, blocking: true });
+    // Used instead of the app's, as the same kind of prompt (an image prompt gets no language line).
+    expect(promptModuleFor(w.key, 'IMAGE_PLAN')).toBe(w.key);
+    expect(promptModuleFor(w.key, 'IMAGE_GENERATION')).toBe(w.key);
+    // A general writer has no photo search of its own.
+    expect(promptModuleFor(w.key, 'IMAGE_SEARCH')).not.toBe(w.key);
+    expect(await loadPromptTemplate(w.key, 'IMAGE_GENERATION')).toMatchObject({ content: draw, kind: 'image' });
+    expect(await loadPromptTemplate(w.key, 'IMAGE_PLAN')).toMatchObject({ content: plan, kind: 'text' });
+    // Listed in Prompt Manager under the writer, with versions.
+    const rows = await client.promptTemplate.findMany({ where: { moduleKey: w.key }, orderBy: { stageKey: 'asc' } });
+    expect(rows.map((r) => [r.stageKey, r.name])).toEqual([
+      ['ARTICLE', 'Flat Guides — Article'],
+      ['IMAGE_GENERATION', 'Flat Guides — Image generation'],
+      ['IMAGE_PLAN', 'Flat Guides — Image plan'],
+    ]);
+    // Back to the app's: the app's prompts again; its own stay saved for later.
+    await store.updateCustomWriter(w.key, { config: { ...own, photoPrompts: 'app' } });
+    expect(promptModuleFor(w.key, 'IMAGE_PLAN')).toBe('tigram-writer');
+    expect((await store.getCustomWriter(w.key)).prompts.IMAGE_PLAN).toBe(plan);
+    // A copy keeps them; Export carries them.
+    const copy = await store.createCustomWriter({ name: 'Flat Guides Copy', startFrom: w.key });
+    expect((await store.getCustomWriter(copy.key)).prompts).toMatchObject({ IMAGE_PLAN: plan, IMAGE_GENERATION: draw });
+    const { exportWriters } = await import('@/lib/writers/transfer');
+    expect((await exportWriters([w.key])).file.writers[0].prompts).toMatchObject({ IMAGE_PLAN: plan, IMAGE_GENERATION: draw });
+  });
+
+  it('an active writer cannot switch to its own photo prompts without them; a person writer has its own photo search', async () => {
+    const { promptModuleFor } = await import('@/lib/prompts/load');
+    const w = await store.createCustomWriter({ name: 'Family Photos', startFrom: 'celebrity2-writer' });
+    await store.setWriterStatus(w.key, 'ACTIVE');
+    await expect(store.updateCustomWriter(w.key, { config: { ...w.config, photoPrompts: 'own' } })).rejects.toMatchObject({ fieldErrors: { 'prompts.IMAGE_SEARCH': ['Write this prompt.'] } });
+    await expect(store.updateCustomWriter(w.key, { config: { ...w.config, photoPrompts: 'own' }, prompts: { IMAGE_SEARCH: 'Show photos as a gallery.' } })).rejects.toThrow(/Use \{\{person_name\}\} \(or \{\{keyword\}\}\)/);
+    const search = 'Search the web for red carpet photos of {{person_name}} and show them as an image gallery.';
+    const detail = await store.updateCustomWriter(w.key, { config: { ...w.config, photoPrompts: 'own' }, prompts: { IMAGE_SEARCH: search } });
+    expect(detail.prompts.IMAGE_SEARCH).toBe(search);
+    expect(promptModuleFor(w.key, 'IMAGE_SEARCH')).toBe(w.key);
+    // Its photo check (a fixed answer format) stays the app's.
+    expect(promptModuleFor(w.key, 'PHOTO_CHECK')).toBe('celebrity-writer');
+    // Photos off: no photo prompts at all.
+    await store.updateCustomWriter(w.key, { config: { ...w.config, photoPrompts: 'own', images: 'off' } });
+    expect(promptModuleFor(w.key, 'IMAGE_SEARCH')).toBe('celebrity-writer');
+    await store.setWriterStatus(w.key, 'ARCHIVED');
+  });
+
   it('built-in writers keep their rules (Celebrity 2’s table and FAQs, Tigram’s images and designs)', async () => {
     const { categoryRuleFor, imagesKindFor, keepsAnswerOrder, profileTableFor, sendsPromptAsWritten } = await import('@/lib/writers/rules');
     expect(categoryRuleFor('celebrity2-writer')).toEqual({ mode: 'celebrity' });

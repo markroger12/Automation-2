@@ -4640,3 +4640,42 @@ npx vitest run --config vitest.integration.config.ts tests/integration/images.te
 npx vitest run                                                                          # 66 files, 464 tests pass
 npx tsc --noEmit                                                                        # 0 errors
 ```
+
+## Owner request (2026-11-07): “custom writer me photos ka custom prompt”
+
+A writer of your own can now use its own photo prompts instead of the app's.
+- **Setting:** `config.photoPrompts` (`app` by default, or `own`) in `src/lib/writers/types.ts`. The Photos & links section shows it when photos are on.
+- **Stages** (`photoPromptStages`):
+  - general writers: `IMAGE_PLAN` and `IMAGE_GENERATION` (instead of Tigram's);
+  - person writers: `IMAGE_SEARCH` (instead of Celebrity's).
+  - `PHOTO_CHECK` stays the app's, because the app reads its fixed answer format.
+- **Storage:**
+  - the prompts are `PromptTemplate` rows under the writer's key (“<writer> — Image plan / Image generation / Photo search”), versioned and listed in Prompt Manager;
+  - they start as a copy of the app's current prompt (`photoDefaults`).
+- **Used** by `promptModuleFor` when photos are on and `photoPrompts` is `own`. The prompt has the same kind as the app's (`loadPromptTemplate`), so an image prompt gets no language line.
+- **Checks** (`checkPrompt` per stage):
+  - **variables:** only the general ones plus that prompt's own; `{{image_title}}` is for the plan, `{{image_brief}}` for generation, `{{person_name}}` for the search;
+  - **errors:** generation without `{{image_brief}}`; a search without `{{person_name}}`/`{{keyword}}`;
+  - **warnings:** a plan without the `IMAGE 1 PROMPT:` lines; a search that does not ask for photos;
+  - **checklist:** a “Photo prompts” item;
+  - an active writer cannot switch to its own photo prompts without them.
+- **Duplicate, Export and Import** carry the photo prompts. Older files without them still import.
+- **Tests:**
+  - unit `custom-writers` (+2): defaults, checks, prompt choice, kind, Prompt Manager rows, back to the app's, copy, export, the person writer's search, the active guard, photos off;
+  - unit `writer-transfer` (+1): the prompts in a file are checked, imported and updated as versions;
+  - integration `images` (+1): a writer of your own with its own image plan and image prompt.
+    - Its plan prompt is sent once and its image prompt three times, with the plan's descriptions and no language line.
+    - The app's photo prompts are never sent (the scripted answer fails the test if they are).
+    - The pictures are uploaded with the plan's alt texts and the keyword file names.
+- **Checked:** unit 66 files / 467 tests; integration `images` 15/15; `tsc` 0 errors.
+- **Not verified:**
+  - the writer page in a browser: no production build was possible, the container disk being full of earlier test data in /tmp;
+  - real ChatGPT image runs.
+
+**Commands run**
+```
+npx vitest run tests/unit/custom-writers.test.ts tests/unit/writer-transfer.test.ts           # 10 + 10 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts      # 15 pass
+npx vitest run                                                                              # 66 files, 467 tests pass
+npx tsc --noEmit                                                                            # 0 errors
+```

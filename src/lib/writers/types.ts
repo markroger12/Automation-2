@@ -56,6 +56,9 @@ export const customWriterConfigSchema = z
       .refine((c) => c.mode !== 'fixed' || c.name.length >= 2, { message: 'Type the category name.', path: ['name'] }),
     /** Photos: person photos (the celebrity photo steps) for person writers, generated images for general writers. */
     images: z.enum(['on', 'off']).default('on'),
+    /** app: the app's photo prompts (Celebrity's photo search, Tigram's image plan and generation; Prompt Manager);
+     * own: the writer's own photo prompts (owner request 2026-11-07: “custom writer me photos ka custom prompt”). */
+    photoPrompts: z.enum(['app', 'own']).default('app'),
     /** Open every link of the answer and unlink the ones that fail (as Celebrity 2). */
     linkCheck: z.boolean().default(true),
     internalLinks: z.boolean().default(true),
@@ -94,8 +97,21 @@ export interface CustomWriterInfo {
   config: CustomWriterConfig;
 }
 
+/** The prompts of a custom writer: its article prompt, its title prompt, and its own photo prompts. */
+export const WRITER_PROMPT_STAGES = ['ARTICLE', 'TITLES', 'IMAGE_PLAN', 'IMAGE_GENERATION', 'IMAGE_SEARCH'] as const;
+export type WriterPromptStage = (typeof WRITER_PROMPT_STAGES)[number];
+export type PhotoPromptStage = Extract<WriterPromptStage, 'IMAGE_PLAN' | 'IMAGE_GENERATION' | 'IMAGE_SEARCH'>;
+
+/** The photo prompts a writer can have: person writers search photos of the person; general writers plan and create images. */
+export const photoPromptStages = (base: WriterBase): PhotoPromptStage[] => (base === 'person' ? ['IMAGE_SEARCH'] : ['IMAGE_PLAN', 'IMAGE_GENERATION']);
+
+/** The app's prompt a photo prompt replaces (and starts from). */
+export const PHOTO_PROMPT_LENDER: Record<PhotoPromptStage, 'celebrity-writer' | 'tigram-writer'> = { IMAGE_SEARCH: 'celebrity-writer', IMAGE_PLAN: 'tigram-writer', IMAGE_GENERATION: 'tigram-writer' };
+
+export const PROMPT_STAGE_LABELS: Record<WriterPromptStage, string> = { ARTICLE: 'Article', TITLES: 'Titles', IMAGE_PLAN: 'Image plan', IMAGE_GENERATION: 'Image generation', IMAGE_SEARCH: 'Photo search' };
+
 /** Template variables a custom writer's prompts can use (Writers → the prompt editor shows them as buttons). */
-export const CUSTOM_PROMPT_VARIABLES: { name: string; label: string; example: string; stage?: 'TITLES' | 'ARTICLE' }[] = [
+export const CUSTOM_PROMPT_VARIABLES: { name: string; label: string; example: string; stage?: WriterPromptStage }[] = [
   { name: 'keyword', label: 'Primary keyword', example: 'Andrea Soros' },
   { name: 'selected_title', label: 'Approved title (from the title step)', example: 'Who Is Andrea Soros? All About George Soros’ Daughter', stage: 'ARTICLE' },
   { name: 'secondary_keywords', label: 'Secondary keywords (comma-separated)', example: 'andrea soros husband, andrea soros children' },
@@ -106,6 +122,9 @@ export const CUSTOM_PROMPT_VARIABLES: { name: string; label: string; example: st
   { name: 'word_range', label: 'Word range (e.g. 1300–1600 words)', example: '1300–1600 words', stage: 'ARTICLE' },
   { name: 'faq_count', label: 'Number of FAQs', example: '5', stage: 'ARTICLE' },
   { name: 'table_heading', label: 'Table heading (Family Profile)', example: 'Family Profile', stage: 'ARTICLE' },
+  { name: 'image_title', label: 'Short title for the featured picture (before “:” or “–”, ~45 characters)', example: 'How to Install WordPress', stage: 'IMAGE_PLAN' },
+  { name: 'image_brief', label: 'This picture’s description from the image plan', example: 'A minimal flat illustration of a laptop with a setup wizard, soft colours, no text.', stage: 'IMAGE_GENERATION' },
+  { name: 'person_name', label: 'The person (the facts table’s full name, else the keyword)', example: 'Andrea Soros Colombel', stage: 'IMAGE_SEARCH' },
 ];
 
 /** A readable key from a name: “Tech Reviews” → custom-tech-reviews. */

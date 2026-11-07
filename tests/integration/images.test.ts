@@ -582,6 +582,49 @@ describe('Image Studio (IMAGES stage)', () => {
     }
   });
 
+  it('owner request (2026-11-07): a writer of your own with its own photo prompts — its image plan and image prompt are sent instead of the app’s', async () => {
+    const wp = await startFakeWordPress();
+    servers.push(wp);
+    const site = await loggedInSite(wp, 'Watercolour Blog');
+    const store = await import('@/lib/writers/store');
+    const w = await store.createCustomWriter({ name: 'Watercolour Guides', startFrom: 'tigram-writer' });
+    const plan = 'WATERCOLOUR PLAN for "{{keyword}}" (picture title: {{image_title}}). Answer with IMAGE 1 PROMPT / IMAGE 1 ALT lines for images 1 to 3.';
+    const draw = 'WATERCOLOUR DRAW, landscape:\n{{image_brief}}';
+    await store.updateCustomWriter(w.key, { config: { ...w.config, photoPrompts: 'own', rules: { ...w.config.rules, wordMin: 300, wordMax: 900 } }, prompts: { IMAGE_PLAN: plan, IMAGE_GENERATION: draw } });
+    await store.setWriterStatus(w.key, 'ACTIVE');
+    const colors = [await solid(180, 90, 40), await solid(60, 140, 90), await solid(70, 80, 190)];
+    let gen = 0;
+    const sent: { stageKey: string; prompt: string }[] = [];
+    const answer = (stageKey: string, prompt: string, language: 'en' | 'de', keyword: string): ScriptedAnswer => {
+      sent.push({ stageKey, prompt });
+      if (/WATERCOLOUR PLAN/.test(prompt))
+        return 'IMAGE 1 PROMPT: A watercolour laptop on a tidy wooden desk in soft morning light\nIMAGE 1 ALT: Watercolour laptop ready for installing WordPress\nIMAGE 2 PROMPT: A watercolour browser window with a setup wizard\nIMAGE 2 ALT: Watercolour browser with a setup wizard\nIMAGE 3 PROMPT: A watercolour checklist on a clipboard\nIMAGE 3 ALT: Watercolour checklist for a new website';
+      if (/WATERCOLOUR DRAW/.test(prompt)) return { text: 'Here is the image.', images: [colors[gen++ % 3]] };
+      if (/Plan 3 images|Create this image now/.test(prompt)) throw new Error('The app’s photo prompt was sent instead of the writer’s.');
+      return cannedAnswer(stageKey === 'ARTICLE' ? 'ARTICLE' : stageKey, prompt, language, keyword);
+    };
+    const driver = makeDriver(client, answer);
+    const { task } = await create.createArticleTask({ moduleKey: w.key, keyword: 'How to Install WordPress', secondaryKeywords: 'hosting', websiteId: site.id, idempotencyKey: 'img:own-photo-prompts' }, { source: 'SINGLE' });
+    const t = await driver.drive(task.id);
+    expect(t.status, `${t.message} ${t.reviewReasons}`).toBe('COMPLETED');
+    // The driver names the step (IMAGES); the prompts are told apart by their text.
+    const plans = sent.filter((x) => x.stageKey === 'IMAGES' && /^WATERCOLOUR PLAN/.test(x.prompt));
+    expect(plans).toHaveLength(1);
+    expect(plans[0].prompt).toMatch(/^WATERCOLOUR PLAN for "How to Install WordPress" \(picture title: [^)]+\)\./);
+    const draws = sent.filter((x) => x.stageKey === 'IMAGES' && /^WATERCOLOUR DRAW/.test(x.prompt)).map((x) => x.prompt);
+    expect(sent.filter((x) => x.stageKey === 'IMAGES')).toHaveLength(4);
+    expect(draws).toHaveLength(3);
+    expect(draws.every((d) => d.startsWith('WATERCOLOUR DRAW, landscape:\n'))).toBe(true);
+    expect(draws.join('\n')).toContain('A watercolour browser window with a setup wizard');
+    expect(draws.join('\n')).toContain('A watercolour checklist on a clipboard');
+    // An image prompt gets no language line (as the app's).
+    expect(draws.some((d) => /Write in|US English|Language:/i.test(d))).toBe(false);
+    // The pictures are placed and uploaded, with the plan's alt texts and the keyword's file names.
+    expect(wp.media.size).toBe(3);
+    expect([...wp.media.values()].map((m) => m.alt)).toEqual(expect.arrayContaining(['Watercolour browser with a setup wizard', 'Watercolour checklist for a new website']));
+    expect([...wp.media.values()].every((m) => m.filename.startsWith('how-to-install-wordpress'))).toBe(true);
+  });
+
   it('degrades safely: no photos → text-only with a note, or review when images are required', async () => {
     commonsPages = [];
     const site = await offlineSite('No Photos');

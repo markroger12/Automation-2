@@ -3,8 +3,8 @@ import { db } from '../db';
 import { AppError } from '../errors';
 import { audit } from '../audit';
 import { checkPrompt } from './prompt-check';
-import { customWriterConfigSchema, isCustomKey, keyFromName, WRITER_BASES, WRITER_STATUSES, type CustomWriterConfig, type WriterBase } from './types';
-import { ensureCustomWriters, nameProblem, nameSchema, setWriterStatus, toInfo, updateCustomWriter, writePrompt } from './store';
+import { customWriterConfigSchema, isCustomKey, keyFromName, PROMPT_STAGE_LABELS, WRITER_BASES, WRITER_STATUSES, type CustomWriterConfig, type PhotoPromptStage, type WriterBase } from './types';
+import { ensureCustomWriters, nameProblem, nameSchema, ownPhotoStages, setWriterStatus, toInfo, updateCustomWriter, writePrompt } from './store';
 import {
   MAX_WRITERS_PER_FILE,
   WRITER_FILE_FORMAT,
@@ -27,6 +27,8 @@ import {
 const ABOUT = 'Writers exported from Blog Automation Studio (Writers → Export). Import them with Writers → Import. Each writer’s name, settings and current prompts — no passwords, keys, websites or articles.';
 const FINISHED = ['COMPLETED', 'CANCELLED', 'FAILED'];
 const norm = (s: string | null | undefined) => (s ?? '').replace(/\r\n/g, '\n');
+const PHOTO_STAGES: PhotoPromptStage[] = ['IMAGE_PLAN', 'IMAGE_GENERATION', 'IMAGE_SEARCH'];
+const ALL_STAGES = ['ARTICLE', 'TITLES', ...PHOTO_STAGES];
 
 /** The owner's writers (all, or the given keys) as a writer file. */
 export async function exportWriters(keys: string[] = []): Promise<{ file: WriterFile; filename: string }> {
@@ -35,11 +37,12 @@ export async function exportWriters(keys: string[] = []): Promise<{ file: Writer
   const rows = await db.customWriter.findMany({ where: wanted.length ? { key: { in: wanted } } : {}, orderBy: { createdAt: 'asc' } });
   if (wanted.length && rows.length !== wanted.length) throw new AppError(404, 'NOT_FOUND', 'Writer not found.');
   if (!rows.length) throw new AppError(404, 'NOT_FOUND', 'There is no writer of your own to export yet.');
-  const prompts = await db.promptTemplate.findMany({ where: { moduleKey: { in: rows.map((r) => r.key) }, stageKey: { in: ['ARTICLE', 'TITLES'] } }, select: { moduleKey: true, stageKey: true, content: true } });
+  const prompts = await db.promptTemplate.findMany({ where: { moduleKey: { in: rows.map((r) => r.key) }, stageKey: { in: ALL_STAGES } }, select: { moduleKey: true, stageKey: true, content: true } });
   const prompt = (key: string, stage: string) => prompts.find((p) => p.moduleKey === key && p.stageKey === stage)?.content ?? null;
   const writers: WriterFileEntry[] = rows.map((row) => {
     const w = toInfo(row);
-    return { key: w.key, name: w.name, shortName: w.shortName, description: w.description, base: w.base, status: w.status, config: w.config, prompts: { ARTICLE: prompt(w.key, 'ARTICLE') ?? '', TITLES: prompt(w.key, 'TITLES') } };
+    const photos = Object.fromEntries(PHOTO_STAGES.map((stage) => [stage, prompt(w.key, stage)]).filter(([, text]) => text !== null));
+    return { key: w.key, name: w.name, shortName: w.shortName, description: w.description, base: w.base, status: w.status, config: w.config, prompts: { ARTICLE: prompt(w.key, 'ARTICLE') ?? '', TITLES: prompt(w.key, 'TITLES'), ...photos } };
   });
   const exportedAt = new Date().toISOString();
   const filename = writers.length === 1 && wanted.length === 1 ? `writer-${writers[0].key.replace(/^custom-/, '')}.json` : `writers-${exportedAt.slice(0, 10)}.json`;
@@ -61,7 +64,13 @@ const entrySchema = z.object({
   base: z.enum(WRITER_BASES),
   status: z.enum(WRITER_STATUSES).optional(),
   config: z.unknown(),
-  prompts: z.object({ ARTICLE: z.string().max(100_000), TITLES: z.string().max(100_000).nullable().optional() }),
+  prompts: z.object({
+    ARTICLE: z.string().max(100_000),
+    TITLES: z.string().max(100_000).nullable().optional(),
+    IMAGE_PLAN: z.string().max(100_000).nullable().optional(),
+    IMAGE_GENERATION: z.string().max(100_000).nullable().optional(),
+    IMAGE_SEARCH: z.string().max(100_000).nullable().optional(),
+  }),
 });
 
 interface ParsedEntry {
@@ -74,6 +83,7 @@ interface ParsedEntry {
   config: CustomWriterConfig;
   article: string;
   titles: string | null;
+  photos: Partial<Record<PhotoPromptStage, string>>;
 }
 
 /** The file's writers (each still to be checked on its own), or why the file cannot be read at all. */
@@ -112,8 +122,21 @@ function readEntry(raw: unknown): { entry: ParsedEntry | null; name: string; bas
   } else if (config.data.titles === 'own') {
     warnings.push('It uses its own title prompt, but the file has none: write one on its page before making it active.');
   }
+  const photos: Partial<Record<PhotoPromptStage, string>> = {};
+  const usedPhotos = ownPhotoStages({ base: d.base, config: config.data });
+  for (const stage of PHOTO_STAGES) {
+    const text = d.prompts[stage]?.trim() ? norm(d.prompts[stage]) : null;
+    if (!text) {
+      if (usedPhotos.includes(stage)) warnings.push(`It uses its own photo prompts, but the file has no ${PROMPT_STAGE_LABELS[stage].toLowerCase()} prompt: write one on its page before making it active.`);
+      continue;
+    }
+    const check = checkPrompt(text, stage);
+    if (check.errors.length) return { entry: null, name: d.name, base: d.base, error: `${PROMPT_STAGE_LABELS[stage]} prompt: ${check.errors[0]}`, warnings: [] };
+    if (usedPhotos.includes(stage)) warnings.push(...check.warnings.map((w) => `${PROMPT_STAGE_LABELS[stage]} prompt: ${w}`));
+    photos[stage] = text;
+  }
   return {
-    entry: { key: d.key && isCustomKey(d.key) ? d.key : null, name: d.name, shortName: d.shortName?.trim() || d.name, description: d.description ?? '', base: d.base, wasActive: d.status === 'ACTIVE', config: config.data, article, titles },
+    entry: { key: d.key && isCustomKey(d.key) ? d.key : null, name: d.name, shortName: d.shortName?.trim() || d.name, description: d.description ?? '', base: d.base, wasActive: d.status === 'ACTIVE', config: config.data, article, titles, photos },
     name: d.name,
     base: d.base,
     error: null,
@@ -153,7 +176,7 @@ interface Plan {
 async function planImport(rawFile: unknown): Promise<Plan> {
   const raws = readWriterFile(rawFile);
   const rows = await db.customWriter.findMany();
-  const prompts = await db.promptTemplate.findMany({ where: { moduleKey: { in: rows.map((r) => r.key) }, stageKey: { in: ['ARTICLE', 'TITLES'] } }, select: { moduleKey: true, stageKey: true, content: true } });
+  const prompts = await db.promptTemplate.findMany({ where: { moduleKey: { in: rows.map((r) => r.key) }, stageKey: { in: ALL_STAGES } }, select: { moduleKey: true, stageKey: true, content: true } });
   const running = await db.articleTask.groupBy({ by: ['moduleKey'], where: { moduleKey: { in: rows.map((r) => r.key) }, status: { notIn: FINISHED } }, _count: { _all: true } });
   const taken = rows.map((r) => ({ name: r.name, shortName: r.shortName }));
   const items: ImportPreviewItem[] = [];
@@ -173,10 +196,18 @@ async function planImport(rawFile: unknown): Promise<Plan> {
     if (row) {
       const here = toInfo(row);
       const stored = (stage: string) => norm(prompts.find((p) => p.moduleKey === row.key && p.stageKey === stage)?.content);
-      const promptChanged = stored('ARTICLE') !== e.article || (e.titles !== null && stored('TITLES') !== e.titles);
+      const promptChanged = stored('ARTICLE') !== e.article || (e.titles !== null && stored('TITLES') !== e.titles) || (Object.entries(e.photos) as [PhotoPromptStage, string][]).some(([stage, text]) => stored(stage) !== text);
       const settingsChanged = JSON.stringify(here.config) !== JSON.stringify(e.config) || here.base !== e.base || here.description !== e.description;
       const busy = running.find((c) => c.moduleKey === row.key)?._count._all ?? 0;
-      const updateBlocked = here.base !== e.base && busy ? `${busy} article(s) of “${here.name}” are still running: “about a person” / “any topic” can change when they are done.` : here.status === 'ACTIVE' && e.config.titles === 'own' && !e.titles && !stored('TITLES') ? 'It would use its own title prompt, which neither the file nor your writer has.' : null;
+      const missingPhoto = here.status === 'ACTIVE' ? ownPhotoStages({ base: e.base, config: e.config }).find((stage) => !e.photos[stage] && !stored(stage)) : undefined;
+      const updateBlocked =
+        here.base !== e.base && busy
+          ? `${busy} article(s) of “${here.name}” are still running: “about a person” / “any topic” can change when they are done.`
+          : here.status === 'ACTIVE' && e.config.titles === 'own' && !e.titles && !stored('TITLES')
+            ? 'It would use its own title prompt, which neither the file nor your writer has.'
+            : missingPhoto
+              ? `It would use its own ${PROMPT_STAGE_LABELS[missingPhoto].toLowerCase()} prompt, which neither the file nor your writer has.`
+              : null;
       match = { key: row.key, name: here.name, status: here.status, by: byKey ? 'key' : 'name', promptChanged, settingsChanged, updateBlocked };
     }
     const suggestedName = await freeName(e.name, taken);
@@ -264,7 +295,7 @@ export async function importWriters(raw: unknown): Promise<ImportResult | { prev
   for (const { item, entry, action, name, shortName } of todo) {
     if (action === 'update') {
       const key = item.match!.key;
-      const detail = await updateCustomWriter(key, { description: entry.description, base: entry.base, config: entry.config, prompts: { ARTICLE: entry.article, ...(entry.titles ? { TITLES: entry.titles } : {}) }, note: `Imported from ${from}` });
+      const detail = await updateCustomWriter(key, { description: entry.description, base: entry.base, config: entry.config, prompts: { ARTICLE: entry.article, ...(entry.titles ? { TITLES: entry.titles } : {}), ...entry.photos }, note: `Imported from ${from}` });
       await audit('writer.import', 'CustomWriter', key, { action: 'update', name: detail.writer.name, fileKey: entry.key, fileName: input.fileName ?? null });
       result.imported.push({ index: item.index, key, name: detail.writer.name, action, status: detail.writer.status, note: null });
       continue;
@@ -274,6 +305,7 @@ export async function importWriters(raw: unknown): Promise<ImportResult | { prev
     await db.customWriter.create({ data: { key, name, shortName, description: entry.description, base: entry.base, startedFrom: 'import', status: 'DRAFT', config: JSON.stringify(entry.config) } });
     await writePrompt(key, name, 'ARTICLE', entry.article, `Imported from ${from}`);
     if (entry.titles) await writePrompt(key, name, 'TITLES', entry.titles, `Imported from ${from}`);
+    for (const [stage, text] of Object.entries(entry.photos) as [PhotoPromptStage, string][]) await writePrompt(key, name, stage, text, `Imported from ${from}`);
     await audit('writer.import', 'CustomWriter', key, { action: 'new', name, fileKey: entry.key, fileName: input.fileName ?? null });
     let status: ImportResult['imported'][number]['status'] = 'DRAFT';
     let note: string | null = null;

@@ -9,7 +9,7 @@ import { moduleDisplayName } from '@/lib/domain';
 import { renderTemplate } from '@/lib/prompts/template';
 import { checkPrompt } from '@/lib/writers/prompt-check';
 import { OWN_TITLES_STARTER_PROMPT } from '@/lib/writers/starters';
-import { CUSTOM_PROMPT_VARIABLES, type CustomWriterConfig, type CustomWriterInfo, type WriterBase } from '@/lib/writers/types';
+import { CUSTOM_PROMPT_VARIABLES, photoPromptStages, PROMPT_STAGE_LABELS, type CustomWriterConfig, type CustomWriterInfo, type PhotoPromptStage, type WriterBase, type WriterPromptStage } from '@/lib/writers/types';
 import type { CustomWriterDetail, LastTest } from '@/lib/writers/store';
 import type { CustomArticleParse } from '@/modules/custom/parsers';
 import { customManifest } from '@/modules/custom/manifest';
@@ -25,7 +25,7 @@ import { NewWriterButton, type StartOption } from '../new-writer';
  * before it can be made active; nothing uses a writer until then.
  */
 
-type Draft = { name: string; shortName: string; description: string; base: WriterBase; config: CustomWriterConfig; article: string; titles: string };
+type Draft = { name: string; shortName: string; description: string; base: WriterBase; config: CustomWriterConfig; article: string; titles: string; photos: Record<PhotoPromptStage, string> };
 type TestResponse = { parse: CustomArticleParse; result: LastTest; saved: boolean };
 
 const toDraft = (d: CustomWriterDetail): Draft => ({
@@ -36,7 +36,15 @@ const toDraft = (d: CustomWriterDetail): Draft => ({
   config: d.writer.config,
   article: d.prompts.ARTICLE ?? '',
   titles: d.prompts.TITLES ?? '',
+  photos: { IMAGE_PLAN: d.prompts.IMAGE_PLAN ?? '', IMAGE_GENERATION: d.prompts.IMAGE_GENERATION ?? '', IMAGE_SEARCH: d.prompts.IMAGE_SEARCH ?? '' },
 });
+
+/** What each photo prompt is for, on the writer page. */
+const PHOTO_PROMPT_HELP: Record<PhotoPromptStage, string> = {
+  IMAGE_PLAN: 'Plans the 3 pictures: image 1 is the featured image, 2 and 3 go into the article. Keep the answer lines “IMAGE 1 PROMPT: …”, “IMAGE 1 ALT: …” (also for 2 and 3): the app reads the pictures from them.',
+  IMAGE_GENERATION: 'Sent once for each planned picture; ChatGPT draws it. {{image_brief}} is that picture’s description from the plan. The app adds the website logo and the image design afterwards.',
+  IMAGE_SEARCH: 'Asks ChatGPT to search the web for photos of the person and show them as a gallery; the app saves the pictures, checks them and chooses the best ones (your uploads come first).',
+};
 
 const SECTIONS = [
   { id: 'basics', label: 'Basics', icon: PenLine },
@@ -83,6 +91,16 @@ export function WriterBuilder({ initial, categoryNames, own }: { initial: Custom
 
   const articleCheck = useMemo(() => checkPrompt(draft.article, 'ARTICLE'), [draft.article]);
   const titlesCheck = useMemo(() => (c.titles === 'own' ? checkPrompt(draft.titles, 'TITLES') : null), [c.titles, draft.titles]);
+  const photoStages = c.images === 'on' && c.photoPrompts === 'own' ? photoPromptStages(draft.base) : [];
+  const photoChecks = useMemo(() => photoStages.map((stage) => ({ stage, check: checkPrompt(draft.photos[stage], stage) })), [JSON.stringify(photoStages), JSON.stringify(draft.photos)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const photoError = photoChecks.find((p) => p.check.errors.length);
+  /** Own photo prompts start from the app's current ones (as edited in Prompt Manager). */
+  const usePhotoPrompts = (mode: CustomWriterConfig['photoPrompts']) =>
+    setDraft((d) => ({
+      ...d,
+      config: { ...d.config, photoPrompts: mode },
+      photos: mode === 'own' ? (Object.fromEntries((Object.keys(d.photos) as PhotoPromptStage[]).map((stage) => [stage, d.photos[stage].trim() ? d.photos[stage] : saved.photoDefaults[stage]])) as Draft['photos']) : d.photos,
+    }));
   const info: CustomWriterInfo = { key, name: draft.name || 'Writer', shortName: draft.shortName || draft.name, description: draft.description, base: draft.base, status: saved.writer.status, startedFrom: saved.writer.startedFrom, config: c };
   const manifest = useMemo(() => customManifest(info), [JSON.stringify(info)]); // eslint-disable-line react-hooks/exhaustive-deps
   // Changes to the prompt or the rules make the last test out of date.
@@ -92,6 +110,7 @@ export function WriterBuilder({ initial, categoryNames, own }: { initial: Custom
     { label: 'Name', ok: draft.name.trim().length >= 2, detail: draft.name.trim().length >= 2 ? undefined : 'At least 2 characters.', blocking: true, href: '#basics' },
     { label: 'Article prompt', ok: articleCheck.errors.length === 0, detail: articleCheck.errors[0] ?? articleCheck.warnings[0], blocking: true, href: '#prompt' },
     ...(titlesCheck ? [{ label: 'Title prompt', ok: titlesCheck.errors.length === 0, detail: titlesCheck.errors[0] ?? titlesCheck.warnings[0], blocking: true, href: '#titles' }] : []),
+    ...(photoChecks.length ? [{ label: 'Photo prompts', ok: !photoError, detail: photoError ? `${PROMPT_STAGE_LABELS[photoError.stage]}: ${photoError.check.errors[0]}` : photoChecks.flatMap((p) => p.check.warnings)[0], blocking: true, href: '#media' }] : []),
     { label: 'Category rule', ok: c.category.mode !== 'fixed' || c.category.name.trim().length >= 2, detail: c.category.mode === 'fixed' && c.category.name.trim().length < 2 ? 'Type the category name.' : undefined, blocking: true, href: '#category' },
     { label: 'Answer rules', ok: c.rules.wordMax > c.rules.wordMin, detail: c.rules.wordMax > c.rules.wordMin ? undefined : 'The highest word count must be above the lowest.', blocking: true, href: '#rules' },
     { label: 'Tested with a ChatGPT answer', ok: testPassed, detail: testPassed ? undefined : testedChanged && saved.lastTest ? 'Changed since the last test — test again.' : saved.lastTest && !saved.lastTest.ok ? 'The last test found problems.' : 'Recommended before making it active.', blocking: false, href: '#test' },
@@ -104,7 +123,14 @@ export function WriterBuilder({ initial, categoryNames, own }: { initial: Custom
     try {
       const res = await api<CustomWriterDetail>(`/api/writers/${key}`, {
         method: 'PUT',
-        body: { name: draft.name, shortName: draft.shortName || draft.name, description: draft.description, base: draft.base, config: draft.config, prompts: { ARTICLE: draft.article, ...(c.titles === 'own' && draft.titles.trim() ? { TITLES: draft.titles } : {}) } },
+        body: {
+          name: draft.name,
+          shortName: draft.shortName || draft.name,
+          description: draft.description,
+          base: draft.base,
+          config: draft.config,
+          prompts: { ARTICLE: draft.article, ...(c.titles === 'own' && draft.titles.trim() ? { TITLES: draft.titles } : {}), ...Object.fromEntries(photoStages.filter((stage) => draft.photos[stage].trim()).map((stage) => [stage, draft.photos[stage]])) },
+        },
       });
       setSaved(res);
       setDraft(toDraft(res));
@@ -343,6 +369,25 @@ export function WriterBuilder({ initial, categoryNames, own }: { initial: Custom
               <Switch label="Internal links" help="Relevant posts of the same website and an “Also read” line." checked={c.internalLinks} onChange={(e) => setConfig({ internalLinks: e.target.checked })} />
               <Switch label="Add the app’s SEO brief" help="Off: your prompt is sent as written (as Celebrity 2). On: the brief (search intent, entities) is added under it." checked={c.seoBrief} onChange={(e) => setConfig({ seoBrief: e.target.checked })} />
             </div>
+            {c.images === 'on' ? (
+              <div className="space-y-4 border-t border-[var(--border)] pt-4">
+                <Choice
+                  label="Photo prompts"
+                  value={c.photoPrompts}
+                  onChange={(v) => usePhotoPrompts(v as CustomWriterConfig['photoPrompts'])}
+                  options={[
+                    { value: 'app', title: 'The app’s photo prompts', text: person ? 'Celebrity’s photo search (Prompt Manager → Celebrity → Image search).' : 'Tigram’s image plan and image prompt (Prompt Manager → Tigram).' },
+                    { value: 'own', title: 'My own photo prompts', text: person ? 'Your photo search prompt for this writer only. It starts as a copy of the app’s.' : 'Your image plan and image prompt for this writer only, for example another style. They start as a copy of the app’s.' },
+                  ]}
+                />
+                {photoStages.map((stage) => (
+                  <div key={stage} className="space-y-1">
+                    <PromptEditor id={`w-${stage.toLowerCase()}`} label={`${PROMPT_STAGE_LABELS[stage]} prompt`} value={draft.photos[stage]} onChange={(v) => setDraft((d) => ({ ...d, photos: { ...d.photos, [stage]: v } }))} check={photoChecks.find((p) => p.stage === stage)?.check ?? null} stage={stage} rows={stage === 'IMAGE_PLAN' ? 16 : 7} starter={saved.photoDefaults[stage]} error={errors[`prompts.${stage}`]} />
+                    <p className="text-muted text-xs">{PHOTO_PROMPT_HELP[stage]}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </Section>
 
           <Section id="keywords" n={7} title="Keywords" description="Which keywords get this writer by themselves in Workflow and Bulk Campaigns (you can always choose it by hand).">
@@ -451,7 +496,7 @@ function Choice({ label, value, onChange, options }: { label?: string; value: st
 }
 
 /** A prompt with buttons that insert the app's variables where the cursor is, live checks and a preview with example values. */
-function PromptEditor({ id, label, value, onChange, check, stage, rows, starter, error }: { id: string; label: string; value: string; onChange: (v: string) => void; check: ReturnType<typeof checkPrompt> | null; stage: 'ARTICLE' | 'TITLES'; rows: number; starter?: string; error?: string[] }) {
+function PromptEditor({ id, label, value, onChange, check, stage, rows, starter, error }: { id: string; label: string; value: string; onChange: (v: string) => void; check: ReturnType<typeof checkPrompt> | null; stage: WriterPromptStage; rows: number; starter?: string; error?: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [preview, setPreview] = useState(false);
   const vars = CUSTOM_PROMPT_VARIABLES.filter((v) => !v.stage || v.stage === stage);

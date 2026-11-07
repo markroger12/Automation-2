@@ -3,8 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { WorkerLock, inspectLock, isPidAlive } from '@/worker/lock';
+import { makeTempDir } from '../helpers/temp-dirs';
 
-const tmpLock = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bas-lock-')), 'worker.lock');
+const tmpLock = () => path.join(makeTempDir('bas-lock-'), 'worker.lock');
 
 describe('single-worker lock', () => {
   it('allows only one live owner', () => {

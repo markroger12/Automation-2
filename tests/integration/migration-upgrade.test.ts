@@ -1,9 +1,9 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { makeTempDir } from '../helpers/temp-dirs';
 
 /**
  * Upgrading keeps data: migrations that rebuild a table (SQLite
@@ -13,7 +13,7 @@ import { PrismaClient } from '@prisma/client';
  * applies the rest, and compares row counts.
  */
 const root = path.resolve(__dirname, '..', '..');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-mig-'));
+const tmp = makeTempDir('bas-mig-');
 
 function deploy(prismaDir: string, dbFile: string) {
   const r = spawnSync(process.execPath, [path.join(root, 'node_modules', 'prisma', 'build', 'index.js'), 'migrate', 'deploy', '--schema', path.join(prismaDir, 'schema.prisma')], {
@@ -23,8 +23,6 @@ function deploy(prismaDir: string, dbFile: string) {
   });
   if (r.status !== 0) throw new Error(`migrate deploy failed: ${r.stderr || r.stdout}`);
 }
-
-afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 describe('database upgrade', () => {
   it('a Website table rebuild keeps categories, workflows, keywords, link targets and tasks', async () => {

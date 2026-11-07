@@ -94,6 +94,8 @@ Then reload the extension in Automation Chrome (`chrome://extensions` → reload
 | `npm run test:e2e:wordpress` | Optional: draft/publish-guard tests against a **disposable** WordPress (see below) |
 | `npm run audit:a11y` | Accessibility audit (axe-core, WCAG 2.1 AA, light and dark) of the running dashboard |
 
+Tests keep their databases and browser profiles in `bas-*` folders in the system temp folder and remove them when each test file ends, also after a failure. To keep them for debugging, set `BAS_KEEP_TEST_DATA=1`; the test output lists the kept folders.
+
 ### Testing against a disposable WordPress
 
 Only ever point this at a throw-away site — it creates drafts and deliberately tries (and must fail) to publish them.

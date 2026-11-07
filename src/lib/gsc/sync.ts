@@ -148,8 +148,8 @@ async function requestPayload(kw: { id: string; publishedUrl: string | null }, w
  *  1. ~35 s after a verified publish, “Request indexing” is queued for Automation Chrome (workflow switch).
  *  2. 24 hours after the request (or after publishing, without the switch), Google search is asked through the search
  *     API (Serper: `site:` + the address) whether the post is on Google — not Search Console.
- *  3. Found → INDEXED. Not found → indexing is requested again (never twice within a day) and searched a day later;
- *     after 14 days without it, requests and searches stop.
+ *  3. Found → INDEXED. Not found → indexing is requested again 48 hours after the last request (owner, 2026-11-07)
+ *     and searched a day after it; after 14 days without it, requests and searches stop.
  */
 export async function indexingTick(now = new Date(), maxChecks = 20): Promise<{ submitted: number; checked: number; indexed: number }> {
   let submitted = 0;
@@ -215,10 +215,10 @@ export async function indexingTick(now = new Date(), maxChecks = 20): Promise<{ 
         continue;
       }
       if (kw.workflow.requestIndexing) {
-        // Owner: not indexed → request again (one request a day), and search again a day after it.
+        // Owner: not indexed → request again 48 hours after the last request, and search again a day after it.
         const { payload } = await requestPayload(kw, kw.workflow.websiteId);
         const at = await requestIndexingAgain(payload, now);
-        await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: new Date(at.getTime() + DAY_MS), indexingStatus: `${notFound}. Indexing is requested again ${at.getTime() <= now.getTime() ? 'now' : `at ${at.toISOString()}`} (one request a day); Google search is checked 24 hours after it.` } });
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: new Date(at.getTime() + DAY_MS), indexingStatus: `${notFound}. Indexing is requested again ${at.getTime() <= now.getTime() ? 'now' : `at ${at.toISOString()}`} (48 hours after the last request); Google search is checked 24 hours after it.` } });
       } else {
         const next = new Date(now.getTime() + DAY_MS);
         await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: next, indexingStatus: `${notFound}; next search ${next.toISOString()}.${also ? ` · ${also}` : ''}` } });

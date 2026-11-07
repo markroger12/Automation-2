@@ -199,7 +199,7 @@ describe('indexing after a workflow publish', () => {
   const H = 3600_000;
   const row = (id: string) => client.workflowKeyword.findUniqueOrThrow({ where: { id } });
 
-  it('~35 s after publishing the request is queued; a day after it Google search is asked; not found → requested again; found → INDEXED', async () => {
+  it('~35 s after publishing the request is queued; a day after it Google search is asked; not found → requested again 48 h after the last request; found → INDEXED', async () => {
     const ri = await import('@/lib/gsc/request-indexing');
     indexedUrls = new Set();
     const publishedAt = new Date('2026-10-16T12:00:00Z');
@@ -228,19 +228,27 @@ describe('indexing after a workflow publish', () => {
     expect(r.indexingStatus).toMatch(/A request is not proof of indexing; Google search is checked 24 hours later/);
     // 23 h after the request: nothing is searched yet.
     expect(await sync.indexingTick(new Date(t2.getTime() + 23 * H))).toMatchObject({ checked: 0 });
-    // 24 h: not on Google → asked again (it is a day after the last request), searched a day after that.
+    // 24 h: not on Google → asked again 48 hours after the last request (owner, 2026-11-07), searched a day after that.
     const t3 = new Date(t2.getTime() + 24 * H + 10_000);
     expect(await sync.indexingTick(t3)).toMatchObject({ checked: 1, indexed: 0 });
     expect(serperQueries.at(-1)).toEqual({ q: 'site:promizeiten.example/daphne-govers/', hl: 'de' });
     r = await row(kw.id);
     expect(r.status).toBe('INDEXING_REQUESTED');
-    expect(r.indexingStatus).toMatch(/^Google: not in Google search yet \(site:promizeiten\.example\/daphne-govers\/, 0 result\(s\), checked .*\)\. Indexing is requested again now \(one request a day\); Google search is checked 24 hours after it\.$/);
+    const again48 = new Date(t2.getTime() + 48 * H);
+    expect(r.indexingStatus).toBe(
+      `Google: not in Google search yet (site:promizeiten.example/daphne-govers/, 0 result(s), checked ${t3.toISOString()}). Indexing is requested again at ${again48.toISOString()} (48 hours after the last request); Google search is checked 24 hours after it.`,
+    );
+    expect(r.indexCheckAt?.toISOString()).toBe(new Date(again48.getTime() + 24 * H).toISOString());
     let job = await client.queueJob.findUniqueOrThrow({ where: { id: jobs[0].id } });
     expect(job).toMatchObject({ status: 'WAITING', attempts: 0 });
-    expect(job.runAt.toISOString()).toBe(t3.toISOString());
-    const again = await ri.claimIndexingRequest('install-1', new Date(t3.getTime() + 1000));
+    expect(job.runAt.toISOString()).toBe(again48.toISOString());
+    // Not before the 48 hours: nothing for Automation Chrome; the next search is not before the request either.
+    expect(await ri.claimIndexingRequest('install-1', new Date(t3.getTime() + 1000))).toBeNull();
+    expect(await ri.claimIndexingRequest('install-1', new Date(again48.getTime() - 60_000))).toBeNull();
+    expect(await sync.indexingTick(new Date(again48.getTime() - 60_000))).toMatchObject({ checked: 0 });
+    const again = await ri.claimIndexingRequest('install-1', again48);
     expect(again?.id).toBe(jobs[0].id);
-    const t4 = new Date(t3.getTime() + 60_000);
+    const t4 = new Date(again48.getTime() + 60_000);
     await ri.reportIndexingRequest({ jobId: jobs[0].id, installId: 'install-1', outcome: 'REQUESTED' }, t4);
     // A day later it is on Google.
     indexedUrls = new Set(['https://promizeiten.example/daphne-govers/']);
@@ -250,6 +258,34 @@ describe('indexing after a workflow publish', () => {
     expect(r.indexingStatus).toMatch(/^Google: found in Google search \(site:promizeiten\.example\/daphne-govers\/\) · checked /);
     job = await client.queueJob.findUniqueOrThrow({ where: { id: jobs[0].id } });
     expect(job.status).toBe('COMPLETED');
+  });
+
+  it('not on Google for 14 days: a request every 48 hours, a search 24 hours after each, then both stop', async () => {
+    const ri = await import('@/lib/gsc/request-indexing');
+    indexedUrls = new Set();
+    const publishedAt = new Date('2026-11-01T00:00:00Z');
+    const kw = await publishedKeyword('Every Two Days', 'https://promizeiten.example/every-two-days/', true, publishedAt);
+    const requests: Date[] = [];
+    const searches = serperQueries.length;
+    // Walk the clock in 10-minute steps; Automation Chrome makes every request as soon as it may.
+    for (let t = publishedAt.getTime() + 60_000; t < publishedAt.getTime() + 16 * 24 * H; t += 10 * 60_000) {
+      const now = new Date(t);
+      await sync.indexingTick(now);
+      const job = await ri.claimIndexingRequest('i48', now);
+      if (job) {
+        await ri.reportIndexingRequest({ jobId: job.id, installId: 'i48', outcome: 'REQUESTED' }, now);
+        requests.push(now);
+      }
+    }
+    const gaps = requests.slice(1).map((d, i) => (d.getTime() - requests[i].getTime()) / H);
+    // Requests at 0, 48, …, 336 h; searches 24 h after each; the search at 360 h (past 14 days) ends it.
+    expect(requests.length).toBe(8);
+    expect(gaps.every((g) => g >= 48 && g < 48.5)).toBe(true);
+    const r = await row(kw.id);
+    expect(r).toMatchObject({ status: 'INDEXING_REQUESTED', indexCheckAt: null });
+    expect(r.indexingStatus).toMatch(/^Not found in Google search 14 days after publishing/);
+    expect(serperQueries.length - searches).toBe(r.indexChecks);
+    expect(r.indexChecks).toBe(8);
   });
 
   it('one request per article per day: “Request indexing” by the owner, a request pulled forward and an error retry wait for the day', async () => {

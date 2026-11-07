@@ -4577,3 +4577,32 @@ npx tsc --noEmit                                       # 0 errors
 npx next build                                         # compiled (/api/writers/export, /api/writers/import)
 node scratchpad/transfer-smoke.mjs                     # Chromium: export, import preview, import, again, phone dark
 ```
+
+## Owner request (2026-11-07): “again indexing ko 48 hours ke baad krde”
+
+When Google search does not show a published workflow post, indexing is now requested again 48 hours after the last request. Before, it was requested again at once, a day after the last request.
+- **Flow:**
+  1. Request.
+  2. Google search 24 hours later (unchanged).
+  3. Not found: the request is made again 48 hours after the last one.
+  4. Search again 24 hours after that request.
+  5. After 14 days without the post on Google, requests and searches stop (unchanged).
+- **Code:**
+  - `REQUEST_AGAIN_AFTER_MS` (48 h) in `src/lib/gsc/request-indexing.ts`;
+  - `nextRequestAllowedAt(keywordId, everyMs)`;
+  - `requestIndexingAgain` waits for 48 h;
+  - the keyword's note says “Indexing is requested again at … (48 hours after the last request)”;
+  - the Workflow switch help and the README are updated.
+- **Unchanged:** the owner's own **Request indexing** and **Request now** still only wait for the one-a-day rule. An error retry still waits a day.
+- **Tests:** unit `search-console-live`:
+  - the publish → request → search test now expects the re-request at 48 h. It fails on the previous code (“requested again now (one request a day)”).
+  - new: 14 days without the post on Google → 8 requests, each 48 h apart, a search 24 h after each, then both stop.
+- **Checked:** unit 66 files / 463 tests; `tsc` 0 errors.
+- **Not verified:** on the owner's site.
+
+**Commands run**
+```
+npx vitest run tests/unit/search-console-live.test.ts   # before the fix: fails (re-request “now”); after: 14 pass
+npx vitest run                                          # 66 files, 463 tests pass
+npx tsc --noEmit                                        # 0 errors
+```

@@ -314,7 +314,7 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
   - **One request per article per day** (owner rule). This also applies to your own **Request indexing**, to **Request now**, and to a retry after an error. Such a request waits until a day after the last one, and the keyword says when.
   - **Is it on Google?** 24 hours after the request, Google search is asked through the search API (Serper: `site:` + the post's address; needs `SERPER_API_KEY` in `.env`). Search Console is not asked.
     - Found → **Indexed** (“Google: found in Google search …”).
-    - Not found → indexing is requested again, and searched again 24 hours after that request.
+    - Not found → indexing is requested again **48 hours after the last request** (so a day after the search), and searched again 24 hours after that request. Your own **Request indexing** and **Request now** still only wait for the one-a-day rule.
     - After 14 days without it, requests and searches stop.
     - Each search uses one Serper credit. Without the key, nothing is searched and the keyword says what to add.
   - **Is Automation Chrome signed in?** The Workflow and Automation Chrome pages have an **Indexing in Search Console** panel:

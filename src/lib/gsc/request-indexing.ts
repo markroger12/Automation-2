@@ -22,6 +22,8 @@ export const GOOGLE_SIGNIN_URL = `https://accounts.google.com/ServiceLogin?conti
 const ASK_AGAIN_NOW = ['NOT_SIGNED_IN', 'HUMAN_CHECK'];
 /** Owner rule (2026-11-04): at most one indexing request per article per day; Google search is checked a day after it. */
 export const REQUEST_EVERY_MS = 24 * 3600_000;
+/** Owner rule (2026-11-07: “again indexing ko 48 hours ke baad”): not on Google → requested again 48 hours after the last request. */
+export const REQUEST_AGAIN_AFTER_MS = 48 * 3600_000;
 const KIND = 'gsc.request-indexing';
 const LEASE_MS = 8 * 60_000;
 
@@ -43,24 +45,24 @@ export async function queueIndexingRequest(p: IndexingJobPayload, now = new Date
 }
 
 /**
- * The earliest time the next request for a keyword may be made: a day after the last one. The last one is the last
- * request Google accepted (or that the owner marked as made), or an attempt that ended in an error (the click may
- * have reached Google).
+ * The earliest time the next request for a keyword may be made: a day (or `everyMs`) after the last one. The last one
+ * is the last request Google accepted (or that the owner marked as made), or an attempt that ended in an error (the
+ * click may have reached Google).
  */
-export async function nextRequestAllowedAt(keywordId: string): Promise<Date | null> {
+export async function nextRequestAllowedAt(keywordId: string, everyMs = REQUEST_EVERY_MS): Promise<Date | null> {
   const kw = await db.workflowKeyword.findUnique({ where: { id: keywordId }, select: { indexingRequestedAt: true } });
   const job = await db.queueJob.findUnique({ where: { idempotencyKey: `gsc-index:${keywordId}` }, select: { errorCode: true, startedAt: true } });
   const times = [kw?.indexingRequestedAt?.getTime() ?? 0, job?.errorCode === 'ERROR' && job.startedAt ? job.startedAt.getTime() : 0];
   const last = Math.max(...times);
-  return last ? new Date(last + REQUEST_EVERY_MS) : null;
+  return last ? new Date(last + everyMs) : null;
 }
 
 /**
- * Ask again (owner: “if it is not indexed, request again”): the keyword's request is made once more, not before a day
- * after the last one. Returns when it is due; a request Automation Chrome is making right now is left alone.
+ * Ask again (owner: “if it is not indexed, request again”): the keyword's request is made once more, 48 hours after the
+ * last one (owner, 2026-11-07). Returns when it is due; a request Automation Chrome is making right now is left alone.
  */
 export async function requestIndexingAgain(p: IndexingJobPayload, now = new Date()): Promise<Date> {
-  const allowed = await nextRequestAllowedAt(p.keywordId);
+  const allowed = await nextRequestAllowedAt(p.keywordId, REQUEST_AGAIN_AFTER_MS);
   const runAt = allowed && allowed > now ? allowed : now;
   const job = await db.queueJob.findUnique({ where: { idempotencyKey: `gsc-index:${p.keywordId}` } });
   if (!job) {

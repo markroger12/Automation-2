@@ -675,7 +675,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
         <DialogSection icon={<ScanSearch className="h-3.5 w-3.5" />} title="Indexing">
           <Switch
             label="Request indexing after publishing"
-            help="As you do it by hand: about 35 seconds after a verified publish, Automation Chrome opens the URL in Search Console (URL Inspection) and clicks “Request indexing”. Sign in to Google once in Automation Chrome with the account that owns the property. One request per article per day. 24 hours after it, Google search is asked through the search API (Serper, SERPER_API_KEY in .env) whether the post is on Google: not found → requested again, for up to 14 days. “Indexed” appears only when Google search shows the post."
+            help="As you do it by hand: about 35 seconds after a verified publish, Automation Chrome opens the URL in Search Console (URL Inspection) and clicks “Request indexing”. Sign in to Google once in Automation Chrome with the account that owns the property. One request per article per day. 24 hours after it, Google search is asked through the search API (Serper, SERPER_API_KEY in .env) whether the post is on Google: not found → requested again 48 hours after the last request (and searched 24 hours after it), for up to 14 days. “Indexed” appears only when Google search shows the post."
             checked={form.requestIndexing}
             onChange={(e) => setForm({ ...form, requestIndexing: e.target.checked })}
           />

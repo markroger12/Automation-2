@@ -1,8 +1,7 @@
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { chromium, type BrowserContext, type Worker } from 'playwright';
 import { installFakeChatGPT, type FakeChatGptConfig } from '../fixtures/fake-chatgpt';
+import { beforeTempDirsRemoved, makeTempDir, removeTempDir } from './temp-dirs';
 
 // The extension APIs exist only inside the service worker (evaluate callbacks).
 declare const chrome: { storage: { local: { set: (v: Record<string, unknown>) => Promise<void> } }; tabs: { query: (q: object) => Promise<{ id?: number; url?: string }[]>; remove: (id: number) => Promise<void> } };
@@ -10,17 +9,20 @@ declare const chrome: { storage: { local: { set: (v: Record<string, unknown>) =>
 /**
  * Launch Chromium with the ACTUAL unpacked extension from ./extension, the
  * fake ChatGPT app routed onto https://chatgpt.com/, and the extension paired
- * to a local agent server.
+ * to a local agent server. close() removes the browser profile; a browser
+ * still open when the test file ends is closed and removed then.
  */
 export async function launchWithExtension(options: { serverOrigin: string; key: string; config: () => FakeChatGptConfig }): Promise<{ context: BrowserContext; sw: Worker; tick: () => Promise<void>; close: () => Promise<void>; userDataDir: string }> {
   const extensionPath = path.resolve(__dirname, '..', '..', 'extension');
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-ext-'));
+  const userDataDir = makeTempDir('bas-ext-');
   const executablePath = process.env.BROWSER_EXECUTABLE_PATH || undefined;
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath,
     headless: !process.env.DISPLAY,
     args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`, '--no-first-run', '--no-default-browser-check'],
   });
+  // Closing the browser also lets Playwright delete its own playwright-artifacts-* folder.
+  beforeTempDirsRemoved(() => context.close().catch(() => {}));
   await installFakeChatGPT(context, options.config);
   let sw = context.serviceWorkers()[0];
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 30_000 });
@@ -40,6 +42,7 @@ export async function launchWithExtension(options: { serverOrigin: string; key: 
     userDataDir,
     close: async () => {
       await context.close().catch(() => {});
+      await removeTempDir(userDataDir);
     },
   };
 }

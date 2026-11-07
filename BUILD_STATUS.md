@@ -1734,3 +1734,30 @@ integration: extension 28/28, images 9/9, image-tools 3/3 (real MediaPipe with B
 npm run build                       # compiled; postbuild recorded the commit; preflight --build then said "up to date"
 npx tsx scripts/preflight.ts        # on an empty data folder: all tables, settings, prompts, face detector
 ```
+
+## Owner report: test runs filled the temp folder (about 25 GB) in a cloud session
+
+- **Cause:** every test file made folders in the system temp folder and nothing removed them:
+  - `bas-isolated-*` (setup file), `bas-test-*` (`setupTestDb`), `bas-ext-*` (one Chromium profile per extension test), and `bas-lock-*` / `bas-toolchain-*` in two test files;
+  - a WordPress browser left open by `seo-brief.test.ts` kept writing into its profile in the data folder;
+  - `playwright-artifacts-*`: Playwright makes this folder before it checks that the browser exists. In this cloud image the hard-coded `/opt/pw-browsers/chromium-1194` is gone, so every extension launch failed and left one.
+- **Fix:** `tests/helpers/temp-dirs.ts` records the exact folders `mkdtempSync` returned.
+  - The setup file removes them in an `afterAll` that runs after the test file's own hooks, also after failing tests. A process exit hook would not run: vitest ends each worker with SIGTERM.
+  - Before removing, it disconnects the Prisma clients (the app's `db` and the test client) and closes WordPress and extension browsers (Windows cannot delete open files).
+  - The extension helper's `close()` removes its profile at once.
+  - `configureTestBrowser()` also uses `/opt/pw-browsers/chromium`.
+  - Set `BAS_KEEP_TEST_DATA=1` to keep the folders; the output lists them.
+- **Verified:** before/after listings of the temp folder: no new `bas-*` or `playwright-*` folder and no Chrome process left after the unit and integration suites. Also checked: a failing test, a failing `beforeAll`, and `BAS_KEEP_TEST_DATA=1`.
+
+**Not verified here**
+- Windows (file locks); a locked folder is retried for about 10 s, then a warning names it.
+
+**Commands run** (Node 26.13.0)
+```
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 42 of 43 files, 292 of 293 tests; workflow-scheduler fails without this change too
+                                    #   (its calendar asks for free slots in 2026-10-20…23, which are now in the past)
+npx vitest run --config vitest.integration.config.ts   # 10 files, 74 tests pass, 1 skipped (MediaPipe needs BAS_TEST_MEDIAPIPE_DIR)
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts   # 9/9
+# before: unit run left 76 folders (43 bas-isolated, 29 bas-test, 4 bas-lock); images run left 2. After: none.
+```

@@ -1,14 +1,15 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { beforeTempDirsRemoved, makeTempDir } from './temp-dirs';
 
 /**
  * Create an isolated SQLite database with all migrations applied and point the
  * app's `db` singleton at it. Call BEFORE importing modules that use `db`.
+ * The folder is removed when the test file ends (see temp-dirs.ts).
  */
 export async function setupTestDb(): Promise<{ dir: string; file: string; client: PrismaClient }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-test-'));
+  const dir = makeTempDir('bas-test-');
   const file = path.join(dir, 'app.db').split(path.sep).join('/');
   process.env.BAS_DATA_DIR = dir;
   process.env.DATABASE_URL = `file:${file}`;
@@ -31,5 +32,10 @@ export async function setupTestDb(): Promise<{ dir: string; file: string; client
     await migrator.$disconnect();
   }
   const client = new PrismaClient({ datasources: { db: { url: `file:${file}` } } });
+  beforeTempDirsRemoved(async () => {
+    // WordPress browser profiles live in <data>/profiles: a browser left open would keep writing into the folder.
+    if (fs.existsSync(path.join(dir, 'profiles'))) await (await import('@/wordpress/browser')).closeAllContexts();
+    await client.$disconnect();
+  });
   return { dir, file, client };
 }

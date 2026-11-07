@@ -10,7 +10,7 @@ export default function CampaignsPage() {
     <>
       <PageHeader
         title="Bulk Campaigns"
-        description="Import up to 1,000 keywords at once. Each row becomes the same standard article task as Single Article — previewed, de-duplicated and routed to one of the two writers first. Campaigns never publish anything."
+        description="Import up to 1,000 keywords at once. Each row becomes the same standard article task as Single Article — previewed, de-duplicated and routed to a writer first (you choose Celebrity or Celebrity 2 for person keywords). Campaigns never publish anything."
         actions={
           <Link href="/campaigns/new" className={buttonClasses('primary')}>
             <Plus className="h-4 w-4" /> New campaign

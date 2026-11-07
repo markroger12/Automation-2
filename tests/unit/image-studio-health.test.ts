@@ -74,6 +74,25 @@ describe('site health and upload names (database)', () => {
     expect(wpUploadName({ id: 'x1', filePath: 'media/t1/.jpg', mime: 'image/jpeg' }).filename).toBe('image-x1.jpg');
   });
 
+  it('owner request (2026-11-07): an article image is named after its keyword — example-keyword.png, then -2, -3', async () => {
+    const { wpUploadName, keywordFileStem } = await import('@/wordpress/media');
+    const asset = { id: 'cmv9elggv00097dav8cp5phns', filePath: 'media/t1/featured-rendered-1762000000.png', mime: 'image/png' };
+    expect(wpUploadName(asset, { keyword: 'Example Keyword', language: 'en', index: 1 })).toEqual({ filename: 'example-keyword.png', slug: 'example-keyword-av8cp5phns' });
+    expect(wpUploadName({ ...asset, filePath: 'media/t1/body-1.webp', mime: 'image/webp' }, { keyword: 'Example Keyword', language: 'en', index: 2 }).filename).toBe('example-keyword-2.webp');
+    expect(wpUploadName({ ...asset, filePath: 'media/t1/body-2.jpg', mime: 'image/jpeg' }, { keyword: 'Example Keyword', language: 'en', index: 3 }).filename).toBe('example-keyword-3.jpg');
+    // The slug does not depend on the place: an upload whose answer was lost is found again after the article changed.
+    expect(wpUploadName(asset, { keyword: 'Example Keyword', language: 'en', index: 4 }).slug).toBe('example-keyword-av8cp5phns');
+    expect(keywordFileStem('Who is Andrea Soros? All about George Soros’ daughter')).toBe('who-is-andrea-soros-all-about-george-soros-daughter');
+    expect(keywordFileStem('Céline Dion Größe')).toBe('celine-dion-grosse');
+    // German websites: umlauts as WordPress writes them in German.
+    expect(keywordFileStem('Jürgen Müller Vermögen', 'de')).toBe('juergen-mueller-vermoegen');
+    expect(keywordFileStem('Straße', 'de')).toBe('strasse');
+    // Nothing usable (another script): the earlier name.
+    expect(keywordFileStem('محمد صلاح')).toBeNull();
+    expect(wpUploadName(asset, { keyword: 'محمد صلاح', language: 'en', index: 1 })).toEqual(wpUploadName(asset));
+    expect(keywordFileStem('x'.repeat(200))).toHaveLength(80);
+  });
+
   it('summarises measured observations only', async () => {
     const now = new Date();
     expect((await health.siteHealth(siteId, now)).overall).toBe('UNKNOWN');

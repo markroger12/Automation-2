@@ -51,7 +51,9 @@ describe('campaign preview', () => {
     expect(await counts()).toEqual(before);
     expect(p.format).toBe('csv');
     const by = (line: number) => p.rows.find((r) => r.line === line)!;
-    expect(by(2)).toMatchObject({ status: 'READY', writer: 'celebrity-writer', writerSource: 'RULE', categoryName: 'Celebrities', secondaryKeywords: ['Travis Kelce', 'Eras Tour'], exampleTitle: 'Taylor Swift Money' });
+    // A person keyword: the owner chooses Celebrity or Celebrity 2 (owner decision 2026-11-04).
+    expect(by(2)).toMatchObject({ status: 'NEEDS_WRITER', writer: null, secondaryKeywords: ['Travis Kelce', 'Eras Tour'], exampleTitle: 'Taylor Swift Money' });
+    expect(by(2).routerRationale).toMatch(/Choose Celebrity or Celebrity 2\.$/);
     expect(by(3).status).toBe('DUPLICATE');
     expect(by(3).issues.map((i) => i.kind)).toContain('DUPLICATE');
     expect(by(4).issues.map((i) => i.message).join()).toMatch(/Very similar to line 2/);
@@ -63,13 +65,16 @@ describe('campaign preview', () => {
     expect(by(9).status).toBe('INVALID');
     expect(by(10).issues[0].message).toMatch(/Unknown website “Unknown Site”/);
     expect(by(11).issues.map((i) => i.message).join()).toMatch(/not an active writer/);
-    expect(by(11).writer).toBe('celebrity-writer'); // the 2.0 column is ignored, the rule decides
+    expect(by(11).writer).toBeNull(); // the 2.0 column is ignored; a person keyword waits for the owner's choice
     expect(p.rows.map((r) => r.raw)).toEqual(text.split('\n').slice(1));
     // Owner corrections are applied by line without touching the text.
     const p2 = await svc.previewCampaign({ text, websiteId: siteA, overrides: { '5': { writer: 'tigram' }, '3': { confirmVariant: true }, '2': { include: false } } });
     expect(p2.rows.find((r) => r.line === 5)).toMatchObject({ status: 'READY', writer: 'tigram-writer' });
+    // The owner's choice for a person keyword: the article goes into the website's celebrity category.
+    const p3 = await svc.previewCampaign({ text, websiteId: siteA, overrides: { '2': { writer: 'celebrity 2' } } });
+    expect(p3.rows.find((r) => r.line === 2)).toMatchObject({ status: 'READY', writer: 'celebrity2-writer', writerSource: 'OVERRIDE', categoryName: 'Celebrities' });
     expect(p2.rows.find((r) => r.line === 2)!.status).toBe('SKIPPED');
-    expect(p2.rows.find((r) => r.line === 3)!.status).toBe('READY'); // its twin is skipped, and it is confirmed anyway
+    expect(p2.rows.find((r) => r.line === 3)!.status).toBe('NEEDS_WRITER'); // its twin is skipped and it is confirmed; a person keyword still waits for the writer choice
   });
 });
 

@@ -19,7 +19,7 @@ const csp = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  serverExternalPackages: ['@prisma/client', 'sharp', 'playwright', 'playwright-core'],
+  serverExternalPackages: ['@prisma/client', 'sharp', 'playwright', 'playwright-core', 'opentype.js'],
   devIndicators: false,
   async headers() {
     return [

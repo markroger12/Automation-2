@@ -39,6 +39,18 @@ export interface FakeWpOptions {
   role?: 'administrator' | 'editor' | 'author' | 'contributor' | 'subscriber';
   /** Admin pages show WordPress's “session expired” pop-up (as after a heartbeat with an expired cookie). */
   expiredPopup?: boolean;
+  /** Only this password signs in (default: any); a wrong one shows WordPress's “incorrect password” error. */
+  password?: string;
+  /** A second step after the password (as a 2FA plugin): this code must be entered in “authcode”. */
+  twoFactor?: string;
+  /** A CAPTCHA box on the login page; the form is taken only with g-recaptcha-response=ok (the owner's tick). */
+  captcha?: boolean;
+  /**
+   * WordPress's scheduler (WP-Cron) for posts whose time has come. 'visits' (default): any request publishes them;
+   * 'missed' (“Missed schedule”, as on hosts where WP-Cron's loopback does not run): only a request to wp-cron.php does;
+   * 'never': nothing does (wp-cron.php blocked).
+   */
+  cron?: 'visits' | 'missed' | 'never';
 }
 
 const ROLE_CAPS: Record<NonNullable<FakeWpOptions['role']>, string[]> = {
@@ -79,6 +91,8 @@ export interface FakeWp {
   addPost(p: Partial<FakePost> & { title: string }): FakePost;
   /** Public path redirects (e.g. a post whose URL changed): "/?p=101" → "/new-slug/". */
   redirects: Map<string, string>;
+  /** Sign-in forms posted (user name and password), for “not tried again” checks. */
+  loginPosts(): number;
 }
 
 const NONCE = 'fa0e1d2c3b';
@@ -236,6 +250,10 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     dropMediaAcks: opts.dropMediaAcks ?? 0,
     role: opts.role ?? 'administrator',
     expiredPopup: opts.expiredPopup ?? false,
+    password: opts.password ?? '',
+    twoFactor: opts.twoFactor ?? '',
+    captcha: opts.captcha ?? false,
+    cron: opts.cron ?? 'visits',
     categories: opts.categories ?? [
       { id: 1, name: opts.language === 'de' ? 'Allgemein' : 'Uncategorized', slug: opts.language === 'de' ? 'allgemein' : 'uncategorized', count: 3 },
       { id: 7, name: 'Celebrities', slug: 'celebrities', count: 12 },
@@ -243,6 +261,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     ],
   };
   const sessions = new Set<string>();
+  let loginPosts = 0;
   const redirects = new Map<string, string>();
   let baseUrl = 'http://fake';
   const requests: FakeWp['requests'] = [];
@@ -313,26 +332,50 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     };
     const p = url.pathname;
 
+    if (p === '/wp-cron.php') {
+      // WordPress runs its due jobs: scheduled posts whose time has come are published.
+      if (options.cron !== 'never') for (const post of posts.values()) if (post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
+      return send(200, '', 'text/html');
+    }
+
     if (p === '/wp-login.php') {
+      const esc = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+      const loginForm = (redirectTo: string, error = '') =>
+        `${error}<form name="loginform" id="loginform" method="post" action="/wp-login.php"><input id="user_login" name="log"><input id="user_pass" name="pwd" type="password">${
+          options.captcha ? '<div class="g-recaptcha" style="width:304px;height:78px;border:1px solid #ccc"><input type="hidden" name="g-recaptcha-response" id="g-recaptcha-response" value=""></div>' : ''
+        }<input name="rememberme" type="checkbox" id="rememberme" value="forever"><input type="hidden" name="redirect_to" value="${esc(redirectTo)}"><button id="wp-submit" type="submit">${t('Log In', 'Anmelden')}</button></form>`;
+      // Like WordPress: a persistent cookie only with "Remember Me", otherwise a session cookie.
+      const issue = (redirectTo: string, remember: boolean) => {
+        const tok = randomUUID();
+        sessions.add(tok);
+        return redirect(redirectTo || '/wp-admin/', { 'Set-Cookie': `wordpress_logged_in_fake=${tok}; Path=/; HttpOnly${remember ? '; Max-Age=1209600' : ''}` });
+      };
       if (req.method === 'POST') {
         const form = new URLSearchParams(body);
-        if (form.get('log') && form.get('pwd')) {
-          const tok = randomUUID();
-          sessions.add(tok);
-          // Like WordPress: a persistent cookie only with "Remember Me", otherwise a session cookie.
-          const persist = form.get('rememberme') === 'forever' ? '; Max-Age=1209600' : '';
-          return redirect(form.get('redirect_to') || '/wp-admin/', { 'Set-Cookie': `wordpress_logged_in_fake=${tok}; Path=/; HttpOnly${persist}` });
+        const redirectTo = form.get('redirect_to') || '/wp-admin/';
+        if (url.searchParams.get('action') === 'validate_2fa') {
+          if (form.get('authcode') === options.twoFactor) return issue(redirectTo, form.get('rememberme') === 'forever');
+          return send(200, html(options.language, `<div id="login_error">${t('Invalid code.', 'Ungültiger Code.')}</div>`, 'login'));
         }
-        return send(200, html(options.language, `<div id="login_error">${t('Error', 'Fehler')}</div>`));
+        if (options.captcha && form.get('g-recaptcha-response') !== 'ok') return send(200, html(options.language, loginForm(redirectTo, `<div id="login_error">${t('Please complete the CAPTCHA.', 'Bitte das CAPTCHA lösen.')}</div>`), 'login'));
+        const user = form.get('log') ?? '';
+        if (user && form.get('pwd')) loginPosts++;
+        if (user && form.get('pwd') && (!options.password || form.get('pwd') === options.password)) {
+          if (options.twoFactor) {
+            return send(
+              200,
+              html(
+                options.language,
+                `<form id="twofactor" method="post" action="/wp-login.php?action=validate_2fa"><label for="authcode">${t('Authentication Code', 'Authentifizierungscode')}</label><input id="authcode" name="authcode" autocomplete="one-time-code"><input type="hidden" name="redirect_to" value="${esc(redirectTo)}"><input type="hidden" name="rememberme" value="${esc(form.get('rememberme') ?? '')}"><button id="wp-2fa-submit" type="submit">${t('Log In', 'Anmelden')}</button></form>`,
+                'login',
+              ),
+            );
+          }
+          return issue(redirectTo, form.get('rememberme') === 'forever');
+        }
+        return send(200, html(options.language, loginForm(redirectTo, `<div id="login_error"><strong>${t('Error', 'Fehler')}:</strong> ${t(`The password you entered for the username <strong>${esc(user)}</strong> is incorrect.`, `Das Passwort für den Benutzernamen <strong>${esc(user)}</strong> ist nicht korrekt.`)}</div>`), 'login'));
       }
-      return send(
-        200,
-        html(
-          options.language,
-          `<form name="loginform" id="loginform" method="post" action="/wp-login.php"><input id="user_login" name="log"><input id="user_pass" name="pwd" type="password"><input name="rememberme" type="checkbox" id="rememberme" value="forever"><input type="hidden" name="redirect_to" value="${url.searchParams.get('redirect_to') ?? '/wp-admin/'}"><button id="wp-submit" type="submit">${t('Log In', 'Anmelden')}</button></form>`,
-          'login',
-        ),
-      );
+      return send(200, html(options.language, loginForm(url.searchParams.get('redirect_to') ?? '/wp-admin/'), 'login'));
     }
 
     const restRoute = p.startsWith('/wp-json') ? p.slice('/wp-json'.length) || '/' : url.searchParams.get('rest_route');
@@ -397,7 +440,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
         const post = posts.get(Number(one[1]));
         if (!post) return json(404, { code: 'rest_post_invalid_id', message: 'Invalid post ID.' });
         // Like WordPress cron: a scheduled post whose time has come is published.
-        if (post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
+        if (options.cron === 'visits' && post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
         if (method === 'GET') return json(200, restPost(post));
         if (method === 'DELETE') {
           post.status = 'trash';
@@ -415,10 +458,16 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       }
       if (restRoute === '/wp/v2/media' && method === 'POST') {
         if (!can('upload_files')) return json(403, { code: 'rest_cannot_create', message: 'Sorry, you are not allowed to upload files.' });
-        const filename = /filename="([^"]+)"/.exec(String(req.headers['content-disposition'] ?? ''))?.[1] ?? 'upload.bin';
+        const sent = /filename="([^"]+)"/.exec(String(req.headers['content-disposition'] ?? ''))?.[1] ?? 'upload.bin';
+        // Like WordPress (wp_unique_filename): a file name already in the uploads gets “-1”, “-2” …
+        const dot = sent.lastIndexOf('.');
+        const [stem, ext] = dot > 0 ? [sent.slice(0, dot), sent.slice(dot)] : [sent, ''];
+        let filename = sent;
+        for (let n = 1; [...media.values()].some((m) => m.filename === filename); n++) filename = `${stem}-${n}${ext}`;
         const id = nextId++;
-        // Like WordPress: the attachment slug comes from the file name (unique: a taken slug gets a suffix).
-        const base = slugify(filename.replace(/\.[^.]+$/, ''));
+        // Like WordPress: the attachment slug is the `slug` sent with the upload, else it comes from the file name
+        // (unique: a taken slug gets a suffix).
+        const base = url.searchParams.get('slug') || slugify(filename.replace(/\.[^.]+$/, ''));
         let slug = base;
         for (let n = 2; [...media.values()].some((m) => m.slug === slug); n++) slug = `${base}-${n}`;
         const item = { id, bytes: Number(req.headers['content-length'] ?? body.length), mime: String(req.headers['content-type'] ?? ''), filename, slug, alt: '', url: `${baseUrl}/wp-content/uploads/${filename}` };
@@ -525,6 +574,7 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
     addPost,
     redirects,
     logoutAll: () => sessions.clear(),
+    loginPosts: () => loginPosts,
     close: () =>
       new Promise((resolve) => {
         server.closeAllConnections?.();

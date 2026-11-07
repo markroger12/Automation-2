@@ -33,7 +33,7 @@ export default async function EditorialPage() {
             <Card key={t.href} title={<span className="flex items-center gap-2"><Icon className="h-4 w-4" /> {t.title}</span>} actions={soon ? <Chip>coming in {t.milestone}</Chip> : <Chip tone="success">available</Chip>}>
               <p className="text-sm">{t.text}</p>
               {!soon ? (
-                <Link href={t.href} className="mt-3 inline-block text-sm font-medium text-indigo-600 underline">
+                <Link href={t.href} className="mt-3 inline-block text-sm font-medium link">
                   Open {t.title}
                 </Link>
               ) : null}
@@ -47,7 +47,7 @@ export default async function EditorialPage() {
           <ul className="space-y-2 text-sm">
             {runs.map((r) => (
               <li key={r.id} className="flex items-center justify-between gap-2">
-                <Link href={`/humanizer?run=${r.id}`} className="truncate text-indigo-600 underline">
+                <Link href={`/humanizer?run=${r.id}`} className="truncate link">
                   {r.title}
                 </Link>
                 <span className="flex shrink-0 items-center gap-2">
@@ -64,7 +64,7 @@ export default async function EditorialPage() {
           <ul className="space-y-2 text-sm">
             {edits.map((e) => (
               <li key={e.id} className="flex items-center justify-between gap-2">
-                <Link href={`/articles/${e.taskId}?tab=editor`} className="truncate text-indigo-600 underline">
+                <Link href={`/articles/${e.taskId}?tab=editor`} className="truncate link">
                   {keywords.get(e.taskId) ?? 'Article'}
                 </Link>
                 <span className="text-muted shrink-0 text-xs">

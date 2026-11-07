@@ -105,14 +105,14 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
                         </details>
                       ) : null}
                       {row.screenshotPath ? (
-                        <a className="text-xs text-indigo-600 underline" href={`/api/files/screenshot?path=${encodeURIComponent(row.screenshotPath)}`} target="_blank" rel="noreferrer">
+                        <a className="text-xs link" href={`/api/files/screenshot?path=${encodeURIComponent(row.screenshotPath)}`} target="_blank" rel="noreferrer">
                           screenshot
                         </a>
                       ) : null}
                     </td>
                     <td className="whitespace-nowrap text-xs">
                       {row.taskId ? (
-                        <Link className="text-indigo-600 hover:underline" href={`/articles/${row.taskId}`}>
+                        <Link className="link" href={`/articles/${row.taskId}`}>
                           {row.taskId.slice(0, 10)}…
                         </Link>
                       ) : (

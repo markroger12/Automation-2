@@ -117,6 +117,12 @@ export async function startWorker(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGBREAK', () => void shutdown('SIGBREAK'));
+  // npm run start:all (scripts/start-all.mjs) stops the worker over IPC for an update: on Windows a signal sent to a
+  // child process ends it at once, without this shutdown. When start:all itself is gone, the worker stops too.
+  process.on('message', (message) => {
+    if (message && typeof message === 'object' && (message as { type?: unknown }).type === 'bas:shutdown') void shutdown('stopped by start:all');
+  });
+  process.on('disconnect', () => void shutdown('start:all ended'));
   process.on('uncaughtException', (error) => {
     console.error('Uncaught exception in worker:', error);
     void log({ level: 'error', category: 'worker', message: `Uncaught exception: ${errorMessage(error)}` }).finally(() => shutdown('uncaught exception', 1));

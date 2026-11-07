@@ -181,7 +181,7 @@ export function DatePicker({
                   }}
                   className={cx(
                     'h-8 rounded-md text-sm tabular-nums transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-30',
-                    isSelected ? 'bg-indigo-600 font-semibold text-white' : d.inMonth ? 'hover:bg-black/5 dark:hover:bg-white/10' : 'text-muted opacity-60 hover:bg-black/5 dark:hover:bg-white/10',
+                    isSelected ? 'bg-[var(--primary)] font-semibold text-[var(--primary-fg)]' : d.inMonth ? 'hover:bg-black/5 dark:hover:bg-white/10' : 'text-muted opacity-60 hover:bg-black/5 dark:hover:bg-white/10',
                     !isSelected && d.iso === today && 'ring-1 ring-inset ring-indigo-400',
                   )}
                 >
@@ -197,11 +197,11 @@ export function DatePicker({
                 onChange('');
                 close();
               }}
-              className="rounded-md px-2 py-1 font-medium text-indigo-600 hover:bg-black/5 dark:hover:bg-white/10"
+              className="rounded-md px-2 py-1 font-medium hover:bg-black/5 dark:hover:bg-white/10"
             >
               Clear
             </button>
-            <button type="button" disabled={!allowed(today)} onClick={() => choose(today)} className="rounded-md px-2 py-1 font-medium text-indigo-600 hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10">
+            <button type="button" disabled={!allowed(today)} onClick={() => choose(today)} className="rounded-md px-2 py-1 font-medium hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10">
               Today
             </button>
           </div>

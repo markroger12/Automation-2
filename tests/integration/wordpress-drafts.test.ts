@@ -139,7 +139,9 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     const driver = makeDriver(client, answer);
     const task = await celebTask(site, 'Tom Kaulitz Heidi Klum', 'rm-never');
     const t = await driver.drive(task.id);
-    expect(t.status).toBe('NEEDS_REVIEW');
+    // Review holds are off by default: the verified draft completes and the reasons are notes on the article page.
+    expect(t.status).toBe('COMPLETED');
+    expect(t.message).toMatch(/note\(s\) on the article page/);
     expect(t.rankMathScore).toBeNull();
     expect(t.reviewReasons).toMatch(/Rank Math showed 0 \/ 100 for the whole check/);
     expect(t.reviewReasons).not.toMatch(/below the target/);
@@ -155,7 +157,7 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     const before = seoCorrections.length;
     const task = await celebTask(site, 'Sydney Sweeney Glen Powell', 'rm-cap');
     const t = await driver.drive(task.id);
-    expect(t.status).toBe('NEEDS_REVIEW');
+    expect(t.status).toBe('COMPLETED'); // with the reasons as notes (review holds off by default)
     expect(t.rankMathScore).toBe(60);
     expect(t.reviewReasons).toMatch(/Rank Math score 60 is below the target 75 after \d correction round/);
     const report = await stageData(task.id, 'RANKMATH');
@@ -293,6 +295,51 @@ describe('WordPress drafts + Rank Math (fake WordPress fixture)', () => {
     expect(report.editorSave).toMatch(/draft/);
     // The Classic "Save Draft" was posted (no publish field) and passed the guard.
     expect(wp.requests.some((r) => r.method === 'POST' && r.path.startsWith('/wp-admin/post.php') && /save=/.test(r.body) && !/(^|&)publish=/.test(r.body))).toBe(true);
+  });
+
+  it('owner report (Willie Beir): a draft changed in WordPress waits for a choice of version; “Approve” says so; Keep or Overwrite finishes it', async () => {
+    const wp = await startFakeWordPress({});
+    servers.push(wp);
+    const site = await loggedInSite(wp, 'Edits Blog');
+    await client.website.update({ where: { id: site.id }, data: { settingsOverrides: JSON.stringify({ content: {}, seo: { rankMathMode: 'off' }, workflow: {} }) } });
+    const driver = makeDriver(client, answer);
+    const task = await celebTask(site, 'Willie Beir Max Gail', 'edits-1');
+    let t = await driver.drive(task.id);
+    expect(t.status, t.reviewReasons).toBe('COMPLETED');
+    const post = wp.posts.get(t.wpPostId!)!;
+    // The owner edits the draft in WordPress, then the article is re-assembled in the app (e.g. Regenerate images).
+    const ownerEdit = () => {
+      post.content += '<p>A paragraph the owner added in WordPress.</p>';
+      post.modified_gmt = new Date(Date.parse(post.modified_gmt + 'Z') + 60_000).toISOString().slice(0, 19);
+    };
+    ownerEdit();
+    await actions.regenerateStage(task.id, 'ASSEMBLY');
+    t = await driver.drive(task.id);
+    expect(t.status).toBe('NEEDS_REVIEW');
+    expect(t.message).toMatch(/edited in WordPress after the app saved it/);
+    expect(t.nextAction).toMatch(/Keep the WordPress version.*Overwrite with the app version/);
+    // “Approve despite review reasons” cannot decide which version to keep (before: “continuing”, then the same stop).
+    await expect(actions.overrideQuality(task.id, { reason: 'go on' })).rejects.toThrow(/Approving does not decide which version to keep/);
+    expect((await client.articleTask.findUniqueOrThrow({ where: { id: task.id } })).status).toBe('NEEDS_REVIEW');
+    // Keep the WordPress version: the owner's paragraph stays, the app takes it as the article's text, the steps finish.
+    await actions.resaveToWordPress(task.id, { mode: 'keep-remote' });
+    t = await driver.drive(task.id);
+    expect(t.status, t.reviewReasons).toBe('COMPLETED');
+    expect(post.content).toContain('A paragraph the owner added in WordPress.');
+    expect(t.editedHtml).toContain('A paragraph the owner added in WordPress.');
+    expect(await client.articleStageRevision.count({ where: { taskId: task.id, reason: 'app version before keeping the WordPress version' } })).toBe(1);
+    expect(wp.posts.size).toBe(1);
+    // Next time the owner prefers the app's version: Overwrite replaces the WordPress edit.
+    post.content = post.content.replace('A paragraph the owner added in WordPress.', 'Changed again in WordPress.');
+    post.modified_gmt = new Date(Date.parse(post.modified_gmt + 'Z') + 60_000).toISOString().slice(0, 19);
+    await actions.resaveToWordPress(task.id, { mode: 'resave' });
+    t = await driver.drive(task.id);
+    expect(t.status).toBe('NEEDS_REVIEW');
+    await actions.resaveToWordPress(task.id, { mode: 'overwrite-remote' });
+    t = await driver.drive(task.id);
+    expect(t.status, t.reviewReasons).toBe('COMPLETED');
+    expect(post.content).not.toContain('Changed again in WordPress.');
+    expect(post.content).toContain('A paragraph the owner added in WordPress.');
   });
 
   it('publish guard on the fake editors: the Publish buttons and direct requests never reach WordPress', async () => {

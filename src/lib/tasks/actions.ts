@@ -11,6 +11,8 @@ import { ensureArticleRun } from './lifecycle';
 import { runSeoChecks } from '../seo/checks';
 import { getSettings, parseSiteOverrides } from '../settings';
 import { effectiveTaskConfig, taskOptionsSchema, type EffectiveTaskConfig } from '../settings-schema';
+import { expectedFaqCount, wordRangeFor } from '../writer-config';
+import { contentHash as wpContentHash } from '@/wordpress/drafts';
 
 async function loadTask(id: string) {
   const task = await db.articleTask.findUnique({ where: { id } });
@@ -48,11 +50,25 @@ export async function approveArticle(taskId: string) {
 export const overrideSchema = z.object({ reason: z.string().trim().min(3, 'Give a short reason').max(500) });
 
 /** Owner accepts the current review reasons (audited); the gate is re-run with the override. */
+/**
+ * Owner report (Willie Beir: “approved 100 times, it is not approved”): a draft changed in WordPress after the app
+ * saved it is not a quality reason. Approving cannot decide which version to keep, so it is refused with what to do.
+ */
+export const WORDPRESS_EDITS_RE = /has edits made in WordPress|edited in WordPress after the app saved it/;
+export function heldForWordPressEdits(task: { status: string; message: string | null; reviewReasons: string }): boolean {
+  return task.status === 'NEEDS_REVIEW' && (WORDPRESS_EDITS_RE.test(task.message ?? '') || parseJson<string[]>(task.reviewReasons, []).some((r) => WORDPRESS_EDITS_RE.test(r)));
+}
+const WORDPRESS_EDITS_CHOICE = 'Approving does not decide which version to keep. Choose “Keep the WordPress version” (the edits made in WordPress stay) or “Overwrite with the app version” on the article page.';
+
 export async function overrideQuality(taskId: string, raw: unknown) {
   const { reason } = overrideSchema.parse(raw);
   const task = await loadTask(taskId);
   await assertIdle(taskId);
-  const options = { ...parseJson<Record<string, unknown>>(task.options, {}), qualityOverride: true, qualityOverrideReason: reason };
+  if (heldForWordPressEdits(task)) throw new AppError(409, 'WORDPRESS_EDITS', `Draft #${task.wpPostId ?? ''} was changed in WordPress after the app saved it. ${WORDPRESS_EDITS_CHOICE}`);
+  // “Approve despite review reasons” on a task held by the duplicate pre-check allows the duplicate as well.
+  const duplicate = await heldForDuplicate(taskId, task.reviewReasons);
+  const options = { ...parseJson<Record<string, unknown>>(task.options, {}), qualityOverride: true, qualityOverrideReason: reason, ...(duplicate ? { allowDuplicate: true } : {}) };
+  if (duplicate) await db.articleStage.updateMany({ where: { taskId, key: 'DUPLICATE_PRECHECK' }, data: { status: 'PENDING', error: null } });
   await db.articleTask.update({ where: { id: taskId }, data: { options: JSON.stringify(options), status: 'QUEUED', message: 'Owner approved despite review reasons.', nextAction: null } });
   await db.articleStage.updateMany({ where: { taskId, key: { in: ['QUALITY_GATE', 'VERIFIED_COMPLETE'] }, status: { in: ['FAILED', 'WAITING', 'COMPLETED'] } }, data: { status: 'PENDING', error: null } });
   await audit('task.quality-override', 'ArticleTask', taskId, { reason });
@@ -79,7 +95,7 @@ export async function approveWaiting(taskId: string, reason: string): Promise<'t
     return 'article';
   }
   if (task.status === 'NEEDS_REVIEW') {
-    if (parseJson<string[]>(task.reviewReasons, []).some((r) => r.startsWith('Duplicate keyword'))) {
+    if (await heldForDuplicate(taskId, task.reviewReasons)) {
       await allowDuplicate(taskId);
       return 'duplicate';
     }
@@ -87,6 +103,17 @@ export async function approveWaiting(taskId: string, reason: string): Promise<'t
     return 'review';
   }
   throw new AppError(409, 'CONFLICT', `not waiting for an approval (${task.status.toLowerCase().replace(/_/g, ' ')})`);
+}
+
+/**
+ * Is the task held by the same-site duplicate pre-check? Its reasons read “Possible duplicate on this website: …”
+ * (owner report: approving such a task did not continue, because only “Duplicate keyword …” was recognised and the
+ * plain review approval left the pre-check holding it again).
+ */
+export async function heldForDuplicate(taskId: string, reviewReasons: string | null): Promise<boolean> {
+  if (parseJson<string[]>(reviewReasons, []).some((r) => /^(Possible duplicate|Duplicate keyword)/.test(r))) return true;
+  const stage = await db.articleStage.findUnique({ where: { taskId_key: { taskId, key: 'DUPLICATE_PRECHECK' } }, select: { status: true } });
+  return stage?.status === 'FAILED';
 }
 
 /** Owner confirms an intentional duplicate keyword on the same site. */
@@ -107,7 +134,8 @@ const REGEN_RESETS: Record<string, Record<string, unknown>> = {
   TITLE_APPROVAL: { titleApprovedAt: null },
   RESEARCH: { researchNotes: null },
   FINAL_ARTICLE: { bodyHtml: null },
-  ARTICLE: { bodyHtml: null, seoTitle: null, metaDescription: null, slug: null },
+  // Celebrity 2's ARTICLE answer also holds its Family Profile table and FAQs.
+  ARTICLE: { bodyHtml: null, seoTitle: null, metaDescription: null, slug: null, quickBio: '[]', quickBioHtml: null, faqs: '[]' },
   FAQS: { faqs: '[]' },
   QUICK_BIO: { quickBio: '[]', quickBioHtml: null },
   ASSEMBLY: { assembledHtml: null },
@@ -156,6 +184,10 @@ export async function regenerateStage(taskId: string, stageKey: string) {
   }
   await db.chatGPTResponse.updateMany({ where: { taskId, stageKey: { in: plan }, status: { in: ['COMPLETED', 'PENDING'] } }, data: { status: 'SUPERSEDED' } });
   await db.queueJob.updateMany({ where: { taskId, queue: 'chatgpt', status: 'WAITING' }, data: { status: 'CANCELLED', errorCode: 'SUPERSEDED' } });
+  // New images follow today's photo check switch (owner report: an article made while it was off kept using collages).
+  if (plan.includes('IMAGES') && task.configSnapshot !== '{}') {
+    resets.configSnapshot = JSON.stringify({ ...parseJson<Record<string, unknown>>(task.configSnapshot, {}), celebrityPhotoReview: (await getSettings()).seo.celebrityPhotoReview });
+  }
   await db.articleTask.update({
     where: { id: taskId },
     data: { ...resets, status: 'QUEUED', message: `Regenerating ${stage.label} and ${plan.length - 1} dependent stage(s).`, nextAction: null, reviewReasons: '[]', verifiedCompleteAt: null, version: { increment: 1 } },
@@ -205,7 +237,6 @@ export async function rerunSeo(taskId: string) {
   const html = task.editedHtml ?? task.assembledHtml;
   if (!html) throw new AppError(409, 'NOT_READY', 'There is no assembled article yet.');
   const config = await taskConfig(task);
-  const range = config.tigramWordRange.split(/\s*[-–]\s*/).map(Number) as [number, number];
   const report = runSeoChecks({
     html,
     moduleKey: task.moduleKey,
@@ -217,10 +248,10 @@ export async function rerunSeo(taskId: string) {
     slug: task.slug,
     categoryName: task.categoryName,
     tags: stringArray(task.tags),
-    expectedFaqCount: task.moduleKey === 'tigram-writer' ? config.tigramFaqCount : config.faqCount,
+    expectedFaqCount: expectedFaqCount(task.moduleKey, config),
     quickBioRows: config.quickBioRows,
     maxWords: config.maxWords,
-    wordRange: task.moduleKey === 'tigram-writer' ? range : null,
+    wordRange: wordRangeFor(task.moduleKey, config),
     minKeywordOccurrences: config.minKeywordOccurrences,
     maxKeywordOccurrences: config.maxKeywordOccurrences,
     densityCeilingPct: config.keywordDensityCeilingPct,
@@ -264,10 +295,11 @@ export async function saveMetadata(taskId: string, raw: unknown) {
 
 export const wordpressActionSchema = z
   .object({
-    /** resave: save/verify again (same post); overwrite-remote: replace edits made in WordPress;
+    /** resave: save/verify again (same post); overwrite-remote: replace edits made in WordPress; keep-remote: take
+     *  the WordPress version as the article's (the edits stay) and finish the WordPress steps;
      *  recreate: create a new draft when the old one is gone or the earlier attempt is ambiguous;
      *  adopt: use an existing post found during reconciliation. */
-    mode: z.enum(['resave', 'overwrite-remote', 'recreate', 'adopt']).default('resave'),
+    mode: z.enum(['resave', 'overwrite-remote', 'keep-remote', 'recreate', 'adopt']).default('resave'),
     adoptPostId: z.number().int().positive().optional(),
   })
   .refine((v) => v.mode !== 'adopt' || v.adoptPostId, { message: 'Choose the post to use.', path: ['adoptPostId'] });
@@ -300,6 +332,18 @@ export async function resaveToWordPress(taskId: string, raw: unknown) {
   delete options.wpAdoptPostId;
   options.saveToWordPress = true;
   if (input.mode === 'overwrite-remote') options.wpOverwriteRemoteEdits = true;
+  // Keep the WordPress version: it becomes the article's text in the app (the app's version stays as a revision), so
+  // the draft step finds nothing to overwrite and finishes with the owner's WordPress edits in place.
+  let keep: { editedHtml: string; editedAt: Date; wpContentHash: string } | null = null;
+  if (input.mode === 'keep-remote') {
+    const wpStage = await db.articleStage.findFirst({ where: { taskId, key: 'WORDPRESS_DRAFT' } });
+    const remote = parseJson<{ remoteEdit?: { content?: string; postId?: number } | null }>(wpStage?.privateState ?? '{}', {}).remoteEdit;
+    if (!remote?.content) throw new AppError(409, 'NO_WORDPRESS_VERSION', 'The WordPress version was not captured for this article. Press “Save again” on the WordPress tab first: it reads the draft again (nothing is overwritten).');
+    const current = task.editedHtml ?? task.assembledHtml ?? '';
+    const asm = await db.articleStage.findFirst({ where: { taskId, key: 'ASSEMBLY' } });
+    if (asm && current) await db.articleStageRevision.create({ data: { stageId: asm.id, taskId, key: 'EDITOR', reason: 'app version before keeping the WordPress version', outputHtml: current } });
+    keep = { editedHtml: sanitizeArticleHtml(remote.content), editedAt: new Date(), wpContentHash: wpContentHash(remote.content) };
+  }
   if (input.mode === 'recreate') options.wpRecreate = true;
   if (input.mode === 'adopt') options.wpAdoptPostId = input.adoptPostId;
   const plan = ['WORDPRESS_DRAFT', 'RANKMATH', 'VERIFIED_COMPLETE'];
@@ -315,7 +359,8 @@ export async function resaveToWordPress(taskId: string, raw: unknown) {
     data: {
       options: JSON.stringify(options),
       status: 'QUEUED',
-      message: input.mode === 'resave' ? 'Saving to WordPress again.' : `WordPress: ${input.mode.replace('-', ' ')} requested by the owner.`,
+      message: input.mode === 'resave' ? 'Saving to WordPress again.' : input.mode === 'keep-remote' ? 'WordPress: the version edited in WordPress is kept (chosen by the owner).' : `WordPress: ${input.mode.replace('-', ' ')} requested by the owner.`,
+      ...(keep ?? {}),
       nextAction: null,
       reviewReasons: JSON.stringify(reasons),
       verifiedCompleteAt: null,

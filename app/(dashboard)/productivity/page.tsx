@@ -3,6 +3,8 @@ import { Download } from 'lucide-react';
 import { productivityReport, TARGET_PER_HOUR, type BenchmarkClaim } from '@/lib/analytics/productivity';
 import { Alert, Card, Chip, EmptyState, PageHeader, Stat, formatDateTime } from '@/components/ui';
 import { RefreshButton } from './refresh-button';
+import { moduleDisplayName } from '@/lib/domain';
+import { ensureCustomWriters } from '@/lib/writers/store';
 
 export const metadata = { title: 'Productivity Analytics' };
 export const dynamic = 'force-dynamic';
@@ -13,10 +15,11 @@ const CLAIM: Record<BenchmarkClaim, { tone: 'success' | 'danger' | 'warning' | '
   SUSPENDED: { tone: 'warning', text: 'claim suspended' },
   NO_WORK: { tone: 'neutral', text: 'no work to measure' },
 };
-const WRITER: Record<string, string> = { 'celebrity-writer': 'Celebrity Article Writer', 'tigram-writer': 'Tigram Article Writer', 'celebrity-writer-2': 'Celebrity Writer 2.0 (retired)' };
+const WRITER: Record<string, string> = { 'celebrity-writer': 'Celebrity Article Writer', 'celebrity2-writer': 'Celebrity 2 Article Writer', 'tigram-writer': 'Tigram Article Writer', 'celebrity-writer-2': 'Celebrity Writer 2.0 (retired)' };
 const sec = (ms: number | null) => (ms == null ? '—' : ms >= 120_000 ? `${(ms / 60_000).toFixed(1)} min` : `${Math.round(ms / 1000)} s`);
 
 export default async function ProductivityPage() {
+  await ensureCustomWriters();
   const r = await productivityReport();
   const maxDay = Math.max(1, ...r.days.map((d) => d.count));
   const hour = r.rolling.find((w) => w.minutes === 60)!;
@@ -103,7 +106,7 @@ export default async function ProductivityPage() {
             <ul className="space-y-1 text-sm">
               {r.byWriter.map((w) => (
                 <li key={w.moduleKey} className="flex justify-between gap-2">
-                  <span>{WRITER[w.moduleKey] ?? w.moduleKey}</span>
+                  <span>{WRITER[w.moduleKey] ?? moduleDisplayName(w.moduleKey)}</span>
                   <span className="tabular-nums">{w.count}</span>
                 </li>
               ))}
@@ -140,7 +143,7 @@ export default async function ProductivityPage() {
           description={`Completed stage runs; time includes waiting for ChatGPT answers. Whole article: median ${r.articleMinutes.p50 ?? '—'} min, p90 ${r.articleMinutes.p90 ?? '—'} min (${r.articleMinutes.samples} articles).`}
           padded={false}
           actions={
-            <a className="inline-flex items-center gap-1 px-2 text-sm text-indigo-600 underline" href="/api/productivity/export?view=stages">
+            <a className="inline-flex items-center gap-1 px-2 text-sm link" href="/api/productivity/export?view=stages">
               <Download className="h-3.5 w-3.5" /> CSV
             </a>
           }
@@ -225,7 +228,7 @@ export default async function ProductivityPage() {
         description="Most recent first: each one is an article whose WordPress draft was read back and verified."
         padded={false}
         actions={
-          <a className="inline-flex items-center gap-1 px-2 text-sm text-indigo-600 underline" href="/api/productivity/export?view=verified">
+          <a className="inline-flex items-center gap-1 px-2 text-sm link" href="/api/productivity/export?view=verified">
             <Download className="h-3.5 w-3.5" /> CSV
           </a>
         }

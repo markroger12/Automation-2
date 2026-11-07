@@ -97,11 +97,15 @@ describe('Celebrity Writer 2.0 retirement', () => {
     expect(await counts()).toEqual(before);
   });
 
-  it('2.0 cannot be selected or queued; exactly two writers are offered', async () => {
+  it('2.0 cannot be selected or queued; the active writers are Celebrity, Celebrity 2 (owner request 2026-11-04) and Tigram', async () => {
     const { ACTIVE_MODULE_KEYS } = await import('@/lib/domain');
     const { writerOptions, getManifest } = await import('@/modules/registry');
-    expect([...ACTIVE_MODULE_KEYS]).toEqual(['celebrity-writer', 'tigram-writer']);
-    expect(writerOptions().map((w) => w.key)).toEqual(['celebrity-writer', 'tigram-writer']);
+    expect([...ACTIVE_MODULE_KEYS]).toEqual(['celebrity-writer', 'celebrity2-writer', 'tigram-writer']);
+    expect(writerOptions().map((w) => w.key)).toEqual(['celebrity-writer', 'celebrity2-writer', 'tigram-writer']);
+    // Celebrity 2 is a new writer, never the retired 2.0 under another name.
+    const { normalizeWriter } = await import('@/lib/campaigns/router');
+    expect(normalizeWriter('celebrity-writer-2')).toBeNull();
+    expect(normalizeWriter('Celebrity 2')).toBe('celebrity2-writer');
     expect(getManifest('celebrity-writer-2')).toBeUndefined();
     const create = await import('@/lib/tasks/create');
     await expect(create.createArticleTask({ moduleKey: 'celebrity-writer-2', keyword: 'New', websiteId: siteId, idempotencyKey: 'new-2' }, { source: 'SINGLE' })).rejects.toThrow();

@@ -10,6 +10,8 @@ import { claimChatGPTJob, completeChatGPTJob, failChatGPTJob, reportChatGPTProgr
 import { resumeLoginPausedTasks } from '../tasks/lifecycle';
 import { openIncident } from '../recovery';
 import { verifyConnectionKey } from './keys';
+import { DESKTOP_AGENT_ID, bearerKey, chatgptInApp, isDesktopAgentKey } from './desktop';
+import { claimIndexingRequest, reportIndexingRequest, waitingIndexingRequests } from '../gsc/request-indexing';
 import { agentRequestSchema, type AgentRequest } from './schemas';
 import { AGENT_PROTOCOL_VERSION, EXPECTED_EXTENSION_VERSION } from './version';
 
@@ -18,8 +20,9 @@ import { AGENT_PROTOCOL_VERSION, EXPECTED_EXTENSION_VERSION } from './version';
  * Response), shared by the Next.js route and the integration-test server.
  *
  * Security: loopback Host only; Origin must be a chrome-extension:// origin
- * (or absent); bearer connection key verified against the stored hash;
- * strict payload size; Zod validation; per-install rate limit.
+ * (or absent); bearer connection key verified against the stored hash, or the
+ * desktop app's key for its own ChatGPT tab (agent/desktop.ts), each bound to
+ * its install id; strict payload size; Zod validation; per-install rate limit.
  */
 
 const MAX_BODY = 4_000_000;
@@ -51,9 +54,8 @@ export async function checkAgentRequest(req: Request, maxBody = MAX_BODY): Promi
   if (origin && !origin.startsWith('chrome-extension://')) return agentJson({ error: 'Origin not allowed.' }, 403, origin);
   const length = Number(req.headers.get('content-length') ?? '0');
   if (length > maxBody) return agentJson({ error: 'Payload too large.' }, 413, origin);
-  const auth = req.headers.get('authorization') ?? '';
-  const key = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
-  if (!(await verifyConnectionKey(key))) {
+  const key = bearerKey(req);
+  if (!isDesktopAgentKey(key) && !(await verifyConnectionKey(key))) {
     return agentJson({ error: 'Invalid or missing connection key. Create a key in Settings → ChatGPT extension and paste it into the extension popup.', code: 'UNAUTHORIZED' }, 401, origin);
   }
   return null;
@@ -86,6 +88,8 @@ export async function handleAgentRequest(req: Request): Promise<Response> {
   const parsed = agentRequestSchema.safeParse(raw);
   if (!parsed.success) return agentJson({ error: 'Invalid request', issues: z.treeifyError(parsed.error) }, 400, origin);
   const body = parsed.data;
+  // The desktop app's key and install id belong together: the extension can never act as the app, nor the app as it.
+  if ((body.installId === DESKTOP_AGENT_ID) !== isDesktopAgentKey(bearerKey(req))) return agentJson({ error: 'This connection key does not belong to this install id.' }, 403, origin);
   if (rateLimited(`install:${body.installId}`)) return agentJson({ error: 'Rate limited — slow down.', retryAfterSec: 30 }, 429, origin);
   try {
     return agentJson(await dispatch(body), 200, origin);
@@ -98,7 +102,7 @@ export async function handleAgentRequest(req: Request): Promise<Response> {
 async function versionMismatch(installId: string): Promise<string | null> {
   const row = await db.workerStatus.findUnique({ where: { id: `extension:${installId}` }, select: { version: true } });
   if (row?.version && row.version !== EXPECTED_EXTENSION_VERSION) {
-    return `Extension version ${row.version} does not match the app (${EXPECTED_EXTENSION_VERSION}). Reload the unpacked extension from the project's extension folder once (chrome://extensions → reload).`;
+    return `Extension version ${row.version} does not match the app (${EXPECTED_EXTENSION_VERSION}). From 3.5.0 on it reloads itself from the project's extension folder when it is idle; an older one needs one reload by hand (chrome://extensions → reload).`;
   }
   return null;
 }
@@ -111,12 +115,22 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
       const mismatch = await versionMismatch(body.installId);
       if (mismatch) return { job: null, reason: 'version-mismatch', message: mismatch };
       if (await getValue<boolean>(CLAIMS_PAUSED_KEY, false)) return { job: null, reason: 'paused', message: 'New claims are paused from the dashboard.' };
+      if (body.installId !== DESKTOP_AGENT_ID && (await chatgptInApp())) return { job: null, reason: 'in-app', message: 'ChatGPT runs in the desktop app.' };
       const result = await claimChatGPTJob({ installId: body.installId, tabId: body.tabId, openConversationUrls: body.openConversationUrls });
       if (!('job' in result)) {
         return { job: null, reason: result.reason, ...(result.reason === 'backoff' ? { retryAfterSec: Math.max(1, Math.round((result.until.getTime() - Date.now()) / 1000)) } : {}) };
       }
       return { job: await describeJob(result.job, result.payload, result.reconcile, result.leaseUntil) };
     }
+    case 'gsc-claim': {
+      // Google refuses sign-ins in a browser built into an app: Search Console stays in Automation Chrome.
+      if (body.installId === DESKTOP_AGENT_ID) return { job: null, reason: 'not-here' };
+      const mismatch = await versionMismatch(body.installId);
+      if (mismatch) return { job: null, reason: 'version-mismatch', message: mismatch };
+      return { job: await claimIndexingRequest(body.installId) };
+    }
+    case 'gsc-result':
+      return reportIndexingRequest({ jobId: body.jobId, installId: body.installId, outcome: body.outcome, message: body.message ?? null, pageCopy: body.pageCopy });
     case 'progress':
       return reportChatGPTProgress({
         jobId: body.jobId,
@@ -135,6 +149,8 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
         elapsedMs: body.elapsedMs,
         images: body.images,
         imageLinks: body.imageLinks,
+        galleryReport: body.galleryReport,
+        pageCopy: body.pageCopy,
       });
     case 'fail':
       return failChatGPTJob({ jobId: body.jobId, tabId: body.tabId, code: body.code, message: body.message, retryAfterSec: body.retryAfterSec ?? null, uncertain: body.uncertain, diagnostics: body.diagnostics });
@@ -173,25 +189,28 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
       lastSeenAt: now,
     },
   });
-  if (!previous) await log({ category: 'extension', message: `Extension ${body.installId.slice(0, 8)} v${body.version} connected.` });
+  if (!previous) await log({ category: 'extension', message: body.installId === DESKTOP_AGENT_ID ? `The desktop app's ChatGPT tab connected (scripts v${body.version}).` : `Extension ${body.installId.slice(0, 8)} v${body.version} connected.` });
   if (body.loggedIn === true && prevDiag.loggedIn !== true) {
     const resumed = await resumeLoginPausedTasks({ chatgpt: true });
     if (resumed) await log({ category: 'extension', message: `ChatGPT signed in; resumed ${resumed} paused task(s).` });
   }
   const versionOk = body.version === EXPECTED_EXTENSION_VERSION;
-  const [waiting, active, slots, backoffUntil, paused] = await Promise.all([
+  const desktop = body.installId === DESKTOP_AGENT_ID;
+  const [waiting, active, slots, backoffUntil, paused, gscWaiting, inApp] = await Promise.all([
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: now } } }),
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'ACTIVE' } }),
     allowedSlots(),
     inBackoff(),
     getValue<boolean>(CLAIMS_PAUSED_KEY, false),
+    waitingIndexingRequests(now),
+    desktop ? false : chatgptInApp(now),
   ]);
   return {
     ok: true,
     versionOk,
     expectedVersion: EXPECTED_EXTENSION_VERSION,
     protocol: AGENT_PROTOCOL_VERSION,
-    message: versionOk ? null : `Version mismatch: extension ${body.version}, app expects ${EXPECTED_EXTENSION_VERSION}. Reload the unpacked extension once; it will not reload itself.`,
+    message: versionOk ? null : `Version mismatch: extension ${body.version}, app expects ${EXPECTED_EXTENSION_VERSION}. From 3.5.0 on the extension reloads itself from its folder when it is idle; an older one needs one reload by hand (chrome://extensions → reload).`,
     serverTime: now.toISOString(),
     config: {
       chatgptUrl: settings.browser.chatgptUrl,
@@ -205,6 +224,10 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
       backoffUntil: backoffUntil?.toISOString() ?? null,
       claimsPaused: paused,
       waitingJobs: waiting,
+      // Search Console “Request indexing” requests waiting for Automation Chrome.
+      gscWaiting: desktop ? 0 : gscWaiting,
+      // The desktop app's ChatGPT tab is connected: Automation Chrome opens no ChatGPT tab and claims no prompt.
+      chatgptInApp: inApp,
       warning: settings.browser.chatgptTabs > 3 ? 'More than 3 ChatGPT tabs can trigger account-wide rate limiting.' : null,
     },
   };

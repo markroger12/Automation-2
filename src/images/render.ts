@@ -1,5 +1,7 @@
 import sharp, { type OverlayOptions } from 'sharp';
-import { CANVAS, sanitizeSvg, type ImageTemplate, type Layer } from '@/lib/image-template';
+import { CANVAS, penPathD, sanitizeSvg, type ImageTemplate, type Layer, type PenPoint } from '@/lib/image-template';
+import { fontChoice } from '@/lib/fonts';
+import { covers, linesPath, loadFont, wrapMeasured } from './fonts';
 
 /**
  * The production image renderer (also used for the designer's live preview).
@@ -11,12 +13,16 @@ export interface RenderInput {
   template: ImageTemplate;
   /** Photo slots 0 and 1 (missing slots fall back to slot 0, then to a flat accent panel). */
   photos: Buffer[];
-  /** Optional focus points per slot, in source-image fractions (e.g. from face boxes). */
-  focus?: ({ x: number; y: number } | null)[];
+  /** Optional focus per slot, in source-image fractions: a point, or the area around the main faces. */
+  focus?: PhotoFocus[];
   logo?: Buffer | null;
   fixedPhotos?: Record<string, Buffer>;
   vars?: Record<string, string>;
 }
+
+type Area = { left: number; right: number; top: number; bottom: number };
+/** Where a crop should centre: a point, and/or the area around the main faces, and each main face (fractions of the picture). */
+export type PhotoFocus = { x: number; y: number; area?: Area; faces?: Area[] } | null;
 
 export interface RenderOptions {
   width: number;
@@ -25,12 +31,11 @@ export interface RenderOptions {
   format?: 'webp' | 'jpeg';
 }
 
-const FONTS: Record<string, string> = {
-  sans: "Inter, 'Segoe UI', Arial, Helvetica, sans-serif",
-  serif: "Georgia, 'Times New Roman', serif",
-  condensed: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif",
-  mono: "Consolas, 'Courier New', monospace",
-};
+/** System font names for text drawn as SVG text (system fonts, or a bundled font missing a letter). */
+function systemFonts(id: string): string {
+  const f = fontChoice(id);
+  return f.bundled ? `'${f.label}', ${f.css.split(', ').slice(1).join(', ')}` : f.css;
+}
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const resolveColor = (c: string | null | undefined, accent: string) => (!c ? 'none' : c === 'accent' ? accent : c === 'transparent' ? 'none' : c);
@@ -68,28 +73,91 @@ function svgBuffer(w: number, h: number, inner: string): Buffer {
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w)}" height="${Math.round(h)}" viewBox="0 0 ${Math.round(w)} ${Math.round(h)}">${inner}</svg>`);
 }
 
+/** A photo cut to its place's shape (rounded rectangle, circle or a pen-drawn shape) with the border drawn inside it. */
+async function framed(buf: Buffer, w: number, h: number, l: { radius: number; shape: 'rect' | 'circle' | 'path'; points?: PenPoint[]; stroke: string | null; strokeWidth: number }, accent: string): Promise<Buffer> {
+  const sw = l.stroke ? Math.min(l.strokeWidth, Math.min(w, h) / 2) : 0;
+  if (l.shape === 'path' && l.points?.length) {
+    const d = penPathD(l.points, true, w, h);
+    const parts: OverlayOptions[] = [{ input: svgBuffer(w, h, `<path d="${d}" fill="#fff"/>`), blend: 'dest-in' }];
+    // The border along the outline, inside the place (its outer half would fall outside the cut photo).
+    if (sw) parts.push({ input: svgBuffer(w, h, `<defs><clipPath id="c"><path d="${d}"/></clipPath></defs><path d="${d}" fill="none" stroke="${esc(resolveColor(l.stroke!, accent))}" stroke-width="${sw * 2}" stroke-linejoin="round" clip-path="url(#c)"/>`) });
+    return sharp(buf).ensureAlpha().composite(parts).png().toBuffer();
+  }
+  if (l.shape === 'circle') {
+    const mask = svgBuffer(w, h, `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="#fff"/>`);
+    const parts: OverlayOptions[] = [{ input: mask, blend: 'dest-in' }];
+    if (sw) parts.push({ input: svgBuffer(w, h, `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${Math.max(0, w / 2 - sw / 2)}" ry="${Math.max(0, h / 2 - sw / 2)}" fill="none" stroke="${esc(resolveColor(l.stroke!, accent))}" stroke-width="${sw}"/>`) });
+    return sharp(buf).ensureAlpha().composite(parts).png().toBuffer();
+  }
+  const cut = await rounded(buf, w, h, l.radius);
+  if (!sw) return cut;
+  const ring = svgBuffer(w, h, `<rect x="${sw / 2}" y="${sw / 2}" width="${Math.max(0, w - sw)}" height="${Math.max(0, h - sw)}" rx="${Math.max(0, l.radius - sw / 2)}" fill="none" stroke="${esc(resolveColor(l.stroke!, accent))}" stroke-width="${sw}"/>`);
+  return sharp(cut).ensureAlpha().composite([{ input: ring }]).png().toBuffer();
+}
+
 async function rounded(buf: Buffer, w: number, h: number, radius: number): Promise<Buffer> {
   if (!radius) return buf;
   const mask = svgBuffer(w, h, `<rect x="0" y="0" width="${w}" height="${h}" rx="${radius}" ry="${radius}" fill="#fff"/>`);
   return sharp(buf).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
 }
 
-async function photoTile(src: Buffer, w: number, h: number, focus: { x: number; y: number } | null, mode: 'auto' | 'center' | 'top'): Promise<Buffer> {
-  const img = sharp(src, { failOn: 'none' }).rotate();
+/**
+ * Where a photo is cut for its place (cover crop) around the faces — face LOCATIONS only. The earlier tool's rule:
+ * the main faces centred across, a little above the middle with room over the heads. Owner reports (group photos in
+ * the narrow half of the featured design: faces at both edges cut in half; keeping only some of the people left half
+ * bodies at the edges): when the main faces do not all fit the place, there is no good crop — null, and the photo is
+ * shown whole instead.
+ */
+export function cropBox(sw: number, sh: number, w: number, h: number, focus: NonNullable<PhotoFocus>): { rw: number; rh: number; left: number; top: number } | null {
+  const scale = Math.max(w / sw, h / sh);
+  const rw = Math.ceil(sw * scale);
+  const rh = Math.ceil(sh * scale);
+  const area = focus.area;
+  if (area && focus.faces?.length) {
+    // Hair and ears reach a little past the detected face (as fitsPlace counts them).
+    const pad = (f: { left: number; right: number }) => (f.right - f.left) * 0.2;
+    const across = (Math.max(...focus.faces.map((f) => f.right + pad(f))) - Math.min(...focus.faces.map((f) => f.left - pad(f)))) * rw;
+    const down = (Math.max(...focus.faces.map((f) => f.bottom)) - Math.min(...focus.faces.map((f) => f.top))) * rh * 1.4;
+    if (across > w || down > h) return null;
+  }
+  let left: number;
+  let top: number;
+  if (area) {
+    left = ((area.left + area.right) / 2) * rw - w / 2;
+    top = Math.min(((area.top + area.bottom) / 2) * rh - h * 0.4, area.top * rh - h * 0.08);
+  } else {
+    left = focus.x * rw - w / 2;
+    top = focus.y * rh - h / 2;
+  }
+  return { rw, rh, left: Math.min(Math.max(0, Math.round(left)), rw - w), top: Math.min(Math.max(0, Math.round(top)), rh - h) };
+}
+
+/** The whole picture on a blurred, darkened copy of itself (nothing of it is cut). */
+async function wholeOnBlur(upright: Buffer, w: number, h: number): Promise<Buffer> {
+  const backdrop = await sharp(upright).resize(w, h, { fit: 'cover' }).blur(Math.max(8, Math.round(Math.min(w, h) / 30))).modulate({ brightness: 0.8 }).png().toBuffer();
+  const whole = await sharp(upright).resize(w, h, { fit: 'inside' }).png().toBuffer();
+  return sharp(backdrop).composite([{ input: whole, gravity: 'centre' }]).png().toBuffer();
+}
+
+async function photoTile(src: Buffer, w: number, h: number, focus: PhotoFocus, mode: 'auto' | 'center' | 'top'): Promise<Buffer> {
+  const upright = await sharp(src, { failOn: 'none' }).rotate().toBuffer();
+  const meta = await sharp(upright).metadata();
+  const sw = meta.width ?? w;
+  const sh = meta.height ?? h;
+  // As in the owner's earlier tool: a picture much taller than its place would lose the face when cropped, so it is
+  // shown whole on a blurred copy of itself.
+  if (mode === 'auto' && sw / sh < (w / h) * 0.8) return wholeOnBlur(upright, w, h);
   if (focus) {
-    // Crop around a known focus point (e.g. a detected face box) — face LOCATION only.
-    const meta = await img.metadata();
-    const sw = meta.width ?? w;
-    const sh = meta.height ?? h;
-    const scale = Math.max(w / sw, h / sh);
-    const rw = Math.ceil(sw * scale);
-    const rh = Math.ceil(sh * scale);
-    const left = Math.min(Math.max(0, Math.round(focus.x * rw - w / 2)), rw - w);
-    const top = Math.min(Math.max(0, Math.round(focus.y * rh - h / 2)), rh - h);
-    return sharp(src).rotate().resize(rw, rh).extract({ left, top, width: w, height: h }).png().toBuffer();
+    const box = cropBox(sw, sh, w, h, focus);
+    // Faces that do not all fit the place: the whole photo (no face or person cut), unless a crop mode was chosen.
+    if (!box) {
+      if (mode === 'auto') return wholeOnBlur(upright, w, h);
+      return sharp(upright).resize(w, h, { fit: 'cover', position: mode === 'top' ? 'north' : 'centre' }).png().toBuffer();
+    }
+    return sharp(upright).resize(box.rw, box.rh).extract({ left: box.left, top: box.top, width: w, height: h }).png().toBuffer();
   }
   const position = mode === 'top' ? 'north' : mode === 'center' ? 'centre' : sharp.strategy.attention;
-  return img.resize(w, h, { fit: 'cover', position }).png().toBuffer();
+  return sharp(upright).resize(w, h, { fit: 'cover', position }).png().toBuffer();
 }
 
 async function layerImage(layer: Layer, input: RenderInput, template: ImageTemplate): Promise<Buffer | null> {
@@ -99,13 +167,13 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
   switch (layer.type) {
     case 'photo': {
       const src = input.photos[layer.slot] ?? input.photos[0];
-      if (!src) return sharp({ create: { width: w, height: h, channels: 4, background: accent } }).png().toBuffer();
-      return rounded(await photoTile(src, w, h, input.focus?.[layer.slot] ?? null, layer.focus), w, h, layer.radius);
+      if (!src) return framed(await sharp({ create: { width: w, height: h, channels: 4, background: accent } }).png().toBuffer(), w, h, layer, accent);
+      return framed(await photoTile(src, w, h, input.focus?.[layer.slot] ?? null, layer.focus), w, h, layer, accent);
     }
     case 'fixed-photo': {
       const src = input.fixedPhotos?.[layer.assetId];
       if (!src) return null;
-      return rounded(await photoTile(src, w, h, null, 'auto'), w, h, layer.radius);
+      return framed(await photoTile(src, w, h, null, 'auto'), w, h, layer, accent);
     }
     case 'logo': {
       if (!input.logo) return null;
@@ -126,22 +194,28 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
       const text = layer.uppercase ? raw.toUpperCase() : raw;
       if (!text.trim()) return null;
       const inner = Math.max(1, w - 2 * layer.padding);
+      // A bundled font is drawn from its file (same picture on every computer), lines broken by real letter widths.
+      const loaded = loadFont(layer.fontFamily, layer.fontWeight);
+      const font = loaded && covers(loaded, text) ? loaded : null;
+      const wrap = (fs: number, max: number) => (font ? wrapMeasured(font, text, fs, inner, max) : wrapText(text, fs, inner, max, layer.fontWeight));
       // Auto-fit: shrink the font (down to 60 %) until all lines fit the box; then truncate with an ellipsis.
       let fontSize = layer.fontSize;
-      let lines = wrapText(text, fontSize, inner, 99, layer.fontWeight);
+      let lines = wrap(fontSize, 99);
       const fits = (fs: number, n: number) => n <= layer.maxLines && 2 * layer.padding + fs * 1.25 + (n - 1) * fs * layer.lineHeight <= h;
       while (!fits(fontSize, lines.length) && fontSize > layer.fontSize * 0.6) {
         fontSize = Math.round(fontSize * 0.92);
-        lines = wrapText(text, fontSize, inner, 99, layer.fontWeight);
+        lines = wrap(fontSize, 99);
       }
       const roomLines = Math.max(1, Math.min(layer.maxLines, Math.floor((h - 2 * layer.padding - fontSize * 1.25) / (fontSize * layer.lineHeight)) + 1));
-      if (lines.length > roomLines) lines = wrapText(text, fontSize, inner, roomLines, layer.fontWeight);
+      if (lines.length > roomLines) lines = wrap(fontSize, roomLines);
       const lh = fontSize * layer.lineHeight;
+      const fill = esc(resolveColor(layer.color, accent));
+      const bg = layer.background ? `<rect width="${w}" height="${h}" fill="${esc(resolveColor(layer.background, accent))}"/>` : '';
+      if (font) return sharp(svgBuffer(w, h, `${bg}<path d="${linesPath(font, lines, { size: fontSize, width: w, padding: layer.padding, lineHeight: layer.lineHeight, align: layer.align })}" fill="${fill}"/>`)).png().toBuffer();
       const anchor = layer.align === 'center' ? 'middle' : layer.align === 'right' ? 'end' : 'start';
       const tx = layer.align === 'center' ? w / 2 : layer.align === 'right' ? w - layer.padding : layer.padding;
-      const bg = layer.background ? `<rect width="${w}" height="${h}" fill="${esc(resolveColor(layer.background, accent))}"/>` : '';
       const tspans = lines.map((l, i) => `<tspan x="${tx}" y="${layer.padding + fontSize + i * lh}">${esc(l)}</tspan>`).join('');
-      return sharp(svgBuffer(w, h, `${bg}<text font-family="${esc(FONTS[layer.fontFamily])}" font-size="${fontSize}" font-weight="${layer.fontWeight}" fill="${esc(resolveColor(layer.color, accent))}" text-anchor="${anchor}">${tspans}</text>`)).png().toBuffer();
+      return sharp(svgBuffer(w, h, `${bg}<text font-family="${esc(systemFonts(layer.fontFamily))}" font-size="${fontSize}" font-weight="${layer.fontWeight}" fill="${fill}" text-anchor="${anchor}">${tspans}</text>`)).png().toBuffer();
     }
     case 'rect': {
       const sw = layer.stroke ? layer.strokeWidth : 0;
@@ -150,6 +224,14 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
     case 'circle': {
       const sw = layer.stroke ? layer.strokeWidth : 0;
       return sharp(svgBuffer(w, h, `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${Math.max(0, w / 2 - sw / 2)}" ry="${Math.max(0, h / 2 - sw / 2)}" fill="${esc(resolveColor(layer.fill, accent))}"${sw ? ` stroke="${esc(resolveColor(layer.stroke, accent))}" stroke-width="${sw}"` : ''}/>`)).png().toBuffer();
+    }
+    case 'path': {
+      // A shape drawn with the pen tool. Its border is centred on the line, so the picture reaches past the box by half
+      // of it (placed back by `layerMargin`).
+      const m = layerMargin(layer);
+      const d = penPathD(layer.points, layer.closed, w, h);
+      const stroke = layer.stroke && layer.strokeWidth ? ` stroke="${esc(resolveColor(layer.stroke, accent))}" stroke-width="${layer.strokeWidth}" stroke-linejoin="round" stroke-linecap="round"` : '';
+      return sharp(svgBuffer(w + 2 * m, h + 2 * m, `<path transform="translate(${m} ${m})" d="${d}" fill="${layer.closed ? esc(resolveColor(layer.fill, accent)) : 'none'}"${stroke}/>`)).png().toBuffer();
     }
     case 'svg': {
       const safe = sanitizeSvg(layer.svg);
@@ -161,10 +243,16 @@ async function layerImage(layer: Layer, input: RenderInput, template: ImageTempl
   }
 }
 
+/** How far a layer's picture reaches past its box on each side (a pen shape's border, centred on its line). */
+function layerMargin(layer: Layer): number {
+  return layer.type === 'path' && layer.stroke && layer.strokeWidth ? Math.ceil(layer.strokeWidth / 2) + 1 : 0;
+}
+
 async function placeRotated(buf: Buffer, layer: Layer): Promise<{ input: Buffer; left: number; top: number } | null> {
   let img = buf;
-  let left = Math.round(layer.x);
-  let top = Math.round(layer.y);
+  const margin = layerMargin(layer);
+  let left = Math.round(layer.x) - margin;
+  let top = Math.round(layer.y) - margin;
   if (layer.opacity < 1) {
     const meta = await sharp(img).metadata();
     const mask = svgBuffer(meta.width ?? 1, meta.height ?? 1, `<rect width="100%" height="100%" fill="#fff" fill-opacity="${layer.opacity}"/>`);
@@ -229,7 +317,7 @@ export async function renderTemplate(input: RenderInput, opts: RenderOptions) {
 }
 
 /** A clean 16:9 body image (no text, no logo): smart crop of one photo or illustration. */
-export async function renderCleanImage(photo: Buffer, opts: RenderOptions, focus?: { x: number; y: number } | null) {
+export async function renderCleanImage(photo: Buffer, opts: RenderOptions, focus?: PhotoFocus) {
   const tile = await photoTile(photo, CANVAS.width, CANVAS.height, focus ?? null, 'auto');
   return encodeWithinBudget(tile, opts);
 }

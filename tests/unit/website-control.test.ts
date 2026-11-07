@@ -18,7 +18,7 @@ beforeAll(async () => {
   }
   const { defaultSiteImageSettings } = await import('@/lib/image-template');
   const design = defaultSiteImageSettings('#e11d48');
-  design.featured.layers.push({ id: 'fixed1', name: 'Fixed', type: 'fixed-photo', assetId: 'asset-of-celeb', x: 0, y: 0, width: 100, height: 100, rotation: 0, opacity: 1, visible: true, locked: false, radius: 0 });
+  design.featured.layers.push({ id: 'fixed1', name: 'Fixed', type: 'fixed-photo', assetId: 'asset-of-celeb', x: 0, y: 0, width: 100, height: 100, rotation: 0, opacity: 1, visible: true, locked: false, radius: 0, shape: 'rect', stroke: null, strokeWidth: 0 });
   await client.website.update({
     where: { id: ids.en },
     data: {

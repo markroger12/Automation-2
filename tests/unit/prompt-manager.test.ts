@@ -26,6 +26,19 @@ describe('Prompt Manager', () => {
     expect(saved.versions.map((v) => v.version)).toEqual([2, 1]);
   });
 
+  it('owner request: {{keyword}} and {{image_title}} are optional in the Tigram image plan (also for a row seeded as required)', async () => {
+    const t = await client.promptTemplate.findUniqueOrThrow({ where: { moduleKey_stageKey: { moduleKey: 'tigram-writer', stageKey: 'IMAGE_PLAN' } } });
+    // As in the owner's database: both shown as required by an earlier version.
+    await client.promptTemplate.update({ where: { id: t.id }, data: { variables: JSON.stringify(JSON.parse(t.variables).map((v: { required: boolean }) => ({ ...v, required: true }))) } });
+    const { seedAll } = await import('@/lib/seed');
+    await seedAll(client);
+    const vars = (await manage.getPrompt(t.id)).variablesList;
+    expect(vars.filter((v) => ['keyword', 'image_title'].includes(v.name)).map((v) => [v.name, v.required])).toEqual([['keyword', false], ['image_title', false]]);
+    const res = await manage.savePrompt(t.id, { content: 'Plan 3 simple images for this article. Do not create them yet.', note: 'own plan' });
+    expect(res.warnings).toEqual([]);
+    await manage.restorePrompt(t.id, {});
+  });
+
   it('restores the default or an older version as a NEW version (history kept)', async () => {
     const t = await client.promptTemplate.findUniqueOrThrow({ where: { moduleKey_stageKey: { moduleKey: 'celebrity-writer', stageKey: 'TITLES' } } });
     const r = await manage.restorePrompt(t.id, {});

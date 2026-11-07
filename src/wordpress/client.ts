@@ -271,9 +271,11 @@ export class WpClient {
 
   // ---------------- media ----------------
 
-  async uploadMedia(file: { bytes: Buffer; filename: string; mime: string; altText?: string | null; title?: string | null }): Promise<{ id: number; url: string }> {
+  async uploadMedia(file: { bytes: Buffer; filename: string; slug?: string | null; mime: string; altText?: string | null; title?: string | null }): Promise<{ id: number; url: string }> {
     const safeName = file.filename.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 120) || 'image';
     const { data } = await this.call<{ id: number; source_url: string }>('POST', '/wp/v2/media', {
+      // The attachment slug (else WordPress takes it from the file name): known before the upload, so a lost answer can be found again.
+      ...(file.slug ? { query: { slug: file.slug } } : {}),
       body: file.bytes,
       headers: { 'Content-Type': file.mime, 'Content-Disposition': `attachment; filename="${safeName}"` },
       timeoutMs: Math.max(this.timeoutMs, 120_000),

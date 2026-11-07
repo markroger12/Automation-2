@@ -458,10 +458,16 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
       }
       if (restRoute === '/wp/v2/media' && method === 'POST') {
         if (!can('upload_files')) return json(403, { code: 'rest_cannot_create', message: 'Sorry, you are not allowed to upload files.' });
-        const filename = /filename="([^"]+)"/.exec(String(req.headers['content-disposition'] ?? ''))?.[1] ?? 'upload.bin';
+        const sent = /filename="([^"]+)"/.exec(String(req.headers['content-disposition'] ?? ''))?.[1] ?? 'upload.bin';
+        // Like WordPress (wp_unique_filename): a file name already in the uploads gets “-1”, “-2” …
+        const dot = sent.lastIndexOf('.');
+        const [stem, ext] = dot > 0 ? [sent.slice(0, dot), sent.slice(dot)] : [sent, ''];
+        let filename = sent;
+        for (let n = 1; [...media.values()].some((m) => m.filename === filename); n++) filename = `${stem}-${n}${ext}`;
         const id = nextId++;
-        // Like WordPress: the attachment slug comes from the file name (unique: a taken slug gets a suffix).
-        const base = slugify(filename.replace(/\.[^.]+$/, ''));
+        // Like WordPress: the attachment slug is the `slug` sent with the upload, else it comes from the file name
+        // (unique: a taken slug gets a suffix).
+        const base = url.searchParams.get('slug') || slugify(filename.replace(/\.[^.]+$/, ''));
         let slug = base;
         for (let n = 2; [...media.values()].some((m) => m.slug === slug); n++) slug = `${base}-${n}`;
         const item = { id, bytes: Number(req.headers['content-length'] ?? body.length), mime: String(req.headers['content-type'] ?? ''), filename, slug, alt: '', url: `${baseUrl}/wp-content/uploads/${filename}` };

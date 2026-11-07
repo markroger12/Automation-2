@@ -100,7 +100,7 @@ function draftInput(ctx: PipelineContext, site: Website, html: string, editor: E
 async function featuredMedia(client: WpClient, ctx: PipelineContext): Promise<{ id: number; how: UploadHow } | null> {
   const asset = await db.mediaAsset.findFirst({ where: { taskId: ctx.taskId, role: 'FEATURED', status: { in: ['READY', 'UPLOADED'] } }, orderBy: { createdAt: 'desc' } });
   if (!asset) return null;
-  const r = await uploadAssetWithRetry(client, asset, { altText: asset.altText, title: ctx.task.selectedTitle });
+  const r = await uploadAssetWithRetry(client, asset, { altText: asset.altText, title: ctx.task.selectedTitle, naming: { keyword: ctx.task.keyword, language: ctx.task.language, index: 1 } });
   return { id: r.id, how: r.how };
 }
 

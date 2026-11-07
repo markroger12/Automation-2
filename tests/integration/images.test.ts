@@ -165,6 +165,13 @@ describe('Image Studio (IMAGES stage)', () => {
     expect((post.content.match(/<!-- wp:image \{"id":\d+/g) ?? []).length).toBe(2);
     expect(post.content).not.toContain('/api/media/');
     expect([...wp.media.values()].map((m) => m.alt)).toContain('Checklist for securing a new website');
+    // Owner request (2026-11-07): the files are named after the keyword — the featured image, then the article's images.
+    const named = [...wp.media.values()].map((m) => m.filename);
+    const ext = /\.[a-z]+$/.exec(named[0])![0];
+    expect(new Set(named)).toEqual(new Set([`how-to-install-wordpress${ext}`, `how-to-install-wordpress-2${ext}`, `how-to-install-wordpress-3${ext}`]));
+    expect(wp.media.get(post.featured_media)!.filename).toBe(`how-to-install-wordpress${ext}`);
+    const inArticle = [...post.content.matchAll(/<img [^>]*src="([^"]+)"/g)].map((m) => m[1].split('/').pop());
+    expect(inArticle).toEqual([`how-to-install-wordpress-2${ext}`, `how-to-install-wordpress-3${ext}`]);
     await actions.resaveToWordPress(t.id, { mode: 'resave' });
     expect((await driver.drive(t.id)).status).toBe('COMPLETED');
     expect(wp.media.size).toBe(3); // no duplicate media on retry
@@ -269,6 +276,9 @@ describe('Image Studio (IMAGES stage)', () => {
     expect(wp.media.size).toBe(3);
     expect(new Set([...wp.media.values()].map((m) => m.alt))).toEqual(new Set(alts));
     expect((await stageData(t.id, 'WORDPRESS_DRAFT')).media).toEqual({ uploaded: 1, reused: 0, adopted: 2, failed: 0 });
+    // Named after the keyword; found again by the slug sent with the upload (not the file name).
+    expect([...wp.media.values()].map((m) => m.filename.replace(/\.[a-z]+$/, '')).sort()).toEqual(['how-to-install-wordpress', 'how-to-install-wordpress-2', 'how-to-install-wordpress-3']);
+    expect([...wp.media.values()].every((m) => /^how-to-install-wordpress-[a-z0-9]{10}$/.test(m.slug))).toBe(true);
     const post = [...wp.posts.values()][0];
     expect((post.content.match(/<!-- wp:image \{"id":\d+/g) ?? []).length).toBe(2);
     const assets = await client.mediaAsset.findMany({ where: { taskId: t.id, role: { in: ['FEATURED', 'BODY1', 'BODY2'] }, status: 'UPLOADED' } });

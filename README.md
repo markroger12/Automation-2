@@ -219,7 +219,8 @@ The test types these credentials itself (simulating you in the login window); th
   - “Image of …” is dropped and long text is shortened to 125 characters;
   - file names, web addresses, one-word labels, keyword stuffing and the same text on two images are replaced with a neutral text (the article title for the featured image, “*Subject*: article image 2/3” for body images);
   - every change is listed in the image notes. Alt text you edit in the article wins.
-- **Uploads happen once.** Each image is uploaded under a unique name, so if an upload's answer is lost (timeout), the next attempt finds it in the Media Library instead of uploading it again. An image that cannot be uploaded is left out of the draft with a note; the text is still saved.
+- **File names from the keyword** (owner request): an article's images are uploaded as `example-keyword.webp` (the featured image), then `example-keyword-2.webp`, `example-keyword-3.webp` … for the images in the article, in their order. The keyword is written in lower case with “-” between words; accents are dropped, and on German websites ä/ö/ü/ß become ae/oe/ue/ss. When the name already exists in the Media Library, WordPress adds “-1”. The file keeps its format (`.webp`, `.jpg` or `.png`). Images already in WordPress keep the name they were uploaded with.
+- **Uploads happen once.** Each upload is sent with a unique attachment slug (the keyword plus a short tag), so if an upload's answer is lost (timeout), the next attempt finds it in the Media Library instead of uploading it again. An image that cannot be uploaded is left out of the draft with a note; the text is still saved.
 
 ## WordPress health
 

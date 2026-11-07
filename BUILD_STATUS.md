@@ -4606,3 +4606,37 @@ npx vitest run tests/unit/search-console-live.test.ts   # before the fix: fails 
 npx vitest run                                          # 66 files, 463 tests pass
 npx tsc --noEmit                                        # 0 errors
 ```
+
+## Owner request (2026-11-07): image file names from the keyword (“example-keyword.png”)
+
+Before, an image was uploaded to WordPress under its local file name plus a tag from the asset id (for example `featured-rendered-1762…-av8cp5phns.webp`).
+- **Now** (`wpUploadName` in `src/wordpress/media.ts`):
+  - The featured image is `<keyword>.<ext>`.
+  - The images in the article are `<keyword>-2.<ext>`, `<keyword>-3.<ext>` … in their order. They start at 1 when the article has no featured image.
+  - **The keyword in the name** (`keywordFileStem`):
+    - lower case, with words joined by “-”;
+    - accents removed; on German websites ä/ö/ü/ß become ae/oe/ue/ss, as WordPress writes them;
+    - at most 80 characters.
+  - A keyword with nothing usable (another script) keeps the earlier name. The file keeps its format.
+- **Lost upload answers:** the upload now sends its attachment slug (`?slug=<keyword>-<tag>`), so it is still known before the upload.
+  - The slug does not depend on the image's place, so a lost answer is found again even after the article changed.
+  - An upload started with the older name is still looked up by the older slug.
+  - When a file name exists, WordPress adds “-1” itself. The fake WordPress now does the same and takes the `slug` parameter.
+- **Tests:**
+  - unit `image-studio-health`: names, German umlauts, a non-Latin keyword, the length limit, the stable slug;
+  - integration `images`:
+    - a Tigram article's three uploads are `how-to-install-wordpress`, `-2` and `-3`; the featured media is the first, and the article's `<img>` tags use `-2` and `-3`;
+    - a re-save uploads nothing new;
+    - lost answers are found by the sent slug.
+- **Checked:** unit 66 files / 464 tests; integration `images` 14/14; `tsc` 0 errors.
+- **Not verified:**
+  - on a real WordPress, that the `slug` sent with the upload is kept. That check was not run, because running the downloaded WordPress was not allowed here. If WordPress ignored it, the only effect would be a second copy of an image whose upload answer was lost.
+  - on the owner's websites.
+
+**Commands run**
+```
+npx vitest run tests/unit/image-studio-health.test.ts                                  # 10 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts  # 14 pass
+npx vitest run                                                                          # 66 files, 464 tests pass
+npx tsc --noEmit                                                                        # 0 errors
+```

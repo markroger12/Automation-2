@@ -38,7 +38,8 @@
       <span class="logo" aria-hidden="true">BA</span>
       <button id="tab-dashboard" role="tab" aria-selected="true" disabled>Dashboard</button>
       <button id="tab-chatgpt" role="tab" aria-selected="false" disabled><span class="dot" id="chatgpt-dot" aria-hidden="true"></span>ChatGPT</button>
-      <button id="tab-google" title="Google and Search Console open in Automation Chrome (Google refuses sign-ins in a browser built into an app)" disabled>Google (Chrome)</button>
+      <button id="tab-search-console" role="tab" aria-selected="false" title="Search Console in this app: sign in to Google here (Google may refuse sign-ins in a browser built into an app; then use Google (Chrome))" disabled>Search Console</button>
+      <button id="tab-google" title="Google and Search Console open in Automation Chrome" disabled>Google (Chrome)</button>
       <span id="chatgpt-state" aria-live="polite"></span>
     </nav>
     <main>
@@ -56,7 +57,7 @@
         document.getElementById('detail').textContent = detail || '';
       };
       const shell = window.basShell;
-      const tabs = { dashboard: document.getElementById('tab-dashboard'), chatgpt: document.getElementById('tab-chatgpt') };
+      const tabs = { dashboard: document.getElementById('tab-dashboard'), chatgpt: document.getElementById('tab-chatgpt'), 'search-console': document.getElementById('tab-search-console') };
       for (const [name, button] of Object.entries(tabs)) button.addEventListener('click', () => shell && shell.select(name));
       document.getElementById('tab-google').addEventListener('click', () => shell && shell.select('google'));
       if (shell) {

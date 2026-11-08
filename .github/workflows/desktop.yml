@@ -46,7 +46,7 @@ jobs:
       # extension's ChatGPT scripts against a fake ChatGPT page and the dashboard's agent handlers (no live ChatGPT).
       - name: Test the ChatGPT tab (Electron, fake ChatGPT page)
         run: |
-          npx vitest run tests/unit/desktop-agent.test.ts
+          npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-google.test.ts
           npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts
 
       - name: Assemble the bundle (the tool and the packages it loads)

@@ -4914,3 +4914,26 @@ npx vitest run tests/unit/desktop-agent.test.ts                                 
 npx vitest run tests/unit/app-update.test.ts tests/unit/ensure-prisma-client.test.ts   # 8 pass
 npx tsc --noEmit                                                                 # 0 errors
 ```
+
+## Desktop app (2026-11-08): a Search Console tab, for the owner's Google sign-in test
+
+Owner request: “search console ko bhi app me add krde, check krta hon login kr ke”.
+- **The tab:**
+  - New **Search Console** tab in the app's tab bar, and in the App and tray menus.
+  - **`desktop/google-tab.cjs`:** a sandboxed, context-isolated `WebContentsView` with storage of its own (`persist:google`). It has no preload and runs no scripts; the app reads nothing from it, and the owner types the Google sign-in.
+  - It is made and loaded only the first time the tab is opened (`https://search.google.com/search-console`). Permissions: only copying text.
+  - It keeps the app's normal user agent and is never disguised as Chrome. Google may refuse the sign-in (“This browser or app may not be secure”); then Search Console stays in Automation Chrome, as before.
+- **Allowed pages:** `desktop/google-hosts.cjs` lets the tab show Search Console and the pages Google signs in through (`*.google.com`, country domains such as `google.com.pk`, `accounts.youtube.com`, `gstatic`). Every other address, look-alike or `http:` page opens in the default browser, including pages a Google page opens in a new window.
+- **Indexing requests:** they are still made by Automation Chrome. If the owner's sign-in works in the app, they can move into the app next.
+- **Installer:** `electron-builder.yml` now lists the two new files (its file list is explicit; without them the installed app would not start).
+- **Tests:**
+  - unit `desktop-google` (2): allowed pages and refused ones (other sites, look-alikes, `http:`, `javascript:`). The Windows workflow runs it too.
+  - `desktop-agent` 8/8; `tsc` 0 errors.
+  - The Windows workflow's install-and-start check covers the app starting with the new files.
+- **Not verified:** Google's answer to a sign-in in this app, on the owner's PC.
+
+**Commands run**
+```
+npx vitest run tests/unit/desktop-google.test.ts tests/unit/desktop-agent.test.ts   # 10 pass
+npx tsc --noEmit                                                                     # 0 errors
+```

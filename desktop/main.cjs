@@ -30,6 +30,7 @@ const path = require('node:path');
 
 const { createHash, randomBytes } = require('node:crypto');
 const { createChatGPTTabs, isChatGPTContents } = require('./chatgpt-tab.cjs');
+const { createGoogleTab, isGoogleContents } = require('./google-tab.cjs');
 
 /** Ports the dashboard may use; the extension looks for it on the same ones. */
 const PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
@@ -327,6 +328,8 @@ function secureContents(contents) {
 
 /** The ChatGPT tabs' views in the window (one per ChatGPT tab; the agent opens more while prompts wait). */
 let chatgptViews = [];
+/** The Search Console tab (google-tab.cjs), made the first time it is opened. */
+let googleTab = null;
 
 /**
  * The dashboard fills the window. The ChatGPT tabs share the same place side by side (owner report 2026-11-08: one
@@ -353,6 +356,7 @@ function layout() {
   const { width, height } = win.getContentBounds();
   const bounds = { x: 0, y: TAB_BAR, width, height: Math.max(0, height - TAB_BAR) };
   if (dashboardView) dashboardView.setBounds(bounds);
+  if (googleTab) googleTab.view.setBounds(bounds);
   const cells = chatgptGrid(bounds, chatgptViews.length);
   chatgptViews.forEach((view, i) => view.setBounds(cells[i]));
 }
@@ -365,6 +369,7 @@ function chatgptTabsChanged(views) {
   chatgptViews = [...views];
   // A new view was added on top: put back on top the one shown.
   if (activeTab === 'chatgpt') for (const view of chatgptViews) win.contentView.addChildView(view);
+  else if (activeTab === 'search-console' && googleTab) win.contentView.addChildView(googleTab.view);
   else if (dashboardView) win.contentView.addChildView(dashboardView);
   layout();
   shellState();
@@ -384,11 +389,19 @@ function selectTab(tab, focusId = null) {
     tab = 'dashboard';
     void dashboardView.webContents.loadURL(`${ORIGIN}/automation-chrome`).catch(() => {});
   }
-  activeTab = tab === 'chatgpt' && chatgpt ? 'chatgpt' : 'dashboard';
-  // The one shown goes on top: the dashboard, or all ChatGPT tabs side by side.
+  if (tab === 'search-console' && !googleTab) {
+    // Owner request: Search Console in the app (Google may refuse the sign-in in a browser built into an app).
+    googleTab = createGoogleTab({ log: (line) => logLine('google', line) });
+    win.contentView.addChildView(googleTab.view);
+    layout();
+  }
+  if (tab === 'search-console') googleTab.open();
+  activeTab = tab === 'chatgpt' && chatgpt ? 'chatgpt' : tab === 'search-console' ? 'search-console' : 'dashboard';
+  // The one shown goes on top: the dashboard, all ChatGPT tabs side by side, or Search Console.
   if (activeTab === 'chatgpt') for (const view of chatgptViews) win.contentView.addChildView(view);
+  else if (activeTab === 'search-console') win.contentView.addChildView(googleTab.view);
   else win.contentView.addChildView(dashboardView);
-  (activeTab === 'chatgpt' ? (focusId && chatgpt.viewOf(focusId)) || chatgptViews[0] : dashboardView).webContents.focus();
+  (activeTab === 'chatgpt' ? (focusId && chatgpt.viewOf(focusId)) || chatgptViews[0] : activeTab === 'search-console' ? googleTab.view : dashboardView).webContents.focus();
   shellState();
 }
 
@@ -505,6 +518,8 @@ function createWindow(hidden) {
       chatgpt.destroy();
       chatgpt = null;
       chatgptViews = [];
+      if (googleTab) googleTab.destroy();
+      googleTab = null;
       if (agent) void agent.stop();
     }
   });
@@ -530,6 +545,7 @@ function buildTray(dataDir, logFile) {
     Menu.buildFromTemplate([
       { label: `Open ${TITLE}`, click: showWindow },
       { label: 'ChatGPT', click: () => (showWindow(), selectTab('chatgpt')) },
+      { label: 'Search Console (in this app)', click: () => (showWindow(), selectTab('search-console')) },
       { label: 'Automation Chrome (Google, Search Console)', click: () => (showWindow(), showDashboard('/automation-chrome')) },
       { type: 'separator' },
       { label: 'Open the data folder', click: () => void shell.openPath(dataDir) },
@@ -580,6 +596,7 @@ function appMenu() {
         submenu: [
           { label: 'Dashboard', accelerator: 'CmdOrCtrl+Shift+H', click: () => showDashboard() },
           { label: 'ChatGPT', accelerator: 'CmdOrCtrl+Shift+G', click: () => selectTab('chatgpt') },
+          { label: 'Search Console (in this app)', click: () => selectTab('search-console') },
           { type: 'separator' },
           {
             // Owner's way back: if ChatGPT does not work in the app, Automation Chrome's extension takes the prompts again.
@@ -701,8 +718,8 @@ if (!app.requestSingleInstanceLock()) {
       });
   });
   app.on('web-contents-created', (_e, contents) => {
-    // The ChatGPT tab has its own rules (chatgpt-tab.cjs).
-    if (!isChatGPTContents(contents)) secureContents(contents);
+    // The ChatGPT and Search Console tabs have their own rules (chatgpt-tab.cjs, google-tab.cjs).
+    if (!isChatGPTContents(contents) && !isGoogleContents(contents)) secureContents(contents);
   });
   ipcMain.on('bas-shell:select', (event, tab) => {
     if (win && event.sender === win.webContents) selectTab(tab);

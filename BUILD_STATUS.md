@@ -4872,3 +4872,42 @@ npx vitest run --config vitest.integration.config.ts tests/integration/images.te
 npx vitest run                                                                              # 66 files, 467 tests pass
 npx tsc --noEmit                                                                            # 0 errors
 ```
+
+## Desktop app (2026-11-08): all features of the main branch, and several ChatGPT prompts at once
+
+Owner request: “sare features app me bhi krde”, and “app me sirf ek hi chatgpt chalti hai, ek bar me ek hi tab active hota hai”. The desktop app stays on its own branch (`claude/desktop-app`), as the owner asked.
+- **Merge:** `claude/confident-brown-pwlrz6` (up to d564901) merged into `claude/desktop-app`. It brings the features since the upload-order fix: custom writers, writer import/export, own photo prompts, keyword image names, photo places, the missed-schedule fix, 48-hour indexing, update notifications and the rest.
+  - One conflict, in `src/worker/runtime.ts`: the worker now stops over IPC for both the desktop app (`shutdown`) and `npm run start:all` (`bas:shutdown`).
+- **Cause of the one-at-a-time:** the app's ChatGPT agent (`desktop/chatgpt-agent.cjs`) knew a single tab (`app-1`). Automation Chrome's extension runs 1–5 tabs (Settings → ChatGPT tabs; the dashboard already sends `maxTabs`/`wantedTabs` per hello and owns jobs per tab).
+- **Fix:**
+  - **`chatgpt-agent.cjs`:** a pool of tabs, the same way as `extension/background.js`.
+    - **New tabs:** it opens one new tab per round while prompts wait, up to `min(5, maxTabs, max(wantedTabs, busy))`. It does this only after the pages said ChatGPT is signed in without a check.
+    - **Claims:** each idle ready tab claims its own prompt; hello lists every tab.
+    - **Job channels:** they are kept per tab, since two pages can use the same channel id.
+    - **Idle tabs:** an extra idle tab closes after 10 minutes, or at once when Settings → ChatGPT tabs is lowered; `app-1` is never closed.
+    - **Quit:** every running prompt goes back to the queue with its own tab id, also after the window closed the tabs.
+    - The single-tab interface (`deps.tab`) still works.
+  - **`chatgpt-tab.cjs`:** `createChatGPTTabs`, a pool of `WebContentsView`s in the one ChatGPT partition (one sign-in).
+    - Each page's messages are routed by sender to its tab, and a request is answered only by the page it went to.
+    - The window is told when a tab opens or closes.
+  - **`main.cjs`:** the ChatGPT tab shows all ChatGPT pages side by side (1–3 columns, 4–5 in two rows), because ChatGPT draws pictures only in a page that is shown. A closed tab's view is removed. The status line counts prompts and tabs.
+  - **The Electron test harness** lays out the tabs the same way and reports every page (`PAGES`).
+- **Tests:**
+  - unit `desktop-agent`: 5 earlier tests plus 3 new ones.
+    - Three waiting prompts → `app-2`/`app-3` open one per round and each runs its own prompt; the job channels are kept apart by tab.
+    - No new tab while ChatGPT is signed out or shows a check; never more tabs than allowed.
+    - An idle extra tab closes after 10 minutes; one closes at once when the setting is lowered.
+  - integration `desktop-chatgpt` (Electron, Windows CI): new test “two prompts at once run in two ChatGPT tabs side by side, each sent once”.
+  - The sign-in test now expects `FRONT app-1`.
+- **Checked here:** `tsc` 0 errors; unit `desktop-agent` 8/8; `app-update` and `ensure-prisma-client` pass.
+- **Not run here:**
+  - the whole unit suite: the container's disk is full of earlier test data;
+  - the Electron test: Electron cannot be installed without disk space. The Windows workflow runs it, builds the installer and starts the app once.
+- **Not verified:** the owner's real ChatGPT account with several tabs.
+
+**Commands run**
+```
+npx vitest run tests/unit/desktop-agent.test.ts                                  # 8 pass
+npx vitest run tests/unit/app-update.test.ts tests/unit/ensure-prisma-client.test.ts   # 8 pass
+npx tsc --noEmit                                                                 # 0 errors
+```

@@ -1,12 +1,14 @@
 'use strict';
 /**
- * The app's own ChatGPT tab as an agent of the dashboard (owner request: “the browser inside the app”).
+ * The app's own ChatGPT tabs as an agent of the dashboard (owner request: “the browser inside the app”).
  *
- * The same work as the extension's background (extension/background.js) for its ChatGPT tabs, for the one ChatGPT tab
- * of this window. The tab runs the extension's own ChatGPT scripts (adapter.js, content.js: typing, sending once,
- * waiting for the real end of the answer, recovering a sent prompt), so prompts are handled exactly as in Automation
- * Chrome. This file only does what the background does: talk to the dashboard (hello, claim, progress, complete, fail,
- * an outbox kept on disk), open the conversation a job needs, and answer the scripts' requests.
+ * The same work as the extension's background (extension/background.js) for its ChatGPT tabs, for the ChatGPT tabs of
+ * this window: 1 to Settings → ChatGPT tabs (owner report 2026-11-08: the app ran only one prompt at a time, in one
+ * tab). Each tab runs the extension's own ChatGPT scripts (adapter.js, content.js: typing, sending once, waiting for
+ * the real end of the answer, recovering a sent prompt), so prompts are handled exactly as in Automation Chrome. This
+ * file only does what the background does: talk to the dashboard (hello, claim, progress, complete, fail, an outbox
+ * kept on disk), open a tab when prompts wait (one per round, never many at once), open the conversation a job needs,
+ * and answer the scripts' requests. An extra tab with nothing to do is closed again after a while.
  *
  * - Talks ONLY to this app's own dashboard on 127.0.0.1, with the key the app gave the dashboard at start.
  * - Login pages and human checks are never automated: the owner is told and completes them in the ChatGPT tab.
@@ -15,7 +17,12 @@
  */
 
 const INSTALL_ID = 'desktop-app';
+/** The first tab (the one the owner signs in in); more are app-2 … app-5. */
 const TAB_ID = 'app-1';
+/** At most this many tabs, whatever the dashboard allows (as the extension: Settings → ChatGPT tabs is 1–5). */
+const MAX_TABS = 5;
+/** An extra tab with nothing to do for this long is closed (each ChatGPT tab costs memory). */
+const IDLE_CLOSE_MS = 10 * 60_000;
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'continue-generating', 'outbox', 'in-app'];
 const IMAGE_HOSTS = (host) => /\.oaiusercontent\.com$/.test(host) || host === 'oaidalleapiprodscus.blob.core.windows.net' || host === 'chatgpt.com' || host === 'images.openai.com' || /(^|\.)mm\.bing\.net$/.test(host);
 
@@ -36,8 +43,10 @@ function sameConversation(a, b) {
  * @param {() => string} deps.origin  the dashboard (http://127.0.0.1:PORT)
  * @param {string} deps.key  the key the app gave the dashboard (BAS_DESKTOP_AGENT_KEY)
  * @param {string} deps.version  the ChatGPT scripts' version (extension/manifest.json)
- * @param {object} deps.tab  the ChatGPT tab: load(url), reload(), url(), send(msg) → Promise(answer), post(portId, msg),
- *   front() (show it: ChatGPT draws pictures only in a visible tab)
+ * @param {object} [deps.pool]  the ChatGPT tabs: ids() → the open tabs' ids (the first is app-1), open(url) → a new
+ *   tab's id, close(id), load(id, url), reload(id), url(id), send(id, msg) → Promise(answer), post(id, portId, msg),
+ *   front(id) (show it: ChatGPT draws pictures only in a page that is shown)
+ * @param {object} [deps.tab]  one tab only (load(url), reload(), url(), send(msg), post(portId, msg), front()): app-1
  * @param {(url: string) => Promise<{ ok: boolean, status: number, mime: string, bytes: Buffer }>} deps.fetchImage
  *   a picture with the ChatGPT tab's own sign-in (its session)
  * @param {{ read: () => object, write: (state: object) => void }} deps.store  the outbox and checkpoints on disk
@@ -59,10 +68,30 @@ function createChatGPTAgent(deps) {
   let running = false;
   let paused = false;
   let timer = null;
-  /** The one ChatGPT tab of the window (as the extension's tabState). */
-  const t = { ready: false, url: '', busy: false, started: false, jobId: null, job: null, port: null, freshPage: false, reloads: 0, lastReloadAt: 0, loadedAt: Date.now(), waiters: [] };
-  /** Open job channels of the page (content.js connects one per job: `bas-job:<jobId>`). */
+  /** The ChatGPT tabs: one fixed tab (deps.tab), or a pool that can open and close tabs. */
+  const pool = deps.pool || {
+    ids: () => [TAB_ID],
+    open: null,
+    close: null,
+    load: (_id, url) => deps.tab.load(url),
+    reload: () => deps.tab.reload(),
+    url: () => deps.tab.url(),
+    send: (_id, msg) => deps.tab.send(msg),
+    post: (_id, portId, msg) => deps.tab.post(portId, msg),
+    front: () => deps.tab.front(),
+  };
+  /** Each tab's state (as the extension's tabState). */
+  const tabs = new Map();
+  const newTab = () => ({ ready: false, url: '', busy: false, started: false, jobId: null, job: null, port: null, freshPage: false, reloads: 0, lastReloadAt: 0, loadedAt: Date.now(), idleSince: Date.now(), waiters: [] });
+  function tabState(id) {
+    if (!tabs.has(id)) tabs.set(id, newTab());
+    return tabs.get(id);
+  }
+  const ids = () => pool.ids();
+  const first = () => ids()[0] || TAB_ID;
+  /** Open job channels of the pages (content.js connects one per job: `bas-job:<jobId>`), by tab and channel. */
   const ports = new Map();
+  const portKey = (tabId, portId) => `${tabId}\u0000${portId}`;
 
   // ---------------- storage (outbox, checkpoints) ----------------
   const state = () => {
@@ -139,8 +168,9 @@ function createChatGPTAgent(deps) {
     }
   }
 
-  // ---------------- the tab ----------------
-  function waitReady(timeoutMs, expectedUrl) {
+  // ---------------- the tabs ----------------
+  function waitReady(id, timeoutMs, expectedUrl) {
+    const t = tabState(id);
     if (t.ready && (!expectedUrl || sameConversation(t.url, expectedUrl))) return Promise.resolve(true);
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('ChatGPT tab did not load within ' + Math.round(timeoutMs / 1000) + 's')), timeoutMs);
@@ -160,11 +190,12 @@ function createChatGPTAgent(deps) {
     return job.conversationUrl;
   }
 
-  async function runOnTab(job) {
+  async function runOnTab(id, job) {
+    const t = tabState(id);
     t.busy = true;
     t.jobId = job.id;
     t.job = job;
-    const cp = checkpoint(job.id, { operationId: job.operationId, job, step: 'claimed' });
+    const cp = checkpoint(job.id, { tabId: id, operationId: job.operationId, job, step: 'claimed' });
     try {
       const target = targetUrl(job);
       const isRoot = /^https:\/\/chatgpt\.com\/?$/.test(target);
@@ -174,63 +205,123 @@ function createChatGPTAgent(deps) {
       if (isRoot || !sameConversation(target, t.url) || fresh) {
         t.ready = false;
         checkpoint(job.id, { step: 'navigating', target });
-        if (fresh && !isRoot && sameConversation(target, t.url)) deps.tab.reload();
-        else deps.tab.load(target);
-        await waitReady(60_000, target);
+        if (fresh && !isRoot && sameConversation(target, t.url)) pool.reload(id);
+        else pool.load(id, target);
+        await waitReady(id, 60_000, target);
       } else if (!t.ready) {
-        await waitReady(60_000);
+        await waitReady(id, 60_000);
       }
       t.started = true;
-      await sendRun(job, cp, job.reconcile ? 'the app offered the job again (the earlier run did not report back)' : null);
+      await sendRun(id, job, cp, job.reconcile ? 'the app offered the job again (the earlier run did not report back)' : null);
     } catch (e) {
       t.busy = false;
       t.job = null;
       t.jobId = null;
       t.freshPage = true;
-      await outboxPush('fail', { jobId: job.id, tabId: TAB_ID, code: 'ERROR', message: 'Tab could not start the job: ' + e.message });
+      t.idleSince = Date.now();
+      await outboxPush('fail', { jobId: job.id, tabId: id, code: 'ERROR', message: 'Tab could not start the job: ' + e.message });
       dropCheckpoint(job.id);
     }
   }
 
-  async function sendRun(job, cp, resumedBy) {
+  async function sendRun(id, job, cp, resumedBy) {
     const local = cp && cp.sentAt ? { sentAt: cp.sentAt, userTurnsBefore: cp.userTurnsBefore, conversationUrl: cp.conversationUrl || null } : null;
-    const res = await deps.tab.send({ type: 'run', job: Object.assign({}, job, { localCheckpoint: local, resumedBy: resumedBy || null }), config: serverCfg });
+    const res = await pool.send(id, { type: 'run', job: Object.assign({}, job, { localCheckpoint: local, resumedBy: resumedBy || null }), config: serverCfg });
     if (!res || !res.ok) throw new Error('content script refused the job: ' + (res && res.error));
   }
 
-  function finishTab(jobId) {
+  function finishTab(id, jobId) {
+    const t = tabState(id);
     if (t.jobId === jobId) {
       t.busy = false;
       t.started = false;
       t.jobId = null;
       t.job = null;
+      t.idleSince = Date.now();
     }
     dropCheckpoint(jobId);
   }
 
+  /** Forget the state of tabs that are gone (closed by the app or the pool). */
+  function syncTabs() {
+    const open = new Set(ids());
+    for (const id of [...tabs.keys()]) if (!open.has(id)) tabs.delete(id);
+    for (const id of open) tabState(id);
+  }
+
+  /**
+   * More tabs while prompts wait (as the extension): up to what the dashboard allows (Settings → ChatGPT tabs, and its
+   * slots), one new tab per round, and only when every open tab has loaded and ChatGPT is signed in without a check.
+   */
+  function ensureTabs() {
+    if (!pool.open) return;
+    // Only once the pages said ChatGPT is signed in without a check (the owner signs in in app-1 first).
+    if (pageLogin !== true || pageHumanCheck) return;
+    const list = ids();
+    const busy = list.filter((id) => tabState(id).busy).length;
+    const wanted = Math.min(MAX_TABS, serverCfg.maxTabs || 1, Math.max(serverCfg.wantedTabs || 1, busy));
+    if ((serverCfg.waitingJobs || 0) === 0 && list.length > 0) return;
+    if (list.length >= wanted) return;
+    if (list.some((id) => !tabState(id).ready && !tabState(id).busy)) return;
+    const id = pool.open(serverCfg.chatgptUrl || 'https://chatgpt.com/');
+    if (id) {
+      tabState(id).loadedAt = Date.now();
+      log(`ChatGPT tab ${id} opened (${list.length + 1} of at most ${wanted}).`);
+    }
+  }
+
+  /** An extra tab with nothing to do: closed after a while, or at once when the owner lowered Settings → ChatGPT tabs. */
+  function closeIdleTabs() {
+    if (!pool.close) return;
+    const list = ids();
+    const limit = Math.max(1, Math.min(MAX_TABS, serverCfg.maxTabs || 1));
+    let open = list.length;
+    for (const id of list.slice(1).reverse()) {
+      const t = tabState(id);
+      if (t.busy || t.port) continue;
+      const tooMany = open > limit;
+      const idleLong = (serverCfg.waitingJobs || 0) === 0 && Date.now() - t.idleSince > IDLE_CLOSE_MS;
+      if (!tooMany && !idleLong) continue;
+      pool.close(id);
+      tabs.delete(id);
+      open--;
+      log(`ChatGPT tab ${id} closed (${tooMany ? 'more tabs than Settings → ChatGPT tabs allows' : 'nothing to do'}).`);
+    }
+  }
+
   // ---------------- main loop ----------------
   async function pageSignals() {
-    const pong = await deps.tab.send({ type: 'ping' }).catch(() => null);
-    if (pong && pong.state) {
-      pageLogin = pong.state === 'login' ? false : pong.state === 'ready' ? true : pageLogin;
-      pageHumanCheck = pong.state === 'challenge';
+    // All tabs share one sign-in: any tab that shows the sign-in page or a check says so.
+    let login = null;
+    let check = false;
+    for (const id of ids()) {
+      if (!tabState(id).ready) continue;
+      const pong = await pool.send(id, { type: 'ping' }).catch(() => null);
+      if (!pong || !pong.state) continue;
+      if (pong.state === 'login') login = false;
+      else if (pong.state === 'ready' && login === null) login = true;
+      if (pong.state === 'challenge') check = true;
     }
-    return pong;
+    if (login !== null) pageLogin = login;
+    pageHumanCheck = check;
   }
 
   async function hello() {
-    if (t.ready) await pageSignals();
+    if (ids().some((id) => tabState(id).ready)) await pageSignals();
     const res = await api('hello', {
       version: deps.version,
       protocol: 1,
       capabilities: CAPABILITIES,
-      tabs: [{ tabId: TAB_ID, url: t.url || null, state: t.busy ? 'busy' : t.ready ? 'idle' : 'loading', jobId: t.jobId }],
+      tabs: ids().map((id) => {
+        const t = tabState(id);
+        return { tabId: id, url: t.url || null, state: t.busy ? 'busy' : t.ready ? 'idle' : 'loading', jobId: t.jobId };
+      }),
       loggedIn: pageLogin,
       humanCheck: pageHumanCheck,
       claimsPaused: paused,
       backoffUntil: serverCfg.backoffUntil,
       lastError,
-      diagnostics: { outbox: state().outbox.length, inApp: true },
+      diagnostics: { outbox: state().outbox.length, inApp: true, tabs: ids().length },
     });
     lastHelloAt = Date.now();
     serverCfg = Object.assign({}, serverCfg, res.config || {});
@@ -239,7 +330,9 @@ function createChatGPTAgent(deps) {
   }
 
   function status() {
-    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: t.busy, ready: t.ready, loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil };
+    const list = ids().map((id) => tabState(id));
+    const busyTabs = list.filter((t) => t.busy).length;
+    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: busyTabs > 0, busyTabs, tabs: list.length, ready: list.some((t) => t.ready), loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil };
     if (deps.onStatus) deps.onStatus(s);
     return s;
   }
@@ -248,22 +341,39 @@ function createChatGPTAgent(deps) {
     if (ticking || !running) return;
     ticking = true;
     try {
+      syncTabs();
       await flushOutbox();
       // A ChatGPT page that never became ready (failed first load, network blip): reload it, at most 5 times. Never a
       // busy one, and never OpenAI's sign-in page (the owner may be typing there).
-      if (!t.busy && !t.ready && /^https:\/\/chatgpt\.com\//.test(deps.tab.url()) && Date.now() - (t.lastReloadAt || t.loadedAt) > 30_000 && t.reloads < 5) {
-        t.reloads++;
-        t.lastReloadAt = Date.now();
-        deps.tab.reload();
+      for (const id of ids()) {
+        const t = tabState(id);
+        if (!t.busy && !t.ready && /^https:\/\/chatgpt\.com\//.test(pool.url(id)) && Date.now() - (t.lastReloadAt || t.loadedAt) > 30_000 && t.reloads < 5) {
+          t.reloads++;
+          t.lastReloadAt = Date.now();
+          pool.reload(id);
+        }
       }
-      if (t.busy || paused || Date.now() - lastHelloAt > 20_000 || !lastHelloAt) await hello();
+      const anyBusy = ids().some((id) => tabState(id).busy);
+      if (anyBusy || paused || Date.now() - lastHelloAt > 20_000 || !lastHelloAt) await hello();
       if (versionMessage || paused || serverCfg.claimsPaused) return;
       if (serverCfg.backoffUntil && new Date(serverCfg.backoffUntil) > new Date()) return;
-      if (!t.busy && t.ready) {
-        const res = await api('claim', { tabId: TAB_ID, openConversationUrls: t.url ? [t.url] : [] });
-        if (res.job) void runOnTab(res.job);
-        else if (res.reason === 'backoff' && res.retryAfterSec) serverCfg.backoffUntil = new Date(Date.now() + res.retryAfterSec * 1000).toISOString();
+      // Before opening a tab: what the pages show now (not only at the last hello).
+      if (pool.open && (pageLogin !== true || pageHumanCheck) && (serverCfg.waitingJobs || 0) > 0) await pageSignals();
+      ensureTabs();
+      closeIdleTabs();
+      // Each idle tab with a ready page asks for a prompt; the first “nothing for you” ends the round.
+      for (const id of ids()) {
+        const t = tabState(id);
+        if (t.busy || !t.ready) continue;
+        const open = ids().map((i) => tabState(i).url).filter(Boolean);
+        const res = await api('claim', { tabId: id, openConversationUrls: open });
+        if (res.job) {
+          void runOnTab(id, res.job);
+          continue;
+        }
+        if (res.reason === 'backoff' && res.retryAfterSec) serverCfg.backoffUntil = new Date(Date.now() + res.retryAfterSec * 1000).toISOString();
         else if (res.reason === 'version-mismatch') versionMessage = res.message;
+        break;
       }
       lastError = null;
     } catch (e) {
@@ -278,13 +388,15 @@ function createChatGPTAgent(deps) {
   function schedule() {
     if (timer) clearTimeout(timer);
     if (!running) return;
-    const busy = t.busy || (serverCfg.waitingJobs || 0) > 0;
+    const busy = ids().some((id) => tabState(id).busy) || (serverCfg.waitingJobs || 0) > 0;
     timer = setTimeout(() => void tick(), Math.max(1, busy ? serverCfg.pollBusySec || 3 : serverCfg.pollIdleSec || 30) * 1000);
   }
 
-  // ---------------- the page's messages (as chrome.runtime) ----------------
-  async function onMessage(msg) {
+  // ---------------- the pages' messages (as chrome.runtime) ----------------
+  async function onMessage(msg, tabId) {
     if (!msg || typeof msg !== 'object') return { ok: false };
+    const id = tabId || first();
+    const t = tabState(id);
     switch (msg.type) {
       case 'content-ready': {
         t.ready = true;
@@ -295,7 +407,7 @@ function createChatGPTAgent(deps) {
         if (t.busy && t.job && t.started && !t.port) {
           const cp = getCheckpoint(t.job.id);
           const job = t.job;
-          if (cp && cp.step !== 'navigating') setTimeout(() => sendRun(job, cp, 'the ChatGPT page reloaded').catch((e) => (lastError = e.message)), 500);
+          if (cp && cp.step !== 'navigating') setTimeout(() => sendRun(id, job, cp, 'the ChatGPT page reloaded').catch((e) => (lastError = e.message)), 500);
         }
         setTimeout(() => void tick(), 300);
         return { ok: true };
@@ -304,13 +416,13 @@ function createChatGPTAgent(deps) {
         t.url = String(msg.url || '');
         return { ok: true };
       case 'come-to-front':
-        deps.tab.front();
+        pool.front(id);
         return { ok: true };
       case 'checkpoint':
         checkpoint(msg.jobId, Object.fromEntries(Object.entries({ step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore }).filter(([, v]) => v !== undefined)));
         return { ok: true };
       case 'pre-send-check': {
-        const res = await api('progress', { tabId: TAB_ID, jobId: msg.jobId, step: 'about to send' }).catch(() => null);
+        const res = await api('progress', { tabId: id, jobId: msg.jobId, step: 'about to send' }).catch(() => null);
         return { cancel: Boolean(res && res.cancel), ok: Boolean(res && res.ok) };
       }
       case 'fetch-attachment': {
@@ -340,7 +452,7 @@ function createChatGPTAgent(deps) {
       }
       case 'upload-image': {
         try {
-          const res = await api('upload', { tabId: TAB_ID, jobId: msg.jobId, name: msg.name, mime: msg.mime, dataBase64: msg.dataBase64, sourceUrl: msg.sourceUrl }, '/api/extension/upload', 60_000);
+          const res = await api('upload', { tabId: id, jobId: msg.jobId, name: msg.name, mime: msg.mime, dataBase64: msg.dataBase64, sourceUrl: msg.sourceUrl }, '/api/extension/upload', 60_000);
           return { ok: true, mediaAssetId: res.mediaAssetId };
         } catch (e) {
           return { ok: false, error: e.message };
@@ -352,34 +464,39 @@ function createChatGPTAgent(deps) {
   }
 
   // ---------------- a job's channel (as chrome.runtime.connect) ----------------
-  function onPortOpen(portId, name) {
+  function onPortOpen(portId, name, tabId) {
     if (typeof name !== 'string' || !name.startsWith('bas-job:')) return;
-    const jobId = name.slice('bas-job:'.length);
+    const id = tabId || first();
+    const key = portKey(id, portId);
     // Handle this job's messages strictly in order.
-    ports.set(portId, { jobId, chain: Promise.resolve() });
-    t.port = portId;
+    ports.set(key, { jobId: name.slice('bas-job:'.length), tabId: id, portId, chain: Promise.resolve() });
+    tabState(id).port = key;
   }
 
-  function onPortMessage(portId, msg) {
-    const p = ports.get(portId);
+  function onPortMessage(portId, msg, tabId) {
+    const p = ports.get(portKey(tabId || first(), portId));
     if (!p || !msg || typeof msg !== 'object') return;
-    p.chain = p.chain.then(() => handlePortMessage(portId, p.jobId, msg)).catch((e) => (lastError = e.message));
+    p.chain = p.chain.then(() => handlePortMessage(p, msg)).catch((e) => (lastError = e.message));
   }
 
-  function onPortClose(portId) {
-    ports.delete(portId);
-    if (t.port === portId) t.port = null;
+  function onPortClose(portId, tabId) {
+    const id = tabId || first();
+    const key = portKey(id, portId);
+    ports.delete(key);
+    const t = tabs.get(id);
+    if (t && t.port === key) t.port = null;
   }
 
-  async function handlePortMessage(portId, jobId, msg) {
+  async function handlePortMessage(p, msg) {
+    const { jobId, tabId, portId } = p;
     if (msg.type === 'progress') {
       if (msg.sent) checkpoint(jobId, Object.assign({ sent: true, sentAt: msg.sentAt || new Date().toISOString() }, msg.conversationUrl ? { conversationUrl: msg.conversationUrl } : {}));
-      const res = await api('progress', { tabId: TAB_ID, jobId, step: String(msg.step || '').slice(0, 200), sent: Boolean(msg.sent), sentAt: msg.sentAt, conversationUrl: msg.conversationUrl || null, diagnostics: msg.snapshot || {} }).catch((e) => ({ ok: false, error: e.message }));
-      if (res && res.cancel) deps.tab.post(portId, { type: 'cancel' });
+      const res = await api('progress', { tabId, jobId, step: String(msg.step || '').slice(0, 200), sent: Boolean(msg.sent), sentAt: msg.sentAt, conversationUrl: msg.conversationUrl || null, diagnostics: msg.snapshot || {} }).catch((e) => ({ ok: false, error: e.message }));
+      if (res && res.cancel) pool.post(tabId, portId, { type: 'cancel' });
     } else if (msg.type === 'needs-human') {
       pageLogin = msg.kind === 'login' ? false : pageLogin;
       pageHumanCheck = msg.kind !== 'login';
-      deps.tab.front();
+      pool.front(tabId);
       deps.notify('Blog Automation Studio needs you', `${msg.message} Please complete it in the ChatGPT tab of this window. The job waits up to ${serverCfg.humanCheckPauseMinutes || 10} minutes.`);
       await hello().catch(() => {});
     } else if (msg.type === 'human-resolved') {
@@ -387,7 +504,7 @@ function createChatGPTAgent(deps) {
       pageLogin = true;
     } else if (msg.type === 'complete') {
       await outboxPush('complete', {
-        tabId: TAB_ID,
+        tabId,
         jobId,
         text: msg.text,
         html: msg.html || null,
@@ -398,22 +515,38 @@ function createChatGPTAgent(deps) {
         recovered: Boolean(msg.recovered),
         elapsedMs: msg.elapsedMs,
       });
-      finishTab(jobId);
+      finishTab(tabId, jobId);
       setTimeout(() => void tick(), 500);
     } else if (msg.type === 'fail') {
-      await outboxPush('fail', { tabId: TAB_ID, jobId, code: msg.code || 'ERROR', message: String(msg.message || 'Unknown error').slice(0, 2000), retryAfterSec: msg.retryAfterSec ?? null, uncertain: Boolean(msg.uncertain), diagnostics: msg.snapshot || {} });
+      await outboxPush('fail', { tabId, jobId, code: msg.code || 'ERROR', message: String(msg.message || 'Unknown error').slice(0, 2000), retryAfterSec: msg.retryAfterSec ?? null, uncertain: Boolean(msg.uncertain), diagnostics: msg.snapshot || {} });
       if (msg.code === 'USAGE_LIMIT') serverCfg.backoffUntil = new Date(Date.now() + (msg.retryAfterSec || 60) * 1000).toISOString();
-      if (msg.freshPage) t.freshPage = true;
-      finishTab(jobId);
+      if (msg.freshPage) tabState(tabId).freshPage = true;
+      finishTab(tabId, jobId);
       setTimeout(() => void tick(), 1000);
     }
   }
 
-  /** A new page in the tab (navigation, reload): its scripts start again and announce themselves. */
-  function onPageLoading() {
+  /** A new page in a tab (navigation, reload): its scripts start again and announce themselves. */
+  function onPageLoading(tabId) {
+    const id = tabId || first();
+    const t = tabState(id);
     t.ready = false;
     t.loadedAt = Date.now();
-    for (const id of [...ports.keys()]) onPortClose(id);
+    for (const p of [...ports.values()]) if (p.tabId === id) onPortClose(p.portId, id);
+  }
+
+  /** Release the jobs of the busy tabs (the app quits, or a tab is gone). */
+  async function releaseBusy(reason, onlyId) {
+    // The agent's own list: on quit the window may have closed the tabs already.
+    for (const id of onlyId ? [onlyId] : [...tabs.keys()]) {
+      const t = tabs.get(id);
+      if (!t || !t.busy || !t.jobId) continue;
+      await api('release', { tabId: id, jobId: t.jobId, reason }, null, 5000).catch(() => {});
+      dropCheckpoint(t.jobId);
+      t.busy = false;
+      t.jobId = null;
+      t.job = null;
+    }
   }
 
   return {
@@ -422,20 +555,17 @@ function createChatGPTAgent(deps) {
     /** Start: a job left from the last run (the app was closed mid-job) goes back to the queue, which reconciles it. */
     async start() {
       running = true;
-      for (const [jobId] of Object.entries(state().checkpoints)) {
-        await api('release', { tabId: TAB_ID, jobId, reason: 'The desktop app restarted; its ChatGPT tab is new' }).catch(() => {});
+      for (const [jobId, cp] of Object.entries(state().checkpoints)) {
+        await api('release', { tabId: (cp && cp.tabId) || TAB_ID, jobId, reason: 'The desktop app restarted; its ChatGPT tabs are new' }).catch(() => {});
         dropCheckpoint(jobId);
       }
       await tick();
     },
-    /** Quit: a job in progress goes back to the queue (it reconciles before any resend). */
+    /** Quit: the prompts in progress go back to the queue (they are reconciled before any resend). */
     async stop() {
       running = false;
       if (timer) clearTimeout(timer);
-      if (t.busy && t.jobId) {
-        await api('release', { tabId: TAB_ID, jobId: t.jobId, reason: 'The desktop app was closed' }, null, 5000).catch(() => {});
-        dropCheckpoint(t.jobId);
-      }
+      await releaseBusy('The desktop app was closed');
     },
     /** Owner switch: ChatGPT in this app, or in Automation Chrome (paused: the dashboard is told at once). */
     async setPaused(value) {
@@ -443,6 +573,12 @@ function createChatGPTAgent(deps) {
       await hello().catch((e) => (lastError = e.message));
       status();
       schedule();
+    },
+    /** A tab the app had to close (its page is gone for good): its prompt goes back to the queue. */
+    async onTabGone(tabId) {
+      await releaseBusy('The ChatGPT tab of the desktop app was closed', tabId);
+      for (const [key, p] of [...ports.entries()]) if (p.tabId === tabId) ports.delete(key);
+      tabs.delete(tabId);
     },
     tick,
     status,
@@ -452,8 +588,8 @@ function createChatGPTAgent(deps) {
     onPortClose,
     onPageLoading,
     /** For tests. */
-    _state: () => ({ tab: { ...t, waiters: t.waiters.length }, serverCfg, lastError, versionMessage }),
+    _state: () => ({ tab: { ...tabState(first()), waiters: tabState(first()).waiters.length }, tabs: Object.fromEntries(ids().map((id) => [id, { ...tabState(id), waiters: tabState(id).waiters.length }])), serverCfg, lastError, versionMessage }),
   };
 }
 
-module.exports = { createChatGPTAgent, INSTALL_ID, TAB_ID, sleep };
+module.exports = { createChatGPTAgent, INSTALL_ID, TAB_ID, MAX_TABS, IDLE_CLOSE_MS, sleep };

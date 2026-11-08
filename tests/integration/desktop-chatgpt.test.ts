@@ -51,6 +51,12 @@ function launch(fake: FakeChatGptConfig) {
   return (app = { child, lines, dir, fakeFile });
 }
 
+/** Every ChatGPT tab's page (the agent opens more while prompts wait). */
+const lastPages = () => {
+  const line = [...(app?.lines ?? [])].reverse().find((l) => l.startsWith('PAGES '));
+  return line ? (JSON.parse(line.slice(6)) as { stats: { sends: number; lastPrompt: string | null } | null; url: string }[]) : null;
+};
+
 const lastPage = () => {
   const line = [...(app?.lines ?? [])].reverse().find((l) => l.startsWith('PAGE '));
   return line ? (JSON.parse(line.slice(5)) as { bridge: string; chrome: string; runtime: string; stats: { sends: number; lastPrompt: string | null } | null; url: string }) : null;
@@ -119,6 +125,25 @@ describe.skipIf(!fs.existsSync(electron))("the desktop app's ChatGPT tab against
     expect(page.runtime).toBe('undefined');
   });
 
+  it('owner report (2026-11-08): two prompts at once run in two ChatGPT tabs side by side, each sent once', async () => {
+    // A slow answer: the first prompt is still running when the second waits.
+    launch({ variant: 'standard', mode: 'normal', answerDelayMs: 8000 });
+    const a = await request('First parallel prompt about Tom Kaulitz');
+    const b = await request('Second parallel prompt about Heidi Klum');
+    const [doneA, doneB] = await Promise.all([responseDone(a.responseId, 120_000), responseDone(b.responseId, 120_000)]);
+    expect([doneA.status, doneB.status]).toEqual(['COMPLETED', 'COMPLETED']);
+    // A second tab was opened in the window, and each page sent one of the prompts once.
+    expect(app!.lines).toContain('TABS 2');
+    const pages = await waitFor(async () => {
+      const p = lastPages();
+      return p && p.filter((x) => x.stats?.sends === 1).length === 2 ? p : null;
+    }, 15_000, 'two pages with one prompt each', 500);
+    expect(pages.map((p) => p.stats?.lastPrompt?.replace(/\s+/g, ' ').trim()).sort()).toEqual(['First parallel prompt about Tom Kaulitz', 'Second parallel prompt about Heidi Klum']);
+    // The dashboard was told about both tabs.
+    const agent = await client.workerStatus.findUniqueOrThrow({ where: { id: 'extension:desktop-app' } });
+    expect(JSON.stringify(agent)).toContain('app-2');
+  });
+
   it('recovers the answer after the page reloads mid-generation without resending the prompt', async () => {
     launch({ variant: 'standard', mode: 'normal', chunkMs: 400, chunkSize: 15 });
     const req = await request('Interrupted completion prompt');
@@ -171,7 +196,7 @@ describe.skipIf(!fs.existsSync(electron))("the desktop app's ChatGPT tab against
     expect(task.status).toBe('LOGIN_REQUIRED');
     expect(task.pausedFor).toBe('chatgpt-login');
     expect(app!.lines.some((l) => l.startsWith('NOTIFY ') && l.includes('ChatGPT asks you to sign in'))).toBe(true);
-    expect(app!.lines).toContain('FRONT');
+    expect(app!.lines).toContain('FRONT app-1'); // the tab that shows the sign-in comes to the front
     expect(lastPage()?.stats?.sends ?? 0).toBe(0);
   });
 });

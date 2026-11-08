@@ -59,6 +59,12 @@ The same tool as one Windows program, like Discord: no command window, and nothi
 - **ChatGPT inside the app (3.2.0):**
   - Open the **ChatGPT** tab once and sign in to ChatGPT with your **email and password**. The sign-in stays in the app, apart from Chrome; “Continue with Google” does not work there, because Google refuses sign-ins in a browser built into an app.
   - The prompts then run in that tab, with the same ChatGPT scripts as the extension, and the dashboard tab keeps working meanwhile. The dot and the text at the top say whether ChatGPT is ready, needs your sign-in or a check, or is working.
+  - **Several prompts at once** (as in Chrome):
+    - When more prompts wait, the app opens more ChatGPT tabs, up to **Settings → ChatGPT tabs** (1–5, default 3) and the article slots of High-Throughput mode. It opens one at a time, and only while ChatGPT is signed in without a check.
+    - Each tab runs its own prompt. All share your one sign-in.
+    - The **ChatGPT** tab shows them side by side: 2 or 3 in columns, 4 or 5 in two rows. ChatGPT draws pictures only in a page that is shown.
+    - An extra tab with nothing to do closes after 10 minutes; one closes at once when you lower the setting.
+    - The top line says e.g. “working on 2 prompts at once (3 tabs)”.
   - A sign-in page or a human check is never automated: the app shows the ChatGPT tab and a notification, and the job waits for you as in Chrome. Links in answers open in your default browser.
   - While the app's ChatGPT is connected, Automation Chrome's extension (3.4.6) opens no ChatGPT tab and takes no prompt (badge “APP”).
   - **Switching back:** if ChatGPT does not work in the app, untick **App → Run ChatGPT prompts in this app**, and Automation Chrome takes the prompts again.

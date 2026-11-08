@@ -7,8 +7,9 @@
  *
  *   electron desktop-chatgpt-harness.cjs --origin=http://127.0.0.1:PORT --key=KEY --fake=config.json --dir=TMP
  *
- * Prints one line per event: `STATUS {...}` (the agent's status), `LOG ...`, `PAGE {...}` (what the page's own world
- * sees, and the fake page's counters, every second). The test can write `reload` into TMP/command to reload the page.
+ * Prints one line per event: `STATUS {...}` (the agent's status), `LOG ...`, `PAGE {...}` (what the first page's own
+ * world sees, and the fake page's counters, every second), `PAGES [...]` (the same for every ChatGPT tab: the agent
+ * opens more while prompts wait). The test can write `reload` into TMP/command to reload the first page.
  */
 const { app, BrowserWindow, session } = require('electron');
 const fs = require('node:fs');
@@ -41,7 +42,7 @@ const dir = arg('dir');
 app.setPath('userData', path.join(dir, 'user-data'));
 
 app.whenReady().then(async () => {
-  const { createChatGPTTab, PARTITION } = require(path.join(repo, 'desktop', 'chatgpt-tab.cjs'));
+  const { createChatGPTTabs, PARTITION } = require(path.join(repo, 'desktop', 'chatgpt-tab.cjs'));
   const APP = fs.readFileSync(path.join(repo, 'tests', 'fixtures', 'fake-chatgpt', 'app.js'), 'utf8');
   const fake = () => JSON.parse(fs.readFileSync(arg('fake'), 'utf8'));
   session.fromPartition(PARTITION).protocol.handle('https', (req) => {
@@ -58,7 +59,17 @@ app.whenReady().then(async () => {
   });
   const win = new BrowserWindow({ width: 1200, height: 800, show: true, webPreferences: { sandbox: true, contextIsolation: true } });
   const storeFile = path.join(dir, 'agent.json');
-  const tab = createChatGPTTab({
+  let shown = [];
+  // As the app: every ChatGPT tab in the window, side by side.
+  const tabsChanged = (views) => {
+    for (const v of shown) if (!views.includes(v)) win.contentView.removeChildView(v);
+    for (const v of views) if (!shown.includes(v)) win.contentView.addChildView(v);
+    shown = [...views];
+    const w = Math.floor(1200 / Math.max(1, views.length));
+    views.forEach((v, i) => v.setBounds({ x: i * w, y: 0, width: w, height: 800 }));
+    console.log(`TABS ${views.length}`);
+  };
+  const tab = createChatGPTTabs({
     appDir: repo,
     origin: () => arg('origin'),
     key: arg('key'),
@@ -73,12 +84,12 @@ app.whenReady().then(async () => {
       write: (s) => fs.writeFileSync(storeFile, JSON.stringify(s)),
     },
     notify: (title, body) => console.log(`NOTIFY ${JSON.stringify({ title, body })}`),
-    front: () => console.log('FRONT'),
+    front: (id) => console.log(`FRONT ${id || ''}`),
+    onTabsChanged: (views) => tabsChanged(views),
     onStatus: (s) => console.log(`STATUS ${JSON.stringify(s)}`),
     log: (line) => console.log(`LOG ${line}`),
   });
-  win.contentView.addChildView(tab.view);
-  tab.view.setBounds({ x: 0, y: 0, width: 1200, height: 800 });
+  tabsChanged(tab.views());
   await tab.load('https://chatgpt.com/');
   await tab.agent.start();
   const commandFile = path.join(dir, 'command');
@@ -93,5 +104,7 @@ app.whenReady().then(async () => {
     // The page's own world: never the app's channel, never a chrome.runtime.
     const page = await wc.executeJavaScript('({ bridge: typeof window.basBridge, chrome: typeof window.chrome, runtime: typeof (window.chrome && window.chrome.runtime), stats: window.__fakeStats ? window.__fakeStats() : null, url: location.href })').catch((e) => ({ error: e.message }));
     console.log(`PAGE ${JSON.stringify(page)}`);
+    const pages = await Promise.all(tab.views().map((v) => v.webContents.executeJavaScript('({ stats: window.__fakeStats ? window.__fakeStats() : null, url: location.href })').catch((e) => ({ error: e.message }))));
+    console.log(`PAGES ${JSON.stringify(pages)}`);
   }, 1000);
 });

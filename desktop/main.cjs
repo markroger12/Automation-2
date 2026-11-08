@@ -29,7 +29,7 @@ const net = require('node:net');
 const path = require('node:path');
 
 const { createHash, randomBytes } = require('node:crypto');
-const { createChatGPTTab, isChatGPTContents } = require('./chatgpt-tab.cjs');
+const { createChatGPTTabs, isChatGPTContents } = require('./chatgpt-tab.cjs');
 
 /** Ports the dashboard may use; the extension looks for it on the same ones. */
 const PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
@@ -325,11 +325,49 @@ function secureContents(contents) {
 
 // ------------------------------------------------------------------ the tabs
 
+/** The ChatGPT tabs' views in the window (one per ChatGPT tab; the agent opens more while prompts wait). */
+let chatgptViews = [];
+
+/**
+ * The dashboard fills the window. The ChatGPT tabs share the same place side by side (owner report 2026-11-08: one
+ * prompt at a time): every ChatGPT page is shown at once when the ChatGPT tab is on top, as ChatGPT draws pictures only
+ * in a page that is shown — 1 to 3 tabs in columns, 4 or 5 in two rows.
+ */
+function chatgptGrid(area, count) {
+  const cols = count <= 3 ? count : Math.ceil(count / 2);
+  const rows = count <= 3 ? 1 : 2;
+  const gap = count > 1 ? 2 : 0;
+  const w = Math.floor((area.width - gap * (cols - 1)) / cols);
+  const h = Math.floor((area.height - gap * (rows - 1)) / rows);
+  return Array.from({ length: count }, (_, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = area.x + col * (w + gap);
+    const y = area.y + row * (h + gap);
+    return { x, y, width: col === cols - 1 ? area.x + area.width - x : w, height: row === rows - 1 ? area.y + area.height - y : h };
+  });
+}
+
 function layout() {
   if (!win || win.isDestroyed()) return;
   const { width, height } = win.getContentBounds();
   const bounds = { x: 0, y: TAB_BAR, width, height: Math.max(0, height - TAB_BAR) };
-  for (const view of [dashboardView, chatgpt && chatgpt.view]) if (view) view.setBounds(bounds);
+  if (dashboardView) dashboardView.setBounds(bounds);
+  const cells = chatgptGrid(bounds, chatgptViews.length);
+  chatgptViews.forEach((view, i) => view.setBounds(cells[i]));
+}
+
+/** A ChatGPT tab was opened or closed: the window shows exactly the open ones, the tab shown stays on top. */
+function chatgptTabsChanged(views) {
+  if (!win || win.isDestroyed()) return;
+  for (const view of chatgptViews) if (!views.includes(view)) win.contentView.removeChildView(view);
+  for (const view of views) if (!chatgptViews.includes(view)) win.contentView.addChildView(view);
+  chatgptViews = [...views];
+  // A new view was added on top: put back on top the one shown.
+  if (activeTab === 'chatgpt') for (const view of chatgptViews) win.contentView.addChildView(view);
+  else if (dashboardView) win.contentView.addChildView(dashboardView);
+  layout();
+  shellState();
 }
 
 function shellState() {
@@ -337,8 +375,9 @@ function shellState() {
   win.webContents.send('bas-shell:state', { ready: Boolean(dashboardView), tab: activeTab, chatgpt: chatgptState });
 }
 
-/** Both tabs stay in the window (ChatGPT keeps working behind the dashboard); the one shown is on top. */
-function selectTab(tab) {
+/** Both tabs stay in the window (ChatGPT keeps working behind the dashboard); the one shown is on top. `focusId`: the
+ * ChatGPT tab (app-1, app-2 …) that asked to be shown. */
+function selectTab(tab, focusId = null) {
   if (!win || win.isDestroyed() || !dashboardView) return;
   if (tab === 'google') {
     // Google and Search Console: Automation Chrome (its sign-in and the indexing panel are on this page).
@@ -346,8 +385,10 @@ function selectTab(tab) {
     void dashboardView.webContents.loadURL(`${ORIGIN}/automation-chrome`).catch(() => {});
   }
   activeTab = tab === 'chatgpt' && chatgpt ? 'chatgpt' : 'dashboard';
-  win.contentView.addChildView(activeTab === 'chatgpt' ? chatgpt.view : dashboardView);
-  (activeTab === 'chatgpt' ? chatgpt.view : dashboardView).webContents.focus();
+  // The one shown goes on top: the dashboard, or all ChatGPT tabs side by side.
+  if (activeTab === 'chatgpt') for (const view of chatgptViews) win.contentView.addChildView(view);
+  else win.contentView.addChildView(dashboardView);
+  (activeTab === 'chatgpt' ? (focusId && chatgpt.viewOf(focusId)) || chatgptViews[0] : dashboardView).webContents.focus();
   shellState();
 }
 
@@ -365,8 +406,9 @@ function chatgptSummary(s) {
   if (s.loggedIn === false) return { tone: 'warn', text: 'ChatGPT: sign in in the ChatGPT tab (email and password)' };
   if (!s.connected) return { tone: 'bad', text: s.lastError ? `ChatGPT: ${s.lastError}` : 'ChatGPT: connecting to the dashboard…' };
   if (s.backoffUntil && new Date(s.backoffUntil) > new Date()) return { tone: 'warn', text: `ChatGPT: usage limit, waiting until ${new Date(s.backoffUntil).toLocaleTimeString()}` };
-  if (s.busy) return { tone: 'ok', text: 'ChatGPT: working on a prompt' };
-  return { tone: 'ok', text: s.ready ? 'ChatGPT: ready' : 'ChatGPT: loading…' };
+  const tabs = s.tabs > 1 ? ` (${s.tabs} tabs)` : '';
+  if (s.busy) return { tone: 'ok', text: s.busyTabs > 1 ? `ChatGPT: working on ${s.busyTabs} prompts at once${tabs}` : `ChatGPT: working on a prompt${tabs}` };
+  return { tone: 'ok', text: s.ready ? `ChatGPT: ready${tabs}` : 'ChatGPT: loading…' };
 }
 
 function agentStore() {
@@ -393,7 +435,7 @@ function attachTabs(ownServer) {
   dashboardView = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false } });
   win.contentView.addChildView(dashboardView);
   void dashboardView.webContents.loadURL(ORIGIN).catch(() => {});
-  chatgpt = createChatGPTTab({
+  chatgpt = createChatGPTTabs({
     appDir,
     // A dashboard started elsewhere (npm run start:all) does not know this app's key: ChatGPT stays in Automation Chrome.
     origin: ownServer ? () => `http://127.0.0.1:${PORT}` : null,
@@ -405,18 +447,19 @@ function attachTabs(ownServer) {
       n.on('click', () => (showWindow(), selectTab('chatgpt')));
       n.show();
     },
-    front: () => {
+    front: (id) => {
       if (!win || win.isDestroyed()) return;
-      selectTab('chatgpt');
+      selectTab('chatgpt', id || null);
       if (!win.isVisible() || win.isMinimized()) win.showInactive();
     },
+    onTabsChanged: (views) => chatgptTabsChanged(views),
     onStatus: (s) => {
       chatgptState = chatgptSummary(s);
       shellState();
     },
     log: (line) => logLine('chatgpt', line),
   });
-  win.contentView.addChildView(chatgpt.view);
+  chatgptTabsChanged(chatgpt.views());
   if (!ownServer) chatgptState = { tone: '', text: 'ChatGPT: prompts run in Automation Chrome while npm run start:all runs' };
   // The smoke test needs no ChatGPT page (only the connection to the dashboard).
   if (!smoke) void chatgpt.load('https://chatgpt.com/').catch(() => {});
@@ -461,6 +504,7 @@ function createWindow(hidden) {
       const agent = chatgpt.agent;
       chatgpt.destroy();
       chatgpt = null;
+      chatgptViews = [];
       if (agent) void agent.stop();
     }
   });

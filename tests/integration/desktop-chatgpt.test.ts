@@ -132,13 +132,22 @@ describe.skipIf(!fs.existsSync(electron))("the desktop app's ChatGPT tab against
     const b = await request('Second parallel prompt about Heidi Klum');
     const [doneA, doneB] = await Promise.all([responseDone(a.responseId, 120_000), responseDone(b.responseId, 120_000)]);
     expect([doneA.status, doneB.status]).toEqual(['COMPLETED', 'COMPLETED']);
-    // A second tab was opened in the window, and each page sent one of the prompts once.
+    // A second tab was opened in the window; each prompt was claimed by its own tab, and they ran at the same time.
     expect(app!.lines).toContain('TABS 2');
+    const [jobA, jobB] = await Promise.all([a, b].map((r) => client.queueJob.findFirstOrThrow({ where: { relatedId: r.responseId } })));
+    expect([jobA.claimedByTab, jobB.claimedByTab].sort()).toEqual(['app-1', 'app-2']);
+    const [first, second] = [jobA, jobB].sort((x, y) => x.startedAt!.getTime() - y.startedAt!.getTime());
+    expect(second.startedAt!.getTime()).toBeLessThan(first.finishedAt!.getTime());
+    expect(doneA.conversationUrl).not.toBe(doneB.conversationUrl);
+    // Each prompt was sent once. The fake page keeps its counters in localStorage, which every ChatGPT tab of the one
+    // sign-in shares (as tabs of one browser do): two sends in all, and two pages show them.
     const pages = await waitFor(async () => {
       const p = lastPages();
-      return p && p.filter((x) => x.stats?.sends === 1).length === 2 ? p : null;
-    }, 15_000, 'two pages with one prompt each', 500);
-    expect(pages.map((p) => p.stats?.lastPrompt?.replace(/\s+/g, ' ').trim()).sort()).toEqual(['First parallel prompt about Tom Kaulitz', 'Second parallel prompt about Heidi Klum']);
+      return p && p.length === 2 && p.every((x) => x.stats?.sends === 2) ? p : null;
+    }, 15_000, 'two pages and two sends in all', 500).catch((e) => {
+      throw new Error(`${(e as Error).message}\nPAGES ${JSON.stringify(lastPages())}\n--- app output ---\n${app?.lines.filter((l) => !l.startsWith('PAGE')).slice(-40).join('\n')}`);
+    });
+    expect(pages).toHaveLength(2);
     // The dashboard was told about both tabs.
     const agent = await client.workerStatus.findUniqueOrThrow({ where: { id: 'extension:desktop-app' } });
     expect(JSON.stringify(agent)).toContain('app-2');

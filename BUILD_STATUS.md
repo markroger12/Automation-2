@@ -4900,6 +4900,9 @@ Owner request: “sare features app me bhi krde”, and “app me sirf ek hi cha
   - integration `desktop-chatgpt` (Electron, Windows CI): new test “two prompts at once run in two ChatGPT tabs side by side, each sent once”.
   - The sign-in test now expects `FRONT app-1`.
 - **Checked here:** `tsc` 0 errors; unit `desktop-agent` 8/8; `app-update` and `ensure-prisma-client` pass.
+- **Windows run [42484321938](https://github.com/markroger12/Automation-2/actions/runs/42484321938):** the new Electron test failed at its page check.
+  - Both prompts were answered and a second tab opened (“TABS 2”). The check “each page sent one prompt” could never pass: the fake ChatGPT page keeps its send counter and last prompt in `localStorage`, which every ChatGPT tab of the one sign-in shares, as tabs of one browser do.
+  - The test now checks it through the dashboard's records: the two prompts were claimed by `app-1` and `app-2`, the second started before the first finished, the two conversations differ, and there were two sends in all. On a timeout it prints the pages and the app's log.
 - **Not run here:**
   - the whole unit suite: the container's disk is full of earlier test data;
   - the Electron test: Electron cannot be installed without disk space. The Windows workflow runs it, builds the installer and starts the app once.

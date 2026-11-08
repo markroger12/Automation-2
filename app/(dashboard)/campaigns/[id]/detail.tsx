@@ -8,7 +8,8 @@ import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Input, Select } from '@/components/form';
 import { Alert, Card, Chip, ProgressBar, StatusChip, buttonClasses, cx } from '@/components/ui';
-import { CampaignStatusChip, RowStatusChip, WRITER_LABEL } from '../shared';
+import { CampaignStatusChip, RowStatusChip, writerLabel } from '../shared';
+import { writerChoices } from '@/lib/writers/options';
 
 interface Row {
   id: string;
@@ -120,7 +121,7 @@ export function CampaignDetail({ id }: { id: string }) {
     <div className="space-y-6">
       <Card
         title={<span className="flex items-center gap-2">{c.name} <CampaignStatusChip status={c.status} /></span>}
-        description={`${c.website.name} · writer: ${c.defaultWriter === 'AUTO' ? `automatic (${c.routerVersion})` : WRITER_LABEL[c.defaultWriter]} · ${c.rows.length} rows`}
+        description={`${c.website.name} · writer: ${c.defaultWriter === 'AUTO' ? `automatic (${c.routerVersion})` : writerLabel(c.defaultWriter)} · ${c.rows.length} rows`}
         actions={
           <div className="flex flex-wrap gap-2">
             {c.status === 'PAUSED' ? (
@@ -167,7 +168,7 @@ export function CampaignDetail({ id }: { id: string }) {
       <Card padded={false}>
         <div className="border-app flex flex-wrap items-center gap-1 border-b p-3">
           {FILTERS.map(([fid, label]) => (
-            <button key={fid} type="button" aria-pressed={filter === fid} onClick={() => { setFilter(fid); setPage(0); }} className={cx('rounded-md px-2 py-1 text-xs', filter === fid ? 'bg-indigo-600 text-white' : 'surface-2')}>
+            <button key={fid} type="button" aria-pressed={filter === fid} onClick={() => { setFilter(fid); setPage(0); }} className={cx('rounded-md px-2 py-1 text-xs', filter === fid ? 'bg-[var(--primary)] text-[var(--primary-fg)]' : 'surface-2')}>
               {label}
             </button>
           ))}
@@ -179,8 +180,11 @@ export function CampaignDetail({ id }: { id: string }) {
               </Button>
               <Input aria-label="Priority" type="number" min={-10} max={10} value={priority} onChange={(e) => setPriority(e.target.value)} className="w-16 px-2 py-1 text-xs" />
               <Button size="sm" onClick={() => void rowAction('priority', { priority: Number(priority) || 0 })}>Set priority</Button>
-              <Button size="sm" onClick={() => void rowAction('writer', { writer: 'celebrity-writer' })}>Celebrity</Button>
-              <Button size="sm" onClick={() => void rowAction('writer', { writer: 'tigram-writer' })}>Tigram</Button>
+              {writerChoices().map((w) => (
+                <Button key={w.key} size="sm" onClick={() => void rowAction('writer', { writer: w.key })}>
+                  {w.short}
+                </Button>
+              ))}
               {(() => {
                 // Bulk category (owner request): for rows of one website that are not queued yet.
                 const ids = [...new Set(c.rows.filter((r) => selected.has(r.id)).map((r) => r.websiteId).filter((x): x is string => Boolean(x)))];
@@ -229,7 +233,7 @@ export function CampaignDetail({ id }: { id: string }) {
                     {r.priority ? <Chip>priority {r.priority}</Chip> : null}
                   </td>
                   <td className="text-xs" title={r.routerRationale ?? undefined}>
-                    {r.writer ? WRITER_LABEL[r.writer] : <span className="text-amber-700">choose</span>}
+                    {r.writer ? writerLabel(r.writer) : <span className="text-amber-700">choose</span>}
                     <div className="text-muted">{r.writerSource === 'RULE' ? `router ${Math.round((r.routerConfidence ?? 0) * 100)} %` : r.writerSource === 'OVERRIDE' ? 'your choice' : r.writerSource === 'CAMPAIGN' ? 'campaign' : ''}</div>
                   </td>
                   <td>
@@ -242,7 +246,7 @@ export function CampaignDetail({ id }: { id: string }) {
                           <StatusChip status={r.task.status} />
                         </Link>
                         {r.task.wpEditUrl ? (
-                          <a className="text-indigo-600 underline" href={r.task.wpEditUrl} target="_blank" rel="noreferrer">
+                          <a className="link" href={r.task.wpEditUrl} target="_blank" rel="noreferrer">
                             #{r.task.wpPostId}
                           </a>
                         ) : null}

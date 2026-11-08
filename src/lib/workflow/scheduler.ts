@@ -1,6 +1,10 @@
 import type { Website, Workflow, WorkflowKeyword } from '@prisma/client';
 import { db } from '../db';
 import { log } from '../log';
+import { isActiveModuleKey, moduleDisplayName, writerTypeToModule, type ActiveModuleKey } from '../domain';
+import { findRuleCategory, missingRuleCategoryMessage } from '../celebrity-category';
+import { categoryRuleFor } from '../writers/rules';
+import { ensureCustomWriters } from '../writers/store';
 import { parseJson } from '../json';
 import { enqueue } from '../queue';
 import { createArticleTask } from '../tasks/create';
@@ -14,22 +18,30 @@ import { upcomingSlots } from './time';
  *  2. moves keywords whose slot passed before they were ready to the next
  *     free slot (bounded by maxRetries, then FAILED with the reason);
  *  3. READY keywords on sites with publishing allowed → one wp.schedule job;
- *     scheduled ones past their time → one wp.verify-published job;
+ *     scheduled ones past their time → one wp.verify-published job at a time
+ *     (every 5 min for 2 h, then every 30; a missed schedule is published);
  *  4. starts new articles: next WAITING keyword (by position), next free
  *     slot (unique per website and time), within the write-ahead horizon and
- *     the backlog cap.
+ *     the backlog cap. A keyword the owner moved to a later day keeps its
+ *     planned (reserved) slot and starts within the write-ahead time before it.
  */
 
 export const SCHEDULE_LEAD_MS = 5 * 60_000;
+/**
+ * Owner report (morgan carey, slot 7:00 pm, still “scheduled” at 7:15): WordPress publishes a scheduled post with its
+ * own scheduler (WP-Cron), which on many hosts runs late or never (“Missed schedule”). This long after its time, the
+ * check starts WP-Cron and, if WordPress still has not published it, publishes it itself (src/wordpress/schedule.ts).
+ */
+export const MISSED_SCHEDULE_GRACE_MS = 2 * 60_000;
+/** After the slot the publication is checked every 5 minutes for 2 hours (a failed check is soon tried again), then every 30. */
+const verifyWindowMs = (slot: Date, now: Date) => (now.getTime() - slot.getTime() < 2 * 3_600_000 ? 5 * 60_000 : 30 * 60_000);
 const SLOT_HORIZON_DAYS = 60;
 
 export type WorkflowWithSite = Workflow & { website: Website };
 
-export function writerFor(wf: Pick<Workflow, 'writerPreference'>, kw: Pick<WorkflowKeyword, 'writerType'>): 'celebrity-writer' | 'tigram-writer' | null {
-  if (wf.writerPreference === 'celebrity-writer' || wf.writerPreference === 'tigram-writer') return wf.writerPreference;
-  if (kw.writerType === 'CELEBRITY') return 'celebrity-writer';
-  if (kw.writerType === 'TIGRAM') return 'tigram-writer';
-  return null;
+export function writerFor(wf: Pick<Workflow, 'writerPreference'>, kw: Pick<WorkflowKeyword, 'writerType'>): ActiveModuleKey | null {
+  if (isActiveModuleKey(wf.writerPreference)) return wf.writerPreference;
+  return writerTypeToModule(kw.writerType);
 }
 
 export const slotRules = (wf: Pick<Workflow, 'slots' | 'weekdays' | 'slotTimezone'>) => ({ slots: parseJson<string[]>(wf.slots, []), weekdays: parseJson<number[]>(wf.weekdays, []), timezone: wf.slotTimezone });
@@ -89,6 +101,7 @@ export interface TickReport {
 
 export async function schedulerTick(now = new Date()): Promise<TickReport> {
   const report: TickReport = { workflows: 0, started: 0, ready: 0, kept: 0, moved: 0, failed: 0, scheduleJobs: 0, verifyJobs: 0 };
+  await ensureCustomWriters();
   const workflows = await db.workflow.findMany({ where: { active: true }, include: { website: true } });
   for (const wf of workflows) {
     report.workflows++;
@@ -160,11 +173,22 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       if (created) report.scheduleJobs++;
     }
   }
-  const due = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'SCHEDULED', scheduledAt: { lte: new Date(now.getTime() - 60_000) } } });
+  const due = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'SCHEDULED', scheduledAt: { lte: new Date(now.getTime() - MISSED_SCHEDULE_GRACE_MS) } } });
   for (const kw of due) {
-    const bucket = Math.floor(now.getTime() / (30 * 60_000));
+    // One check at a time (a waiting one is not joined by another every window).
+    if (await db.queueJob.count({ where: { kind: 'wp.verify-published', relatedId: kw.id, status: { in: ['WAITING', 'ACTIVE'] } } })) continue;
+    const width = verifyWindowMs(kw.scheduledAt!, now);
+    const bucket = `${width / 60_000}m${Math.floor(now.getTime() / width)}`;
     const { created } = await enqueue({ queue: 'control', kind: 'wp.verify-published', idempotencyKey: `wp-verify:${kw.id}:${bucket}`, websiteId: wf.websiteId, relatedId: kw.id, payload: { keywordId: kw.id, websiteId: wf.websiteId } });
     if (created) report.verifyJobs++;
+  }
+
+  // 3b. A keyword moved to a later day whose planned slot came before its article could start (the backlog was full):
+  // the planned slot is given back, and it takes the next free slot when it starts.
+  const passed = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'WAITING', scheduledAt: { lte: new Date(now.getTime() + SCHEDULE_LEAD_MS) } }, select: { id: true } });
+  for (const kw of passed) {
+    await release(kw.id);
+    await db.workflowKeyword.update({ where: { id: kw.id }, data: { scheduledAt: null } });
   }
 
   // 4. Start new articles within the backlog cap and the write-ahead horizon.
@@ -173,6 +197,8 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
   let backlog = await db.workflowKeyword.count({ where: { workflowId: wf.id, status: { in: ['WRITING', 'READY'] } } });
   if (backlog >= wf.maxBacklog) return;
   const waiting = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'WAITING' }, orderBy: { position: 'asc' }, take: 50 });
+  // Once the next free slot is beyond the write-ahead time, only keywords with a planned slot can still start.
+  let freeSlotsAhead = true;
   for (const kw of waiting) {
     if (backlog >= wf.maxBacklog) break;
     const writer = writerFor(wf, kw);
@@ -181,16 +207,30 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       if (kw.lastError !== msg) await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: msg } });
       continue;
     }
-    if (writer === 'celebrity-writer' && !wf.website.defaultCategoryId) {
-      const msg = 'Celebrity articles need a default category for this website (Websites → edit → default category).';
+    const rule = categoryRuleFor(writer);
+    if (rule.mode !== 'chatgpt' && !findRuleCategory(await db.category.findMany({ where: { websiteId: wf.websiteId } }), rule, wf.website.language)) {
+      // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”); the owner's
+      // writers may always use another fixed category.
+      const msg = missingRuleCategoryMessage(wf.website.name, rule, wf.website.language, moduleDisplayName(writer));
       if (kw.lastError !== msg) await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: msg } });
       continue;
     }
-    const slot = await nextFreeSlot(wf, new Date(now.getTime() + SCHEDULE_LEAD_MS));
-    if (!slot) break;
-    if (wf.writeAheadHours > 0 && slot.getTime() - now.getTime() > wf.writeAheadHours * 3_600_000) break;
-    const reserved = await reserveSlot(wf, kw.id, new Date(now.getTime() + SCHEDULE_LEAD_MS));
-    if (!reserved) break;
+    const planned = kw.scheduledAt ? await db.slotReservation.findFirst({ where: { workflowKeywordId: kw.id, scheduledAt: kw.scheduledAt } }) : null;
+    if (!planned && !freeSlotsAhead) continue;
+    const slot = planned ? planned.scheduledAt : await nextFreeSlot(wf, new Date(now.getTime() + SCHEDULE_LEAD_MS));
+    if (!slot) {
+      freeSlotsAhead = false;
+      continue;
+    }
+    if (wf.writeAheadHours > 0 && slot.getTime() - now.getTime() > wf.writeAheadHours * 3_600_000) {
+      if (!planned) freeSlotsAhead = false;
+      continue;
+    }
+    const reserved = planned ? planned.scheduledAt : await reserveSlot(wf, kw.id, new Date(now.getTime() + SCHEDULE_LEAD_MS));
+    if (!reserved) {
+      freeSlotsAhead = false;
+      continue;
+    }
     try {
       const { task } = await createArticleTask(
         {
@@ -209,7 +249,7 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
       report.started++;
     } catch (error) {
       await release(kw.id);
-      await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: `Could not start the article: ${(error as Error).message}`.slice(0, 400) } });
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { scheduledAt: null, lastError: `Could not start the article: ${(error as Error).message}`.slice(0, 400) } });
     }
   }
 }

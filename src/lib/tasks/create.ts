@@ -2,9 +2,13 @@ import { defaultSeoBrief } from '@/lib/seo/intent';
 import { z } from 'zod';
 import type { ArticleTask } from '@prisma/client';
 import { db, type Tx } from '../db';
-import { activeModuleKeySchema, countrySchema, languageSchema, normalizeKeyword, type TaskSource } from '../domain';
+import { activeModuleKeySchema, countrySchema, languageSchema, moduleDisplayName, normalizeKeyword, type TaskSource } from '../domain';
+import { findRuleCategory, missingRuleCategoryMessage } from '../celebrity-category';
+import { categoryRuleFor } from '../writers/rules';
+import { isCustomKey } from '../writers/types';
+import { ensureCustomWriters } from '../writers/store';
 import { taskOptionsSchema } from '../settings-schema';
-import { parseSecondaryKeywords } from '../content/text';
+import { MAX_SECONDARY_KEYWORDS, parseSecondaryKeywords } from '../content/text';
 import { AppError } from '../errors';
 import { ensureArticleRun } from './lifecycle';
 import { log } from '../log';
@@ -26,11 +30,11 @@ export const articleTaskInputSchema = z.object({
     .transform((v) => v.replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim())
     .pipe(z.string().min(2, 'Primary keyword must be at least 2 characters').max(160, 'Primary keyword must be at most 160 characters')),
   secondaryKeywords: z
-    .union([z.string().max(4000), z.array(z.string().max(160)).max(40)])
+    .union([z.string().max(6000), z.array(z.string().max(160)).max(60)])
     .optional()
     .nullable()
     .transform((v) => parseSecondaryKeywords(v ?? []))
-    .refine((v) => v.length <= 20, 'At most 20 secondary keywords'),
+    .refine((v) => v.length <= MAX_SECONDARY_KEYWORDS, `At most ${MAX_SECONDARY_KEYWORDS} secondary keywords`),
   exampleTitle: optionalTrimmed(200),
   websiteId: z.string({ error: 'Choose a website' }).min(1, 'Choose a website').max(40),
   categoryId: z.string().max(40).optional().nullable(),
@@ -57,6 +61,8 @@ export interface CreateContext {
  * job. Re-submitting the same idempotency key returns the existing task.
  */
 export async function createArticleTask(raw: unknown, ctx: CreateContext, client: Tx = db): Promise<{ task: ArticleTask; created: boolean }> {
+  // One of the owner's writers: know it (and whether it is active) before checking the input.
+  if (isCustomKey((raw as { moduleKey?: string } | null)?.moduleKey)) await ensureCustomWriters();
   const input = articleTaskInputSchema.parse(raw);
   const existing = await client.articleTask.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
   if (existing) return { task: existing, created: false };
@@ -65,21 +71,20 @@ export async function createArticleTask(raw: unknown, ctx: CreateContext, client
   if (!site) throw new AppError(400, 'VALIDATION', 'The selected website does not exist.', { websiteId: ['Unknown website'] });
   if (!site.active) throw new AppError(400, 'VALIDATION', `${site.name} is inactive. Activate it on the Websites page first.`, { websiteId: ['Website is inactive'] });
 
-  let category = input.categoryId ? site.categories.find((c) => c.id === input.categoryId) : undefined;
-  if (input.categoryId && !category) throw new AppError(400, 'VALIDATION', 'That category does not belong to the selected website.', { categoryId: ['Not a synchronized category of this site'] });
-  // Tigram without a chosen category: its CATEGORY stage chooses one (with the default as the fallback). Celebrity
-  // articles need one from the start: the website's default, which their CATEGORY stage replaces for workflow articles.
-  if (!category && site.defaultCategoryId && input.moduleKey !== 'tigram-writer') category = site.categories.find((c) => c.id === site.defaultCategoryId);
-  if (!category && input.moduleKey === 'celebrity-writer') {
-    throw new AppError(
-      400,
-      'VALIDATION',
-      site.categories.length ? 'Choose a category for this article.' : `${site.name} has no synchronized categories yet. Open Websites → ${site.name} → Sync categories.`,
-      { categoryId: ['Category is required'] },
-    );
+  const language = input.language ?? (site.language as 'en' | 'de');
+  let category: (typeof site.categories)[number] | undefined;
+  const rule = categoryRuleFor(input.moduleKey);
+  if (rule.mode !== 'chatgpt') {
+    // Owner decision (2026-11-04): celebrity articles always go into the website's “Celebrity” category (German
+    // websites: “Prominente”); the owner's writers may always use another fixed category. A chosen one is not used.
+    category = findRuleCategory(site.categories, rule, language) ?? undefined;
+    if (!category) throw new AppError(400, 'VALIDATION', missingRuleCategoryMessage(site.name, rule, language, moduleDisplayName(input.moduleKey)), { categoryId: [rule.mode === 'celebrity' ? 'No Celebrity category on this website' : `No “${rule.name}” category on this website`] });
+  } else {
+    category = input.categoryId ? site.categories.find((c) => c.id === input.categoryId) : undefined;
+    if (input.categoryId && !category) throw new AppError(400, 'VALIDATION', 'That category does not belong to the selected website.', { categoryId: ['Not a synchronized category of this site'] });
+    // Tigram without a chosen category: its CATEGORY stage chooses one (with the default as the fallback).
   }
 
-  const language = input.language ?? (site.language as 'en' | 'de');
   const country = input.targetCountry ?? site.targetCountry;
   try {
     const task = await client.articleTask.create({

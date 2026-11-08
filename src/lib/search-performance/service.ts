@@ -148,7 +148,7 @@ async function siteArticles(websiteId: string) {
       published: target?.status === 'ACTIVE' || kw?.status === 'PUBLISHED' || kw?.status === 'INDEXING_REQUESTED' || kw?.status === 'INDEXED',
       publishedAt: target?.publishedAt ?? kw?.publishedAt ?? null,
       indexingRequested: Boolean(kw?.indexingRequestedAt) || kw?.status === 'INDEXING_REQUESTED',
-      // INDEXED from Google's URL Inspection (live Search Console) or from the owner's own confirmation.
+      // INDEXED from Google search (the search API; earlier: Google's URL Inspection) or from the owner's own confirmation.
       indexedByGoogle: kw?.status === 'INDEXED' && Boolean(kw.indexingStatus?.startsWith('Google:')),
       indexedByOwner: kw?.status === 'INDEXED' && !kw.indexingStatus?.startsWith('Google:'),
     };

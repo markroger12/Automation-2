@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { parseJson, stringArray } from '../json';
-import { isActiveModuleKey, moduleDisplayName, statusGroup } from '../domain';
+import { isRunnableModuleKey, moduleDisplayName, statusGroup } from '../domain';
 import { sanitizeArticleHtml } from '../html/sanitize';
 import { stripTags } from '../content/text';
 
@@ -46,7 +46,7 @@ export async function getTaskDetail(id: string) {
     ...task,
     writerName: moduleDisplayName(task.moduleKey),
     // Retired-writer records are read-only even if created after the retirement migration ran.
-    legacy: task.legacy || !isActiveModuleKey(task.moduleKey),
+    legacy: task.legacy || !isRunnableModuleKey(task.moduleKey),
     group: statusGroup(task.status),
     secondaryKeywordList: stringArray(task.secondaryKeywords),
     titleOptionList: stringArray(task.titleOptions),

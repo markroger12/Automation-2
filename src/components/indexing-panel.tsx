@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from './client';
 import { Alert, Card, Chip } from './ui';
+import { ScreenshotModal } from './screenshot-modal';
 import { formatInZone } from '@/lib/workflow/time';
 
 interface IndexingOverview {
@@ -25,6 +26,8 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
   const toast = useToast();
   const [o, setO] = useState<IndexingOverview | null>(null);
   const [busy, setBusy] = useState(false);
+  // The screenshot opens over the page (owner request: not in a new tab).
+  const [shotOpen, setShotOpen] = useState(false);
   const load = useCallback(async () => setO(await api<IndexingOverview>('/api/search-console/indexing')), []);
   useEffect(() => {
     void load().catch(() => {});
@@ -55,7 +58,20 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
   const when = (iso: string) => `${formatInZone(iso, 'Asia/Karachi')} PK`;
   const needsSignIn = o.signedIn === false || o.notSignedIn > 0;
   return (
-    <Card title="Indexing in Search Console" description="About 35 seconds after a publish (or when you select keywords and click “Request indexing”), Automation Chrome opens Search Console, inspects the post's URL and clicks “Request indexing”, as you do by hand. The keyword then shows “indexing requested” and Google's answer.">
+    <Card
+      title="Indexing in Search Console"
+      description="About 35 seconds after a publish (or when you select keywords and click “Request indexing”), Automation Chrome opens Search Console, inspects the post's URL and clicks “Request indexing”, as you do by hand. The keyword then shows “indexing requested” and Google's answer."
+      actions={
+        <>
+          <Button size="sm" disabled={busy} onClick={() => void act('signin')}>
+            Sign in to Google in Automation Chrome
+          </Button>
+          <Button size="sm" variant="secondary" disabled={busy || !o.waiting} onClick={() => void act('now')}>
+            Request now
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <Chip tone={o.signedIn === true ? 'success' : needsSignIn ? 'warning' : 'neutral'}>
@@ -64,6 +80,7 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
           <Chip tone="success">{o.requested} requested</Chip>
           {o.waiting ? <Chip tone="info">{o.waiting} waiting</Chip> : null}
           {o.quota ? <Chip tone="warning">{o.quota} after today's limit</Chip> : null}
+          {!o.last ? <span className="text-muted text-xs">No request made yet.</span> : null}
         </div>
         {needsSignIn ? (
           <Alert tone="warning" title="Sign in to Google once in Automation Chrome">
@@ -74,33 +91,27 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
         {o.last ? (
           <p className="text-muted text-xs">
             Last answer: {o.last.outcome === 'REQUESTED' ? 'indexing requested' : o.last.outcome === 'NOT_SIGNED_IN' ? 'Google asked to sign in' : o.last.outcome === 'QUOTA' ? "Search Console's daily limit" : o.last.outcome.toLowerCase().replace('_', ' ')} for{' '}
-            <a className="text-indigo-600 underline" href={o.last.url} target="_blank" rel="noreferrer">
+            <a className="link" href={o.last.url} target="_blank" rel="noreferrer">
               {o.last.url.replace(/^https?:\/\//, '')}
             </a>{' '}
             · {when(o.last.at)}
           </p>
-        ) : (
-          <p className="text-muted text-xs">No request made yet.</p>
-        )}
+        ) : null}
         {o.lastProof ? (
           <div className="flex items-start gap-3">
-            <a href={`/api/media/${o.lastProof.id}`} target="_blank" rel="noreferrer" className="shrink-0" title="Open the screenshot">
+            <button type="button" onClick={() => setShotOpen(true)} className="shrink-0" title="Open the screenshot" aria-label="Open the latest Search Console screenshot">
               <img src={`/api/media/${o.lastProof.id}`} alt="Search Console after “Request indexing” (latest)" className="border-app h-20 w-36 rounded border object-cover object-top" />
-            </a>
+            </button>
             <p className="text-muted text-xs">
               Latest proof: Search Console as Automation Chrome saw it after “Request indexing”{o.lastProof.url ? ` for ${o.lastProof.url.replace(/^https?:\/\//, '')}` : ''} · {when(o.lastProof.at)}. Each keyword's own screenshot is linked in the keyword queue.
             </p>
           </div>
         ) : null}
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" disabled={busy} onClick={() => void act('signin')}>
-            Sign in to Google in Automation Chrome
-          </Button>
-          <Button size="sm" variant="secondary" disabled={busy || !o.waiting} onClick={() => void act('now')}>
-            Request now
-          </Button>
-        </div>
       </div>
+      <ScreenshotModal
+        shot={shotOpen && o.lastProof ? { id: o.lastProof.id, title: 'Search Console screenshot (latest)', caption: `${o.lastProof.url ? `${o.lastProof.url} · ` : ''}${when(o.lastProof.at)}` } : null}
+        onClose={() => setShotOpen(false)}
+      />
     </Card>
   );
 }

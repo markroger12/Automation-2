@@ -3,24 +3,28 @@ import { getSettings } from '@/lib/settings';
 import { connectionKeyInfo } from '@/lib/agent/keys';
 import { Card, PageHeader } from '@/components/ui';
 import { ExtensionPairing } from '@/components/extension-pairing';
+import { AppUpdates } from '@/components/app-updates';
+import { updateInfo } from '@/lib/update/service';
+import { readAutoCheck } from '@/lib/update/auto-check';
 import { SettingsForm } from './settings-form';
 
 export const metadata = { title: 'Settings' };
 
 export default async function SettingsPage() {
-  const [settings, key] = await Promise.all([getSettings(), connectionKeyInfo()]);
+  const [settings, key, update, autoCheck] = await Promise.all([getSettings(), connectionKeyInfo(), updateInfo(), readAutoCheck().catch(() => null)]);
   return (
     <>
       <PageHeader
         title="Settings"
         description="Global defaults. Website pages can override content/SEO/workflow values for their own tasks only. Each task freezes its effective configuration when it starts."
       />
+      <AppUpdates initial={update} auto={autoCheck} />
       <Card
         title="ChatGPT extension connection key"
         className="mb-6"
         description={
           <>
-            The extension authenticates to this dashboard with this key. Full setup: <Link className="text-indigo-600 underline" href="/automation-chrome">Automation Chrome</Link>.
+            The extension authenticates to this dashboard with this key. Full setup: <Link className="link" href="/automation-chrome">Automation Chrome</Link>.
           </>
         }
       >

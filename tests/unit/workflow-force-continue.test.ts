@@ -98,6 +98,19 @@ describe('owner request: Force continue for a draft stopped by the quality check
     expect(JSON.parse(t.options)).toMatchObject({ qualityOverride: true, qualityOverrideReason: 'Force continue from the workflow keyword queue' });
     expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('WRITING');
   });
+
+  it('owner report (Willie Beir): a draft changed in WordPress is not forced; the note says to choose the version', async () => {
+    const { task } = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Edited Draft', websiteId: siteId, categoryId, options: { images: 'off' }, idempotencyKey: 'force-continue:4' }, { source: 'WORKFLOW' });
+    await client.articleTask.update({ where: { id: task.id }, data: { status: 'NEEDS_REVIEW', wpPostId: 8098, message: 'Draft #8098 was edited in WordPress after the app saved it (modified 2026-11-04T23:46:21 UTC). The app did not overwrite those edits.', reviewReasons: JSON.stringify(['Draft #8098 has edits made in WordPress.']) } });
+    const kw = await client.workflowKeyword.create({ data: { workflowId, keyword: 'Edited Draft', normalizedKeyword: 'edited draft', position: 8, status: 'FAILED', taskId: task.id } });
+    const r = await service.keywordAction(siteId, { keywordIds: [kw.id], action: 'force' });
+    expect(r.changed).toBe(0);
+    expect(r.notes.join(' ')).toMatch(/“Edited Draft”: its draft #8098 was changed in WordPress after the app saved it\. Open the article and choose “Keep the WordPress version” or “Overwrite with the app version”\./);
+    expect((await client.articleTask.findUniqueOrThrow({ where: { id: task.id } })).status).toBe('NEEDS_REVIEW');
+    // “Approve selected” on the queue says the same for this article.
+    const { approveWaiting } = await import('@/lib/tasks/actions');
+    await expect(approveWaiting(task.id, 'go on')).rejects.toThrow(/Approving does not decide which version to keep/);
+  });
 });
 
 describe('owner report: an article published today showed on tomorrow’s slot in the calendar', () => {

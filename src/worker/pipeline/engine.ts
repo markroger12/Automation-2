@@ -2,7 +2,10 @@ import type { ArticleStage, ArticleTask, QueueJob, Website } from '@prisma/clien
 import { db } from '@/lib/db';
 import { log, errorMessage } from '@/lib/log';
 import { parseJson } from '@/lib/json';
-import { isActiveModuleKey, type TaskStatus } from '@/lib/domain';
+import { isRunnableModuleKey, type TaskStatus } from '@/lib/domain';
+import { isCustomKey } from '@/lib/writers/types';
+import { ensureCustomWriters } from '@/lib/writers/store';
+import { registerCustomPipelines } from '../pipelines/custom';
 import { completeJob, failJob, heartbeatJob, releaseJob } from '@/lib/queue';
 import { exponentialBackoffMs } from '@/lib/backoff';
 import { getSettings, parseSiteOverrides } from '@/lib/settings';
@@ -91,15 +94,26 @@ export async function runArticleJob(job: QueueJob, options: EngineOptions): Prom
     await completeJob(job.id, owner, { noop: task.status });
     return 'completed';
   }
-  const def = getPipeline(task.moduleKey);
-  if (task.legacy || !isActiveModuleKey(task.moduleKey) || !def) {
+  let def = getPipeline(task.moduleKey);
+  if (!task.legacy && isCustomKey(task.moduleKey) && (!def || !isRunnableModuleKey(task.moduleKey))) {
+    // One of the owner's writers this worker does not know yet (created a moment ago): load the writers again.
+    await ensureCustomWriters({ force: true });
+    registerCustomPipelines();
+    def = getPipeline(task.moduleKey);
+  }
+  if (task.legacy || !isRunnableModuleKey(task.moduleKey) || !def) {
     await db.articleTask.update({
       where: { id: taskId },
       data: {
         status: 'NEEDS_REVIEW',
         legacy: true,
-        message: task.legacy || task.moduleKey === 'celebrity-writer-2' ? 'Retired writer — choose a supported writer to create a new task.' : `Writer module "${task.moduleKey}" is not available.`,
-        nextAction: 'Create a new task with Celebrity Article Writer or Tigram Article Writer.',
+        message:
+          task.legacy || task.moduleKey === 'celebrity-writer-2'
+            ? 'Retired writer — choose a supported writer to create a new task.'
+            : isCustomKey(task.moduleKey)
+              ? `Your writer “${task.moduleKey}” was deleted; this article cannot continue.`
+              : `Writer module "${task.moduleKey}" is not available.`,
+        nextAction: 'Create a new task with one of the active writers.',
         reviewReasons: JSON.stringify(['Retired or unknown writer module; this task is read-only.']),
       },
     });
@@ -289,7 +303,7 @@ async function handleError(
       'LOGIN_REQUIRED',
       error.scope === 'wordpress' ? 'wordpress-login' : 'chatgpt-login',
       error.message,
-      error.scope === 'wordpress' ? 'Open Websites → this site → Log in, sign in manually, then the task resumes.' : 'Sign in to ChatGPT in the Automation Chrome window; the task resumes automatically.',
+      error.scope === 'wordpress' ? 'Open Websites → this site → Session tab: save the WordPress sign-in (the app logs in by itself) or Log in yourself; the task then resumes.' : 'Sign in to ChatGPT in the Automation Chrome window; the task resumes automatically.',
     );
     return 'paused';
   }

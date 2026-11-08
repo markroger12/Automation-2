@@ -3,7 +3,7 @@ import { audit } from '@/lib/audit';
 import { log } from '@/lib/log';
 import { getSettings } from '@/lib/settings';
 import { LoginRequiredError } from '@/lib/pipeline-errors';
-import { moveToNextSlot, SCHEDULE_LEAD_MS } from '@/lib/workflow/scheduler';
+import { MISSED_SCHEDULE_GRACE_MS, moveToNextSlot, SCHEDULE_LEAD_MS } from '@/lib/workflow/scheduler';
 import { withSiteContext, withWordPressSlot } from './browser';
 import { WpClient, type WpPost } from './client';
 import { withPublishPermit } from './publish-guard';
@@ -89,22 +89,74 @@ export async function scheduleKeywordPost(keywordId: string): Promise<Record<str
   return { scheduled: true, postId, at: at.toISOString() };
 }
 
-/** After the slot: confirm WordPress actually published the post (status read back; nothing is changed). */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const gmt = (dateGmt: string | null | undefined) => (dateGmt ? Date.parse(`${dateGmt.replace(/Z$/, '')}Z`) : NaN);
+
+/**
+ * After the slot: confirm WordPress published the post (status read back). Owner report (morgan carey, 7:00 pm,
+ * still “scheduled” at 7:15): WordPress publishes a scheduled post with its own scheduler, WP-Cron, which on many
+ * hosts runs late or never (“Missed schedule”). So when the post's own time has passed by MISSED_SCHEDULE_GRACE_MS and
+ * it is still “future”: first WP-Cron is started (wp-cron.php, as a visit to the site does) and WordPress publishes
+ * it; if it still does not, the app publishes it itself — the approved path (withPublishPermit), its date kept.
+ * Nothing is ever published before its time. A check that cannot reach WordPress says why on the keyword.
+ */
 export async function verifyKeywordPublished(keywordId: string): Promise<Record<string, unknown>> {
-  const kw = await db.workflowKeyword.findUnique({ where: { id: keywordId }, include: { workflow: true } });
+  const kw = await db.workflowKeyword.findUnique({ where: { id: keywordId }, include: { workflow: { include: { website: true } } } });
   if (!kw || kw.status !== 'SCHEDULED' || !kw.taskId) return { skipped: 'not scheduled' };
   const task = await db.articleTask.findUniqueOrThrow({ where: { id: kw.taskId } });
   if (!task.wpPostId) return { skipped: 'no post' };
-  const post = await siteClient(kw.workflow.websiteId, `verify post #${task.wpPostId}`, (client) => client.getPost(task.wpPostId!));
+  const postId = task.wpPostId;
+  let via: 'wp-cron' | 'app' | null = null;
+  let post: WpPost | null;
+  try {
+    post = await siteClient(kw.workflow.websiteId, `verify post #${postId}`, async (client) => {
+      let p = await client.getPost(postId);
+      const overdue = (x: WpPost | null) => x?.status === 'future' && Date.now() - gmt(x.date_gmt) >= MISSED_SCHEDULE_GRACE_MS;
+      if (!overdue(p)) return p;
+      // 1. WordPress's own scheduler (it may answer before it has finished: read back a few times).
+      await client.runCron();
+      for (let i = 0; i < 3 && p?.status === 'future'; i++) {
+        if (i) await sleep(3000);
+        p = await client.getPost(postId);
+      }
+      if (p?.status === 'publish') {
+        via = 'wp-cron';
+        return p;
+      }
+      if (!overdue(p) || !kw.workflow.website.canPublish || !kw.workflow.website.canPublishAcknowledgedAt) return p;
+      // 2. WP-Cron did not run: published as scheduled, on the approved path, with its scheduled date kept.
+      const date = p!.date_gmt!;
+      await withPublishPermit(kw.workflow.websiteId, postId, `missed schedule ${date} for “${kw.keyword}”`, () => client.publishMissedSchedule(postId, date));
+      p = await client.getPost(postId);
+      if (p?.status === 'publish') via = 'app';
+      return p;
+    });
+  } catch (error) {
+    const message = (error as Error).message.split('\n')[0].slice(0, 300);
+    await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: `Could not check WordPress after the slot: ${message} Checked again in a few minutes.` } });
+    throw error;
+  }
+  if (via === 'wp-cron') await log({ category: 'workflow', taskId: kw.taskId, message: `“${kw.keyword}”: WordPress had not published post #${postId} at its time (its scheduler, WP-Cron, had not run). The app started WP-Cron and WordPress published it.` });
+  if (via === 'app') {
+    await audit('workflow.published-missed-schedule', 'WorkflowKeyword', kw.id, { postId, at: post?.date_gmt, website: kw.workflow.website.name });
+    await log({ level: 'warn', category: 'workflow', taskId: kw.taskId, message: `“${kw.keyword}”: WordPress did not publish post #${postId} at its time, and its scheduler (WP-Cron) did not run when started. The app published it as scheduled (date kept). If this happens often, ask the host to run WP-Cron by a real cron job.` });
+  }
   if (post?.status === 'publish') {
     await markPublished(kw, post, new Date());
-    return { published: true, url: post.link };
+    return { published: true, url: post.link, ...(via ? { via } : {}) };
   }
   if (post?.status === 'future') {
-    const overdue = kw.scheduledAt && Date.now() - kw.scheduledAt.getTime() > 24 * 3_600_000;
-    const message = overdue
-      ? 'WordPress has not published this post 24 hours after its slot. WP-Cron may not be running on this website; it is still checked every 30 minutes.'
-      : 'WordPress still shows “future” after the slot (WP-Cron may be delayed; it is checked again).';
+    const when = gmt(post.date_gmt);
+    const message =
+      when > Date.now()
+        ? kw.scheduledAt && sameMinute(post.date_gmt, kw.scheduledAt)
+          ? `Scheduled in WordPress for ${post.date_gmt!.replace('T', ' ').slice(0, 16)} UTC; checked after that time.`
+          : `WordPress has this post scheduled for ${post.date_gmt!.replace('T', ' ').slice(0, 16)} UTC (changed in WordPress); checked after that time.`
+        : !kw.workflow.website.canPublish || !kw.workflow.website.canPublishAcknowledgedAt
+          ? 'WordPress did not publish this post at its time, and publishing is now off for this website, so the app does not publish it. Publish it in WordPress, or allow publishing again.'
+          : Date.now() - when < MISSED_SCHEDULE_GRACE_MS
+            ? 'Its time has just come; WordPress publishes it within moments (checked again in a few minutes).'
+            : 'WordPress did not publish this post at its time and refused to publish it now. Publish it yourself in WordPress; it is checked again.';
     await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: message } });
     return { published: false, status: post.status };
   }

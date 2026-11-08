@@ -7,14 +7,15 @@
  *   while it owns work.
  * - Manages 1–5 ChatGPT tabs it opened itself (never hijacks the owner's own
  *   tabs), reuses a tab that already shows the needed conversation, and never
- *   restarts tabs or itself to "fix" a routine error.
+ *   restarts tabs or itself to "fix" a routine error (it reloads itself only
+ *   to pick up an updated extension folder, when idle).
  * - Completions/failures go through a persistent outbox so an answer is not
  *   lost if the dashboard is briefly unreachable.
  * - Login pages and human checks are never automated: it notifies the owner.
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.4.6';
+const EXTENSION_VERSION = '3.5.4';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -213,7 +214,10 @@ async function blobToBase64(blob) {
  * stands (pageCapture: works in a background tab and a minimized window, where a screen capture cannot); the
  * dashboard turns the copy into a PNG with the article. A proof that cannot be saved never stops the request.
  */
-async function saveGscProof(tabId, jobId) {
+/** A page structure copy from a content script (extension/outline.js), when it sent one of a sane size. */
+const pageCopyOf = (msg) => (typeof msg.pageCopy === 'string' && msg.pageCopy.length <= 300000 ? msg.pageCopy : undefined);
+
+async function saveGscProof(tabId, jobId, shown) {
   try {
     await new Promise((r) => setTimeout(r, 800)); // let the dialog finish opening
     // The copy lives in a temporary file that Chrome sometimes drops before it can be read ("could not be found"):
@@ -232,7 +236,8 @@ async function saveGscProof(tabId, jobId) {
       }
     }
     await api('gsc-proof', { jobId, mhtmlBase64 }, '/api/extension/gsc-proof');
-    gsc.proof = { jobId, ok: true, bytes: size, at: Date.now() };
+    // `shown`: whether Google's answer was on screen in the copy ('shown', 'set as open', …), for the popup's state.
+    gsc.proof = { jobId, ok: true, bytes: size, shown: shown || null, at: Date.now() };
   } catch (e) {
     gsc.proof = { jobId, ok: false, error: e.message, at: Date.now() };
     lastError = 'Search Console screenshot not saved: ' + e.message;
@@ -285,12 +290,12 @@ async function runGscJob() {
         if (!r || (!r.ok && r.error !== 'busy')) finish({ outcome: 'ERROR', message: 'The Search Console page did not take the request: ' + ((r && r.error) || 'no answer') });
       };
       gsc.onDone = (fromTab, msg) => {
-        if (fromTab === tabId && msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null });
+        if (fromTab === tabId && msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null, shown: msg.shown || null, pageCopy: pageCopyOf(msg) });
       };
     });
     // The proof goes first: the dashboard takes it only while this request is still open.
-    if (result.outcome === 'REQUESTED' || result.outcome === 'QUOTA') await saveGscProof(tabId, job.id);
-    await outboxPush('gsc-result', { jobId: job.id, outcome: result.outcome, message: result.message ? String(result.message).slice(0, 900) : null });
+    if (result.outcome === 'REQUESTED' || result.outcome === 'QUOTA') await saveGscProof(tabId, job.id, result.shown);
+    await outboxPush('gsc-result', { jobId: job.id, outcome: result.outcome, message: result.message ? String(result.message).slice(0, 900) : null, pageCopy: result.pageCopy });
     setTimeout(() => void tick(), 500);
   } catch (e) {
     lastError = e.message;
@@ -471,7 +476,49 @@ async function hello(managed) {
   lastHelloAt = Date.now();
   serverCfg = Object.assign({}, serverCfg, res.config || {});
   versionMessage = res.versionOk === false ? res.message : null;
+  if (res.versionOk === false && res.expectedVersion) await reloadFromFolder(res.expectedVersion, managed);
   return res;
+}
+
+/**
+ * After an app update (Settings → App updates, or git pull) the extension folder holds the new version while Chrome
+ * still runs the old one (owner request: no reload by hand after each update). When the folder has exactly the
+ * version the app expects and nothing runs here, reload from it — as chrome://extensions → reload does. Once per
+ * version: if Chrome loads the extension from another folder, the badge says VER as before.
+ */
+async function reloadFromFolder(expected, managed) {
+  if (expected === EXTENSION_VERSION || gsc.running || managed.some((id) => tabState(id).busy)) return false;
+  let onDisk = null;
+  try {
+    // An unpacked extension's files are read from its folder, so this is the version on disk now.
+    onDisk = (await (await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' })).json()).version;
+  } catch (e) {
+    return false;
+  }
+  if (onDisk !== expected) return false;
+  const { selfReload } = await chrome.storage.local.get('selfReload');
+  if (selfReload && selfReload.to === expected) return false;
+  await chrome.storage.local.set({ selfReload: { from: EXTENSION_VERSION, to: expected, at: Date.now(), tabs: managed } });
+  chrome.runtime.reload();
+  return true;
+}
+
+/** Right after such a reload: the ChatGPT tabs it managed still run the old page scripts, so reload them and keep them. */
+async function afterReloadFromFolder() {
+  const { selfReload } = await chrome.storage.local.get('selfReload');
+  if (!selfReload || selfReload.to !== EXTENSION_VERSION || selfReload.restored) return;
+  await chrome.storage.local.set({ selfReload: Object.assign({}, selfReload, { restored: true }) });
+  const alive = [];
+  for (const id of selfReload.tabs || []) {
+    try {
+      await chrome.tabs.get(id);
+      await chrome.tabs.reload(id);
+      alive.push(id);
+    } catch (e) {
+      /* the tab was closed */
+    }
+  }
+  if (alive.length) await setManagedTabIds(alive);
 }
 
 async function setBadge(text, color) {
@@ -487,6 +534,7 @@ async function tick() {
   if (ticking) return;
   ticking = true;
   try {
+    await startup;
     await loadConfig();
     if (!cfg.key) {
       await setBadge('KEY', '#b45309');
@@ -495,7 +543,8 @@ async function tick() {
     await flushOutbox();
     let managed = await refreshTabs();
     const anyBusy = managed.some((id) => tabState(id).busy);
-    if (anyBusy || Date.now() - lastHelloAt > 20_000 || !lastHelloAt) await hello(managed);
+    // While the versions differ, every poll says hello: it reloads from the folder as soon as an update wrote it.
+    if (anyBusy || versionMessage || Date.now() - lastHelloAt > 20_000 || !lastHelloAt) await hello(managed);
     if (versionMessage) {
       await setBadge('VER', '#b91c1c');
       return;
@@ -589,6 +638,7 @@ chrome.runtime.onConnect.addListener((port) => {
           images: Array.isArray(msg.images) && msg.images.length ? msg.images : undefined,
           imageLinks: Array.isArray(msg.imageLinks) && msg.imageLinks.length ? msg.imageLinks.slice(0, 20) : undefined,
           galleryReport: typeof msg.galleryReport === 'string' ? msg.galleryReport.slice(0, 400) : undefined,
+          pageCopy: pageCopyOf(msg),
           conversationUrl: msg.conversationUrl || null,
           recovered: Boolean(msg.recovered),
           elapsedMs: msg.elapsedMs,
@@ -642,7 +692,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Chrome restarted this background while Google was answering: still report it (proof first), close the tab.
           void (async () => {
             if (tabId !== null && (msg.outcome === 'REQUESTED' || msg.outcome === 'QUOTA')) await saveGscProof(tabId, String(msg.jobId));
-            await outboxPush('gsc-result', { jobId: String(msg.jobId), outcome: msg.outcome, message: msg.message ? String(msg.message).slice(0, 900) : null });
+            await outboxPush('gsc-result', { jobId: String(msg.jobId), outcome: msg.outcome, message: msg.message ? String(msg.message).slice(0, 900) : null, pageCopy: pageCopyOf(msg) });
             if (tabId !== null) await chrome.tabs.remove(tabId).catch(() => {});
           })();
         }
@@ -804,6 +854,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 async function restoreAfterWorkerRestart() {
   await loadConfig();
+  await afterReloadFromFolder().catch((e) => (lastError = e.message));
   const checkpoints = await sessionGet('checkpoints', {});
   for (const [jobId, cp] of Object.entries(checkpoints)) {
     if (!cp || cp.tabId === undefined) continue;
@@ -835,4 +886,5 @@ chrome.alarms.create('bas-poll', { periodInMinutes: 0.5 });
 self.basTick = tick;
 self.basState = () => ({ cfg: cfg && { serverOrigin: cfg.serverOrigin, installId: cfg.installId, paired: Boolean(cfg.key) }, serverCfg, versionMessage, lastError, gscProof: gsc.proof, tabs: Array.from(tabs.entries()).map(([id, t]) => ({ id, ready: t.ready, busy: t.busy, url: t.url, jobId: t.jobId })) });
 
-void restoreAfterWorkerRestart().then(() => tick());
+const startup = restoreAfterWorkerRestart().catch((e) => (lastError = e.message));
+void startup.then(() => tick());

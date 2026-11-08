@@ -121,6 +121,9 @@ export function truncateAtWord(text: string, max: number): string {
   return (at > max * 0.6 ? cut.slice(0, at) : cut.slice(0, max)).replace(/[,;:\s]+$/, '');
 }
 
+/** The most secondary keywords one article may have (owner: 30; it was 20). */
+export const MAX_SECONDARY_KEYWORDS = 30;
+
 /** Parse secondary keywords from multiline / comma-separated input: ordered, de-duplicated, intent preserved. */
 export function parseSecondaryKeywords(input: string | string[] | null | undefined): string[] {
   const raw = Array.isArray(input) ? input : String(input ?? '').split(/[\n,;]+/);

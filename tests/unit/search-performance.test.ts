@@ -36,7 +36,7 @@ beforeAll(async () => {
   sp = await import('@/lib/search-performance/service');
   const websites = await import('@/lib/websites');
   siteId = (await websites.createWebsite({ name: 'Celeb News', publicUrl: 'https://celeb.example', language: 'en', targetCountry: 'United States', timezone: 'UTC' })).id;
-  await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Stars' } });
+  await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Celebrity' } });
   await article('Tom Kaulitz', 'tom-kaulitz', new Date('2026-08-01T10:00:00Z'));
   await article('Bill Kaulitz', 'bill-kaulitz', new Date('2026-08-01T10:00:00Z'));
   await article('Heidi Klum', 'heidi-klum', new Date('2026-08-02T10:00:00Z'));

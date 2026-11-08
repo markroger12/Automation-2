@@ -7,8 +7,9 @@ import { Button, useToast } from '@/components/client';
 import { Input, Select } from '@/components/form';
 import { Chip } from '@/components/ui';
 import { resolveWriter, type SiteRoutingRule } from '@/lib/campaigns/router';
+import { moduleDisplayName } from '@/lib/domain';
+import { writerChoices } from '@/lib/writers/options';
 
-const WRITER_LABEL: Record<string, string> = { 'celebrity-writer': 'Celebrity Article Writer', 'tigram-writer': 'Tigram Article Writer' };
 
 /** Per-website writer rules for bulk campaigns and the workflow (a row's own writer choice still wins). */
 export function RoutingRules({ websiteId, language, initial }: { websiteId: string; language: string; initial: SiteRoutingRule[] }) {
@@ -41,8 +42,12 @@ export function RoutingRules({ websiteId, language, initial }: { websiteId: stri
             <Input aria-label={`Rule ${i + 1} phrase`} className="w-48" value={r.contains} maxLength={80} onChange={(e) => setRules(rules.map((x, j) => (j === i ? { ...x, contains: e.target.value } : x)))} />
             <span className="text-muted">→</span>
             <Select aria-label={`Rule ${i + 1} writer`} className="w-56" value={r.writer} onChange={(e) => setRules(rules.map((x, j) => (j === i ? { ...x, writer: e.target.value as SiteRoutingRule['writer'] } : x)))}>
-              <option value="celebrity-writer">{WRITER_LABEL['celebrity-writer']}</option>
-              <option value="tigram-writer">{WRITER_LABEL['tigram-writer']}</option>
+              {writerChoices().map((w) => (
+                <option key={w.key} value={w.key}>
+                  {w.name}
+                </option>
+              ))}
+              {!writerChoices().some((w) => w.key === r.writer) ? <option value={r.writer}>{moduleDisplayName(r.writer)} (not active: the rule is passed over)</option> : null}
             </Select>
             <Button size="sm" variant="ghost" aria-label={`Remove rule ${i + 1}`} onClick={() => setRules(rules.filter((_, j) => j !== i))}>
               <X className="h-4 w-4" />
@@ -65,7 +70,7 @@ export function RoutingRules({ websiteId, language, initial }: { websiteId: stri
         <Input id={`probe-${websiteId}`} value={probe} onChange={(e) => setProbe(e.target.value)} placeholder="e.g. best vpn apps" />
         {decision ? (
           <p className="mt-2" role="status">
-            {decision.writer ? <Chip tone="brand">{WRITER_LABEL[decision.writer]}</Chip> : <Chip tone="warning">You choose (unclear)</Chip>} <span className="text-muted">{decision.rationale}</span>
+            {decision.writer ? <Chip tone="brand">{moduleDisplayName(decision.writer)}</Chip> : <Chip tone="warning">{decision.detected === 'celebrity' ? 'You choose: Celebrity or Celebrity 2' : 'You choose (unclear)'}</Chip>} <span className="text-muted">{decision.rationale}</span>
           </p>
         ) : null}
       </div>

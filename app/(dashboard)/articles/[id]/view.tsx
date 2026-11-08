@@ -10,14 +10,14 @@ import { Button, ConfirmDialog, CopyButton, RelativeTime, Tabs, useToast } from 
 import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, ProgressBar, StatusChip, buttonClasses, cx, formatDateTime, formatDuration } from '@/components/ui';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
 import { ArticleExtraTabs, EXTRA_TABS } from './extra-tabs';
+import { ReviewNotes } from './review-notes';
 import { WordPressTab } from './wordpress-tab';
 import { LinksTab } from './links-tab';
 import { HumanizerTab } from './humanizer-tab';
 import { OriginalityTab } from './originality-tab';
-import { QualityCard } from './quality-card';
-import { ACTIVE_MODULES } from '@/modules/registry';
+import { OverviewTab } from './overview-tab';
+import { getManifest } from '@/modules/registry';
 
-const REGENERABLE: Record<string, string[]> = Object.fromEntries(ACTIVE_MODULES.map((m) => [m.key, m.stages.filter((s) => s.regenerable).map((s) => s.key)]));
 
 const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'links', 'images', 'humanizer', 'originality', 'wordpress', 'stages', 'prompts', 'logs', 'conversation'] as const;
 type TabId = (typeof BASE_TABS)[number];
@@ -30,6 +30,23 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Owner report (Willie Beir): a draft changed in WordPress waits for a choice of version, not for an approval.
+  const [wpChoice, setWpChoice] = useState<'keep-remote' | 'overwrite-remote' | null>(null);
+  const wpEdited = task.group === 'review' && /has edits made in WordPress|edited in WordPress after the app saved it/.test(`${task.message ?? ''} ${task.reviewReasonList.join(' ')}`);
+  async function chooseVersion() {
+    if (!wpChoice) return;
+    setBusy(wpChoice);
+    try {
+      await api(`/api/tasks/${task.id}/wordpress`, { body: { mode: wpChoice } });
+      toast('success', wpChoice === 'keep-remote' ? 'The WordPress version is kept; the WordPress steps finish now.' : 'The app version replaces the WordPress draft now.');
+      await reload();
+    } catch (e) {
+      toast('error', (e as Error).message);
+    } finally {
+      setBusy(null);
+      setWpChoice(null);
+    }
+  }
   const live = !['COMPLETED', 'CANCELLED', 'FAILED'].includes(task.status);
 
   const reload = useCallback(async () => {
@@ -107,9 +124,12 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     { id: 'humanizer', label: 'Humanizer' },
     { id: 'originality', label: 'Originality' },
     { id: 'wordpress', label: 'WordPress', badge: task.wpPostId ? <Chip>#{task.wpPostId}</Chip> : undefined },
+  ];
+  // The technical tabs open from “More”, so the row stays on one line (owner: the tabs wrapped onto two lines).
+  const moreTabs = [
     { id: 'stages', label: 'Stages' },
     { id: 'prompts', label: 'Prompt / Response', badge: task.responses.length ? <Chip>{task.responses.length}</Chip> : undefined },
-    { id: 'logs', label: 'Logs' },
+    { id: 'logs', label: 'Logs', badge: task.logs.length ? <Chip>{task.logs.length}</Chip> : undefined },
     { id: 'conversation', label: 'Conversation' },
   ];
 
@@ -151,11 +171,11 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
                   <Ban className="h-4 w-4" /> Cancel
                 </Button>
               ) : null}
-              <Button variant="danger" onClick={() => setConfirmDelete(true)} loading={busy === 'delete'}>
+              <Button variant="secondary" className="text-rose-600 dark:text-rose-400" onClick={() => setConfirmDelete(true)} loading={busy === 'delete'}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>
               {task.wpEditUrl ? (
-                <a className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700" href={task.wpEditUrl} target="_blank" rel="noreferrer">
+                <a className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[var(--primary)] px-3.5 text-sm font-medium text-[var(--primary-fg)] hover:opacity-90" href={task.wpEditUrl} target="_blank" rel="noreferrer">
                   WordPress draft #{task.wpPostId} <ExternalLink className="h-4 w-4" />
                 </a>
               ) : null}
@@ -185,44 +205,48 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
           </Alert>
         </div>
       ) : null}
-      {task.reviewReasonList.length > 0 && task.group !== 'review' ? (
+      {task.reviewReasonList.length > 0 ? (
         <div className="mb-4">
-          <Alert tone="info" title={`Notes (${task.reviewReasonList.length})`}>
-            <ul className="list-disc pl-5">
-              {task.reviewReasonList.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-          </Alert>
-        </div>
-      ) : null}
-      {task.reviewReasonList.length > 0 && task.group === 'review' ? (
-        <div className="mb-4">
-          <Alert tone="warning" title="Review reasons">
-            <ul className="list-disc pl-5">
-              {task.reviewReasonList.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-            {!task.legacy ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {task.reviewReasonList.some((r) => /^(Possible duplicate|Duplicate keyword)/.test(r)) ? (
-                  <Button size="sm" onClick={() => void reviewAction('allow-duplicate')}>
-                    Allow duplicate and continue
-                  </Button>
-                ) : null}
-                <Button size="sm" onClick={() => void reviewAction('override-quality')}>
-                  Approve despite review reasons…
-                </Button>
-              </div>
-            ) : null}
-          </Alert>
+          <ReviewNotes
+            reasons={task.reviewReasonList}
+            taskId={task.id}
+            held={task.group === 'review'}
+            onTab={(t) => setTab(t as TabId)}
+            actions={
+              task.group === 'review' && !task.legacy ? (
+                <>
+                  {task.reviewReasonList.some((r) => /^(Possible duplicate|Duplicate keyword)/.test(r)) ? (
+                    <Button size="sm" onClick={() => void reviewAction('allow-duplicate')}>
+                      Allow duplicate and continue
+                    </Button>
+                  ) : null}
+                  {wpEdited ? (
+                    <>
+                      <Button size="sm" variant="primary" onClick={() => setWpChoice('keep-remote')}>
+                        Keep the WordPress version…
+                      </Button>
+                      <Button size="sm" variant="danger" onClick={() => setWpChoice('overwrite-remote')}>
+                        Overwrite with the app version…
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setTab('wordpress')}>
+                        See what changed
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="sm" onClick={() => void reviewAction('override-quality')}>
+                      Approve despite review reasons…
+                    </Button>
+                  )}
+                </>
+              ) : undefined
+            }
+          />
         </div>
       ) : null}
 
-      <Tabs tabs={tabs} value={tab} onChange={(id) => setTab(id as TabId)} />
+      <Tabs tabs={tabs} more={moreTabs} value={tab} onChange={(id) => setTab(id as TabId)} />
       <div className="mt-4">
-        {tab === 'overview' ? <OverviewTab task={task} /> : null}
+        {tab === 'overview' ? <OverviewTab task={task} onTab={(t) => setTab(t as TabId)} /> : null}
         {tab === 'links' ? <LinksTab task={task} onChanged={reload} /> : null}
         {tab === 'humanizer' ? <HumanizerTab task={task} /> : null}
         {tab === 'originality' ? <OriginalityTab task={task} /> : null}
@@ -234,6 +258,19 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
         {(EXTRA_TABS as readonly string[]).includes(tab) ? <ArticleExtraTabs tab={tab as (typeof EXTRA_TABS)[number]} task={task} onChanged={reload} /> : null}
       </div>
 
+      <ConfirmDialog
+        open={Boolean(wpChoice)}
+        title={wpChoice === 'keep-remote' ? 'Keep the WordPress version?' : 'Overwrite the WordPress draft?'}
+        confirmLabel={wpChoice === 'keep-remote' ? 'Keep WordPress version' : 'Overwrite draft'}
+        tone={wpChoice === 'overwrite-remote' ? 'danger' : undefined}
+        busy={busy === wpChoice}
+        onCancel={() => setWpChoice(null)}
+        onConfirm={() => void chooseVersion()}
+      >
+        {wpChoice === 'keep-remote'
+          ? `The text edited in WordPress (draft #${task.wpPostId ?? ''}) becomes this article's text in the app and stays in WordPress; the app's version is kept as a revision. The WordPress steps then finish (featured image, Rank Math, check).`
+          : `The edits made in WordPress after the app saved draft #${task.wpPostId ?? ''} are replaced by the app's version. WordPress keeps a revision of the replaced text.`}
+      </ConfirmDialog>
       <ConfirmDialog open={confirmDelete} title="Delete this article?" confirmLabel="Delete" tone="danger" busy={busy === 'delete'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()}>
         The article is removed from this app with its stages, prompts and answers. The WordPress draft or post stays as it is. A report of the article is saved in data\backups\deleted-articles first.
       </ConfirmDialog>
@@ -244,85 +281,13 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
   );
 }
 
-function OverviewTab({ task }: { task: SerializedTaskDetail }) {
-  const opts = task.optionValues as Record<string, unknown>;
-  return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <div className="lg:col-span-2">
-        <QualityCard taskId={task.id} />
-      </div>
-      <Card title="Input (as submitted)">
-        <KeyValue
-          items={[
-            { label: 'Primary keyword', value: <span className="font-medium">{task.keyword}</span> },
-            { label: 'Secondary keywords', value: task.secondaryKeywordList.length ? task.secondaryKeywordList.join(', ') : '—' },
-            { label: 'Example title', value: task.exampleTitle ?? '—' },
-            { label: 'Writer', value: task.writerName },
-            { label: 'Website', value: task.website.name },
-            { label: 'Category', value: task.categoryName ?? 'Not chosen yet' },
-            { label: 'Language / country', value: `${LANGUAGE_LABELS[task.language as Language] ?? task.language} · ${task.targetCountry}` },
-            { label: 'Source', value: task.source },
-            { label: 'Options', value: Object.keys(opts).length ? <code className="text-xs">{JSON.stringify(opts)}</code> : 'site defaults' },
-          ]}
-        />
-      </Card>
-      <Card title="Result">
-        <KeyValue
-          items={[
-            { label: 'Selected title', value: task.selectedTitle ?? '—' },
-            { label: 'SEO title', value: task.seoTitle ?? '—' },
-            { label: 'Meta description', value: task.metaDescription ?? '—' },
-            { label: 'Slug', value: task.slug ?? '—' },
-            { label: 'Focus keyword', value: task.focusKeyword ?? '—' },
-            { label: 'Internal SEO score', value: task.seoScore ?? '—' },
-            { label: 'Rank Math score', value: task.rankMathScore !== null ? `${task.rankMathScore} / 100 (read from WordPress)` : <span className="text-muted">not verified</span> },
-            { label: 'WordPress', value: task.wpEditUrl ? <a className="text-indigo-600 underline" href={task.wpEditUrl} target="_blank" rel="noreferrer">post #{task.wpPostId} ({task.wpPostStatus ?? 'draft'})</a> : '—' },
-            { label: 'Verified complete', value: task.verifiedCompleteAt ? formatDateTime(task.verifiedCompleteAt) : '—' },
-          ]}
-        />
-      </Card>
-      <Card title="Timeline">
-        <KeyValue
-          items={[
-            { label: 'Created', value: formatDateTime(task.createdAt) },
-            { label: 'Started', value: formatDateTime(task.startedAt) },
-            { label: 'Draft saved', value: formatDateTime(task.wpDraftAt) },
-            { label: 'Completed', value: formatDateTime(task.completedAt) },
-            { label: 'ChatGPT conversation', value: task.conversationUrl ? <a className="text-indigo-600 underline" href={task.conversationUrl} target="_blank" rel="noreferrer">open</a> : '—' },
-          ]}
-        />
-      </Card>
-      <Card title="Errors & incidents">
-        {task.errorList.length === 0 && task.incidents.length === 0 ? (
-          <p className="text-muted text-sm">No errors recorded.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {task.incidents.map((i) => (
-              <li key={i.id}>
-                <Chip tone={i.status === 'OPEN' ? 'warning' : 'neutral'}>{i.kind}</Chip> {i.description}
-              </li>
-            ))}
-            {task.errorList
-              .slice()
-              .reverse()
-              .map((e, i) => (
-                <li key={i} className="text-rose-700 dark:text-rose-300">
-                  <span className="text-muted text-xs">{formatDateTime(e.at)}</span> {e.stage ? <code className="text-xs">{e.stage}</code> : null} {e.message}
-                </li>
-              ))}
-          </ul>
-        )}
-      </Card>
-    </div>
-  );
-}
-
 function StagesTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged: () => Promise<void> }) {
   const toast = useToast();
   const [plan, setPlan] = useState<{ stage: string; plan: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   if (task.stages.length === 0) return <Card><EmptyState title="No stages yet" description="Stages are created when the worker starts this task." /></Card>;
-  const regenerable = new Set(REGENERABLE[task.moduleKey] ?? []);
+  // The owner's writers too (their steps come from the writer's settings).
+  const regenerable = new Set((getManifest(task.moduleKey)?.stages ?? []).filter((s) => s.regenerable).map((s) => s.key));
   async function preview(stageKey: string) {
     try {
       setPlan(await api<{ stage: string; plan: string[] }>(`/api/tasks/${task.id}/regenerate`, { body: { stageKey, preview: true } }));
@@ -464,7 +429,7 @@ function LogsTab({ task }: { task: SerializedTaskDetail }) {
                 <td className="text-sm break-words">
                   {l.message}
                   {l.screenshotPath ? (
-                    <a className="ml-2 text-xs text-indigo-600 underline" href={`/api/files/screenshot?path=${encodeURIComponent(l.screenshotPath)}`} target="_blank" rel="noreferrer">
+                    <a className="ml-2 text-xs link" href={`/api/files/screenshot?path=${encodeURIComponent(l.screenshotPath)}`} target="_blank" rel="noreferrer">
                       screenshot
                     </a>
                   ) : null}
@@ -484,7 +449,7 @@ function ConversationTab({ task }: { task: SerializedTaskDetail }) {
     <Card
       title="ChatGPT conversation"
       description="Successive prompts of one article run in one conversation whenever possible. Conversation switches are recorded."
-      actions={task.conversationUrl ? <a className="text-sm text-indigo-600 underline" href={task.conversationUrl} target="_blank" rel="noreferrer">Open in Automation Chrome</a> : undefined}
+      actions={task.conversationUrl ? <a className="text-sm link" href={task.conversationUrl} target="_blank" rel="noreferrer">Open in Automation Chrome</a> : undefined}
     >
       {completed.length === 0 ? (
         <EmptyState title="No conversation yet" />

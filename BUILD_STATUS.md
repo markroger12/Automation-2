@@ -3288,3 +3288,1587 @@ npx tsc --noEmit                    # 0 errors
 npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 22 pass, 1 skipped (real MediaPipe)
 npx vitest run                      # 49 files, 360 tests pass
 ```
+
+## Owner request (2026-10-30): “I have to scroll so much” — and a UI like a reference dashboard
+
+The owner sent two screen recordings:
+- **the workflow keyword queue**, scrolled for a long time (every keyword on one page, each row two to eight lines high because of Google's long answers, next to a narrow settings column);
+- **a reference dashboard** to copy the look of (“ignore its content, only the UI”): a menu with folding groups and a fold button, a top bar with a search (Ctrl K) and a bell, the page in a rounded panel, a title with a description and the main button on the right, Filter / View buttons, a bordered table, “Results per page” with “Page 1 of 1” and first/previous/next/last buttons, icon buttons with tooltips, and editing in a window with small capital section headings and a switch row.
+
+**Reproduced first:** a scratch database with 68 workflow keywords (the owner's names and Google answers). The Workflow page was **7334 px** tall; it is now **1632–1728 px** with 20 keywords a page (the page height depends on the panel above the queue).
+
+**What changed (the npm tool only; the desktop app is updated when the owner asks):**
+- **Look:** neutral greys in dark and light (new colour tokens in `app/globals.css`), the main button dark-on-light / light-on-dark, square-cornered badges, buttons of fixed heights, neutral focus rings and checkboxes.
+- **Frame (`src/components/sidebar.tsx`, `Shell`):**
+  - **menu:** groups (Articles, Websites, …) that fold, remembered; the group of the open page stays open; the fold button turns the menu into an icon rail, remembered and applied before paint (no flash); “Owner · Runs on this PC only” with the theme switch at the bottom;
+  - **top bar:** the search moved here (Ctrl+K or “/”), with a list of matching pages (↑/↓, Enter) and “Articles: …”; a **bell** listing the same health warnings as the banner, with their links;
+  - **page panel:** rounded and bordered; the health banner sits at its top.
+- **Pieces (`src/components/data-table.tsx`, `client.tsx`, `form.tsx`):** `Pagination` (10–50 per page, remembered per list), `Menu` with check and item rows (Filter, View, More), `Modal` with `DialogSection`, `Switch`, icon buttons with a tooltip (`data-tip`), `.table-box` (bordered table with column lines).
+- **Workflow page:**
+  - **header:** the website, **Settings** and **Add keywords**; both open in a window (the settings in sections: Writer, Schedule, Images, Indexing; “Workflow on” and “Request indexing” as switches);
+  - **status line:** workflow on/off, drafts only / publishing allowed, the next slot, and the links;
+  - **indexing card:** its two buttons moved into its header;
+  - **queue:** full width; a search, a Filter by status (with counts and removable chips), View (hide Writer, Slot, Article, Links, Google / notes, remembered), one line per keyword, Google's answer on one line with its UTC times shown in Pakistan time and an arrow for the whole message, links as icon buttons, pages;
+  - **selection:** Retry, Force continue, Request indexing and Delete; under More the writer, To top, Skip, Restore, Mark requested and Mark indexed. The actions are the same API calls as before.
+- **Article Queue and Article History:** pages from the server (limit/offset) instead of “Show more”; an emptied last page moves to the new last page. The CSV export still exports every row.
+- **Settings:** one group at a time, picked on the left, with a dot for unsaved changes (the others' unsaved edits are kept).
+- **Small fixes found on the way:**
+  - cards in a grid could not shrink on a phone, so the Overview was 270 px wider than the screen;
+  - Calendar's free slots were too pale in light mode (axe: colour contrast).
+
+**Tests:**
+- **`tests/unit/workflow-queue-view.test.ts` (7):** pages (68 → 4 pages of 20, the last with 8, a page past the end), the search and status filter, the counts, and Google's times in Pakistan time.
+- **`tests/unit/nav-search.test.ts`:** 4 new tests for the top bar search and the menu groups (8 in all).
+
+**Chromium smoke (scratch database, dev server, dark and light):**
+- **Workflow:** 20 rows of 68 on “Page 1 of 4”; next → page 2; last → 8 rows; 50 per page → “Page 1 of 2”; Filter “writing” → 4 rows; search “tariq” → 4 rows; View without “Google / notes” → that column gone; the arrow shows the whole message; selecting the page → “20 selected” and More lists its 7 actions.
+- **Windows:** Settings opens and Cancel closes it; Add keywords previews “Add 2 keyword(s)”.
+- **Top bar and menu:** the search “plag” lists Plagiarism Evidence and Articles, and Enter opens /plagiarism; Ctrl+K focuses it; the bell lists the 2 warnings; the fold button gives a 60 px menu, still folded after a reload.
+- **Settings:** “SEO, links & images” alone, 1327 px instead of 4239 px.
+- **History:** “7 articles · Page 1 of 1”, page size 10.
+- **Phone (390 px):** no sideways scrolling on /workflow, /queue and /; the menu opens as a drawer and closes after a link.
+- **Console:** no console errors on any of the 26 pages.
+
+**Not verified:**
+- the owner's Windows PC and Chrome, and the owner's data;
+- touch use;
+- the desktop app (not updated, as asked).
+
+**Commands run**
+```
+npx vitest run tests/unit/nav-search.test.ts                 # 8 pass
+npx vitest run tests/unit/workflow-queue-view.test.ts        # 7 pass
+npx tsc --noEmit                                             # 0 errors
+npx vitest run                                               # 50 files, 371 tests pass
+BAS_DATA_DIR=<scratch> npx next dev -H 127.0.0.1 -p 3100     # scratch database with 68 workflow keywords
+node <scratch>/shot.mjs …; node <scratch>/smoke.mjs …; node <scratch>/mobile.mjs …; node <scratch>/overflow.mjs   # results above
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # first run: 1 serious (Calendar free slots, light); after the fix: 58/58, no serious or critical violations
+```
+
+## Owner report (2026-10-30): “5 pictures here, it took only 3” (extension 3.4.7)
+
+The owner sent a screenshot of a ChatGPT answer: three photo tiles, the third with a stacked-pictures icon and “5”, and the caption “Five archival photographs of John William McDonald …”. The next prompt (the photo check) attached only 3 photos. The owner had reported the same kind of thing before (3.2.7: “3 thumbnails with +10”; 3.4.2: 6 shown, 2 used).
+- **Cause:**
+  - The two other photos are only reachable in ChatGPT's viewer.
+  - The extension steps through the viewer only with a button named “Next”. When it finds none, it opens each tile on the page by itself, and there are only 3 tiles.
+  - So a viewer whose Next has no name, which steps with the arrow keys, or which shows a row of small pictures, gave 3.
+- **Reproduced first:** the fake ChatGPT page now has the owner's gallery: 3 tiles, the last with the icon and “5”. Its viewer comes in three kinds: `arrows` (icon-only, unnamed Previous/Next), `keys` (arrow keys only) and `filmstrip` (a row of small pictures). On 3.4.6 each kind saved 3 large photos of 5.
+- **Fix (extension 3.4.7, `adapter.js` and `content.js`):**
+  - **The count:** the extension reads the gallery's own count (“5”, or “+2” for two more than the tiles) and keeps going while photos are missing.
+  - **Next:** a button named Next as before; otherwise an icon-only button at the viewer's right edge, halfway down. Buttons with words are left alone: Close, Download, Share.
+  - **Arrow keys:** with no Next, → is pressed while photos are missing. When the picture does not change within 2.5 s, it stops.
+  - **Small pictures:** a row of at least 3 small pictures in the viewer is clicked one by one. Never one that links to another site.
+  - **Tiles:** then, as before, each tile is opened by itself.
+  - **The viewer** is also found as `aria-modal="true"` or an open `<dialog>`.
+  - **The task log** now adds what the gallery said and how the viewer was stepped, e.g. “…; the gallery says 5; viewer stepped by: arrow keys.”
+- **Tests (integration, real extension in Chromium, fake ChatGPT):**
+  - **new:** “3 tiles with “5” on the last” × arrows / keys / filmstrip, 5 of 5 each (3 each on 3.4.6);
+  - **unchanged and passing:** the earlier strip, carousel, fade and lightbox gallery tests.
+
+**Not verified:** the real ChatGPT viewer. Its markup is not available here, so the fix covers the three likely kinds. The task log line of the next image search says which one the real page is.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "3 tiles with"   # 3.4.6: 3 failed (3 of 5 large photos each)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "3 tiles with|viewer: the large picture|“\+10”"   # 3.4.7: 7/7
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 50 files, 371 tests pass
+npx next build                      # compiled successfully (UI and 3.4.7 together)
+```
+
+The whole extension integration file on 3.4.7 (both changes together):
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 51/51
+```
+
+## Owner request (2026-10-30): drag and drop and paste for “Your photos”
+
+The owner sent a screenshot of an article's Images tab (no usable photo of Annie Mae Keith was found). They asked: “here there is only the upload button; add drag and drop too, and when I paste an image it should come in as well.”
+- **Images tab (`app/(dashboard)/articles/[id]/images-tab.tsx`):**
+  - **Box:** a dashed box under the uploads says “Drop photos here, or paste one with Ctrl+V”; a click opens the file chooser.
+  - **Drop:** picture files can be dropped anywhere on the tab, not only on the box. A file dropped beside the box no longer makes the browser open it instead.
+  - **Paste:** Ctrl+V on the tab adds a copied picture. It is ignored while typing in a text field.
+  - **Order:** uploads go one after another, so photos keep the order they were added in (their order in the article).
+  - **Links:** a picture dragged from another web page arrives only as a link. The tab then says to use Copy image and Ctrl+V.
+  - **Unchanged:** the “Upload photos” button and the server's rules (the same upload API: 8 at a time, 12 MB each, its checks).
+- **`src/lib/client/image-input.ts`:**
+  - only PNG, JPEG, WebP and GIF, in the order given, at most 8, with the reason for each file left out;
+  - a pasted “image.png” is named `pasted-<date>-<time>.png`.
+- **Tests:**
+  - **`tests/unit/image-input.test.ts`:** 4 new;
+  - **Chromium smoke (scratch database, dev server):** a picture dragged over the page heading shows “Drop to add the photos”; dropping it adds “dropped-photo.png”; a pasted picture is added as “pasted-20261030-111200.png” after it, in that order; a text file is refused with its reason; a dropped link gets the Copy image hint; no console errors.
+
+**Not verified:** pasting from the owner's Windows clipboard and dropping from Windows Explorer. The browser events are standard ones, but here they were made by Playwright.
+
+**Commands run**
+```
+npx vitest run tests/unit/image-input.test.ts   # 4 pass
+node <scratch>/photos.mjs <out>                 # results above
+npx tsc --noEmit                                # 0 errors
+npx vitest run                                  # 51 files, 375 tests pass
+```
+
+## Owner report (2026-10-30): “Notes (10)” — “look how bad it looks”
+
+The owner sent a screenshot of an article's Notes: a large blue box with ten long sentences, each with cut quotes, the research notes in brackets and a `[RESEARCH_EVIDENCE]` / `[DUPLICATES]` tag at the end.
+- **Cause:** the notes are stored as one sentence each (with the source in brackets) and the page printed them as they are.
+- **Now (`src/lib/review-notes.ts`, `app/(dashboard)/articles/[id]/review-notes.tsx`):**
+  - **Parts:** each note becomes a short title (“Sources disagree on the birth date”, “3 unsupported family/relationship claims · paragraph 1”, “2 % of the wording repeats an article on Techeflux”), the quoted text under it on one line, and, on a click, the research notes, “and N more notes” and the advice.
+  - **Groups:** notes are grouped by where they came from (Research evidence, Duplicates, Article, SEO, Images, …), each group with a link: **Open Research Evidence** (this article), **Open Duplicate Review**, or the right tab.
+  - **Shown:** the first 4, then **Show all 10**. Reasons that hold an article for review are all shown, with the approve buttons as before.
+  - **Text clean-up:**
+    - a quote cut at its length ends in “…”;
+    - a table row from the research (“| December 25, 2008 | … |”) reads “December 25, 2008 · …”.
+  - **Nothing is lost:** the full text of every note stays, and a note of another shape keeps its first sentence as the title.
+- **Tests:** `tests/unit/review-notes.test.ts`, 5, with the owner's notes as stored.
+- **Chromium smoke:** the owner's 10 notes on a scratch article, dark and light.
+  - The box is 290 px with 4 notes and 633 px with all 10 and one opened (the owner's box was about 700 px with every note open).
+  - The link goes to `/research-evidence?task=<id>`.
+  - No console errors.
+
+**Commands run**
+```
+npx vitest run tests/unit/review-notes.test.ts   # 5 pass
+npx tsc --noEmit                                 # 0 errors
+node <scratch>/notes.mjs <out> <task id file>    # results above
+```
+
+## Owner report (2026-10-30): the Search Console proof shows the page, not “Indexing requested” (extension 3.4.8)
+
+The owner sent three proof screenshots (easyvibs.co.uk/jordan-rock/, /lola-simone-rock/, techeflux.com/cy-kass/). Each showed the URL Inspection page (“URL is not on Google”, REQUEST INDEXING) without Google's “Indexing requested”, and icon names as text (“keyboard_arrow_down”, “home”, “info”). The owner said “mostly”: sometimes it was right.
+- **Cause:**
+  - The extension saves the page as soon as “Indexing requested” is in the page's text.
+  - The Search Console tab is in the background, where Chrome does not run the dialog's opening animation. So the dialog was in the page, still transparent and small, and the saved copy showed the page under it. When the tab happened to be in front, it was right; that explains “mostly”.
+  - The icons are a font the copy does not carry, so offline their names show as text.
+- **Reproduced first:** the fake Search Console can now show its answer as a dialog whose opening never ran (`dialog: 'opening'`, a green panel in the middle), and it has two icon-font icons. On 3.4.7 the proof's middle pixel was the white page.
+- **Fix:**
+  - **Extension 3.4.8 (`gsc.js`):** before the answer is reported (and the page saved), the dialog that says it is found.
+    - Its animations are finished.
+    - If it is still not on screen after 1.5 s, it is set as it is once open: fully opaque and full size, with its own text. Nothing else on the page is changed, and the tab is closed right after.
+    - The popup's state records whether it was “shown” or “set as open”.
+  - **Worker (`src/lib/gsc/proof.ts`):** in the offline copy, elements in an icon font whose text is a single icon name are hidden. The page's own scripts still never run.
+- **Tests (integration, real extension in Chromium):**
+  - **new:** “the proof shows Google's ‘Indexing requested’ also when its opening animation did not run, without icon names”. Its middle pixel is the dialog's green, and 2 icons are hidden;
+  - **unchanged:** the indexing request test, which also renders its proof.
+
+**Not verified:** the real Search Console dialog. If Google draws it differently (e.g. not as an element of the page), the copy may still miss it; the popup's state then says “not on screen”.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "the proof shows Google"   # 3.4.7: failed (middle pixel white: 16,16,16 of 16)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "the proof shows Google|indexing is requested in Search Console"   # 3.4.8: 2/2
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 52 files, 380 tests pass
+```
+
+The whole extension integration file on 3.4.8:
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 52/52
+```
+
+## Owner report (2026-10-30): “the image problem is still not fixed” — Sira Martínez, 3 tiles with “10” (extension 3.4.9)
+
+The owner sent a screenshot: 3 tiles, the third with “10”; the photo check got 3. Then a screen recording of ChatGPT's viewer.
+- **The viewer in the recording:**
+  - a full-screen layer: “Image ▾” at the top left; zoom (“32 %”), Download and Close at the top right;
+  - the picture in the middle; unnamed → at the right edge halfway down, and ← from the second picture on;
+  - “1 of 10” with the source site and its link at the bottom;
+  - “6 of 10” showed nothing for a moment while the picture loaded.
+- **What could not have worked (3.4.8):**
+  - **the viewer itself:** the extension took the first `role="dialog"` of the page. ChatGPT keeps other, hidden dialogs in its page, and a full-screen layer need not be a dialog at all. Either way no picture was found, and only the 3 tiles' pictures were left. The photo check sends up to 8 photos and got 3, so only 3 were usable;
+  - **loading:** a picture still loading made the walk stop.
+- **Reproduced first:** the fake ChatGPT page has the recording's viewer (`overlay`): the layer is not a dialog, a hidden dialog is in the page, → and ← are unnamed, there is “1 of 10” with the source's link, and each next picture loads for 0.9 s. 3.4.8 saved 0 large photos of 10 there.
+- **Fix (extension 3.4.9):**
+  - **The viewer:** a dialog on screen with a large picture; else the fixed layer covering most of the window around a large picture; else a dialog on screen. Hidden dialogs are never taken.
+  - **Its count:** “1 of 10” is read. The walk wants that many, stops at “10 of 10”, and the task log adds “the viewer counts 10”.
+  - **Loading:** a picture still loading (or a moment with no picture) is waited for, up to 12 s after →.
+  - **A → that changes nothing:** the arrow keys are tried once.
+  - **Close:** the viewer's own Close button, else Escape.
+- **Test (integration, real extension in Chromium):** “the viewer from the owner's recording … all 10 photos are saved”. On 3.4.8 it gave 0 of 10; on 3.4.9 it gives 10 of 10, and the log has “10 opened large” and “the gallery says 10”.
+
+**Not verified:** the real ChatGPT page's markup (the recording shows how it looks, not how it is built). If the next image search still brings fewer photos, its task log line (“Gallery: … viewer stepped by: …”) says how far the viewer was walked.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "viewer from the owner"   # 3.4.8: failed (0 of 10 large); 3.4.9: pass (10 of 10)
+npx tsc --noEmit                    # 0 errors
+npx vitest run                      # 52 files, 380 tests pass
+```
+
+The whole extension integration file on 3.4.9:
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts   # 53/53
+```
+
+## Owner request (2026-10-30): the Search Console screenshot opens in the same tab
+
+“Make the Search Console screenshot open in the same tab, not a new one.”
+- **Before:** the keyword queue's screenshot button and the indexing panel's picture were links to `/api/media/<id>` with `target="_blank"`.
+- **Now (`src/components/screenshot-modal.tsx`):**
+  - both open the screenshot in a window over the page, with the keyword and the post's URL (or the time, for the latest one);
+  - **Download** saves it; **Close** or Esc returns to the page as it was.
+- **Chromium smoke (scratch database, a proof on “mekhi phifer net worth”):**
+  - the queue's button opens the window on the same page, with no new tab, and the picture loads (1366 px wide); Esc closes it;
+  - the panel's picture opens the latest one; Close closes it; still no new tab;
+  - no console errors.
+
+**Commands run**
+```
+npx tsc --noEmit                                # 0 errors
+node <scratch>/proofmodal.mjs <out>             # results above
+npx vitest run                                  # 52 files, 380 tests pass
+```
+
+## Owner request (2026-10-30): one-click update (Settings → App updates)
+
+“Ek click me update”: instead of `git pull`, `npm run start:all` and reloading the extension by hand.
+- **`npm run start:all` → `scripts/start-all.mjs`** (plain Node.js; replaces `concurrently` for start:all only, dev:all is unchanged):
+  - it starts the dashboard (`next start`) and the worker (`node --import tsx`, one process), with the `[web]` / `[worker]` prefixes as before;
+  - when one of them stops by itself, the other is stopped too, as `concurrently -k` did;
+  - Ctrl+C stops both. The worker gets its shutdown over IPC, because on Windows a signal to a child ends it at once. A worker whose start:all is gone stops too.
+- **Settings → App updates** (`src/components/app-updates.tsx`, `src/lib/update/service.ts`, `app/api/update/*`):
+  - **Check for updates** runs `git fetch` on the branch's upstream (`GIT_TERMINAL_PROMPT=0`, no password prompt) and lists the new commits. Notes show when packages, migrations or the extension change.
+  - It refuses, saying why:
+    - outside start:all;
+    - in the desktop app;
+    - with tracked files changed on this computer;
+    - with local commits GitHub does not have.
+- **Update now** (after a confirm dialog that names the running steps): the dashboard checks again and asks start:all over IPC to update to exactly the commit shown. start:all then:
+  1. stops both;
+  2. answers on port 3000 with a small “updating” page and the progress JSON;
+  3. `git merge --ff-only <commit>`;
+  4. `npm install` only when package.json / package-lock.json changed;
+  5. `prisma generate` + `next build` + build marker;
+  6. migrations with backup and seed (`scripts/preflight.ts`);
+  7. starts both again and waits for the dashboard.
+  - Progress goes to `data/update/status.json`; the card follows it and reloads the page when done.
+  - When installing or building fails, it runs `git reset --keep <previous>` (refuses to overwrite changes), installs/builds the previous version and starts it; the card says “Went back to the previous version”.
+  - A migration failure is reported with the backup location (not undone).
+  - An update interrupted by a closed window is marked failed at the next start.
+- **Extension 3.5.0 reloads itself after an update:**
+  - When the app expects another version, every poll says hello.
+  - When the extension folder on disk (`fetch(chrome.runtime.getURL('manifest.json'))`) has exactly the expected version and no ChatGPT or Search Console job runs, it records `selfReload` (once per version) and calls `chrome.runtime.reload()`.
+  - After the reload it reloads the ChatGPT tabs it managed (their old page scripts no longer reach it) and keeps them.
+  - The app's version message now says this.
+
+**Tests**
+- **Unit `tests/unit/app-update.test.ts`:**
+  - git log parsing;
+  - change kinds;
+  - the refusal reasons;
+  - start:all's steps, package check, interrupted status, loopback Host check, ANSI stripping and HTML escaping.
+- **Integration `tests/integration/extension-update.test.ts` (real extension, Load unpacked):**
+  - a prompt runs on 3.4.99;
+  - the app expects 3.5.0 while the folder is old: no reload, the version message;
+  - the folder gets 3.5.0: the extension reloads itself, reports 3.5.0, reloads its ChatGPT tab, and the next prompt runs in the same tab.
+  - The first version of this test failed: the restore was read before the start-up finished. The test now waits for it; 3/3 runs passed.
+- **An experiment that shaped the test:** an extension loaded with `--load-extension` (how the other tests load it) is removed, not reloaded, by `chrome.runtime.reload()`. One loaded as with Load unpacked (CDP `Extensions.loadUnpacked`) reloads from its folder with the new version. The owner's setup is Load unpacked (README, First run).
+- **End to end, `npm run start:all` in a scratch clone with a local “GitHub” (bare repo):**
+  - **A → B:** the Settings card listed “1 new change”. Update now ran: stop, code, packages “not needed”, build, database, start — all done. While stopped, any page showed “Blog Automation Studio is updating · Now: Build the dashboard”. After it, Settings showed B's text and “Last update · done”.
+  - **B → C:** the card showed the steps live, then the page reloaded by itself on C (2 page loads), with no page errors.
+  - **C → D, a version whose build fails:** `next build failed` → `git reset --keep` to C → rebuilt → C running. The card said “Went back to the previous version · next build failed (exit code 1)” after 107 s.
+  - **Ctrl+C (SIGINT to start:all):** the worker logged “Worker stopped (stopped by start:all)”; the dashboard stopped; nothing was left running.
+
+**Not verified here:**
+- Windows:
+  - Ctrl+C in a Windows console;
+  - `npm.cmd` when start:all is not run through npm;
+  - file locks during `npm install`. The design stops every app process first, and start:all loads neither tsx nor Prisma, but this was not run on Windows.
+- The owner's GitHub sign-in for `git fetch` (Git's own credential store).
+- The `npm install` and migration steps with real changes (the test versions changed neither).
+- The real Chrome on Windows with Load unpacked.
+- Getting there takes one manual step: the owner gets this version with one `git pull` + `npm run start:all`, and reloads the extension by hand once, to 3.5.0.
+- A change to `scripts/start-all.mjs` itself takes effect only when the window is started again.
+
+**Commands run**
+```
+npx tsc --noEmit                                                                        # 0 errors
+npx vitest run                                                                          # 54 files, 388 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension-update.test.ts   # 3/3 runs pass (after the wait fix)
+node <scratch>/update-follow.mjs, update-e2e.mjs C, update-e2e.mjs D                     # results above
+```
+
+## Owner request (2026-10-30): page structure copies (gallery, Search Console)
+
+“Proposal 1, the diagnostic copy”: fixes have been guesses from screenshots, because the real ChatGPT markup is not available here.
+- **`extension/outline.js`** (content script for ChatGPT and Search Console; no new permission) makes an outline of elements. Each element gives:
+  - tag, role, data-testid, class (first 4), aria states;
+  - button names (aria-label/title, or a button's own text up to 24 characters);
+  - box, hidden, position/z-index/transform;
+  - for pictures: address host + path end (no query), natural size, alt (60).
+- **It never includes page text.** An element says only how many characters of its own text it has. Links give their host only (a chat's title or address stays out). At most 350 elements per outline.
+- **ChatGPT (content.js):**
+  - It outlines the gallery's tiles, the viewer when opened (or the layers over the page when no viewer is found), and the viewer where the walk stopped, with the reason (e.g. “step 2: the picture did not change”).
+  - It sends this with the answer only when fewer large pictures were taken than the gallery or viewer says.
+  - The app saves `data/page-copies/chatgpt-gallery-….json`, and the task log line names it.
+- **Search Console (gsc.js):** on an ERROR, or when the proof may miss Google's answer (“not found” / “not on screen”), it sends the answer's dialog, Request button, search box and layers with the result. The app saves `search-console-….json` and logs it.
+- **Logs / Diagnostics → Page structure copies:** the newest 8 with Download (`/api/diagnostics/page-copies/<name>`, names checked by pattern). Only the newest 40 are kept.
+
+**Tests**
+- **Unit `tests/unit/page-copies.test.ts`:**
+  - only JSON objects of the right kind are saved;
+  - newest first;
+  - read by a checked name only (`../app.db` refused);
+  - 40 kept.
+- **Integration (real extension):**
+  - **ChatGPT:** 3 tiles with “5” and a viewer that cannot be stepped (`lightbox`) → 3 photos and one copy (`said: 5, large: 3`, a stop reason, tiles with `img`, the viewer found with its “Close” button). It contains neither the prompt's words nor the answer's lines, and the log names the file.
+  - **Search Console:** no “Inspect any URL” box → one `search-console` copy (`outcome: ERROR`, `page: /search-console`). It contains neither the keyword nor the URL slug, and the log names it.
+
+**Not verified here:** the real ChatGPT and Search Console pages. That is the point of the copy: the next time photos are missing, the owner can send it.
+
+**Commands run**
+```
+npx vitest run tests/unit/page-copies.test.ts                                             # 2 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "fewer photos than the gallery says"   # pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "does not take the request"           # pass
+```
+
+## Owner request (2026-10-30): Windows notifications
+
+“Just Windows notification … workflow ka bhi alert agher koi article review per ha.”
+- **Shown by Windows itself** (`src/lib/notify/windows.ts`): a toast through the built-in Windows PowerShell 5.1 WinRT API, with PowerShell's own app id (no registration, nothing installed, no outside service).
+  - The script goes in through stdin. The text goes in as XML (escaped) through an environment variable, so nothing the app writes is run as a command.
+  - A click (or **Open**) opens the dashboard page.
+  - On other systems nothing is shown.
+- **What** (`src/lib/notify/events.ts`, worker loop every 15 s):
+  - **Review:** articles in a review status (needs review, title/article approval). Workflow ones say “Workflow: …”. More than 3 new at once come as one toast with the count (link: Article Queue → review).
+  - **ChatGPT signed out:** a connected extension reports `loggedIn: false`, or tasks are paused for the ChatGPT sign-in. It is notified when this changes.
+  - **Campaign finished:** a campaign COMPLETED (in the last 7 days).
+  - What was already notified is stored (`notify.windows.state`). The first look only remembers, so nothing that already waited floods in. An article back in review after a retry is notified again.
+- **Settings → Notifications:** on/off overall and per kind (all on), plus **Send a test notification** (`POST /api/notifications/test`).
+
+**Tests:** unit `tests/unit/windows-notifications.test.ts` (6):
+- once per event, the first look remembers only;
+- back in review → again;
+- signed out on change;
+- more than 3 → one with the count;
+- switched-off kinds;
+- the XML is escaped and the script never holds the text;
+- nothing happens off Windows;
+- the worker tick against the database (a workflow article in review and a signed-out extension → 2 toasts, then none; switched off → none).
+
+**Not verified here:** a real Windows toast (no Windows here), including whether Focus assist holds it back and the click opening the browser. The test button shows the result on the owner's PC.
+
+**Commands run**
+```
+npx vitest run tests/unit/windows-notifications.test.ts   # 6 pass
+npx tsc --noEmit                                         # 0 errors
+```
+
+## Owner request (2026-10-30): keyword ideas on the Workflow page
+
+“Proposal 4”: Search Console queries with impressions and no article, and Serper's related searches / People also ask, with Add to queue.
+- **`src/lib/workflow/keyword-ideas.ts`** (verified sources only):
+  - **Search Console:** the latest snapshot with query rows (live API or an imported export). Queries with impressions, most first, at most 100, are left out when the website already has them as a workflow keyword (any state) or an article keyword (normalised).
+  - **Google:** one Serper search (`hl` = the website language) on the owner's Find. It takes `relatedSearches` and `peopleAlsoAsk` (deduplicated, text only) and marks those already in the queue or written.
+  - It says clearly when there is no key (`SERPER_API_KEY`), when the key is refused, or when the limit is reached.
+- **API:** `GET/POST /api/websites/<id>/workflow/ideas`.
+- **UI:** **Workflow → Keyword ideas** opens a window with two tabs:
+  - Search Console: a table with impressions / clicks / average position and the data's dates and source;
+  - Google suggestions: a seed box, plus the newest queue keywords as quick seeds.
+  - Ticked ideas → **Add N to queue** through the same Add keywords path (duplicates left out, writer detected).
+
+**Tests:** unit `tests/unit/keyword-ideas.test.ts` (2), against the database and a local fake Serper:
+- **Search Console:** queued / written queries are left out, the order is by impressions, PAGE rows are ignored, and the data dates are returned.
+- **Google:** no key → the .env message; a short seed refused; the request body `{ q, hl: 'de', num: 10 }` with the key in the header; duplicates and non-text left out; a queued keyword marked `covered`.
+- **Chromium smoke (scratch database, 8 seeded queries):**
+  - the window lists 8 ideas, most impressions first;
+  - 2 ticked → “2 keyword(s) added to the queue.”;
+  - Google without a key shows the .env message;
+  - no page errors.
+
+**Not verified here:** the real Serper answer for the owner's keywords (the format follows Serper's documented `relatedSearches` / `peopleAlsoAsk`), and the owner's live Search Console data.
+
+**Commands run**
+```
+npx vitest run tests/unit/keyword-ideas.test.ts   # 2 pass
+npx tsc --noEmit                                 # 0 errors
+node <scratch>/ideas.mjs <out>                   # results above
+```
+
+## Owner request (2026-10-30): every page good-looking and user friendly
+
+“Is page ko bhi good looking and user friendly bana. Pure tool ko hi bana har page ko” (with a screenshot of Website Control).
+- **Method:** every page in the menu, plus an article, a website and a new campaign, was screenshotted on the scratch database at 1440 px. The worst ones were redone, then checked again in light, dark and at 390 px.
+- **Website Control:** summary tiles; one card per site with its health problem in one line, facts with icons, articles by state (review and failed link to the queue) and the controls in a footer; Copy settings in a window.
+- **Publishing Calendar:** a two-week grid (seven days per row), slots coloured by state with a legend, free slots on one dashed line, today outlined. 4,061 px → 1,141 px.
+- **Overview:** the worker/extension warnings were shown twice (banner and page); now only in the banner. Short stat labels with hints; recent work as article + website/writer. 1,387 px → 1,085 px.
+- **Article Queue / History:** the website and writer go under the keyword (the keyword had wrapped onto three lines); two columns fewer.
+- **Links:** the 65 indigo links now use the text colour with a soft underline (`.link` in globals.css).
+- **Prompt Manager:** preview, variables, history and sent prompts are tabs of one card. 1,674 px → 1,316 px.
+- **Website page:** tabs (Session & categories, Health, Settings, Writer rules, Publishing; `?tab=`). 3,376 px → 966 px for the first tab. Links to a site's settings open that tab.
+- **Diagnostics:** the migration list folds into one line; cards no longer stretch. 2,098 px → 1,798 px. The same for Automation Chrome's setup card.
+- **Help:** start:all as the daily start, numbered sections, and new sections for Updates and for Notifications and keyword ideas.
+- **Article page:** Delete is a quieter (outlined, red text) button next to Report.
+- **Statuses** without a label read as words (“generating article”, not GENERATING_ARTICLE).
+- **Left as they were (they already looked right):** Single Article, Settings, Workflow, Image Template, Productivity, Writers, Websites, Campaigns, Logs, the editorial tools, Recovery and Search Performance. They are consistent with the new look in light and dark.
+
+**Checks**
+- **Accessibility audit** (`scripts/a11y-audit.ts`, light and dark, every page in the menu plus an article and a website): the first run flagged one contrast problem, green text on Website Control. It was fixed (emerald-700 / emerald-400), and then there were no serious or critical violations.
+- **Page checks:** no horizontal scrolling at 1440 px or 390 px on the redone pages, and no page errors.
+
+**Not verified here:** the owner's Windows PC and data. Only scratch data was used (2 websites, 7 articles, 18 reserved slots).
+
+**Commands run**
+```
+node <scratch>/page.mjs <out> 1440 light|dark <pages>      # heights above, overflow 0, errors 0
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://localhost:3100   # after the fix: no serious or critical violations
+npx tsc --noEmit                                           # 0 errors
+npx vitest run                                             # 56 files, 396 tests pass
+npx next build                                             # compiled successfully
+```
+
+## Owner request (2026-10-30): Add website window, and automatic WordPress login
+
+“Add website popup ka UI sahi krde … manual login hata da, add website ke sath hi password dalne ka add krde, phir vo auto login krle.”
+- **A rule changed at the owner's request.** Until now the tool never asked for, stored or typed a WordPress password (the owner logged in once in a visible window). The owner now wants the password given with the website and the app to log in by itself. How the password is protected:
+  - **Storage:** `src/lib/wp-credentials.ts` stores the user name and password per website with AES-256-GCM, bound to the website id, in `data/credentials/wordpress-logins.json`. The random key is next to it in `wordpress-logins.key`; both files are mode 600.
+  - **Where it never goes:** the database, logs (which also redact password keys), backups, the diagnostic bundle, and the browser. The dashboard API returns only the user name, when it was saved, and the last automatic login.
+  - **Honest limit (README Security notes):** this protects against a copied database, log or screenshot, not against someone with the whole data folder.
+  - **Where it is typed:** only into the website's own login form, on the same host as its admin address, with “Remember me” ticked. A login form on another host is not filled in.
+  - **Refused password:** recorded and not tried again until it is changed, so security plugins do not lock the account.
+  - **CAPTCHA and 2-step codes** are never solved. The automatic login stops, and `wp.login` opens the visible window with the user name and password filled in. A CAPTCHA page is not submitted; the owner does the check and clicks Log In. On a 2-step page the owner types only the code.
+  - **No saved sign-in:** **Log in yourself (window)** still opens the window for the whole sign-in.
+- **Automatic login, three ways:**
+  - **From the dashboard:** Add website with a sign-in → `wp.login` (automatic, else the window).
+  - **During a job:** a job that finds the session gone signs in again and retries once (`withWordPress`).
+  - **Worker loop (every 5 min):** sites with LOGIN_REQUIRED and a saved sign-in are signed in again, so paused articles resume.
+  - **Limits:** at most once per site every 10 minutes, and never after a refusal or a step that needs the owner, until the owner acts.
+- **Add website window** (`app/(dashboard)/websites/add-website.tsx`, a Modal in the new look):
+  - **Website:** address (the name is filled in from it), name, language as two buttons (German sets Germany and Europe/Berlin), country, time zone.
+  - **WordPress login:** user name and password with show/hide, and a note on how it is kept.
+  - **More options (closed):** admin address, internal-link line, editor, Search Console property.
+  - **Button:** “Add and log in”.
+- **Website → Session tab → WordPress login card:**
+  - shows “Saved for <user>”, when it was saved, and the last automatic login (worked / refused by WordPress / needed your step) with its reason;
+  - **Log in now**, **Change**, **Remove** (with a confirm);
+  - without a sign-in, a form with **Save and log in**.
+- **Texts** in the app, Help and README describe the new way. The article pause message points to the Session tab.
+
+**Tests**
+- **Unit `tests/unit/wp-credentials.test.ts` (3):**
+  - the file never holds the password, and only the user name comes back;
+  - mode 600 for both files;
+  - an entry copied to another website does not decrypt, nor does one with another key;
+  - the last result, a fresh start after saving again, removal, and empty or oversized input.
+- **Integration `tests/integration/wordpress-auto-login.test.ts` (6, real Chromium against the fake WordPress, which now has a real password check, a 2-step code and a CAPTCHA):**
+  - **Add website through the API with a sign-in:** a login job is queued; the password is not in the file, the API answer, the logs, the audit, the website, the profile or the jobs. The automatic login signs in (1 form post), and the session survives a browser restart.
+  - **Wrong password:** “refused” with WordPress's message. Neither a job nor the worker loop tries it again (still 1 post); after a change it signs in.
+  - **2-step code:** the automatic login stops (needs the owner). The window sends the saved sign-in, and the owner types only the code → active.
+  - **CAPTCHA:** nothing is sent automatically (0 posts). The window has the user name filled in; the owner does the check and clicks Log In → active (1 post).
+  - **Session ended:** the worker loop signs in again, and the article paused for the sign-in goes back to QUEUED. A second try within 10 minutes is skipped.
+  - **Remove:** the sign-in is gone, and there is no automatic login any more.
+- **The earlier WordPress tests still pass:** `wordpress-session`, `wordpress-drafts`, `workflow-publish` (with the new file: 4 files, 30 tests).
+- **Chromium screenshots (scratch database):**
+  - the Add website window in light and dark: name “Celeb News” from www.celeb-news.de, and German → Germany / Europe/Berlin;
+  - More options opened;
+  - the Session tab with the login card;
+  - no page errors.
+
+**Not verified here:**
+- real WordPress sites and their security plugins (login pages that differ from WordPress's own form);
+- the owner's Windows PC.
+- **Unit runs:** one full run had 1 failing file (7 tests skipped). Three more runs were clean, 57 files and 399 tests each. The failing file was not captured, because the output was filtered.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run tests/unit/wp-credentials.test.ts                           # 3 pass
+npx vitest run                                                             # 57 files, 399 tests (3 runs; one earlier run: 1 file failed, not reproduced)
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-auto-login.test.ts   # 6 pass (the first run failed 2: the test's owner typed into the closing automatic-login window; fixed in the test)
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-auto-login.test.ts tests/integration/wordpress-session.test.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 30 pass
+node <scratch>/addsite.mjs <out> light|dark                                 # screenshots, no page errors
+```
+
+## Owner request (2026-10-31): choose the writer in Add keywords
+
+Screenshot of Workflow → Add keywords with “choose writer later” chips: “add the choose-writer option right here”.
+- **Preview** now shows the keywords in a bordered list. Each line has a writer dropdown: Celebrity / Tigram / Choose later, with the detected one marked “(detected)” and the detection's reason as its tooltip.
+  - **Writer for all** (“Set all to…”) sets every line at once.
+  - The header says how many keywords are still without a writer.
+  - Duplicates keep their “keep anyway” box.
+- `addKeywords` takes `writers` by line number (CELEBRITY / TIGRAM / UNKNOWN, validated):
+  - a choice that differs from the detection is saved with `detectionSource: OVERRIDE` and “Chosen by you.”, the same as the queue's writer action;
+  - “Choose later” on a detected line gives “Left for you to choose.”;
+  - lines without a choice keep the detection.
+
+**Tests**
+- **Unit `tests/unit/workflow-add-writers.test.ts` (2):** the chosen writers are saved as overrides, “choose later” keeps a line undecided, unchosen lines keep the detection, and an unknown writer or a non-number line is refused. `workflow-scheduler` still passes (9).
+- **Chromium (a fresh scratch database in `tests/.tmp`, git-ignored):**
+  - 6 keywords → Preview → Writer for all = Celebrity → the WordPress keyword set to Tigram → “6 keyword(s) added.”;
+  - the database then had Celebrity (override) for the 4 undetected names, Celebrity (rule) for the detected one, and Tigram (rule) for the WordPress keyword;
+  - light and dark screenshots, no page errors.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run tests/unit/workflow-add-writers.test.ts tests/unit/workflow-scheduler.test.ts   # 11 pass
+npx vitest run                                                             # 58 files, 401 tests pass
+node tests/.tmp/ui/addkw.mjs <out> light|dark                              # results above
+```
+
+## Owner request (2026-10-31): the workflow keyword links to its article
+
+Screenshot of the Workflow queue: “add the article's link on the keyword”, then “the tool's article page”.
+- In the queue, the keyword is now a link to the app's article page (`/articles/<task id>`) when an article was started for it. The tooltip says “Open the article: …”.
+- A keyword without an article yet stays plain text (tooltip “… — no article yet”).
+- Nothing else changed: the live-post, Search Console and inspect buttons under **Links** are as before.
+
+**Verified**
+- `next dev` in this container kept recompiling (the scratch data lives inside the repo), so client-side navigation did not finish there. This also happened for the existing Article Queue links, so it is not caused by this change.
+- The check was therefore done on a production build (`next build` + `next start` on port 3100, scratch database in `tests/.tmp`, git-ignored, deleted afterwards), in Chromium:
+  - the keyword with an article had `href="/articles/<id>"`;
+  - the keyword without one had no link;
+  - clicking opened the article page with that keyword as its heading;
+  - no page errors.
+- **Not verified:** on the owner's Windows PC.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run                                                             # 58 files, 401 tests pass
+node tests/.tmp/ui/<scratch>.mjs                                           # results above
+```
+
+## Owner request (2026-10-31): move keywords to another day
+
+Screenshot of the Workflow queue: one keyword had moved to tomorrow (“not ready by its slot”), and the owner wants all of them on tomorrow.
+- **Workflow → select keywords → Move to day:** Tomorrow / Day after / Today, or any day within 60 days.
+  - The window shows each keyword's current slot and its new one before anything changes (a preview run of the same code).
+  - The selected keywords take that day's free slots in queue order. The slots of the keywords being moved count as free, so they can swap. When the day has too few free slots, the rest go to the next day(s).
+- **What happens to each keyword (`moveKeywords` in `src/lib/workflow/service.ts`):**
+  - The slot reservations and the keywords change in one transaction.
+  - **Scheduled in WordPress:** back to READY, and one `wp.schedule` job changes the post's time through the existing approved path (`withPublishPermit`, read back). Refused, with a note, when WordPress publishes the post within 10 minutes, or when publishing has been switched off for the website since.
+  - **Not started yet:** keeps the slot as its planned slot. The scheduler starts it within the write-ahead time before that slot, and uses that slot. A keyword that was not selected may still use the slots that became free. A skipped planned keyword gives its slot back; a planned slot that passes before the article could start is given back.
+  - **Being written:** only the slot changes. An old “Moved to the next free slot” note is cleared, and `retries` (the automatic moves) is not changed.
+  - **Published, finished, stopped or skipped:** not moved, with a note.
+  - Audited as `workflow.keywords.move`.
+- **Job key:** a schedule job key used before (a move back to an earlier time) gets a fresh key. Otherwise the scheduler's own key is used, so the tick does not queue a second job.
+
+**Tests**
+- **Unit `tests/unit/workflow-move.test.ts` (5), the owner's queue from the screenshot:**
+  - preview without changes, including the spill to Monday and a slot owned by a keyword that was not selected;
+  - the move: reservations, READY plus one schedule job, retries unchanged, audit;
+  - the scheduler afterwards: nothing moves back, no second job, the planned keyword waits and then starts at its slot;
+  - refusals: a past day, an impossible date, a post WordPress publishes within minutes, publishing switched off;
+  - skip gives the slot back, and the `move` action works through `keywordAction`.
+  - First run on the old code: 5 of 5 failed (no move).
+- **Integration `workflow-publish` (+1):** a post scheduled in the fake WordPress, moved to the day after tomorrow through `keywordAction`, then the schedule job: the post's `date_gmt` in WordPress is the new slot, `future`, and the keyword is SCHEDULED again.
+- **Chromium, production build:** `next build` + `next start` on port 3100, with a scratch database in `/tmp` (deleted afterwards) holding the owner's queue on today's clock.
+  - Select all → Move to day: the preview listed all 5 on Sun 1 Nov, 5:00–7:00 pm, with isabella's “time in WordPress changes too”.
+  - Day after → Mon 2 Nov.
+  - Move → toast “5 keyword(s) moved to Sun, 1 Nov. 1 post(s) get the new time in WordPress in a moment.”
+  - The queue and the database then showed those slots and reservations, and one `wp.schedule` job.
+  - Light and dark screenshots; no page errors.
+- **Limits:**
+  - The new time reaches WordPress only when the worker runs the schedule job with a WordPress session. The app logs in again by itself; a CAPTCHA or 2-step code needs the owner.
+  - Until the job has run, the post keeps its old time in WordPress. If WordPress publishes it at that time first, the queue shows it as published at the real time, as before.
+  - When the worker takes one of the free slots during a move, the whole move is rolled back (“A slot was taken while moving … Try again.”).
+- **Not verified:** on the owner's Windows PC, and against the owner's real WordPress (the fake WordPress takes the new `date_gmt` the way WordPress's REST API does).
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run tests/unit/workflow-move.test.ts                            # before the change: 5 failed; after: 5 pass
+npx vitest run tests/unit/workflow-scheduler.test.ts                       # 9 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 9 pass
+npx vitest run                                                             # 59 files, 406 tests pass
+npx next build                                                             # compiled successfully
+node tests/.tmp/ui/move.mjs <out> light|dark                               # results above
+```
+
+## Owner request (2026-10-31): the article page, tidied
+
+Screenshots of the “morgan carey” article (Overview, Research, Images, Links, WordPress): “yaha koi ui bhi better krde”.
+- **Tabs on one row:** the technical tabs (Stages, Prompt / Response, Logs, Conversation) open from **More** (a new optional `more` list on the shared `Tabs`). The menu's tab shows the name of the open tab. Tab padding went from 12 to 10 px a side.
+  - Measured: the row needs 926 px; there is 950 px at a 1280 px window. Before: 970 px of tabs, two rows from 1440 px down.
+- **Overview (`overview-tab.tsx`):**
+  - secondary keywords as chips (8, then “+N more”);
+  - options in words instead of JSON (unknown keys are still listed, with the value in the tooltip);
+  - the source in words;
+  - “same as the title” when the SEO title equals it;
+  - the meta description's length;
+  - scores as chips;
+  - the WordPress post with its status;
+  - the timeline as steps with the time between them, and the total;
+  - incidents and errors as rows with a kind chip, a status chip and the text shortened to 180 characters, with “more”.
+- **Research → Evidence summary:**
+  - each page once: `utm_*` parameters are removed only for display and the link, and the stored sources are unchanged;
+  - the header gives the page count and the cited count (“11 pages, 15 cited” for the owner's list);
+  - each source shows as the site with its path below on one line;
+  - empty sections say “none”.
+- **Images:** Featured / Body 1 / Body 2 tiles (ready with its size, or missing). The step notes are folded under “How the images were made (N steps)”.
+- **Links:**
+  - external links as rows: the phrase, a kind chip (none for “other”), then the site and the page on one line;
+  - **Automatic** and **Remove line** as buttons with icons;
+  - candidates as rows with **Use this** on the right, and “in use” for the chosen one.
+
+**Checked:**
+- A production build (`next build` + `next start` on port 3100) with a scratch database in `/tmp`, holding an article like the owner's: 16 secondary keywords, 15 cited sources (6 of them repeats), 2 of 3 images, 4 + 3 links, an incident and an error.
+- Screenshots before and after, dark at 1440 px and light at 1280 px. The tab row was 75 px tall before (two rows) and 38 px after.
+- More → Logs opens Logs, and Escape closes the menu. No page errors, and no sideways scrolling.
+- `scripts/a11y-audit.ts` (light and dark, every page plus the article and a website): no serious or critical violations.
+- **Not verified:** on the owner's Windows PC with the owner's articles.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run                                                             # 59 files, 406 tests pass
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # no serious or critical violations
+node <scratch>/article.mjs, more.mjs, measure.mjs                          # results above
+```
+
+## Owner report (2026-10-31): photos not enhanced
+
+Owner screenshot: a blurry two-photo featured image. The article's Images tab said “A 512×384 photo is stretched 2.8×, but Upscayl (remacri-4x) is not installed in data\tools\upscayl — the original was used.” The owner asked to test with real people's photos.
+
+**Causes**
+- Upscayl was a manual download, and the owner's PC never had it, so every small photo was used as it was.
+- Below a 2× stretch nothing was done at all. A 512-pixel photo in a half of the two-photo design is stretched 1.98×.
+
+**Changes**
+- **Automatic install** (`installUpscayl` in `scripts/install-tools.ts`), run by `npm run tools:install` and by `npm run start:all` (preflight) while Upscayl is missing:
+  - the files: `upscayl-ncnn` release 20251207-174704 (the Windows or Linux zip) and `remacri-4x.param` / `.bin` from the Upscayl app at v2.15.0;
+  - SHA-256 checks: each file is checked against the hash taken from these exact downloads here, and a mismatch refuses the install and keeps nothing;
+  - writing: files are written as `.part` and renamed, and the licence is kept as `LICENSE-upscayl.txt`;
+  - a small zip reader, so no new dependency.
+  - Other systems get the manual instructions. A failed download warns, uses the built-in sharpener meanwhile, and is tried again at the next start.
+- **Built-in sharpener** (`enhanceLocally` in `src/images/upscale.ts`): 2× Lanczos steps, each with a light unsharp mask, then the place's size and one more sharpen. A soft photo that is big enough is only sharpened.
+  - It is used for photos stretched 1.3–2× (Upscayl would take minutes there for little change).
+  - It is used when Upscayl is missing or fails; before, the original was stretched.
+  - The Images tab's note says which was used.
+- `findEnhancer` now also requires `remacri-4x.param`.
+
+**Checked with real photos**
+- The photos: 4 photos of Dinesh D'Souza from Wikimedia Commons (CC BY-SA 2.0 / 3.0, Gage Skidmore and others; scratch only, not committed), made 512 px wide.
+  - Google was not scraped (project rule). The Commons API answered 429 after a few queries, so the photos were taken from its image server.
+- **Comparison at 2.8×:** a plain stretch, a single sharpen, and the stepped version. Face crops were checked by eye, and the stepped version looked the most natural.
+- **Edge measure** (mean absolute Laplacian), plain → built-in, with a real photo of that size for reference:
+  - 1.93 → 2.70 (6.12);
+  - 1.46 → 2.00 (3.13);
+  - 1.67 → 2.46 (3.23);
+  - 1.96 → 2.74 (6.48).
+  - The built-in sharpener does not recover detail the way an AI model would.
+- **The two-photo featured design rendered with two of them** (`renderTemplate`, `presetSplit`): the right photo, stretched 2.0×, is visibly crisper (glasses, microphone, hand). No halos were seen.
+
+**Tests**
+- **Unit `tests/unit/upscale-install.test.ts` (6):**
+  - install from a local server: verified, executable, found by the app, not downloaded twice;
+  - a wrong zip or model hash: nothing kept;
+  - the pinned URLs and hashes;
+  - built-in enlargement at 2.8× on the repo's public-domain portrait: crisper than a plain stretch;
+  - soft photo sharpened; a sharp, big photo left alone;
+  - the owner case at 1.98×: the built-in sharpener, and Upscayl not run.
+  - First run on the old code: 5 of 5 failed (the owner-case test was added afterwards).
+- **Integration:** `image-tools` and `images`, 22 pass and 1 skipped (real MediaPipe). The no-Upscayl note now names the built-in sharpener.
+- **Not verified:**
+  - the real Upscayl binary. Running a downloaded program was not allowed in this session; it needs Vulkan, which a GPU driver on Windows provides;
+  - the download on the owner's PC;
+  - the owner's own photos and template.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run tests/unit/upscale-install.test.ts                          # before: 5 failed; after: 6 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/image-tools.test.ts tests/integration/images.test.ts   # 22 pass, 1 skipped
+npx vitest run                                                             # 60 files, 412 tests pass
+npx tsx <scratch>/edges.mjs, featured-real.ts, enhance-compare.mjs        # results above
+```
+
+## Owner request (2026-10-31): the Quality report, tidied
+
+Screenshot of an article's Quality report (Mallory Plotnik: 1 hard stop, a long list of warnings with “RESEARCH_EVIDENCE” links): “abhi yaha ka ui sahi kr”.
+- **Shared parts:** the findings go through the same parser as the article's Notes (`parseReviewNote`). Its group and row rendering moved into `NoteGroups` / `NoteRow` in `review-notes.tsx`, used by both.
+  - Each row has a short title (“4 unsupported family/relationship claims · paragraph 38”) and a one-line quote.
+  - A click shows the research notes and what to do.
+  - Each group has its count and its page link (“Open Research Evidence →”, “Open Duplicate Review →”), or a button that switches the article's tab (SEO, Editor, Images, Stages).
+- **Card layout:**
+  - a summary line (“1 hard stop · 12 warnings” and the groups);
+  - hard stops in a red box;
+  - warnings with the first 4 shown and “Show all N”;
+  - the checks as tiles with a green, amber or red dot.
+  - Nothing is dropped: every finding and every check value is still there.
+
+**Checked:**
+- A production build with a scratch database in `/tmp` holding a report shaped like the owner's.
+- Before and after screenshots: the card went from 1,115 px to 708 px tall.
+- One row opened (research notes and advice shown); Show all → every warning; “Open the SEO tab” switches to SEO.
+- The article's Notes block still works: 4 rows, then Show all 12, and a row opens.
+- `scripts/a11y-audit.ts`: no serious or critical violations, light and dark, including this article.
+- **Not verified:** the owner's articles on Windows.
+
+**Commands run**
+```
+npx tsc --noEmit                                                           # 0 errors
+npx next build                                                             # compiled successfully
+npx vitest run                                                             # 60 files, 412 tests pass
+BROWSER_CHANNEL=chromium npx tsx scripts/a11y-audit.ts http://127.0.0.1:3100   # no serious or critical violations
+node <scratch>/quality.mjs, notes.mjs                                      # results above
+```
+
+## Owner report (2026-11-01): 3 tiles with “7”, again only 3 photos (extension 3.5.1)
+
+Owner screenshot: Melissa Esplana's gallery has 3 tiles, the last with a stacked-pictures icon and “7”. The owner sent the task log line and the page structure copy, and tried it by hand: a click on the “7” tile opened “3 of 7”, and → stepped on.
+- **The log line:** “3 picture(s) in the gallery (0 not shown by the page), 0 opened large, 3 saved; the gallery says 7; viewer stepped by: nothing”.
+- **The copy (`chatgpt-gallery-20261101-113642-f863f7.json`, extension 3.5.0):** `said: 7`, `large: 0`, `stop: "step 1: no large picture in the viewer"`, and no viewer layer after the click.
+- **The tile's markup:** the `img` sits beside an `Overlay` div holding `button[name="Open <alt>"]` (same box as the picture), with the count inside that button. There is also a hidden `Add to Favorites` button.
+- **Cause:** the extension clicked the `img` (`img.click()`). The handler is on the sibling “Open …” button over it, not on an ancestor, so nothing opened. The per-tile fallback clicked the `img` too. A person's click lands on the button.
+
+**Fix (extension 3.5.1):** `tileOpener(img)` in `extension/adapter.js` returns what a person's click on the picture reaches, and both the first open and the per-tile fallback click it.
+- **Order:** a button or link around the picture (the old markup), then a button over the picture (same box ±15 %, preferring an “Open …” name), then the button on top at the picture's middle, then the picture itself.
+- **Never clicked:** a Favorites, Share, Download, Copy, Save, Like or Report button, or anything outside the picture.
+- **Version:** the app expects 3.5.1. A 3.5.0 extension reloads itself from the folder when idle.
+
+**Tests**
+- **The fake ChatGPT page** gained `galleryTiles: 'overlay-button'`, built from the owner's copy:
+  - each picture has an “Open …” button over it;
+  - the count is inside the last tile's button;
+  - each tile has a hidden “Add to Favorites” that counts presses;
+  - a click on the picture opens nothing;
+  - the viewer is the owner's full-screen viewer with “N of 7”.
+- **Integration `extension` (+1):**
+  - on 3.5.0: 0 large photos, the owner's result;
+  - on 3.5.1: 7 different large photos, “7 opened large”, “the gallery says 7”, no favourites pressed, the prompt sent once.
+- **Whole suites:** `extension` + `extension-update` 57/57 on 3.5.1, so the older gallery and viewer kinds still pass. Unit 60 files / 412 tests; `tsc` 0 errors.
+- **Not verified:** the real ChatGPT page with 3.5.1. If it differs again, the next page copy shows how.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "over the picture"   # 3.5.0: 0 of 7 large; 3.5.1: pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 57 pass
+npx vitest run                                                             # 60 files, 412 tests pass
+npx tsc --noEmit                                                           # 0 errors
+```
+
+## Owner report (2026-11-01): finished titles stuck on “generating” (extension 3.5.2)
+
+Owner screenshots (chassidy celeste blackstock):
+- **The app:** TITLES waiting, “ChatGPT (TITLES): generating (770 chars so far)”, for 3–4 minutes.
+- **ChatGPT:** the 10 titles and “Recommended Title: …” were finished, with the answer's Copy / like / read-aloud buttons and the composer back to its voice button.
+
+**Cause:** the text was read (770 characters), but the answer counted as unfinished. A text answer counted as “still writing” while either of these was true:
+- any visible button on the page had “Stop” in its name, not only the composer's Stop;
+- any `.result-streaming` / `[data-testid*="streaming"]` element was on the page, even a hidden one.
+- The image path had already stopped using the page-wide marker (owner report: 600 s “generating” after a picture). The text path still used both.
+
+**Fix (extension 3.5.2):**
+- **`findStopButton`:** `button[data-testid="stop-button"]`, else a Stop button inside the composer's form or area only.
+- **`isGenerating`:** only streaming markers that are on screen count.
+- **Safety net in `waitForAnswer`:** for a text answer that has its own Copy button (`answerFinishedMarks`) and has not changed for 8 seconds, a stray marker or a Stop elsewhere no longer holds it.
+- **Version:** the app expects 3.5.2.
+
+**Tests**
+- **The fake ChatGPT page:**
+  - the answer's Copy button now appears only when the answer is finished (as in ChatGPT);
+  - new option `stuckStreamingShown`: a visible streaming marker that stays, and a “Stop reading aloud” outside the composer.
+- **Integration `extension` (+2):**
+  - a hidden page-wide marker (`staleStreaming`) with a text answer;
+  - a visible stale marker plus a stray Stop.
+  - On 3.5.1 both waited until the test gave up (60 s; the app's limit is 600 s). On 3.5.2 they completed in 6.6 s and 13.6 s, sent once.
+- **Whole suites:** `extension` + `extension-update` 59/59 on 3.5.2. Unit 60 files / 412 tests; `tsc` 0 errors.
+- **Not verified:** which element the real page kept. The fix covers both possible signals, and the Copy-button rule covers markers not seen yet.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "streaming marker"   # 3.5.1: 2 timed out; 3.5.2: 3 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 59 pass
+npx vitest run                                                             # 60 files, 412 tests pass
+npx tsc --noEmit                                                           # 0 errors
+```
+
+## Owner report (2026-11-01): research stuck for hours, and Retry sent nothing (extension 3.5.3)
+
+Owner's article report (Jelena Djokovic, Promizeiten, German):
+- **The failure:** RESEARCH failed after 3 attempts, each 3 × “No complete answer within 600s.” (about 2 hours of waiting in all).
+- **The page snapshots:** at 16:16, 17:02 and 19:48 they were identical: `generating: true`, `stopVisible: true`, `sendVisible: false`, step “generating (20094 chars so far)”, 2 user and 2 assistant turns.
+- **What the owner saw:** the answer had stopped at 20,094 characters hours earlier, but ChatGPT kept showing its Stop button. Closing the tab and reloading did not change it either.
+- **Retry:** at 19:57–19:58 RESEARCH failed three more times within 90 seconds, and no new ChatGPT attempt was created.
+
+**Cause 1, Retry:**
+- `retryTask` resets a failed stage to attempt 0.
+- `askChatGPT` names each attempt's operation `…:RESEARCH:a<attempt>`. For attempts 1–3 it found the old FAILED answers and threw their error again, without sending anything.
+- **Fix:** Retry now marks those failed answers SUPERSEDED (kept as history), as it already did for “uncertain” prompts. The stage then sends a new operation, fresh, so the stuck answer on the page is not taken again.
+- A failed answer from a lost conversation (`CONVERSATION_LOST`) stays, so the next prompt still opens a new chat with the saved context.
+
+**Cause 2, the stalled answer:**
+- The text had not changed for hours, but the composer's Stop button stayed. 3.5.2's Copy-button rule did not apply: an answer that ChatGPT still shows as running has no Copy button.
+- **Fix (extension 3.5.3):** when there has been no new text for `stallStopSec` (new setting, Settings → Browser → “Take a stalled answer after”, 180 s by default, 10–1800) while Stop is shown, the extension presses Stop, as a person would, and takes the answer as it stood.
+- It sends a notice that the task log appends: “ChatGPT wrote no new text for 180 s but kept showing its Stop button; the extension pressed Stop and took the answer as it stood (N characters).”
+- The answer then goes through the stage's usual checks.
+- **Not the image fix:** the owner suspected the gallery fix (3.5.1). It changed only how gallery tiles are clicked. This article started failing at 15:33, and its snapshots show the composer's own Stop.
+
+**Tests**
+- **Unit `engine` (+1):** a ChatGPT stage that fails 3 times, then Retry.
+  - Before: “retry” at once, nothing sent, the owner's case.
+  - After: the 3 failed answers are SUPERSEDED, a new PENDING operation is created with `fresh: true`, and the answer completes the stage.
+- **The fake ChatGPT page:** new option `stallStream` keeps the composer's Stop (and no Copy) after the text ends, until Stop is pressed. Stop then ends the answer and counts presses.
+- **Integration `extension` (+1), with `stallStopSec` 12:**
+  - the answer is taken after more than 12 s, Stop is pressed once, the log carries the notice, and the prompt is sent once;
+  - with 1800 s, as if there were no rule, it never completed (test timed out at 90 s).
+- **Unit:** 60 files, 413 tests; `tsc` 0 errors.
+- **Whole suites:** `extension` + `extension-update` 60/60 on 3.5.3.
+- **Not verified:** the real ChatGPT page with 3.5.3, and why ChatGPT kept Stop for hours. The rule takes the answer as it stood. If ChatGPT really stopped mid-sentence, the research checks see what is there.
+
+**Commands run**
+```
+npx vitest run tests/unit/engine.test.ts                                   # before the fix: the new test got “retry”; after: 15 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "stops changing while"   # stallStopSec 1800: timed out (no rule); 12: pass
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 60 pass
+npx vitest run                                                             # 60 files, 413 tests pass
+npx tsc --noEmit                                                           # 0 errors
+```
+
+## Owner request (2026-11-01): the keyword queue newest first
+
+Screenshot of the Workflow queue: 42 keywords, the newest on “Page 5 of 5”.
+- **Default order:** the queue is now shown newest first. The latest batch is on top, and within a batch the later lines come first (by `createdAt`, then `position`).
+- **View → Order:** Newest first or Queue order (as written). The choice is remembered in this browser, and changing it goes back to page 1.
+- **Unchanged:** the order the articles are written and scheduled in (positions).
+- **Tests:** unit `sortKeywords` in `tests/unit/workflow-move.test.ts`: newest first, queue order, input unchanged.
+- **Checked:** `tsc` 0 errors, unit 60 files / 414 tests, `next build` compiled.
+- **Not verified:** a browser check. The container's disk was full: `next build` first failed with ENOSPC, and the project's `.next/cache` was deleted to make room.
+
+## Owner request (2026-11-04): back to the code before the gallery fix (extension 3.5.4)
+
+Owner: “is fix ke baad se pura tool kharab hogya ha … is sa phale vala code hi laga da again”. Images were sometimes not taken, and ChatGPT had problems before the research stage completed.
+- **Reverted:** `git revert` of 1b6a9d2 (Retry with a fresh prompt, extension 3.5.3 stall rule), cbb593b (extension 3.5.2) and c3501a8 (extension 3.5.1). The three sections above stay as history; their code is gone.
+- **Version 3.5.4:** the extension code is 3.5.0's again under a new number. An extension on 3.5.1–3.5.3 then sees a version mismatch and reloads itself from the folder when idle; the Automation Chrome page shows 3.5.4.
+- **Kept:** the keyword queue newest first, and everything before 3.5.1.
+- **Checked:** `git diff 98b901b` (the commit before 3.5.1) shows only the version numbers, the README note, the newest-first change and this file.
+- **What comes back with the old code:**
+  - galleries can again give only the first 3 photos;
+  - an answer can again stay on “generating”;
+  - after a ChatGPT stage failed for good, Retry can again fail at once without sending a prompt.
+- **Not changed:** the black parts of the Mary Joan Schutz images. They most likely come from the image enhancement (Upscayl, before 3.5.1), so they can still happen. The owner will say how images should be fixed.
+- **Not verified:** the restored code on the owner's PC and the real ChatGPT page.
+
+**Commands run**
+```
+git revert --no-commit 1b6a9d2 cbb593b c3501a8                             # BUILD_STATUS.md conflicts kept ours (history); 3 revert commits
+npx tsc --noEmit                                                           # 0 errors
+npx vitest run                                                             # 60 files, 413 tests pass (the Retry test left with its code)
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts tests/integration/extension-update.test.ts   # 56 pass (as on the 3.5.0 head)
+```
+
+## Owner request (2026-11-04): a new writer “Celebrity 2” with the owner's own prompt
+
+Owner: “ek or celebrity writer ka module add kr celebrity 2 ke name sa”, with the full prompt, a video of ChatGPT's answer and the answer pasted (Andrea Soros).
+- **Images:** “images vala prompt apni use krle” (use the app's own image prompts).
+- **Owner's answers to the questions:**
+  - Title: “title ka step rakhna ha” — with or without a title, a title is generated.
+  - Category: celebrity writers always use “Celebrity”; German websites use “Prominente”. This applies to both celebrity writers.
+  - Writer: for a person keyword the owner chooses which writer writes it.
+
+**The writer (`celebrity2-writer`, a new key; the retired 2.0 stays `celebrity-writer-2`)**
+- **Stages:** PRECHECK, DUPLICATE_PRECHECK, TITLES, TITLE_APPROVAL, CATEGORY (local), ARTICLE, link check, INTERNAL_LINKS, IMAGES, HUMANIZE, ASSEMBLY, SEO_CHECK, QUALITY_GATE, ARTICLE_APPROVAL, WORDPRESS_DRAFT, RANKMATH, VERIFIED_COMPLETE.
+- **Titles:** TITLES is the Celebrity writer's own prompt (the example title only guides it).
+- **Image prompts:** IMAGE_SEARCH and PHOTO_CHECK are the Celebrity writer's prompts, through `promptModuleFor`, which borrows from `celebrity-writer`.
+- **ARTICLE:** the owner's prompt (`src/modules/celebrity2-writer/prompt.ts`), as sent. Only its inputs became variables:
+  - the approved title → `{{selected_title}}`;
+  - `{{KEY}}` → `{{keyword}}`;
+  - the secondary keywords → `{{secondary_keywords}}`, and “Use {{SKEYWORDS}} selectively” reads “Use the secondary keywords from INPUTS selectively”;
+  - “US English” → `{{language_variant}}` (German websites: German).
+  - Doubled quotation marks became single ones, and “tablr” became “table”.
+- **No SEO brief:** the app's SEO brief is not appended to this prompt. Without that rule it was, and for Andrea Soros it read “SEO brief (search intent: Net worth (estimate))”, against the owner's own intent rules.
+- **Parser** (`parseCelebrity2Article`):
+  - reads SEO title, meta description and URL slug; when any is missing, it is filled as for the Celebrity writer;
+  - drops the H1 (the post keeps the approved title);
+  - turns a table in a code block back into a table, and rebuilds the Family Profile table as the clean two-column table;
+  - reads the five FAQs.
+  - A missing table or FAQ section sends the prompt again.
+- **Link check (EXTERNAL_LINKS):** no link prompt is sent.
+  - Every source link of the answer is checked as candidate links are: allowed site, reachable, not a 404 or disambiguation page.
+  - The page has to be about the anchor or about the article's person. `verifyLink` gained `alsoIdentifies` for this.
+  - A failing link keeps its text and loses the link. With external links switched off, all links become text.
+- **Assembly:** the article keeps ChatGPT's order (… Conclusion, then the FAQs). The SEO check and quality gate count its table and its five FAQs (`expectedFaqCount`, `wordRangeFor` in `src/lib/writer-config.ts`).
+
+**Category always “Celebrity” (both celebrity writers)**
+- **Matching:** `findCelebrityCategory` matches “Celebrity”, “Celebrities” and “Celebs” on English websites, and “Prominente”, “Promis” and “Promi” on German ones. It matches by name or slug, the website's language first.
+- **Where it is applied:** at creation (a chosen category is not used), in PRECHECK (also for articles queued before), and in the CATEGORY stage (no prompt). It is also applied in Bulk preview and row actions and in the workflow scheduler.
+- **Without the category:** the owner gets the message “<site> has no “Celebrity” category … Create it in WordPress, then Websites → <site> → Sync categories”.
+- **Celebrity CATEGORY prompt:** removed from the defaults. A stored copy stays in the database but is no longer listed in Prompt Manager.
+- **Single Article:** for celebrity writers the category field is read-only, showing “Celebrity” or the missing message.
+- **Tigram:** unchanged.
+
+**The owner chooses the writer of person keywords**
+- **Router:** `resolveWriter` no longer gives a celebrity writer by itself. A person keyword returns `writer: null, detected: 'celebrity'`, with the reason “Choose Celebrity or Celebrity 2.” Tigram detection is unchanged.
+- **Workflow → Add keywords:**
+  - person keywords show “(person)” and “Choose: Celebrity or Celebrity 2”;
+  - a new **Person keywords** choice sets all of them, and **Writer for all** sets every line;
+  - More → Writer → **Celebrity 2**; the Settings writer can also be Celebrity 2 for every keyword.
+- **Bulk:**
+  - person rows are “choose writer”;
+  - Celebrity 2 is available in the writer choices, the buttons and the summary;
+  - the category column shows the celebrity category.
+- **Also updated:** routing rules, Prompt Manager, the task filter, productivity and duplicates labels, the Writers and Help pages, and the README.
+
+**Tests**
+- **New: unit `celebrity2-writer`, 9 tests, with the owner's real answer** (`tests/fixtures/chatgpt/celebrity2-andrea-soros.md`).
+- **Parsing:**
+  - SEO title, meta description and slug;
+  - no H1 and no code;
+  - the Family Profile table, 14 rows;
+  - the FAQs as Conclusion → FAQ, 5 of them;
+  - 8 links;
+  - a fenced table becomes a table;
+  - a missing table or FAQ section → asked again;
+  - no metadata lines still give the article.
+- **The prompt:**
+  - the exact text with the inputs;
+  - German → “German”;
+  - all 17 sections are kept;
+  - Prompt Manager lists ARTICLE and hides the old Celebrity CATEGORY prompt.
+- **Category:** by name or slug in both languages, and a chosen category is not used (both writers). A website without the category gets the message; Tigram keeps its choice.
+- **End to end (real engine, scripted ChatGPT):**
+  - TITLES, then the ARTICLE prompt exactly as the owner's template plus the language line (no SEO brief);
+  - category Celebrity;
+  - assembled with Conclusion before the FAQs and the 14-row table;
+  - 8 links opened, the 404 one became text;
+  - SEO check: FAQ 5/5, the table, the category and the word count pass (1,564 words, SEO 94).
+- **Workflow:** a CELEBRITY2 keyword starts a `celebrity2-writer` article in “Celebrity”. A website without the category leaves the keyword waiting with the message.
+- **Updated for the owner's decisions:**
+  - category tests: celebrity always “Celebrity”, ChatGPT choosing only for Tigram;
+  - router matrix: detection is measured, and a celebrity writer is never given automatically;
+  - Bulk preview: person rows NEED_WRITER, and the Celebrity 2 override → READY with the celebrity category;
+  - retirement: three writers, “celebrity-writer-2” is still no writer;
+  - fixtures that named the celebrity category “Stars” now use “Celebrity”.
+- **Workflow Add keywords:** person keywords are undecided; CELEBRITY2 is saved, and `writerFor` and More → Writer → Celebrity 2 work.
+
+**Checked**
+- `tsc` 0 errors.
+- Unit: 61 files, 424 tests.
+- Integration: `wordpress-drafts`, `workflow-publish`, `links`, `images`, `image-tools` and `content-refresh`, 52 passed and 1 skipped (real MediaPipe).
+- `next build` compiled.
+- **Chromium on the production build** (scratch data: an English site with “Celebrity”, a German one with “Prominente”, one without):
+  - Single Article shows three writer cards. For Celebrity 2 the category field reads “Celebrity”, “Prominente”, or “No “Celebrity” category on No Celebs” with the message on Generate. The FAQ count field is hidden.
+  - Workflow → Add keywords: “Andrea Soros” shows “Choose: Celebrity or Celebrity 2” with “(person)” options, and the keyboard keyword shows Tigram.
+  - **Person keywords → Celebrity 2** set both person lines and left Tigram. The queue shows “celebrity 2”. The Settings writer offers Celebrity 2. No page errors.
+
+**Not verified**
+- The real ChatGPT page with this prompt (the extension's writing-block reading was not run against it here). The parser was tested on the owner's pasted answer, and the extension turns tables and links into the same Markdown.
+- The owner's websites' real category names: a name other than Celebrity/Celebrities/Celebs or Prominente/Promis/Promi is not matched, and the article then waits with the message.
+- A real WordPress draft and Rank Math score for a Celebrity 2 article (the draft step is shared and was not run with this writer).
+- The real source pages: the link check was tested with stubbed pages.
+
+**Commands run**
+```
+npx vitest run tests/unit/celebrity2-writer.test.ts       # 9 pass; without the brief rule the prompt carried “SEO brief (search intent: Net worth (estimate))”
+npx vitest run                                            # first run 25 failures (old category/router expectations), updated for the owner's decisions; then 61 files, 424 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts tests/integration/links.test.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts tests/integration/content-refresh.test.ts   # 52 pass, 1 skipped
+npx tsc --noEmit                                          # 0 errors
+npx next build                                            # compiled
+node tests/.tmp/c2-smoke.mjs                              # Chromium check above (scratch data, port 3100)
+```
+
+## Owner report (2026-11-04): “SEO Title / Meta Description / URL Slug” at the top of a Celebrity 2 article
+
+Screenshot of the WordPress article “Who Is Ricardo Joel Gomez? All About Selena Gomez's Father”: the body started with “SEO Title: …”, “Meta Description: …” and “URL Slug: …”.
+- **Cause:** the owner's prompt asks for each label on its own line and the value on the next (“**SEO Title:**  ↵ [title]”).
+  - The extension's `toMarkdown` turns that line break into a newline.
+  - The parser (`parseTigramArticle`, used by Celebrity 2) read a value only on the label's own line, and only in the first 12 lines.
+  - So the three lines stayed in the article, and the meta description was taken from them (“SEO Title: …”). The owner's pasted answer had them on one line, so the first tests missed this form.
+- **Fix:**
+  1. **Parser:** `extractMetaLines` (`src/lib/content/meta-lines.ts`) reads the value on the label's line or on the next line. It also handles bold, plain, a heading or list mark before the label, and non-breaking spaces, and searches up to the first “## ” section. It leaves out a short lead-in before the lines. Tigram uses it too.
+  2. **Assembly:** paragraphs of the introduction that are such lines are taken out, and their values become the SEO title, meta description and slug. This also cleans an article saved before the fix: open it → Regenerate → **Assembly**. The WordPress draft and Rank Math fields are then updated by the following stages.
+  3. **Quality gate:** an SEO line left anywhere in a person article is a hard stop (`SEO_LINES_IN_TEXT`) before WordPress. Tigram is not checked, because a how-to about SEO may quote one.
+- **Tests (unit `celebrity2-writer` +3; all three fail on the previous code):**
+  - the owner's answer with the values on the next line (bold, plain, a non-breaking space, the writing block's title before them) is parsed, and Tigram reads the same forms;
+  - a saved article with the three paragraphs → Regenerate Assembly takes them out and sets the SEO fields from them;
+  - a line left in the text → hard stop for Celebrity 2, none for Tigram.
+- **Checked:** unit 61 files / 427 tests; `tsc` 0 errors; integration `wordpress-drafts` + `workflow-publish` 19/19.
+- **Not verified:** the owner's Ricardo Joel Gomez answer itself. The form was inferred from the screenshot (label and value in one paragraph, no bold) and from the extension's `<br>` → newline.
+
+**Commands run**
+```
+npx vitest run tests/unit/celebrity2-writer.test.ts -t "owner report"   # on the previous parser/assembly/gate: 3 fail; after the fix: pass
+npx vitest run                                                            # 61 files, 427 tests pass
+npx tsc --noEmit                                                          # 0 errors
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 19 pass
+```
+
+## Owner request (2026-11-04): one indexing request a day; “indexed” from Google search, not Search Console
+
+Owner: “din me ek article bas ek bar hi indexing ki request ho … check … google search ki api sa ho, search console sa nahi”. Answer to the question: “roz ek bar request or 24 hours ke baad check index howa ke nahi howa. or agher index nahi howa toh again request”.
+- **One request per article per day** (`REQUEST_EVERY_MS`, `nextRequestAllowedAt`): a request is not made within a day of the last one.
+  - The last one is the last request Google accepted, or one the owner marked as made, or an attempt that ended in an error (the click may have reached Google).
+  - The rule is applied when Automation Chrome takes a request, so it covers every way of asking: automatic, again after a search, the owner's **Request indexing** (“requested less than a day ago; the next request is made at …”), and **Request now**.
+  - An error is tried again a day later (was: an hour). “Request now” no longer pulls errors forward.
+  - Not signed in and Google's check stay hourly, because no request was made there.
+- **Is it on Google?** (`src/lib/gsc/google-index.ts`)
+  - One Google search through the search API (Serper, `SERPER_API_KEY`): `site:` + the post's address. It counts only when Google's results contain that exact address (scheme, “www.”, trailing slash, query and fragment ignored).
+  - Search Console's URL Inspection is no longer asked for the status. Its link is still fetched as the request's fallback when the key is connected.
+- **Cycle** (`indexingTick`):
+  1. Publish → request queued; the first search is due a day after publishing.
+  2. On REQUESTED, the next search is 24 h after the request.
+  3. Found → INDEXED (“Google: found in Google search (site:…)”), and a waiting request is cancelled.
+  4. Not found → requested again (one a day) and searched 24 h after it.
+  5. After 14 days without it, requests and searches stop.
+  - Without the workflow switch: searched daily, nothing requested.
+  - Without a Serper key: nothing is searched, and the keyword says what to add.
+  - Search API errors: network or HTTP → an hour; key or credits → a day.
+- **Texts:** the workflow switch help, the README indexing section, and Search Performance (“Indexed (found in Google search)”).
+
+**Tests**
+- **Unit `search-console-live`:** the indexing tests were rewritten for the new rules, against a fake Serper.
+  - Queued ~35 s after publishing, the search a day after the request, not found → requested again, then found → INDEXED.
+  - One a day: the owner's Request indexing → “later”; a pulled-forward run time is held back when taken; an error retry a day later; Request now leaves it.
+  - Without the switch: searched daily, stops after 14 searches.
+  - INDEXED never stepped back; the daily limit and no access as before.
+  - Without either key; and the search API unreachable → “asked again in an hour”, with the request's state kept.
+- **Unit `indexing-signin`:** the owner's Request indexing right after a request → “the next request is made at …” a day later; then made.
+
+**Checked**
+- `tsc` 0 errors.
+- Unit: 61 files, 428 tests.
+- Integration: `extension.test.ts -t "Search Console|indexing|reCAPTCHA|Indexing requested"` 6/6 with the real extension; `workflow-publish` 9/9 (a first run while `next build` ran at the same time failed to start; run alone it passed).
+- `next build` compiled.
+
+**Not verified**
+- Serper's real answers for the owner's posts.
+- How soon a `site:` search shows a newly indexed post (it can lag behind Search Console).
+- The Serper credits used (one per search, at most 14 per article).
+
+**Commands run**
+```
+npx vitest run tests/unit/search-console-live.test.ts tests/unit/indexing-signin.test.ts   # 17 pass
+npx vitest run                                                                           # 61 files, 428 tests pass
+npx tsc --noEmit                                                                         # 0 errors
+npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "Search Console|indexing|reCAPTCHA|Indexing requested"   # 6 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # 9 pass
+npx next build                                                                           # compiled
+```
+
+## Owner report (2026-11-05): two uploads, and ChatGPT's photo was not used
+
+Screenshot (Fausto Xavier Aguilera, Images tab): the two-photo featured image used the owner's two uploads. The one ChatGPT photo under “Collected photos” was not used anywhere. Owner: “jab tek me chatgpt ki images ki don't use nai krun jab tek use krni ha”.
+- **Cause (reproduced):** on Regenerate images, the uploads were too few for the 4 places, so the run searched ChatGPT again.
+  - That search brought nothing, so the stage came back to ask once more in a new chat.
+  - On that second pass, the photos collected before for the article (the ChatGPT photo) were not added to the gallery any more: the code skipped them after an empty search.
+  - Also, a photo the photo check calls a collage (it takes “side by side” in the description for one) was never a body image, and a photo that looked like a cropped copy of another was dropped.
+- **Fix:**
+  1. The photos collected before stay in the gallery on every pass, without being added twice.
+  2. Owner rule: a collected photo is used until “Don't use”.
+     - A likely cropped copy is no longer dropped: it comes last, for a place still free (also the featured image, after the extra search).
+     - A collage still never takes half of the featured image while there is another photo, but it fills a body image that is still free.
+  3. The Images tab says why an unused collected photo was not used (the same photo as another one, a likely cropped copy, a collage, or every place taken).
+- **Test (integration `images`, new):** the owner's case with real stages.
+  - Run 1: ChatGPT gives one photo, then none.
+  - The owner uploads two photos (767×967 and 461×712) and regenerates. ChatGPT gives none again, and the photo check describes the photo as “side by side”.
+  - Result: featured = the two uploads in upload order, body 1 = ChatGPT's photo (used), with a note. After “Don't use” it is left out.
+  - On the previous code: BODY1 missing, the photo unused. With only the first fix: still unused (the collage rule).
+- **Updated (integration `image-tools`):** the two collage tests now expect the collage in a free body image (never in the featured image while there is another photo).
+- **Checked:** unit 61 files / 428 tests; `tsc` 0 errors; integration `images` 13/13 and `image-tools` 10 + 1 skipped; `next build` compiled.
+- **Not verified:** the owner's article itself; its stage notes were not seen, so which rule left the photo out there was inferred from the reproduction.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts -t "Fausto"   # previous code: fail (BODY1 undefined); after both fixes: pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts tests/integration/image-tools.test.ts   # 13 + 10 pass, 1 skipped
+npx vitest run                                                                                       # 61 files, 428 tests pass
+npx tsc --noEmit                                                                                     # 0 errors
+```
+
+## Owner report (2026-11-05): “approved 100 times, it is not approved” (Willie Beir)
+
+Article report and screenshot: Celebrity 2 article, NEEDS_REVIEW at WORDPRESS_DRAFT. “Draft #8098 was edited in WordPress after the app saved it (modified 2026-11-04T23:46:21 UTC). The app did not overwrite those edits.” The quality gate ran 6 times (“All quality checks passed”).
+- **Cause:** the content of draft #8098 changed in WordPress at 23:46 UTC.
+  - The draft was saved at 23:08 and scheduled by the workflow at 23:09. Who changed it at 23:46 (the owner, or a plugin) is not in the report.
+  - After Regenerate images (23:55), the draft step found that change and stopped, as designed, without overwriting it.
+  - The card offered only **Approve despite review reasons**. That approves quality reasons: it re-ran the quality gate (“continuing”) and the draft step stopped again at the same place, every time.
+  - **Overwrite** was only on the WordPress tab, and **keep the WordPress version** had no button at all.
+- **Fix:**
+  - **The card:** for this stop it offers **Keep the WordPress version…**, **Overwrite with the app version…** and **See what changed**, instead of Approve. The next action names the two choices.
+  - **Keep the WordPress version** (`resaveToWordPress` mode `keep-remote`):
+    - the captured WordPress text becomes the article's text in the app (`editedHtml`), and the app's version is saved as a revision;
+    - the stored content hash is that of the WordPress text, so the draft step finds nothing to overwrite;
+    - the WordPress steps then finish.
+    - If no WordPress version was captured, it says to press Save again first (nothing is overwritten).
+  - **Approve refuses this stop:** “Approve despite review reasons” and the queue's “Approve selected” answer that approving does not decide which version to keep. The workflow's “Force continue” leaves the keyword with a note saying the same.
+- **Tests (all failing on the previous code):**
+  - integration `wordpress-drafts`: a draft edited in the fake WordPress, then re-assembly → the stop with both choices named; Approve refused; Keep → completed with the owner's paragraph in WordPress and in the app, and one revision; then an edit, Save again → the stop; Overwrite → completed with the app version;
+  - unit `workflow-force-continue`: Force continue and Approve selected on such a task.
+- **Checked:** unit 61 files / 429 tests; `tsc` 0 errors; integration `wordpress-drafts` + `workflow-publish` 20/20; `next build` compiled.
+- **Not verified:** the owner's real draft #8098, and what changed it at 23:46. For it, choose **Keep the WordPress version** (or Overwrite) on the article page after updating.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts -t "Willie Beir"   # previous code: fail; after: pass
+npx vitest run                                                                                                     # 61 files, 429 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts tests/integration/workflow-publish.test.ts   # 20 pass
+npx tsc --noEmit                                                                                                   # 0 errors
+npx next build                                                                                                     # compiled
+```
+
+## Owner request (2026-11-05): 30 secondary keywords instead of 20
+
+Screenshot: a workflow/import row was **invalid**: “More than 20 secondary keywords.” The owner: “30 krde isko bhi”.
+- **Change:** one limit, `MAX_SECONDARY_KEYWORDS = 30` (`src/lib/content/text.ts`), used by both checks:
+  - the import / workflow keyword parser (`src/lib/campaigns/parse.ts`): “More than 30 secondary keywords.”;
+  - the article input (`src/lib/tasks/create.ts`, Single Article, bulk rows, workflow tasks): “At most 30 secondary keywords”.
+- **Size limits raised with it:** the pasted text may be 6,000 characters (was 4,000) and the list 60 items before de-duplication (was 40). The prompt preview was raised to 6,000 characters too.
+- **Unchanged:** every secondary keyword still reaches the prompt as before (no other cap). Tags still take the keyword and the first 5 secondary keywords.
+- **Test:** unit `campaigns` gets a new test (30 pass, 31 refused, 21 pass, in both checks). It fails on the previous code with “More than 20 secondary keywords.”.
+- **Checked:** unit 61 files / 430 tests; `tsc` 0 errors.
+- **Not verified:** `next build` (not run for this change); the owner's own keyword list.
+- **Already-invalid rows:** a row marked invalid before updating stays as it was imported. Import it again after updating.
+
+**Commands run**
+```
+npx vitest run tests/unit/campaigns.test.ts   # previous code: the new test fails; after: 8 pass
+npx vitest run                                # 61 files, 430 tests pass
+npx tsc --noEmit                              # 0 errors
+```
+
+## Owner request (2026-11-05): a notification when the tool has an update
+
+The owner: “tool update ko notification vagera kuch asa set krde”. Before, a new version was only seen after pressing **Check for updates** in Settings → App updates.
+- **The worker looks by itself** (`src/lib/update/auto-check.ts`, loop `app-update-check`, a tick every 5 min):
+  - It looks at GitHub every hour, and at once after it starts, so a finished update or a `git pull` is seen right away. The look is the same `git fetch` comparison as Check for updates.
+  - It does not look in the desktop app (that updates with its installer) or while an update runs.
+  - Nothing is installed by itself.
+- **Windows notification:** “App update available”, with the number of changes and the newest change title. A click opens Settings → App updates.
+  - It comes once per new GitHub version; an even newer version is notified again.
+  - It is not shown again for a version the owner already saw with Check for updates.
+  - New setting: Settings → Notifications → “A new app version is available” (on by default). Off means no Windows notification; the bell still shows it.
+- **The bell and the banner:** “App update available” with an **Update** link to `/settings#app-updates`, until updated.
+  - When the button cannot update (for example, not started with `npm run start:all`), it says why.
+  - It is listed after the warnings that block work. It is hidden while an update runs and once an update finished after the look.
+  - If GitHub cannot be reached, nothing is shown, and the failure is logged once per kind.
+- **Settings → App updates:**
+  - the card has an anchor (`#app-updates`);
+  - it shows the last automatic look;
+  - when that look found a new version, it checks again on opening, so the changes and **Update now** are there at once;
+  - a manual check also refreshes the bell.
+- **Tests:** new unit file `app-update-notify` (8 tests), covering:
+  - the notification and bell texts;
+  - a look at start, then hourly;
+  - one notification per version, and again for a newer one;
+  - nothing after updating;
+  - the setting off (no Windows notification, the bell still shows it);
+  - a version seen in Settings not notified again;
+  - GitHub not reached;
+  - no look in the desktop app or during an update;
+  - the setting is on by default.
+- **Checked:**
+  - unit 62 files / 438 tests;
+  - `tsc` 0 errors;
+  - `next build` compiled;
+  - Chromium against a scratch database with an available update, light 1440 px and dark 390 px, with no page errors and no sideways scrolling:
+    - the bell lists “App update available”, and its **Update** link opens Settings at the card;
+    - the card checks again (here: newest version);
+    - the setting shows under Notifications.
+- **Not verified:**
+  - a real Windows notification for an update (Windows only);
+  - a real new version arriving on the owner's PC.
+  - With three other warnings (as on the scratch database), the banner shows only the first three and the update is in the bell.
+
+**Commands run**
+```
+npx vitest run tests/unit/app-update-notify.test.ts   # 8 pass
+npx vitest run                                        # 62 files, 438 tests pass
+npx tsc --noEmit                                      # 0 errors
+npx next build                                        # compiled
+node scratchpad/upd-smoke.mjs                         # Chromium: bell, Settings card, setting (1440 light, 390 dark)
+```
+
+## Owner report (2026-11-05): “7:15 and still scheduled” (morgan carey, slot 7:00 pm)
+
+Screenshot: Workflow, Celebrity 2 keyword “morgan carey”, status **scheduled**, slot Thu 5 Nov 7:00 pm, no note, at 7:15 pm.
+- **How publishing works:** the app schedules the verified draft in WordPress (“future”) for its slot. WordPress publishes it with its own scheduler (WP-Cron). After the slot, a check job reads the status back.
+- **Causes found:**
+  1. **Missed schedule:** on many hosts WP-Cron runs late or never, because it needs a visit and a working loopback. The post then stays “future” after its time, and the app only waited. Before: “WP-Cron may be delayed” every 30 min; after 24 h: “WP-Cron may not be running”.
+  2. **Silent failed check:** when the check could not reach WordPress (signed out, browser error), the keyword kept no note. The next check waited for the next half hour.
+  3. **Checks piling up:** a check waiting behind another browser job for the website was joined by a new one every window.
+  - Which one happened on the owner's PC is not known (no logs here). The empty note fits cause 2, or a check still waiting.
+- **Fix:**
+  - **Missed schedule handled** (`verifyKeywordPublished`, `src/wordpress/schedule.ts`), only when the post's own time has passed by 2 min and it is still “future”:
+    1. The app starts WordPress's scheduler (a plain request to `wp-cron.php`, as any visit does) and reads the status back up to 3 times. WordPress publishes the post itself.
+    2. If WP-Cron still does not run, the app publishes the post itself, with its scheduled date kept (`WpClient.publishMissedSchedule`). This is the approved path: only from the scheduler, only inside `withPublishPermit` (`canPublish` + acknowledgement re-read), audited as `workflow.published-missed-schedule`, with a log line that suggests a real cron job on the host.
+    - Nothing is ever published before its time.
+    - Publishing off for the website: not published, and the note says so.
+  - **Check cadence** (`schedulerTick`):
+    - the first check comes 2 min after the slot;
+    - then every 5 min for 2 h, then every 30 min;
+    - only one check job per keyword at a time.
+  - **Notes:**
+    - a failed check writes “Could not check WordPress after the slot: … Checked again in a few minutes.”;
+    - a post not yet due says “Scheduled in WordPress for … UTC”, or “(changed in WordPress)” when its time differs;
+    - a scheduled row whose time passed without a note shows “Its time has passed: the app is checking that WordPress published it …” in the Workflow table.
+  - **Guard test** (`tests/unit/wordpress.test.ts`): the client's only status changes are now “future” and “publish”. Each is called only by `schedule.ts`, once, inside `withPublishPermit`, and the publish only for an overdue post.
+- **Tests:**
+  - **Fake WordPress:** new `cron` option: 'visits' (as before), 'missed' (only `wp-cron.php` publishes) and 'never'.
+  - **Integration `workflow-publish`, new tests** (failing on the previous code):
+    - missed schedule 15 min after the slot: one check queued, not one per tick; WP-Cron started; published with the slot as its date;
+    - `wp-cron.php` blocked: the app publishes, date kept, audited;
+    - a post not yet due stays “future”;
+    - signed out: the note says why, and it is tried again in the next 5-minute window (not the next half hour).
+- **Checked:**
+  - integration `workflow-publish` 11/11;
+  - unit `wordpress` 15/15 and `workflow-scheduler` 9/9;
+  - full unit suite 438/438 (437/438 before the guard-test update, the one failure being that test);
+  - `tsc` 0 errors.
+- **Not verified:** the owner's site, and which cause it was. After updating, the next check (within 5 min) publishes “morgan carey” if WordPress still has it as “future”, or says why it cannot.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts   # previous code: 3 fail; after: 11 pass
+npx vitest run tests/unit/wordpress.test.ts tests/unit/workflow-scheduler.test.ts                  # 15 + 9 pass
+npx vitest run                                                                                     # 438 pass (437 before the guard-test update)
+npx tsc --noEmit                                                                                   # 0 errors
+```
+
+## Owner report (2026-11-05): Celebrity 2 “Family Profile” is not an H2
+
+Screenshot: a Celebrity 2 article (Maison Thomas). “Family Profile” above the person table is bold text, not an H2 heading. The owner asked to fix the prompt.
+- **Cause:** the owner's prompt shows the output as `**Family Profile**` (a bold line), and the parser kept that line as a paragraph.
+- **Fix:**
+  - **Prompt** (`CELEBRITY2_ARTICLE_PROMPT`, default v2):
+    - the output format now has `## Family Profile`;
+    - the “Family Profile Table” section asks for the H2 heading `## Family Profile` (“an H2 heading, not bold text”) with the table directly under it.
+    - A saved prompt still as shipped (v1, not edited) is upgraded at the next start or update (seed, `previousHashes`). An edited one is kept.
+  - **Parser** (`profileHeadingAsH2`, `src/lib/content/profile-heading.ts`, used by `parseCelebrity2Article`):
+    - the line right above the table becomes an H2 with its own words, whether it was bold, bold with a colon, an H3, or German “Familienprofil”;
+    - with no such line, “Family Profile” (German “Familienprofil”) is added;
+    - the direct answer above it stays a paragraph.
+  - **Assembly:**
+    - **Older Celebrity 2 articles:** the bold line becomes the H2, so **Regenerate → Assembly** fixes an article saved before.
+    - **Body images:** the Family Profile section stays after the introduction, and body image 1 keeps its place between the article's first and second own sections.
+- **Tests** (unit `celebrity2-writer`, 15 tests):
+  - the owner's sample answer gives an H2 above the table;
+  - six variants (colon, H3, H2, German, missing, missing German);
+  - Assembly of an article saved before gives the H2, with the image in the same place and the same HTML as the new form;
+  - the prompt asks for the H2, and the seed upgrades v1 but keeps an edited prompt.
+  - The parser tests and the end-to-end test failed on the previous code.
+- **Checked:** unit 441/441; `tsc` 0 errors; `next build` compiled (this head, with the missed-schedule change).
+- **Not verified:** a real ChatGPT answer to the new prompt; the owner's Maison Thomas draft. For that draft: Regenerate → Assembly, then the draft is saved again.
+
+**Commands run**
+```
+npx vitest run tests/unit/celebrity2-writer.test.ts   # previous code: 3 fail; after: 15 pass
+npx vitest run                                        # 441 pass
+npx tsc --noEmit                                      # 0 errors
+npx next build                                        # compiled
+```
+
+## Owner request (2026-11-05): writers built in the app (Writers → New writer), “fully advanced + user friendly”
+
+The owner: “ab mujhe agher koi new write add krna ha toh tujhe bolna parta ha … me jab chaon module add krlon” — then chose Option 1 (a writer builder in the app).
+- **Data:**
+  - `CustomWriter` (new migration `20261105150000_custom_writers`, a new table only). The writer's prompts are `PromptTemplate` rows under its key `custom-…`, so every save is a version and Prompt Manager lists them under the writer's name.
+  - Settings (`src/lib/writers/types.ts`):
+    - title step: the app's / own prompt / off;
+    - answer rules: words, FAQs exact or about, facts table and its H2 heading in English and German, conclusion, SEO lines, no lists;
+    - category: celebrity / a fixed category by name with a German name / chosen-else-ChatGPT;
+    - photos, link check, internal links, SEO brief;
+    - routing: phrases, and offered for person keywords.
+- **One place for writer rules** (`src/lib/writers/rules.ts`): category rule, image kind and designs, answer order, facts table, prompt-as-written, FAQ count and word range. The built-in writers' rules are unchanged; pipelines, assembly, the SEO check, the quality gate, the category stage, pre-check, task creation, the scheduler and campaigns ask there instead of comparing keys.
+- **Running:**
+  - A custom writer runs Celebrity 2's steps (`src/worker/pipelines/custom.ts`, manifest `src/modules/custom/manifest.ts`). Its settings decide which steps run; a skipped step shows as skipped.
+  - Its answer is read by `parseCustomArticle`, using the writer's rules.
+  - Photo, category and title prompts are borrowed: person writers from Celebrity, general writers from Tigram.
+  - The worker loads the writers at start and every 15 s, and on an unknown `custom-…` article. Drafts and archived writers' articles still run.
+- **Known everywhere:**
+  - an in-process catalog (`src/lib/writers/catalog.ts`), filled by the API wrapper, the pages and the worker, and handed to the browser by `WritersHydrator`;
+  - active writers appear in Single Article, Workflow (per line, Person keywords, Writer for all, the More menu, the workflow writer), Bulk Campaigns, website routing rules, Prompt Manager and the article filters;
+  - imports accept their name;
+  - their phrases route keywords (`WRITER_RULE`).
+- **UI:**
+  - **Writers page:** your writers (status, kind, last test, articles), **New writer** (start from Celebrity 2, Celebrity, Tigram, empty person/general, or a copy), and “Use as a start” on the built-in writers.
+  - **The writer's page:** 8 sections — Basics, Title step, Article prompt (variable buttons, live checks, a preview with example values), Answer rules, Category, Photos & links, Keywords, Test with a ChatGPT answer.
+  - **The Test section:** words, FAQs, table rows and SEO lines against the rules; notes; SEO fields; the H2 outline; the article in a sandboxed frame. It says whether the answer would be used or asked again.
+  - **The side panel:** a “ready” checklist and the steps of an article, with the ones that are off greyed out.
+  - **Actions:** save (with an unsaved-changes bar), make active, back to draft, archive, duplicate, delete (only when unused).
+- **Also fixed:** the Single Article form still refused more than 20 secondary keywords in the browser after the 30-keyword change; it now uses the same limit (30).
+- **Tests:**
+  - unit `custom-writers` (8 tests):
+    - created from Celebrity 2 as a draft, not usable or offered;
+    - names unique and never a built-in name;
+    - bad placeholders and template syntax refused;
+    - test with the owner's real Andrea Soros answer (1,564 words, 5 FAQs, 14 table rows) saved in the checklist, and an answer without the table would be asked again;
+    - active: offered everywhere, found by name, routing phrase;
+    - end to end with scripted ChatGPT: the title step, then the owner's prompt as written; the Family Profile H2 and table, 5 FAQs, the SEO checks pass;
+    - a general writer from Tigram with a fixed category and no title step: no TITLES or CATEGORY prompt, its title from the answer, a website without the category gets a clear message;
+    - archived: hidden, its articles still run, not deletable while used; an unused writer is deleted with its prompts;
+    - the built-in rules are unchanged.
+  - `single-article-e2e`: the expected text of the retired-writer message changed; it is still refused.
+- **Checked:**
+  - unit 62 files / 449 tests; `tsc` 0 errors; `next build` compiled;
+  - integration `images` 13/13; `workflow-publish` 11/11 and `wordpress-drafts` 11/11, each run alone (run together with `images`, the shared browser made one login wait time out);
+  - Chromium against a scratch database, with no page errors and no sideways scrolling at 390 px:
+    - Writers → New writer → Create and open → set FAQs → paste the Andrea Soros answer → “This answer would be used” → Make active;
+    - the writer then appears on Writers, Single Article, the Workflow page and Prompt Manager;
+    - a fixed category without a name shows in the checklist, and Discard clears the unsaved bar.
+- **Not verified:**
+  - a real ChatGPT run of a custom writer, and its images and WordPress draft on the owner's sites;
+  - the owner's own prompts.
+
+**Commands run**
+```
+npx vitest run tests/unit/custom-writers.test.ts                         # 8 pass
+npx vitest run                                                           # 62 files, 449 tests pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts            # 13 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/workflow-publish.test.ts  # 11 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/wordpress-drafts.test.ts  # 11 pass
+npx tsc --noEmit                                                         # 0 errors
+npx next build                                                           # compiled
+node scratchpad/cw-smoke.mjs, cw-smoke2.mjs                              # Chromium: builder flow, lists, Prompt Manager
+```
+
+## Owner request (2026-11-05): “Use in featured / Use in body” on uploaded and ChatGPT photos
+
+Screenshot: the Images tab of an article, with one upload (Your photos) and one ChatGPT photo (Collected photos), each offering only “Don't use”. The owner: “images me ek option hi add krde … use in featured use in body … uploaded images me bhi or chatgpt vali images me bhi”.
+- **Data:** `MediaAsset.usePlace` (FEATURED | BODY | null), new migration `20261105170000_media_use_place` (ADD COLUMN, no data change).
+  - It is set with `setTaskImagePlace` through `PATCH /api/tasks/[id]/images/[assetId]` (`{ place }`).
+  - Only an upload or a collected photo the article may use can be given a place.
+- **Images tab:** every upload and collected photo has **Auto · Featured · Body**.
+  - The “used” chip says where the photo is used (*used: featured / body 1 / body 2*).
+  - After a choice a message says it is applied at the next Images run.
+- **Celebrity photos** (`celebrityImages`):
+  - Photos chosen for Featured fill the featured design's places first, in their order on the tab. Photos chosen for Body take the body images first.
+  - This also applies to a photo the checks had put last (a cropped copy, another site's collage).
+  - The app chooses only for the places left, with its usual rules.
+  - More chosen than places: extra featured ones go to the body; an extra body one is not used, with the reason shown.
+  - A note says what was chosen.
+- **General writers** (`generalImages`, `assignOwnedSlots`): marked uploads and marked pictures ChatGPT made earlier take their places first. Unmarked uploads fill the rest in upload order, and only the remaining places are drawn again.
+- **Tests:**
+  - integration `images`, new test: two uploads plus a ChatGPT photo.
+    - Without a choice: featured = upload 1, body 1 = upload 2, body 2 = ChatGPT.
+    - ChatGPT → Featured and upload 1 → Body: featured = ChatGPT, body 1 = upload 1, body 2 = upload 2.
+    - Auto again: back to the app's order.
+    - A rendered image cannot be given a place.
+  - unit `image-places` (general writers' assignment).
+- **Checked:**
+  - integration `images` 14/14;
+  - unit 64 files / 451 tests; `tsc` 0 errors; `next build` compiled;
+  - Chromium against a scratch article (1440 dark and 390 light, no page errors, no sideways scrolling): the two photos show the selector; ChatGPT's photo as Featured; a click on Body for the upload saves and highlights it.
+- **Disk:** the build first failed with “no space left”. Old scratch folders of this session were removed. Deleting the test runs' leftover folders in the shared `/tmp` was not allowed here.
+- **Not verified:** the owner's own article; real ChatGPT photos.
+
+**Commands run**
+```
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts   # 14 pass
+npx vitest run tests/unit/image-places.test.ts                                          # 2 pass
+npx vitest run                                                                          # 64 files, 451 tests pass
+npx tsc --noEmit                                                                        # 0 errors
+npx next build                                                                          # compiled
+node scratchpad/img-smoke.mjs                                                           # Chromium: Auto/Featured/Body on the Images tab
+```
+
+## Owner report (2026-11-05): the disk was full during an update; now `npm run start:all` fails
+
+On the owner's PC (`F:\claude\Automation-2`):
+- `npm run start:all`: the two new migrations applied (with a backup), then `next build` failed with “Type error: Parameter 'c' implicitly has an 'any' type” in `app/(dashboard)/writers/[key]/page.tsx:18`.
+- `git pull` (8ae01f5..5227f14) refused: the files of the new version are there as local changes and untracked files.
+- **Cause:**
+  - The one-click update ran out of disk space. The code was left half-way: the working tree has the new files, but git is still on the old commit, and going back could not finish.
+  - Its build step, which runs `prisma generate`, did not complete. The Prisma client is still made from the old schema (no `CustomWriter`, no `usePlace`).
+  - `npm run start:all` never runs `prisma generate` itself; only `npm install` (postinstall) and the update's build step do.
+  - **Reproduced here:** a client generated from 8ae01f5's schema gives exactly the owner's first error (`writers/[key]/page.tsx(18,38)` TS7006); with the current client, `tsc` has 0 errors.
+  - The same would happen after a manual `git pull` that changes the schema but no package.
+- **Fix:**
+  - **`scripts/ensure-prisma-client.mjs`:** runs first in `prestart:all`, `predev:all` and `setup`. It compares `prisma/schema.prisma` with the copy in the generated client (`node_modules/.prisma/client/schema.prisma`, line ends ignored). When they differ it runs `prisma generate` in its own process, before anything has loaded the Prisma engine (Windows cannot replace a loaded engine). When generate fails, it says to close other app windows and free space.
+  - **Settings → App updates:** an update does not start with less than 1.5 GB free on the app's disk (`UPDATE_MIN_FREE_BYTES`, `fs.statfsSync`). The card says how much is free; the bell's update note gives the same reason.
+  - **README troubleshooting:** how to recover a half-finished update — free space, `git stash push --include-untracked`, `git pull`, `npm run start:all`.
+- **Tests:**
+  - unit `ensure-prisma-client`: same schema with Windows line ends → nothing; changed or missing → generate; the three npm scripts run it;
+  - unit `app-update`: below 1.5 GB → the message; enough or unknown → no block.
+  - **Manual:** a client generated from the old schema → the script reports a mismatch, runs `prisma generate`, and `tsc` is clean again.
+- **Checked:** unit 65 files / 453 tests; `tsc` 0 errors.
+- **Not verified:** on the owner's Windows PC.
+
+**Commands run**
+```
+npx prisma generate --schema <8ae01f5 schema> && npx tsc --noEmit   # the owner's error, reproduced
+node scripts/ensure-prisma-client.mjs                                # regenerated; tsc 0 errors
+npx vitest run tests/unit/ensure-prisma-client.test.ts tests/unit/app-update.test.ts   # pass
+npx vitest run                                                       # 65 files, 453 tests pass
+```
+
+### Follow-up: the check did not see the owner's half-made client
+
+After `git pull` (c01df41) the owner's `npm run start:all` ran `ensure-prisma-client.mjs`. It found nothing to do, and `next build` failed again at `writers/[key]/page.tsx:18:38`.
+- **Cause:** the client's schema copy (`node_modules/.prisma/client/schema.prisma`) was already the new one, but its types were still the old ones.
+  - A `prisma generate` that stopped half-way leaves this state. On Windows that happens when a running or stuck app process keeps the engine file locked (EPERM), or when the disk is full.
+  - **Reproduced here:** a client generated from 8ae01f5's schema, then the new `schema.prisma` copied over its copy → the owner's exact error; the earlier check said “matches”.
+  - **Ruled out:** Next's incremental type-check cache (`.next/cache/.tsbuildinfo`). The same incremental program with the new client reports 0 errors.
+- **Fix:**
+  - A finished `prisma generate` now writes a stamp with the schema's fingerprint (`node_modules/.prisma/client/bas-schema.sha256`). Without the stamp, or with one of another schema, the client is generated again before start. The first start after `npm install` generates once more (a few seconds).
+  - The one-click update's build step uses the same stamped generate (`ensure-prisma-client.mjs --force`).
+  - On Windows the “run directly” check of the script ignores the case of the path.
+  - When generate fails, the message says to close every app window or restart the PC, and to free disk space.
+- **Tests:** unit `ensure-prisma-client`:
+  - the owner's state (new schema copy, no stamp) → generate;
+  - with the stamp → nothing;
+  - a changed schema or no client → generate;
+  - the npm scripts and the update's build use it.
+  - **Manual:** the owner's state reproduced → the script generates → `tsc` 0 errors.
+- **Checked:** unit 65 files / 453 tests.
+
+**Commands run**
+```
+npx prisma generate --schema <8ae01f5 schema>; cp prisma/schema.prisma node_modules/.prisma/client/   # the owner's state: TS7006 at writers/[key]/page.tsx:18:38
+node scripts/ensure-prisma-client.mjs                                                                 # generates; tsc 0 errors
+npx vitest run                                                                                        # 65 files, 453 tests pass
+```
+
+## Owner request (2026-11-06): “writer import export ka option add kr”
+
+Your own writers can now be saved to a file and brought back, on this PC or another one.
+- **Export:**
+  - **Export** on a writer's page downloads that writer (`GET /api/writers/export?key=custom-…` → `writer-<name>.json`). It is disabled while the page has unsaved changes, because the file holds the saved version.
+  - **Export all** on Writers → Your writers downloads every writer (`writers-<date>.json`).
+  - The file (`format: "blog-automation-studio/writers"`, `version: 1`) holds each writer's key, name, short name, description, person/general, status, settings and current article and title prompts. It holds no test results, ids, websites, articles, passwords or keys.
+  - Only the owner's writers can be exported (built-in writers: 400). Like every dashboard request, it is answered only on localhost.
+- **Import** (Writers → Your writers → Import, also in the empty state):
+  - The page reads the file (at most 1.9 MB) and asks the server for a preview (`POST /api/writers/import` with `preview: true`). Nothing is written yet.
+  - Each writer of the file is checked as a save on its page would check it:
+    - its settings are checked with `customWriterConfigSchema`;
+    - its prompts are checked with `checkPrompt` (template syntax, unknown `{{variables}}`);
+    - its name must be free and not a built-in writer's.
+  - A broken writer is shown with the reason and can only be skipped. A file that is not a writer file, one made by a newer app version, an empty file, or a file with more than 50 writers is refused with a clear message.
+  - It is compared with the writers here: the same key means the same writer; the same name means another writer with that name. The dialog says whether the prompt and/or the settings differ.
+  - **The choice for each writer:**
+    - **Add as a new writer:** a draft, `startedFrom: 'import'`, prompt version 1. A name already used gets “Name 2”, which can be edited; a taken short name falls back to the new name.
+    - **Update the same writer:** through `updateCustomWriter`. The prompt becomes a new version with the note “Imported from the file …”, and the old one stays under Versions. Name and status stay. This is not offered while that writer's articles are running and the file changes person/general.
+    - **Skip.**
+  - **Defaults:** identical → Skip; the same key → Update; otherwise → Add.
+  - A tick box makes the writers that were active in the file active here, through `setWriterStatus`, so only with a complete checklist; otherwise the writer stays a draft with the reason.
+  - Every choice is checked before anything is written. If one cannot be done, nothing is written, and the dialog shows the reason under that writer.
+  - Audit entries: `writer.export` and `writer.import`.
+- **Files:**
+  - `src/lib/writers/file-format.ts` (client-safe shapes and limits) and `src/lib/writers/transfer.ts` (export, preview, import);
+  - `app/api/writers/export/route.ts` and `app/api/writers/import/route.ts`;
+  - `app/(dashboard)/writers/import-writers.tsx` (the dialog);
+  - Export buttons on `writers/page.tsx` and `writers/[key]/builder.tsx`;
+  - `nameProblem` in `store.ts`, which the import and `assertNameFree` share.
+- **Tests:** unit `writer-transfer` (9):
+  - export: the file's contents and the download route (localhost only, own writers only);
+  - the same file again → nothing to import;
+  - a backup restores a changed writer as a new prompt version;
+  - on another PC → new drafts (active when asked);
+  - name conflicts (“Name 2”, a taken or built-in name typed);
+  - broken files and writers → nothing written;
+  - an update blocked by running articles;
+  - the route's CSRF, origin and size checks.
+- **Chromium (production build, scratch database):**
+  - Export all and Export download their files; Export is disabled with unsaved changes;
+  - a non-writer file shows the reason;
+  - a file with a new writer, a changed one and a broken one shows Add / Update / Skip (disabled) and imports 2;
+  - the same file again → all Skip;
+  - phone 390 px in dark mode has no horizontal scroll.
+- **Checked:** unit 66 files / 462 tests; `tsc` 0 errors; `next build` compiled.
+- **Not verified:** on the owner's PC with their own writers.
+
+**Commands run**
+```
+npx vitest run tests/unit/writer-transfer.test.ts      # 9 pass
+npx vitest run                                         # 66 files, 462 tests pass
+npx tsc --noEmit                                       # 0 errors
+npx next build                                         # compiled (/api/writers/export, /api/writers/import)
+node scratchpad/transfer-smoke.mjs                     # Chromium: export, import preview, import, again, phone dark
+```
+
+## Owner request (2026-11-07): “again indexing ko 48 hours ke baad krde”
+
+When Google search does not show a published workflow post, indexing is now requested again 48 hours after the last request. Before, it was requested again at once, a day after the last request.
+- **Flow:**
+  1. Request.
+  2. Google search 24 hours later (unchanged).
+  3. Not found: the request is made again 48 hours after the last one.
+  4. Search again 24 hours after that request.
+  5. After 14 days without the post on Google, requests and searches stop (unchanged).
+- **Code:**
+  - `REQUEST_AGAIN_AFTER_MS` (48 h) in `src/lib/gsc/request-indexing.ts`;
+  - `nextRequestAllowedAt(keywordId, everyMs)`;
+  - `requestIndexingAgain` waits for 48 h;
+  - the keyword's note says “Indexing is requested again at … (48 hours after the last request)”;
+  - the Workflow switch help and the README are updated.
+- **Unchanged:** the owner's own **Request indexing** and **Request now** still only wait for the one-a-day rule. An error retry still waits a day.
+- **Tests:** unit `search-console-live`:
+  - the publish → request → search test now expects the re-request at 48 h. It fails on the previous code (“requested again now (one request a day)”).
+  - new: 14 days without the post on Google → 8 requests, each 48 h apart, a search 24 h after each, then both stop.
+- **Checked:** unit 66 files / 463 tests; `tsc` 0 errors.
+- **Not verified:** on the owner's site.
+
+**Commands run**
+```
+npx vitest run tests/unit/search-console-live.test.ts   # before the fix: fails (re-request “now”); after: 14 pass
+npx vitest run                                          # 66 files, 463 tests pass
+npx tsc --noEmit                                        # 0 errors
+```
+
+## Owner request (2026-11-07): image file names from the keyword (“example-keyword.png”)
+
+Before, an image was uploaded to WordPress under its local file name plus a tag from the asset id (for example `featured-rendered-1762…-av8cp5phns.webp`).
+- **Now** (`wpUploadName` in `src/wordpress/media.ts`):
+  - The featured image is `<keyword>.<ext>`.
+  - The images in the article are `<keyword>-2.<ext>`, `<keyword>-3.<ext>` … in their order. They start at 1 when the article has no featured image.
+  - **The keyword in the name** (`keywordFileStem`):
+    - lower case, with words joined by “-”;
+    - accents removed; on German websites ä/ö/ü/ß become ae/oe/ue/ss, as WordPress writes them;
+    - at most 80 characters.
+  - A keyword with nothing usable (another script) keeps the earlier name. The file keeps its format.
+- **Lost upload answers:** the upload now sends its attachment slug (`?slug=<keyword>-<tag>`), so it is still known before the upload.
+  - The slug does not depend on the image's place, so a lost answer is found again even after the article changed.
+  - An upload started with the older name is still looked up by the older slug.
+  - When a file name exists, WordPress adds “-1” itself. The fake WordPress now does the same and takes the `slug` parameter.
+- **Tests:**
+  - unit `image-studio-health`: names, German umlauts, a non-Latin keyword, the length limit, the stable slug;
+  - integration `images`:
+    - a Tigram article's three uploads are `how-to-install-wordpress`, `-2` and `-3`; the featured media is the first, and the article's `<img>` tags use `-2` and `-3`;
+    - a re-save uploads nothing new;
+    - lost answers are found by the sent slug.
+- **Checked:** unit 66 files / 464 tests; integration `images` 14/14; `tsc` 0 errors.
+- **Not verified:**
+  - on a real WordPress, that the `slug` sent with the upload is kept. That check was not run, because running the downloaded WordPress was not allowed here. If WordPress ignored it, the only effect would be a second copy of an image whose upload answer was lost.
+  - on the owner's websites.
+
+**Commands run**
+```
+npx vitest run tests/unit/image-studio-health.test.ts                                  # 10 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts  # 14 pass
+npx vitest run                                                                          # 66 files, 464 tests pass
+npx tsc --noEmit                                                                        # 0 errors
+```
+
+## Owner request (2026-11-07): “custom writer me photos ka custom prompt”
+
+A writer of your own can now use its own photo prompts instead of the app's.
+- **Setting:** `config.photoPrompts` (`app` by default, or `own`) in `src/lib/writers/types.ts`. The Photos & links section shows it when photos are on.
+- **Stages** (`photoPromptStages`):
+  - general writers: `IMAGE_PLAN` and `IMAGE_GENERATION` (instead of Tigram's);
+  - person writers: `IMAGE_SEARCH` (instead of Celebrity's).
+  - `PHOTO_CHECK` stays the app's, because the app reads its fixed answer format.
+- **Storage:**
+  - the prompts are `PromptTemplate` rows under the writer's key (“<writer> — Image plan / Image generation / Photo search”), versioned and listed in Prompt Manager;
+  - they start as a copy of the app's current prompt (`photoDefaults`).
+- **Used** by `promptModuleFor` when photos are on and `photoPrompts` is `own`. The prompt has the same kind as the app's (`loadPromptTemplate`), so an image prompt gets no language line.
+- **Checks** (`checkPrompt` per stage):
+  - **variables:** only the general ones plus that prompt's own; `{{image_title}}` is for the plan, `{{image_brief}}` for generation, `{{person_name}}` for the search;
+  - **errors:** generation without `{{image_brief}}`; a search without `{{person_name}}`/`{{keyword}}`;
+  - **warnings:** a plan without the `IMAGE 1 PROMPT:` lines; a search that does not ask for photos;
+  - **checklist:** a “Photo prompts” item;
+  - an active writer cannot switch to its own photo prompts without them.
+- **Duplicate, Export and Import** carry the photo prompts. Older files without them still import.
+- **Tests:**
+  - unit `custom-writers` (+2): defaults, checks, prompt choice, kind, Prompt Manager rows, back to the app's, copy, export, the person writer's search, the active guard, photos off;
+  - unit `writer-transfer` (+1): the prompts in a file are checked, imported and updated as versions;
+  - integration `images` (+1): a writer of your own with its own image plan and image prompt.
+    - Its plan prompt is sent once and its image prompt three times, with the plan's descriptions and no language line.
+    - The app's photo prompts are never sent (the scripted answer fails the test if they are).
+    - The pictures are uploaded with the plan's alt texts and the keyword file names.
+- **Checked:** unit 66 files / 467 tests; integration `images` 15/15; `tsc` 0 errors.
+- **Not verified:**
+  - the writer page in a browser: no production build was possible, the container disk being full of earlier test data in /tmp;
+  - real ChatGPT image runs.
+
+**Commands run**
+```
+npx vitest run tests/unit/custom-writers.test.ts tests/unit/writer-transfer.test.ts           # 10 + 10 pass
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts      # 15 pass
+npx vitest run                                                                              # 66 files, 467 tests pass
+npx tsc --noEmit                                                                            # 0 errors
+```

@@ -14,7 +14,7 @@ export interface SettingField {
 }
 
 export interface SettingGroup {
-  id: 'browser' | 'workflow' | 'content' | 'seo' | 'advanced';
+  id: 'browser' | 'workflow' | 'content' | 'seo' | 'advanced' | 'notifications';
   title: string;
   description: string;
   fields: SettingField[];
@@ -106,7 +106,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'imagesRequired', label: 'Missing images → Needs review', type: 'boolean', help: 'Off: finish a text-only draft with a review note.' },
       { key: 'imageOutputSize', label: 'Image output size', type: 'select', options: [{ value: '1200x675', label: '1200 × 675' }, { value: '1920x1080', label: '1920 × 1080' }] },
       { key: 'imageMaxBytes', label: 'Image file-size budget (bytes)', type: 'number', min: 50000, max: 5000000 },
-      { key: 'enhanceCelebrityImages', label: 'Enlarge small celebrity photos (Upscayl)', type: 'boolean', help: 'Small photos are enlarged with Upscayl before cropping, as in your earlier tool. Needs Upscayl in data/tools/upscayl (see npm run tools:install); without it the photo is used as it is and the Images tab says so.' },
+      { key: 'enhanceCelebrityImages', label: 'Enlarge small celebrity photos (Upscayl)', type: 'boolean', help: 'Small photos are enlarged with Upscayl before cropping, as in your earlier tool. npm run start:all installs Upscayl by itself (pinned version, checksum verified); until it is there, or if it fails, the built-in sharpener enlarges the photo instead, and the Images tab says which was used.' },
       {
         key: 'celebrityPhotoSource',
         label: 'Celebrity photo source',
@@ -141,6 +141,18 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'chatgptTabs', label: 'ChatGPT tabs', type: 'number', min: 1, max: 5, warnAbove: { value: 3, message: 'More tabs can cause account-wide rate limiting.' } },
       { key: 'autoLaunchChatGPTChrome', label: 'Open Automation Chrome automatically', type: 'boolean', help: 'When you queue an article (or ChatGPT work is waiting) and the extension is not connected, the worker opens the ChatGPT Chrome window by itself (at most once every 3 minutes).' },
       { key: 'autoCloseChatGPTChrome', label: 'Close it when the queue is done', type: 'boolean', help: 'The Chrome window the worker opened by itself is closed normally (never forced) once no queued or running article and no ChatGPT prompt is left for 2 minutes. A Chrome you opened yourself is never closed.' },
+    ],
+  },
+  {
+    id: 'notifications',
+    title: 'Notifications',
+    description: 'Windows notifications (bottom right, and in the notification centre) when something needs you. Windows shows them itself — nothing goes to an outside service — while the worker runs; a click opens the page.',
+    fields: [
+      { key: 'windows', label: 'Windows notifications', type: 'boolean', help: 'Off: nothing is shown (the bell in the dashboard still lists what needs you).' },
+      { key: 'review', label: 'An article needs review or approval', type: 'boolean', help: 'Also articles from the workflow. More than 3 at once come as one notification with the count.' },
+      { key: 'chatgptSignedOut', label: 'ChatGPT is signed out', type: 'boolean', help: 'In Automation Chrome; the articles wait and go on after you sign in.' },
+      { key: 'campaignFinished', label: 'A bulk campaign finished', type: 'boolean' },
+      { key: 'appUpdate', label: 'A new app version is available', type: 'boolean', help: 'The app looks at GitHub every hour; one notification per new version. The bell shows it too, with a link to Settings → App updates.' },
     ],
   },
   {

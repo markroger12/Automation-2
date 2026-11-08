@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { load } from 'cheerio';
 import { normalizeText } from '../content/text';
+import { isCelebrityModule } from '../domain';
 
 /**
  * Search intent and the editable SEO brief (upgrade 04). Deterministic
@@ -44,7 +45,7 @@ export function classifyIntent(keyword: string, opts: { secondary?: string[]; mo
   for (const r of RULES) if (r.re.test(kw)) return { intent: r.intent, confidence: 'high', reason: `the keyword contains ${r.why}` };
   const secondary = (opts.secondary ?? []).join(' ');
   for (const r of RULES) if (secondary && r.re.test(secondary)) return { intent: r.intent, confidence: 'medium', reason: `a secondary keyword contains ${r.why}` };
-  if (opts.moduleKey === 'celebrity-writer') {
+  if (isCelebrityModule(opts.moduleKey)) {
     if (looksLikeTwoPeople(kw)) return { intent: 'FAMILY_RELATIONSHIP', confidence: 'medium', reason: 'the keyword names two people' };
     return { intent: 'BIOGRAPHY', confidence: 'medium', reason: 'a person keyword without a narrower question' };
   }

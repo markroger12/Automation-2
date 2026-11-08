@@ -136,19 +136,28 @@ describe('owner request: “Request indexing” on the keyword queue', () => {
     expect(r.changed).toBe(2);
     expect(r.notes.join(' ')).toMatch(/“Malaak Compton-Rock” is already on Google/);
     expect(r.notes.join(' ')).toMatch(/“Not Yet” is not published yet/);
-    expect(await ri.waitingIndexingRequests(new Date())).toBe(2);
-    // The earlier request is asked again (still one request per keyword); the other is queued, with the website's property.
-    expect(await client.queueJob.findUniqueOrThrow({ where: { id: andre.job.id } })).toMatchObject({ status: 'WAITING', attempts: 0, lockedBy: null, error: null, finishedAt: null });
+    // Owner rule (2026-11-04): one request per article per day. Andre Rock was requested just now: its next request is
+    // made a day after that one (the note says when); Andi Rock is queued now, with the website's property.
+    expect(r.notes.join(' ')).toMatch(/“Andre Rock”: indexing was requested less than a day ago; the next request is made at .* \(one a day\)\./);
+    expect(await ri.waitingIndexingRequests(new Date())).toBe(1);
+    const andreJob = await client.queueJob.findUniqueOrThrow({ where: { id: andre.job.id } });
+    expect(andreJob).toMatchObject({ status: 'WAITING', attempts: 0, lockedBy: null, error: null, finishedAt: null });
+    const andreKw = await client.workflowKeyword.findUniqueOrThrow({ where: { id: andre.kw.id } });
+    expect(andreJob.runAt.getTime()).toBe(andreKw.indexingRequestedAt!.getTime() + 24 * 3600_000);
+    expect(andreKw.indexingStatus).toMatch(/^Indexing was requested less than a day ago; the next request \(one a day\) is made at /);
     const andiJob = await client.queueJob.findUniqueOrThrow({ where: { idempotencyKey: `gsc-index:${andi.id}` } });
     expect(JSON.parse(andiJob.payload)).toMatchObject({ keywordId: andi.id, url: 'https://techeflux.example/andi-rock/', property: 'https://techeflux.example/', websiteId: siteId });
-    // Each keyword says so (it said “fetch failed” before); an indexed one is not touched.
-    for (const id of [andre.kw.id, andi.id]) expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id } })).indexingStatus).toMatch(/^Waiting for Automation Chrome to request indexing in Search Console \(asked by you/);
+    // It says so (it said “fetch failed” before); an indexed one is not touched.
+    expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: andi.id } })).indexingStatus).toMatch(/^Waiting for Automation Chrome to request indexing in Search Console \(asked by you/);
     expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: indexed.id } })).status).toBe('INDEXED');
     expect(await client.auditLog.count({ where: { action: 'workflow.keywords.action', details: { contains: 'request-indexing' } } })).toBe(1);
 
-    // A request Automation Chrome is making right now is left alone.
-    const taken = await ri.claimIndexingRequest('install-1');
+    // A day later Andre Rock's request is made; one Automation Chrome is making right now is left alone.
+    const dayLater = new Date(andreJob.runAt.getTime() + 1000);
+    expect((await ri.claimIndexingRequest('install-1', dayLater))?.id).toBe(andiJob.id);
+    const taken = await ri.claimIndexingRequest('install-1', dayLater);
     expect(taken?.id).toBe(andre.job.id);
+    await client.queueJob.update({ where: { id: andre.job.id }, data: { leaseUntil: new Date(Date.now() + 8 * 60_000) } });
     const busy = await service.keywordAction(siteId, { keywordIds: [andre.kw.id], action: 'request-indexing' });
     expect(busy).toMatchObject({ changed: 0, notes: ['“Andre Rock”: Automation Chrome is requesting indexing for it right now.'] });
     // The second run's proof is made too (before: taken as a repeat of the first one and never rendered).

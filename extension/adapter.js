@@ -418,8 +418,56 @@
     return img.complete && img.naturalWidth === 0 && /^https?:/i.test(img.currentSrc || img.src || '');
   }
 
+  /**
+   * The picture viewer. Owner report with a screen recording (Sira Martínez: 3 tiles with “10”, 3 photos used): ChatGPT
+   * keeps other, hidden dialogs in its page, and its viewer is a full-screen layer. So: a dialog on screen with a large
+   * picture; else the full-screen fixed layer around a large picture; else a dialog on screen.
+   */
   function galleryDialog() {
-    return qs(['[role="dialog"]']);
+    const shown = qsAll(['[role="dialog"]', '[aria-modal="true"]', 'dialog[open]']).filter(isVisible);
+    const withPicture = shown.filter((d) => Array.from(d.querySelectorAll('img')).some((img) => isVisible(img) && img.getBoundingClientRect().width >= 200));
+    return withPicture[withPicture.length - 1] || viewerLayer() || shown[shown.length - 1] || null;
+  }
+
+  /** A fixed layer covering most of the window around a large picture (a viewer that is not marked as a dialog). */
+  function viewerLayer() {
+    for (const img of Array.from(document.images)) {
+      if (!isVisible(img) || img.getBoundingClientRect().width < 200) continue;
+      for (let p = img.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (getComputedStyle(p).position !== 'fixed') continue;
+        const b = p.getBoundingClientRect();
+        if (b.width >= innerWidth * 0.6 && b.height >= innerHeight * 0.6) return p;
+      }
+    }
+    return null;
+  }
+
+  /** The viewer's own count, e.g. “1 of 10” at the bottom of ChatGPT's viewer. */
+  function viewerCounter(dialog) {
+    const m = /(?:^|\s)(\d{1,3})\s*(?:of|von|\/)\s*(\d{1,3})(?:\s|$)/i.exec(dialog.innerText || '');
+    const at = m ? Number(m[1]) : 0;
+    const of = m ? Number(m[2]) : 0;
+    return at >= 1 && of >= at && of <= 100 ? { at, of } : null;
+  }
+
+  /**
+   * How many pictures the gallery says it has, when that is more than the tiles on the page. Owner report (3 tiles,
+   * the third with a stacked-pictures icon and “5”): the count sits on the last tile; the others are only in the viewer.
+   */
+  function galleryCount(thumbs) {
+    if (!thumbs.length) return null;
+    let box = thumbs[0].parentElement;
+    for (let up = 0; box && up < 4 && !thumbs.every((t) => box.contains(t)); up++) box = box.parentElement;
+    if (!box) return null;
+    let best = null;
+    for (const el of box.querySelectorAll('span, div, p, button')) {
+      const m = /^\+?\s*(\d{1,2})$/.exec((el.textContent || '').trim());
+      if (!m || el.querySelector('img')) continue;
+      // “+2” over the last tile: two more than the tiles; “5”: five in all.
+      const n = (el.textContent || '').trim().startsWith('+') ? thumbs.length + Number(m[1]) : Number(m[1]);
+      if (n > thumbs.length && (!best || n > best)) best = n;
+    }
+    return best;
   }
 
   /**
@@ -469,11 +517,55 @@
   }
 
   function galleryNextButton(dialog) {
-    return qs(['button[aria-label*="Next" i]', 'button[aria-label*="Weiter" i]', 'button[aria-label*="Nächste" i]', 'button[data-testid*="next" i]'], dialog);
+    const named = qs(['button[aria-label*="Next" i]', 'button[aria-label*="Weiter" i]', 'button[aria-label*="Nächste" i]', 'button[data-testid*="next" i]', 'button[title*="Next" i]', 'button[aria-label*="forward" i]'], dialog);
+    if (named) return named;
+    // Owner report (3 tiles with “5”, 3 photos used): a Next with no name — an icon-only button at the viewer's right
+    // edge, halfway down (Close, Download and Share sit at the top and have names).
+    const box = dialog.getBoundingClientRect();
+    const left = Math.max(box.left, 0);
+    const right = Math.min(box.right, innerWidth);
+    const top = Math.max(box.top, 0);
+    const bottom = Math.min(box.bottom, innerHeight);
+    let best = null;
+    for (const b of dialog.querySelectorAll('button, [role="button"]')) {
+      if (!isVisible(b)) continue;
+      const name = `${b.getAttribute('aria-label') || ''} ${b.getAttribute('title') || ''} ${b.textContent || ''}`;
+      if (/[a-zäöü]{2,}/i.test(name)) continue;
+      const r = b.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      if (r.width > 120 || r.height > 120 || cx < left + (right - left) * 0.75 || cy < top + (bottom - top) * 0.3 || cy > top + (bottom - top) * 0.7) continue;
+      if (!best || cx > best.getBoundingClientRect().left) best = b;
+    }
+    return best;
+  }
+
+  /** The arrow keys of a viewer that has no Next button (as a person would press them). */
+  function pressViewerKey(dialog, key) {
+    const code = key === 'ArrowRight' ? 39 : 37;
+    for (const type of ['keydown', 'keyup']) dialog.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode: code, which: code, bubbles: true, cancelable: true }));
+  }
+
+  /**
+   * A row of small pictures inside the viewer (each shows that picture large), in page order. At least three, and
+   * never one that links to another site (it would open a new tab).
+   */
+  function viewerStrip(dialog) {
+    const shown = shownPicture(dialog);
+    const big = shown ? shown.getBoundingClientRect().width : 0;
+    const strip = Array.from(dialog.querySelectorAll('img')).filter((img) => {
+      if (img === shown || !isVisible(img)) return false;
+      const r = img.getBoundingClientRect();
+      if (r.width < 24 || r.height < 24 || (big && r.width > big * 0.5)) return false;
+      const a = img.closest('a[href]');
+      return !(a && new URL(a.href, location.href).origin !== location.origin);
+    });
+    return strip.length >= 3 ? strip : [];
   }
 
   function closeGalleryDialog() {
-    const close = qs(['[role="dialog"] button[aria-label*="Close" i]', '[role="dialog"] button[aria-label*="Schließen" i]']);
+    const viewer = galleryDialog();
+    const close = viewer && qs(['button[aria-label*="Close" i]', 'button[aria-label*="Schließen" i]'], viewer);
     if (close) close.click();
     else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
@@ -839,6 +931,10 @@
     galleryDialog,
     shownPicture,
     galleryNextButton,
+    galleryCount,
+    viewerCounter,
+    pressViewerKey,
+    viewerStrip,
     closeGalleryDialog,
     promptMismatchReport,
     looseText,

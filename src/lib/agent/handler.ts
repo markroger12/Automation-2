@@ -102,7 +102,7 @@ export async function handleAgentRequest(req: Request): Promise<Response> {
 async function versionMismatch(installId: string): Promise<string | null> {
   const row = await db.workerStatus.findUnique({ where: { id: `extension:${installId}` }, select: { version: true } });
   if (row?.version && row.version !== EXPECTED_EXTENSION_VERSION) {
-    return `Extension version ${row.version} does not match the app (${EXPECTED_EXTENSION_VERSION}). Reload the unpacked extension from the project's extension folder once (chrome://extensions → reload).`;
+    return `Extension version ${row.version} does not match the app (${EXPECTED_EXTENSION_VERSION}). From 3.5.0 on it reloads itself from the project's extension folder when it is idle; an older one needs one reload by hand (chrome://extensions → reload).`;
   }
   return null;
 }
@@ -130,7 +130,7 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
       return { job: await claimIndexingRequest(body.installId) };
     }
     case 'gsc-result':
-      return reportIndexingRequest({ jobId: body.jobId, installId: body.installId, outcome: body.outcome, message: body.message ?? null });
+      return reportIndexingRequest({ jobId: body.jobId, installId: body.installId, outcome: body.outcome, message: body.message ?? null, pageCopy: body.pageCopy });
     case 'progress':
       return reportChatGPTProgress({
         jobId: body.jobId,
@@ -150,6 +150,7 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
         images: body.images,
         imageLinks: body.imageLinks,
         galleryReport: body.galleryReport,
+        pageCopy: body.pageCopy,
       });
     case 'fail':
       return failChatGPTJob({ jobId: body.jobId, tabId: body.tabId, code: body.code, message: body.message, retryAfterSec: body.retryAfterSec ?? null, uncertain: body.uncertain, diagnostics: body.diagnostics });
@@ -209,7 +210,7 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
     versionOk,
     expectedVersion: EXPECTED_EXTENSION_VERSION,
     protocol: AGENT_PROTOCOL_VERSION,
-    message: versionOk ? null : `Version mismatch: extension ${body.version}, app expects ${EXPECTED_EXTENSION_VERSION}. Reload the unpacked extension once; it will not reload itself.`,
+    message: versionOk ? null : `Version mismatch: extension ${body.version}, app expects ${EXPECTED_EXTENSION_VERSION}. From 3.5.0 on the extension reloads itself from its folder when it is idle; an older one needs one reload by hand (chrome://extensions → reload).`,
     serverTime: now.toISOString(),
     config: {
       chatgptUrl: settings.browser.chatgptUrl,

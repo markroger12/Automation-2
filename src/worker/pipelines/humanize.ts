@@ -1,4 +1,5 @@
 import { parseJson } from '@/lib/json';
+import { isCelebrityModule } from '@/lib/domain';
 import { getSettings } from '@/lib/settings';
 import { TransientError } from '@/lib/pipeline-errors';
 import { batchVariables, evaluateBatch, applyResults, planHumanize, skippedResults, summarize, type ParagraphResult } from '@/lib/humanizer/plan';
@@ -24,7 +25,7 @@ export function humanizerSource(ctx: PipelineContext): string {
 }
 
 async function requiredNames(ctx: PipelineContext): Promise<string[]> {
-  if (ctx.task.moduleKey !== 'celebrity-writer') return [];
+  if (!isCelebrityModule(ctx.task.moduleKey)) return [];
   const { confirmedFullName } = await import('@/modules/celebrity-writer/parsers');
   const full = confirmedFullName(parseJson(ctx.task.quickBio, []));
   return [ctx.task.keyword, full].filter((x): x is string => Boolean(x && /\p{Lu}/u.test(x)));

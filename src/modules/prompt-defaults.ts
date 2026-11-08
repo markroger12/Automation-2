@@ -6,6 +6,7 @@
  *
  * Client-safe: no Node imports.
  */
+import { CELEBRITY2_ARTICLE_PROMPT } from './celebrity2-writer/prompt';
 
 export interface PromptVariableDoc {
   name: string;
@@ -17,7 +18,7 @@ export interface PromptVariableDoc {
 }
 
 export interface PromptDefault {
-  moduleKey: 'celebrity-writer' | 'tigram-writer' | 'shared';
+  moduleKey: 'celebrity-writer' | 'celebrity2-writer' | 'tigram-writer' | 'shared';
   stageKey: string;
   name: string;
   description: string;
@@ -191,6 +192,23 @@ No drawings, no AI-made pictures, no memes, no collages and no screenshots of ar
 Do not write an article; one short caption line is enough.`,
   },
   {
+    moduleKey: 'celebrity2-writer',
+    stageKey: 'ARTICLE',
+    name: 'Celebrity 2 — Article',
+    description: 'The owner’s one-prompt celebrity article: SEO title, meta description, URL slug, introduction, direct answer, Family Profile table, sourced sections, conclusion and five FAQs.',
+    // v2 (owner report): “Family Profile” is asked for as an H2 heading (it was a bold line).
+    version: 2,
+    kind: 'text',
+    previousHashes: ['870eff1cd3416a9b86d091d9bc0770bffa41c1dd4fd1c7942949052f5dc5725b'],
+    variables: [
+      v('selected_title', 'The approved title from the title step (kept exactly)', true, 'stage'),
+      KEYWORD,
+      SECONDARY,
+      v('language_variant', 'Article language: “US English”, or “German” on German websites', true, 'input'),
+    ],
+    content: CELEBRITY2_ARTICLE_PROMPT,
+  },
+  {
     moduleKey: 'tigram-writer',
     stageKey: 'ARTICLE',
     name: 'Tigram — Article',
@@ -214,23 +232,6 @@ URL SLUG: <clear lower-case words separated by hyphens>
 Then deliver the full article as Markdown, without a redundant title heading or introductory chatbot commentary. Start with an interesting, direct introduction of approximately 100–150 words that uses the primary keyword naturally in the first 100 words. Follow with a direct-answer paragraph of around 40–60 words where that format matches reader intent. Use 5–7 substantial ## H2 sections; add ### H3 headings only when useful. Include one practical step-by-step explanation and one meaningful comparison/pros-cons table if the topic lends itself to them. Include a ## Frequently Asked Questions section with {{faq_count}} specific ### H3 questions and brief answers. End with ## Conclusion and a relevant, non-salesy next step.
 
 Keep paragraphs easy to follow and varied in length. Distinguish verified facts from estimates, opinions, unsupported product claims and current information you cannot confirm. Do not pretend to have tested software or products unless the research actually provides that evidence. No fabricated statistics, links, release dates, quotations or testimonials. No empty filler sections. The primary goal is to solve the reader's question, not to game a plugin score.`,
-  },
-  {
-    moduleKey: 'celebrity-writer',
-    stageKey: 'CATEGORY',
-    name: 'Celebrity — Category',
-    description: 'Pick exactly one existing synchronized WordPress category (only for articles without a chosen category, e.g. from the workflow).',
-    version: 1,
-    kind: 'text',
-    previousHashes: [],
-    variables: [KEYWORD, v('categories', 'Synchronized category names, one per line', true, 'stage')],
-    content: `Select exactly one suitable WordPress category for the article about "{{keyword}}" from this list:
-
-{{categories}}
-
-Choose only a category literally present in the list. Output a single line:
-
-CATEGORY: <exact category name>`,
   },
   {
     moduleKey: 'tigram-writer',

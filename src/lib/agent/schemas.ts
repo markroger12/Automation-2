@@ -41,6 +41,8 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
     jobId: id,
     outcome: z.enum(['REQUESTED', 'QUOTA', 'NOT_SIGNED_IN', 'NO_ACCESS', 'HUMAN_CHECK', 'ERROR']),
     message: z.string().max(1000).optional().nullable(),
+    /** A copy of the page's structure (no page text) when the proof may miss Google's answer or the request failed. */
+    pageCopy: z.string().max(400_000).optional(),
   }),
   z.object({
     action: z.literal('progress'),
@@ -72,6 +74,8 @@ export const agentRequestSchema = z.discriminatedUnion('action', [
       .optional(),
     /** What the extension saw in the gallery (how many pictures, opened large, saved, links), for the task log. */
     galleryReport: z.string().max(500).optional(),
+    /** A copy of the gallery's and viewer's structure (no chat text) when fewer pictures were taken than it has. */
+    pageCopy: z.string().max(400_000).optional(),
   }),
   z.object({
     action: z.literal('fail'),

@@ -3,6 +3,7 @@ import type { Website } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getSettings } from '@/lib/settings';
 import { parseJson, stringArray } from '@/lib/json';
+import { expectedFaqCount } from '@/lib/writer-config';
 import { LoginRequiredError, NeedsReviewError } from '@/lib/pipeline-errors';
 import { cleanModelMarkdown, markdownToHtml } from '@/lib/content/markdown';
 import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
@@ -11,7 +12,7 @@ import { evaluateCorrection, markRichText, MARKS_NOTE, restoreRichText, type Mar
 import { evaluateQuality } from '@/lib/quality/gate';
 import type { StageManifest } from '@/modules/types';
 import { firstPage, withSiteContext, withWordPressSlot } from '@/wordpress/browser';
-import { siteRef } from '@/wordpress/session';
+import { autoLoginIfSaved, siteRef } from '@/wordpress/session';
 import { WpApiError, WpClient } from '@/wordpress/client';
 import { contentHash, editorContent, mapApiError, NO_PERMISSION_REASON, RemoteEditedError, saveDraft, sameArticle, type DraftInput, type EditorKind } from '@/wordpress/drafts';
 import { inspectInEditor, type EditorInspection } from '@/wordpress/editor';
@@ -26,11 +27,12 @@ import { articleHtml, assembleForTask, bind, bodyForAssembly, metaFromIntro, seo
  * draft (stored post ID); none of them can publish (see publish-guard.ts).
  */
 
-async function withWordPress<T>(site: Website, purpose: string, fn: (context: BrowserContext) => Promise<T>): Promise<T> {
+async function withWordPress<T>(site: Website, purpose: string, fn: (context: BrowserContext) => Promise<T>, retried = false): Promise<T> {
   const settings = await getSettings();
-  // Known logged-out profile: pause without opening a browser. The task resumes when the owner logs in.
+  // Known logged-out profile: sign in again with the saved sign-in (owner request), else pause without opening a
+  // browser. The task resumes when the session is active again.
   const profile = site.wordpressProfileId ? await db.browserProfile.findUnique({ where: { id: site.wordpressProfileId } }) : null;
-  if (!profile || profile.sessionState === 'LOGIN_REQUIRED') {
+  if (!profile || (profile.sessionState === 'LOGIN_REQUIRED' && !(profile && (await autoLoginIfSaved(site))))) {
     throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress. Use “Log in” on the website page.`, site.id);
   }
   try {
@@ -40,6 +42,8 @@ async function withWordPress<T>(site: Website, purpose: string, fn: (context: Br
   } catch (error) {
     if (error instanceof LoginRequiredError && site.wordpressProfileId) {
       await db.browserProfile.update({ where: { id: site.wordpressProfileId }, data: { sessionState: 'LOGIN_REQUIRED', lastCheckedAt: new Date() } }).catch(() => {});
+      // The session ended during the job: sign in again with the saved sign-in and try once more.
+      if (!retried && (await autoLoginIfSaved(site))) return withWordPress(site, purpose, fn, true);
     }
     throw error;
   }
@@ -96,7 +100,7 @@ function draftInput(ctx: PipelineContext, site: Website, html: string, editor: E
 async function featuredMedia(client: WpClient, ctx: PipelineContext): Promise<{ id: number; how: UploadHow } | null> {
   const asset = await db.mediaAsset.findFirst({ where: { taskId: ctx.taskId, role: 'FEATURED', status: { in: ['READY', 'UPLOADED'] } }, orderBy: { createdAt: 'desc' } });
   if (!asset) return null;
-  const r = await uploadAssetWithRetry(client, asset, { altText: asset.altText, title: ctx.task.selectedTitle });
+  const r = await uploadAssetWithRetry(client, asset, { altText: asset.altText, title: ctx.task.selectedTitle, naming: { keyword: ctx.task.keyword, language: ctx.task.language, index: 1 } });
   return { id: r.id, how: r.how };
 }
 
@@ -318,7 +322,7 @@ async function runRankMath(ctx: PipelineContext): Promise<StageResult> {
         seo,
         reviewThreshold: ctx.config.reviewThreshold,
         densityCeilingPct: ctx.config.keywordDensityCeilingPct,
-        expectedFaqCount: ctx.task.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount,
+        expectedFaqCount: expectedFaqCount(ctx.task.moduleKey, ctx.config),
         categoryValid: true,
         assemblyWarnings: assembled.warnings,
         imagesRequired: false,

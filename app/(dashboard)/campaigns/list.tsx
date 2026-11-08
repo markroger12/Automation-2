@@ -66,7 +66,7 @@ export function CampaignList() {
             return (
               <tr key={c.id}>
                 <td>
-                  <Link className="font-medium text-indigo-600 hover:underline" href={`/campaigns/${c.id}`}>
+                  <Link className="font-medium link" href={`/campaigns/${c.id}`}>
                     {c.name}
                   </Link>
                   {c.message ? <div className="text-muted text-xs">{c.message}</div> : null}

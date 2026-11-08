@@ -228,7 +228,7 @@ function CandidateView({ id, onChanged }: { id: string; onChanged: () => Promise
         title={
           <span className="flex flex-wrap items-center gap-2">
             {c.task ? (
-              <Link className="text-indigo-600 underline" href={`/articles/${c.task.id}`}>
+              <Link className="link" href={`/articles/${c.task.id}`}>
                 {c.title}
               </Link>
             ) : (
@@ -241,7 +241,7 @@ function CandidateView({ id, onChanged }: { id: string; onChanged: () => Promise
         description={`${c.website.name} · evaluated ${formatDateTime(c.evaluatedAt)}${c.task?.wpPostId ? ` · post #${c.task.wpPostId}` : ''}`}
         actions={
           c.task?.wpEditUrl ? (
-            <a className="inline-flex items-center gap-1 text-sm text-indigo-600 underline" href={c.task.wpEditUrl} target="_blank" rel="noreferrer">
+            <a className="inline-flex items-center gap-1 text-sm link" href={c.task.wpEditUrl} target="_blank" rel="noreferrer">
               Open in WordPress <ExternalLink className="h-3.5 w-3.5" />
             </a>
           ) : null

@@ -117,13 +117,16 @@ export async function startWorker(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGBREAK', () => void shutdown('SIGBREAK'));
-  // The desktop app (Windows has no signals for child processes) asks over its IPC channel; if the app itself goes
-  // away, the channel closes and the worker stops the same safe way.
+  // The desktop app and npm run start:all (scripts/start-all.mjs) stop the worker over their IPC channel: on Windows a
+  // signal sent to a child process ends it at once, without this shutdown. When the parent itself goes away, the
+  // channel closes and the worker stops the same safe way.
   if (process.send) {
     process.on('message', (m: unknown) => {
-      if ((m as { type?: string } | null)?.type === 'shutdown') void shutdown('desktop app');
+      const type = (m as { type?: unknown } | null)?.type;
+      if (type === 'shutdown') void shutdown('desktop app');
+      else if (type === 'bas:shutdown') void shutdown('stopped by start:all');
     });
-    process.on('disconnect', () => void shutdown('desktop app closed'));
+    process.on('disconnect', () => void shutdown('the app that started the worker ended'));
   }
   process.on('uncaughtException', (error) => {
     console.error('Uncaught exception in worker:', error);

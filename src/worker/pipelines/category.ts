@@ -1,4 +1,7 @@
 import { db } from '@/lib/db';
+import { moduleDisplayName } from '@/lib/domain';
+import { findCelebrityCategory, findRuleCategory, missingCelebrityCategoryMessage, missingRuleCategoryMessage } from '@/lib/celebrity-category';
+import { categoryIsAutomatic, categoryRuleFor } from '@/lib/writers/rules';
 import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { matchCategory } from '@/modules/tigram-writer/parsers';
 import type { PipelineContext, PipelineStage } from '../pipeline/types';
@@ -10,23 +13,48 @@ export function isUncategorized(c: { name: string; slug: string | null }): boole
 }
 
 /**
- * The CATEGORY stage of both writers: ChatGPT chooses one of the website's synchronized categories for an article
- * nobody chose a category for (never invents one).
+ * The CATEGORY stage of the Tigram writer: ChatGPT chooses one of the website's synchronized categories for an article
+ * nobody chose a category for (never invents one). For the celebrity writers it sets the celebrity category.
  *
  * Owner report: articles the workflow queued never got a category chosen. A workflow keyword has no category of its
  * own, so the article took the website's default (a category sync sets “Uncategorized”), and that default was taken
  * for the owner's choice. Owner decision: ChatGPT chooses for these articles, “Uncategorized” only when the website
  * has nothing else, and the website's default when ChatGPT names no existing category.
  */
+/**
+ * Owner decision (2026-11-04): a celebrity writer's article (Celebrity, Celebrity 2) always goes into the website's
+ * “Celebrity” category (German websites: “Prominente”) — no choice, no ChatGPT prompt. Used by the pre-check and the
+ * CATEGORY stage; an article whose website has no such category waits for the owner.
+ */
+export async function assignCelebrityCategory(ctx: PipelineContext): Promise<{ name: string; changed: boolean }> {
+  const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId }, include: { categories: true } });
+  // The owner's writers may always use another category (Writers → a writer → Category).
+  const rule = categoryRuleFor(ctx.task.moduleKey);
+  const cat = rule.mode === 'chatgpt' ? findCelebrityCategory(site.categories, ctx.task.language) : findRuleCategory(site.categories, rule, ctx.task.language);
+  if (!cat) {
+    const msg = rule.mode === 'chatgpt' ? missingCelebrityCategoryMessage(site.name, ctx.task.language) : missingRuleCategoryMessage(site.name, rule, ctx.task.language, moduleDisplayName(ctx.task.moduleKey));
+    throw new NeedsReviewError(msg, [msg], `Create the category in WordPress, sync categories for ${site.name}, then Retry.`);
+  }
+  if (ctx.task.categoryId === cat.id) return { name: cat.name, changed: false };
+  await ctx.updateTask({ categoryId: cat.id, categoryName: cat.name, categoryExternalId: cat.externalId });
+  return { name: cat.name, changed: true };
+}
+
 export const categoryStage: Pick<PipelineStage, 'run' | 'shouldRun'> = {
   shouldRun: (ctx: PipelineContext) => {
     // Never once the WordPress draft exists: the saved post keeps its category (the draft checks compare the two).
     if (ctx.task.wpPostId) return false;
+    if (categoryIsAutomatic(ctx.task.moduleKey)) return true;
     // A category the owner chose (Single Article, a Bulk row) is kept. Workflow articles queued before this fix carry
     // the website's default in its place.
     return !ctx.task.categoryId || ctx.task.source === 'WORKFLOW';
   },
   run: async (ctx: PipelineContext) => {
+    if (categoryIsAutomatic(ctx.task.moduleKey)) {
+      const c = await assignCelebrityCategory(ctx);
+      const celebrity = categoryRuleFor(ctx.task.moduleKey).mode === 'celebrity';
+      return { outcome: 'completed' as const, data: { category: c.name, how: celebrity ? 'always the celebrity category' : 'always the writer’s category' }, message: `Category: ${c.name} (${celebrity ? 'always for celebrity articles' : 'always for this writer'})` };
+    }
     const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId }, include: { categories: { orderBy: { name: 'asc' } } } });
     const all = site.categories;
     if (all.length === 0) throw new NeedsReviewError(`${site.name} has no synchronized categories.`, ['No categories synced'], 'Sync categories on the website page, then Retry.');

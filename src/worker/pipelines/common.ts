@@ -1,4 +1,7 @@
 import { db } from '@/lib/db';
+import { isCelebrityModule } from '@/lib/domain';
+import { categoryIsAutomatic } from '@/lib/writers/rules';
+import { isCustomKey } from '@/lib/writers/types';
 import { parseJson, stringArray } from '@/lib/json';
 import { NeedsReviewError } from '@/lib/pipeline-errors';
 import { assembleArticle, firstParagraphText, type AssemblyImage } from '@/lib/content/assembly';
@@ -15,6 +18,7 @@ import { isNearDuplicate } from '@/lib/campaigns/dedupe';
 import { deletedPostKeys } from '@/lib/tasks/deleted-posts';
 import { STOPWORDS } from '@/lib/plagiarism/text';
 import type { TemplateVars } from '@/lib/prompts/template';
+import { expectedFaqCount, wordRangeFor } from '@/lib/writer-config';
 import type { StageManifest } from '@/modules/types';
 import type { PipelineContext, PipelineStage, StageResult } from '../pipeline/types';
 
@@ -58,10 +62,16 @@ export function precheck(manifest: StageManifest): PipelineStage {
       const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId }, include: { categories: true } });
       const problems: string[] = [];
       if (!site.active) problems.push(`${site.name} is inactive.`);
-      if (ctx.task.categoryId && !site.categories.some((c) => c.id === ctx.task.categoryId)) problems.push('The chosen category no longer exists on this website (re-sync categories and choose again).');
-      if (ctx.task.moduleKey === 'celebrity-writer' && !ctx.task.categoryId) problems.push('A category is required for the Celebrity Article Writer.');
       if (!['en', 'de'].includes(ctx.task.language)) problems.push(`Unsupported language ${ctx.task.language}.`);
-      if (problems.length) throw new NeedsReviewError(problems.join(' '), problems, 'Fix the website/category, then Retry.');
+      if (problems.length) throw new NeedsReviewError(problems.join(' '), problems, 'Fix the website, then Retry.');
+      // Celebrity articles: always the website's “Celebrity” category (German: “Prominente”), also for articles
+      // queued before that rule (owner decision 2026-11-04). Waits for the owner when the website has none.
+      if (categoryIsAutomatic(ctx.task.moduleKey) && !ctx.task.wpPostId) {
+        const { assignCelebrityCategory } = await import('./category');
+        await assignCelebrityCategory(ctx);
+      } else if (ctx.task.categoryId && !site.categories.some((c) => c.id === ctx.task.categoryId)) {
+        throw new NeedsReviewError('The chosen category no longer exists on this website (re-sync categories and choose again).', ['Category no longer exists'], 'Fix the category, then Retry.');
+      }
       return { outcome: 'completed', data: { website: site.name, category: ctx.task.categoryName, language: ctx.task.language, country: ctx.task.targetCountry }, message: 'Inputs valid' };
     },
   });
@@ -150,9 +160,11 @@ export function assembly(manifest: StageManifest): PipelineStage {
   return bind(manifest, {
     run: async (ctx) => {
       const result = await assembleForTask(ctx, bodyForAssembly(ctx));
-      // Celebrity metadata (Tigram sets its own from the ARTICLE lines).
+      // Celebrity metadata (Tigram sets its own from the ARTICLE lines; Celebrity 2 too, and these fill what its
+      // answer left out).
       const updates: Record<string, unknown> = { assembledHtml: result.html };
-      if (ctx.task.moduleKey === 'celebrity-writer') {
+      // The owner's writers too: what their answer left out is filled in the same way.
+      if (isCelebrityModule(ctx.task.moduleKey) || isCustomKey(ctx.task.moduleKey)) {
         const title = ctx.task.selectedTitle ?? ctx.task.recommendedTitle ?? ctx.task.keyword;
         updates.seoTitle = ctx.task.seoTitle ?? title;
         updates.metaDescription = ctx.task.metaDescription ?? metaFromIntro(result.html, ctx.task.keyword, ctx.task.language);
@@ -163,8 +175,24 @@ export function assembly(manifest: StageManifest): PipelineStage {
         updates.focusKeyword = ctx.task.keyword;
         if (stringArray(ctx.task.tags).length === 0) updates.tags = JSON.stringify([ctx.task.keyword, ...stringArray(ctx.task.secondaryKeywords)].slice(0, 6));
       }
+      // SEO lines found at the top of the article text (saved before the parser read them): their values are
+      // ChatGPT's own, and replace the ones filled in for it.
+      const found: string[] = [];
+      if (result.meta.seoTitle) {
+        updates.seoTitle = result.meta.seoTitle;
+        found.push('SEO title');
+      }
+      if (result.meta.metaDescription) {
+        updates.metaDescription = result.meta.metaDescription;
+        found.push('meta description');
+      }
+      if (result.meta.slug) {
+        updates.slug = makeSlug(result.meta.slug.replace(/^\/+|\/+$/g, '').split('/').pop() ?? result.meta.slug, ctx.task.language, 12);
+        found.push('URL slug');
+      }
       await ctx.updateTask(updates);
-      return { outcome: 'completed', outputHtml: result.html, data: { warnings: result.warnings, structure: result.structure }, message: result.warnings.length ? `${result.warnings.length} assembly note(s)` : 'Assembled' };
+      const notes = found.length ? [`The ${found.join(', ')} line(s) were taken out of the article text and used as the SEO fields.`] : [];
+      return { outcome: 'completed', outputHtml: result.html, data: { warnings: result.warnings, notes, structure: result.structure }, message: [result.warnings.length ? `${result.warnings.length} assembly note(s)` : 'Assembled', ...notes].join(' · ') };
     },
   });
 }
@@ -202,7 +230,6 @@ export function articleHtml(ctx: PipelineContext): string {
 /** Local SEO report for the task's current metadata and the given article HTML. */
 export function seoReportFor(ctx: PipelineContext, html: string) {
   const t = ctx.task;
-  const range = ctx.config.tigramWordRange.split(/\s*[-–]\s*/).map(Number) as [number, number];
   return runSeoChecks({
     html,
     moduleKey: t.moduleKey,
@@ -214,10 +241,10 @@ export function seoReportFor(ctx: PipelineContext, html: string) {
     slug: t.slug,
     categoryName: t.categoryName,
     tags: stringArray(t.tags),
-    expectedFaqCount: t.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount,
+    expectedFaqCount: expectedFaqCount(t.moduleKey, ctx.config),
     quickBioRows: ctx.config.quickBioRows,
     maxWords: ctx.config.maxWords,
-    wordRange: t.moduleKey === 'tigram-writer' && range.length === 2 && range.every(Number.isFinite) ? range : null,
+    wordRange: wordRangeFor(t.moduleKey, ctx.config),
     minKeywordOccurrences: ctx.config.minKeywordOccurrences,
     maxKeywordOccurrences: ctx.config.maxKeywordOccurrences,
     densityCeilingPct: ctx.config.keywordDensityCeilingPct,
@@ -263,7 +290,7 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
         seo,
         reviewThreshold: ctx.config.reviewThreshold,
         densityCeilingPct: ctx.config.keywordDensityCeilingPct,
-        expectedFaqCount: t.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount,
+        expectedFaqCount: expectedFaqCount(t.moduleKey, ctx.config),
         categoryValid,
         assemblyWarnings: assemblyNotes,
         imagesRequired: ctx.config.images && ctx.config.imagesRequired,
@@ -292,7 +319,7 @@ export function qualityGate(manifest: StageManifest): PipelineStage {
       const research = ctx.stageJson<{ sources?: unknown[]; uncertain?: unknown[]; warnings?: string[] }>('RESEARCH_EVIDENCE');
       const sections: QualitySections = {
         seo: { score: seo.score, threshold: ctx.config.reviewThreshold, failed: seo.checks.filter((c) => !c.passed).map((c) => c.label) },
-        structure: { words: seo.metrics.words, faqCount: seo.metrics.faqCount, expectedFaqCount: t.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount, quickBioRows: seo.metrics.quickBioRows, quickBioColumnsOk: seo.metrics.quickBioColumnsOk, emptyHeadings: seo.metrics.emptyHeadings, duplicateSentences: seo.metrics.duplicateSentences },
+        structure: { words: seo.metrics.words, faqCount: seo.metrics.faqCount, expectedFaqCount: expectedFaqCount(t.moduleKey, ctx.config), quickBioRows: seo.metrics.quickBioRows, quickBioColumnsOk: seo.metrics.quickBioColumnsOk, emptyHeadings: seo.metrics.emptyHeadings, duplicateSentences: seo.metrics.duplicateSentences },
         evidence: research ? { sources: research.sources?.length ?? 0, uncertain: research.uncertain?.length ?? 0, warnings: research.warnings ?? [], claims: ev.summary.claims, verified: ev.summary.verified, contradicted: ev.summary.contradicted, unsupportedInArticle: ev.summary.unsupportedInArticle } : null,
         duplicates: { highest: dup.highest, overridden: dup.overridden, overrideReason: dup.overrideReason, compared: dup.compared, matches: dup.comparisons.filter((c) => c.severity !== 'LOW').slice(0, 5).map((c) => ({ otherTaskId: c.otherTaskId, title: c.otherTitle, website: c.otherWebsite, severity: c.severity, wordingShare: c.wordingShare, longestRun: c.longestRun, factWords: c.factWords })) },
         links: { external: seo.metrics.externalLinks, internalLinkLine: Boolean(seo.metrics.internalLinkLine) },

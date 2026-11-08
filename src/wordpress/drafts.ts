@@ -203,7 +203,7 @@ export async function saveDraft(client: WpClient, input: DraftInput, persist: (d
         { postId: post.id, modifiedGmt: post.modified_gmt, content: remoteContent.slice(0, 400_000) },
         `Draft #${post.id} was edited in WordPress after the app saved it (modified ${post.modified_gmt} UTC). The app did not overwrite those edits.`,
         [`Draft #${post.id} has edits made in WordPress.`],
-        'Compare the versions. Keep the WordPress version, or use “Overwrite WordPress draft” to save the app version.',
+        'Choose on the article page: “Keep the WordPress version” (the WordPress edits stay) or “Overwrite with the app version”. “See what changed” shows both.',
       );
     }
     const needsUpdate =

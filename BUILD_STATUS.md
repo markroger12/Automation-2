@@ -5036,7 +5036,12 @@ Owner request: “app ka sara lagg khatam kr de installar sa la kr app ke z tek 
 - **Checked here:**
   - the real trimmed bundle (`node desktop/prepare.mjs`), run in place: start-up steps on a new data folder (all migrations), the dashboard (HTTP 200) and the worker (running); then every page (27) in Chromium, all 200 with no console errors;
   - unit `desktop-bundle` (5), `desktop-agent` (16, incl. the idle check and the 5-minute close), all desktop tests 34/34; `tsc` 0 errors.
-- **Not measured here:** the Windows install time after the change (the workflow's install step prints it), and the memory saver inside Electron (it uses Electron's process metrics).
+- **Windows run [43161313119](https://github.com/markroger12/Automation-2/actions/runs/43161313119) (48e6ca4, green):**
+  - installer 221 → **191 MB**;
+  - install time about 110 → **72 s**;
+  - installed 787 → **652 MB in 9,706 files**.
+  - The bundle check and the smoke test passed on the compiled worker and start-up steps: “updater loaded; Search Console tab ready for indexing requests; reconnect page present; version 3.3.21”.
+- **Not measured:** the memory saver inside Electron (it uses Electron's process metrics), and the owner's PC.
 
 **Commands run**
 ```

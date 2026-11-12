@@ -18,6 +18,7 @@ interface Agent {
   onPortOpen: (id: string, name: string, tabId?: string) => void;
   onPortMessage: (id: string, msg: unknown, tabId?: string) => void;
   status: () => { connected: boolean; paused: boolean };
+  capabilities: () => string[];
 }
 
 function harness(opts: { url?: string; down?: boolean; claim?: unknown } = {}) {

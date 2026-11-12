@@ -12,11 +12,18 @@ import { chromeAutostartTick } from './chrome-autostart';
 import { indexingTick, syncDue, syncWebsite } from '@/lib/gsc/sync';
 import { registerBuiltInPipelines } from './pipelines';
 import { registerBuiltInControlHandlers } from './handlers';
+import { notifyTick } from '@/lib/notify/events';
+import { autoLoginTick } from '@/wordpress/auto-login-loop';
+import { autoCheckTick } from '@/lib/update/auto-check';
+import { ensureCustomWriters } from '@/lib/writers/store';
+import { registerCustomPipelines } from './pipelines/custom';
 
 let dispatcher: ArticleDispatcher | null = null;
 
 /** Registers the worker's processing loops. */
 export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
+  // The owner's writers (Writers → New writer): loaded before the built-in pipelines register theirs too.
+  await ensureCustomWriters({ force: true }).catch((e) => console.error('Could not load your writers:', (e as Error).message));
   registerBuiltInPipelines();
   registerBuiltInControlHandlers();
   await recoverOnStartup(ctx.workerId);
@@ -31,7 +38,8 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'workflow-scheduler', intervalMs: 60_000, run: async () => void (await schedulerTick()) });
   // Content refresh: one read-only evaluation per website and day (enqueues only).
   registerLoop({ name: 'refresh-scheduler', intervalMs: 3600_000, run: async () => void (await scheduleDailyEvaluations()) });
-  // Search Console (when connected): live data every 2 h, one website per tick; sitemap resubmit and index proof.
+  // Search Console: “Request indexing” queued for Automation Chrome after a publish; with the key, live data every 2 h
+  // (one website per tick) and Google's index proof.
   registerLoop({
     name: 'search-console',
     intervalMs: 30_000,
@@ -46,6 +54,14 @@ export async function registerBuiltInLoops(ctx: WorkerContext): Promise<void> {
   registerLoop({ name: 'lease-sweeper', intervalMs: 15_000, run: async () => void (await sweepExpiredLeases()) });
   registerLoop({ name: 'orphan-healer', intervalMs: 60_000, run: async () => void (await healOrphanedTasks()) });
   registerLoop({ name: 'retention', intervalMs: 6 * 3600_000, run: async () => void (await pruneDiagnostics()) });
+  // Windows notifications: an article to review, ChatGPT signed out, a campaign finished (Settings → Notifications).
+  registerLoop({ name: 'windows-notifications', intervalMs: 15_000, run: async () => void (await notifyTick()) });
+  // A WordPress session that ended: sign in again with the saved sign-in (owner request), so paused articles go on.
+  registerLoop({ name: 'wordpress-auto-login', intervalMs: 5 * 60_000, run: async () => void (await autoLoginTick()) });
+  // A new app version on GitHub: looked at every hour (and at start); Windows notification once per version, and the bell.
+  // A writer created, changed or archived in the dashboard: its pipeline is (re)registered within seconds.
+  registerLoop({ name: 'custom-writers', intervalMs: 15_000, run: async () => void (await ensureCustomWriters({ force: true }), registerCustomPipelines()) });
+  registerLoop({ name: 'app-update-check', intervalMs: 5 * 60_000, run: async () => void (await autoCheckTick()) });
 }
 
 /** Let in-flight article work reach a safe point before exit. */

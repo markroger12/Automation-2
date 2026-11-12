@@ -45,3 +45,19 @@ export async function removeTaskImage(taskId: string, assetId: string) {
   await audit('task.images.remove', 'ArticleTask', taskId, { assetId, role: asset.role });
   return { ok: true };
 }
+
+export const IMAGE_PLACES = ['FEATURED', 'BODY'] as const;
+export type ImagePlace = (typeof IMAGE_PLACES)[number];
+
+/**
+ * Owner request (2026-11-05): “Use in featured / Use in body” on a source photo (an upload or a collected ChatGPT
+ * photo). The next Images run puts it there before choosing the rest itself; null gives the choice back to the app.
+ */
+export async function setTaskImagePlace(taskId: string, assetId: string, place: ImagePlace | null) {
+  const asset = await db.mediaAsset.findFirst({ where: { id: assetId, taskId } });
+  if (!asset) throw notFound('Image');
+  if (!['UPLOAD', 'GALLERY'].includes(asset.role) || asset.status === 'REJECTED') throw new AppError(400, 'VALIDATION', 'Only a photo the article may use (an upload or a collected photo) can be given a place.');
+  await db.mediaAsset.update({ where: { id: asset.id }, data: { usePlace: place } });
+  await audit('task.images.place', 'ArticleTask', taskId, { assetId, place });
+  return { ok: true, place };
+}

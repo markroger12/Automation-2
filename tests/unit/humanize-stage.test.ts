@@ -49,7 +49,8 @@ beforeAll(async () => {
   const { seedAll } = await import('@/lib/seed');
   await seedAll(client);
   const { updateSettings } = await import('@/lib/settings');
-  await updateSettings({ content: { humanizerBatchWords: 300 } });
+  // The humanizer is off by default (owner decision); these tests switch it on.
+  await updateSettings({ content: { humanizerBatchWords: 300, humanizerEnabled: true } });
   create = await import('@/lib/tasks/create');
   actions = await import('@/lib/tasks/actions');
   runs = await import('@/lib/humanizer/runs');

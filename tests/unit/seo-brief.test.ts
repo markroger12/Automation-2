@@ -65,7 +65,7 @@ describe('SEO brief in tasks and prompts (database)', () => {
     create = await import('@/lib/tasks/create');
     const websites = await import('@/lib/websites');
     siteId = (await websites.createWebsite({ name: 'Celeb News', publicUrl: 'https://celeb.example', language: 'en', targetCountry: 'United States', timezone: 'UTC' })).id;
-    catId = (await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Stars' } })).id;
+    catId = (await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Celebrity' } })).id;
   });
 
   it('stores the suggested brief at creation; the owner edits (validated, audited) and resets it', async () => {

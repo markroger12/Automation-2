@@ -3,7 +3,11 @@ import type { Category, Website } from '@prisma/client';
 import { db } from '../db';
 import { audit } from '../audit';
 import { AppError, badRequest, notFound } from '../errors';
-import { normalizeKeyword } from '../domain';
+import { isActiveModuleKey, moduleDisplayName, normalizeKeyword } from '../domain';
+import { isCustomKey } from '../writers/types';
+import { findRuleCategory, missingRuleCategoryMessage } from '../celebrity-category';
+import { categoryRuleFor } from '../writers/rules';
+import { ensureCustomWriters } from '../writers/store';
 import { parseJson } from '../json';
 import { enqueue } from '../queue';
 import { taskOptionsSchema } from '../settings-schema';
@@ -13,6 +17,7 @@ import { requestCancel, retryTask } from '../tasks/lifecycle';
 import { parseImport, type ImportRow } from './parse';
 import { ROUTER_VERSION, normalizeWriter, parseRoutingRules, resolveWriter } from './router';
 import { isNearDuplicate } from './dedupe';
+import { deletedPostKeys } from '../tasks/deleted-posts';
 
 /**
  * Bulk campaigns: preview (pure, no writes), create (rows stored as entered,
@@ -40,7 +45,7 @@ export const campaignInputSchema = z.object({
   name: z.string().trim().max(120).default(''),
   text: z.string().max(2_000_000),
   websiteId: z.string().min(1, 'Choose a website').max(40),
-  defaultWriter: z.enum(['AUTO', 'celebrity-writer', 'tigram-writer']).default('AUTO'),
+  defaultWriter: z.string().refine((v) => v === 'AUTO' || isActiveModuleKey(v), { message: 'Choose AUTO or an active writer.' }).default('AUTO'),
   options: taskOptionsSchema.prefault({}),
   /** Owner corrections by input line number (preview never changes the input text). */
   overrides: z.record(z.string(), rowOverrideSchema).default({}),
@@ -79,6 +84,7 @@ function matchSite(sites: SiteWithCats[], value: string | null, fallback: SiteWi
 
 /** Validate, route and deduplicate rows. Pure with respect to the input: nothing is written. */
 export async function previewCampaign(raw: unknown): Promise<{ format: string; problems: string[]; rows: PreviewRow[]; summary: Record<string, number> }> {
+  await ensureCustomWriters();
   const input = campaignInputSchema.parse(raw);
   const sites = await db.website.findMany({ include: { categories: true } });
   const fallback = sites.find((s) => s.id === input.websiteId);
@@ -91,20 +97,25 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
     if (!site) issues.push({ kind: 'ERROR', message: `Unknown website “${r.website}”.` });
     else if (!site.active) issues.push({ kind: 'ERROR', message: `${site.name} is inactive.` });
     const language = r.language ?? site?.language ?? null;
-    if (r.writer && !normalizeWriter(r.writer)) issues.push({ kind: 'WRITER', message: `“${r.writer}” is not an active writer (use celebrity or tigram).` });
+    if (r.writer && !normalizeWriter(r.writer)) issues.push({ kind: 'WRITER', message: `“${r.writer}” is not an active writer (use celebrity, celebrity 2, tigram or the name of one of your writers).` });
     const decision = resolveWriter({ keyword: r.keyword, language, override: o.writer !== undefined ? o.writer : r.writer, campaignDefault: input.defaultWriter === 'AUTO' ? null : input.defaultWriter, siteRules: site ? parseRoutingRules(site.routingRules) : null });
     let category: Category | undefined;
-    if (site) {
+    const rule = categoryRuleFor(decision.writer);
+    if (site && rule.mode !== 'chatgpt') {
+      // Celebrity articles always go into the website's “Celebrity” category (German: “Prominente”); the owner's
+      // writers may always use another fixed category.
+      category = findRuleCategory(site.categories, rule, language ?? site.language) ?? undefined;
+    } else if (site) {
       const wanted = o.categoryId !== undefined ? o.categoryId : null;
       category = wanted ? site.categories.find((c) => c.id === wanted) : r.category ? site.categories.find((c) => c.name.toLowerCase() === r.category!.toLowerCase()) : undefined;
       if (r.category && !category && !wanted) issues.push({ kind: 'CATEGORY', message: `Category “${r.category}” is not synchronized for ${site.name}.` });
-      if (!category && site.defaultCategoryId) category = site.categories.find((c) => c.id === site.defaultCategoryId);
+      // A Tigram row without a category is left to the writer's CATEGORY stage (“chosen by the writer”).
     }
     let status: RowStatus = 'READY';
     if (issues.some((i) => i.kind === 'ERROR')) status = 'INVALID';
     else if (!decision.writer) status = 'NEEDS_WRITER';
-    else if (decision.writer === 'celebrity-writer' && !category) status = 'NEEDS_CATEGORY';
-    if (status === 'NEEDS_CATEGORY') issues.push({ kind: 'CATEGORY', message: site?.categories.length ? 'Choose a category for this celebrity article.' : `${site?.name ?? 'This website'} has no synchronized categories yet.` });
+    else if (rule.mode !== 'chatgpt' && !category) status = 'NEEDS_CATEGORY';
+    if (status === 'NEEDS_CATEGORY') issues.push({ kind: 'CATEGORY', message: missingRuleCategoryMessage(site?.name ?? 'This website', rule, language ?? site?.language ?? 'en', decision.writer ? moduleDisplayName(decision.writer) : undefined) });
     if (o.include === false) status = 'SKIPPED';
     return {
       line: r.line,
@@ -146,7 +157,9 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
   for (let i = 0; siteIds.length && i < keys.length; i += 400) {
     existing.push(...(await db.articleTask.findMany({ where: { websiteId: { in: siteIds }, normalizedKeyword: { in: keys.slice(i, i + 400) }, status: { notIn: ['CANCELLED', 'FAILED'] } }, select: { id: true, websiteId: true, normalizedKeyword: true, status: true } })));
   }
-  const posts = siteIds.length ? await db.linkTarget.findMany({ where: { websiteId: { in: siteIds }, status: 'ACTIVE' }, select: { websiteId: true, title: true, url: true, keyword: true } }) : [];
+  // Posts of articles you deleted here do not count (owner request: a deleted article can be written again).
+  const deleted = await deletedPostKeys();
+  const posts = siteIds.length ? (await db.linkTarget.findMany({ where: { websiteId: { in: siteIds }, status: 'ACTIVE' }, select: { websiteId: true, wpPostId: true, title: true, url: true, keyword: true } })).filter((p) => !deleted.has(`${p.websiteId}:${p.wpPostId}`)) : [];
   for (const row of rows) {
     if (!row.websiteId || row.status === 'INVALID' || row.status === 'SKIPPED') continue;
     const task = existing.find((t) => t.websiteId === row.websiteId && t.normalizedKeyword === normalizeKeyword(row.keyword));
@@ -171,13 +184,16 @@ export async function previewCampaign(raw: unknown): Promise<{ format: string; p
       invalid: count('INVALID'),
       skipped: count('SKIPPED'),
       celebrity: rows.filter((r) => r.status === 'READY' && r.writer === 'celebrity-writer').length,
+      celebrity2: rows.filter((r) => r.status === 'READY' && r.writer === 'celebrity2-writer').length,
       tigram: rows.filter((r) => r.status === 'READY' && r.writer === 'tigram-writer').length,
+      custom: rows.filter((r) => r.status === 'READY' && isCustomKey(r.writer)).length,
     },
   };
 }
 
 /** Store the campaign exactly as previewed (server-side recomputation) and queue its READY rows in the worker. */
 export async function createCampaign(raw: unknown) {
+  await ensureCustomWriters();
   const input = campaignInputSchema.parse(raw);
   const preview = await previewCampaign(input);
   if (!preview.rows.length) throw badRequest(preview.problems[0] ?? 'No keywords found.');
@@ -306,6 +322,27 @@ export async function cancelCampaign(id: string) {
   return { ok: true, tasks: tasks.length };
 }
 
+/**
+ * Deletes the campaign and its rows (owner request). With `withArticles`, its articles are deleted from the app too
+ * (each report is backed up first, see deleteTask); otherwise they stay and only lose the campaign link. WordPress is
+ * never changed.
+ */
+export async function deleteCampaign(id: string, withArticles: boolean) {
+  const campaign = await loadCampaign(id);
+  const tasks = await db.articleTask.findMany({ where: { campaignId: id }, select: { id: true } });
+  const { deleteTask } = await import('../tasks/delete');
+  let deleted = 0;
+  let deleting = 0;
+  if (withArticles) {
+    for (const t of tasks) (await deleteTask(t.id)).status === 'deleted' ? deleted++ : deleting++;
+  } else {
+    await db.articleTask.updateMany({ where: { campaignId: id }, data: { campaignId: null } });
+  }
+  await db.campaign.delete({ where: { id } });
+  await audit('campaign.delete', 'Campaign', id, { name: campaign.name, withArticles, articles: tasks.length, deleted, deleting });
+  return { ok: true, articles: tasks.length, deleted, deleting };
+}
+
 export const rowActionSchema = z.object({
   rowIds: z.array(z.string().max(40)).min(1).max(1000),
   action: z.enum(['retry', 'priority', 'writer', 'category', 'include', 'exclude', 'confirm-variant']),
@@ -316,6 +353,7 @@ export const rowActionSchema = z.object({
 
 /** Bulk row actions: retry failed tasks, reprioritize, or correct rows that are not queued yet. */
 export async function campaignRowAction(campaignId: string, raw: unknown) {
+  await ensureCustomWriters();
   const input = rowActionSchema.parse(raw);
   const campaign = await loadCampaign(campaignId);
   const rows = await db.campaignRow.findMany({ where: { campaignId, id: { in: input.rowIds } } });
@@ -357,7 +395,7 @@ export async function campaignRowAction(campaignId: string, raw: unknown) {
     let excluded = row.status === 'SKIPPED';
     if (input.action === 'writer') {
       const w = normalizeWriter(input.writer);
-      if (!w) throw badRequest('Choose the Celebrity Article Writer or the Tigram Article Writer.');
+      if (!w) throw badRequest('Choose one of the active writers.');
       writer = w;
       writerSource = 'OVERRIDE';
     } else if (input.action === 'category') {
@@ -368,7 +406,11 @@ export async function campaignRowAction(campaignId: string, raw: unknown) {
     else if (input.action === 'exclude') excluded = true;
     else if (input.action === 'include') excluded = false;
     const duplicate = issues.some((i) => ['DUPLICATE', 'NEAR_DUPLICATE', 'EXISTING_TASK', 'EXISTING_POST'].includes(i.kind)) && !confirmed;
-    const status: RowStatus = excluded ? 'SKIPPED' : duplicate ? 'DUPLICATE' : !writer ? 'NEEDS_WRITER' : writer === 'celebrity-writer' && !categoryId && !(row.websiteId && (await db.website.findUnique({ where: { id: row.websiteId } }))?.defaultCategoryId) ? 'NEEDS_CATEGORY' : 'READY';
+    const rowSite = row.websiteId ? await db.website.findUnique({ where: { id: row.websiteId }, include: { categories: true } }) : null;
+    const rowRule = categoryRuleFor(writer);
+    const celebrityCategory = rowSite && rowRule.mode !== 'chatgpt' ? findRuleCategory(rowSite.categories, rowRule, row.language ?? rowSite.language) : null;
+    if (celebrityCategory) categoryId = celebrityCategory.id;
+    const status: RowStatus = excluded ? 'SKIPPED' : duplicate ? 'DUPLICATE' : !writer ? 'NEEDS_WRITER' : rowRule.mode !== 'chatgpt' && !celebrityCategory ? 'NEEDS_CATEGORY' : 'READY';
     await db.campaignRow.update({ where: { id: row.id }, data: { writer, writerSource, categoryId, confirmedVariant: confirmed, status } });
     changed++;
   }
@@ -424,9 +466,15 @@ export async function getCampaign(id: string) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const sites = new Map((await db.website.findMany({ select: { id: true, name: true } })).map((s) => [s.id, s.name]));
   const progress = (await campaignProgress([id])).get(id) ?? emptyProgress();
+  // Categories of the rows' websites, for setting the category of several rows at once (owner request).
+  const siteIds = [...new Set(rows.map((r) => r.websiteId).filter((x): x is string => Boolean(x)))];
+  const cats = siteIds.length ? await db.category.findMany({ where: { websiteId: { in: siteIds } }, select: { id: true, name: true, websiteId: true }, orderBy: { name: 'asc' } }) : [];
+  const categories: Record<string, { id: string; name: string }[]> = {};
+  for (const cat of cats) (categories[cat.websiteId] ??= []).push({ id: cat.id, name: cat.name });
   return {
     ...(await settleStatus(c, progress)),
     progress,
+    categories,
     rows: rows.map((r) => ({
       ...r,
       secondaryKeywords: parseJson<string[]>(r.secondaryKeywords, []),
@@ -457,7 +505,7 @@ export async function exportCampaignCsv(id: string): Promise<string> {
 export const templateSchema = z.object({
   name: z.string().trim().min(1).max(80),
   websiteId: z.string().max(40),
-  defaultWriter: z.enum(['AUTO', 'celebrity-writer', 'tigram-writer']),
+  defaultWriter: z.string().refine((v) => v === 'AUTO' || isActiveModuleKey(v), { message: 'Choose AUTO or an active writer.' }),
   options: taskOptionsSchema.prefault({}),
 });
 export type CampaignTemplate = z.output<typeof templateSchema>;

@@ -137,7 +137,7 @@ export function DiagnosticChecks({ sessions, failedStages }: { sessions: Session
                   <span className="font-medium">{f.keyword}</span> · {f.label}
                   <span className="text-muted block truncate text-xs">{f.error ?? f.message ?? ''}</span>
                 </span>
-                <Link className="text-xs text-indigo-600 underline" href={`/articles/${f.taskId}?tab=stages`}>
+                <Link className="text-xs link" href={`/articles/${f.taskId}?tab=stages`}>
                   <Search className="mr-1 inline h-3 w-3" />
                   Inspect stage
                 </Link>

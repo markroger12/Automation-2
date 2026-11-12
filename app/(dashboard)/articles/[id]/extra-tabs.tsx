@@ -97,31 +97,66 @@ function ResearchTab({ task }: { task: SerializedTaskDetail }) {
                 {w}
               </Alert>
             ))}
-            <div>
-              <div className="text-muted mb-1 text-xs font-semibold uppercase">Sources ({analysis.sources.length})</div>
-              <ul className="space-y-1 text-xs">
-                {analysis.sources.map((s) => (
-                  <li key={s.url} className="break-all">
-                    <a className="text-indigo-600 underline" href={s.url} target="_blank" rel="noreferrer">
-                      {s.url}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <SourceList urls={analysis.sources.map((s) => s.url)} />
             <div>
               <div className="text-muted mb-1 text-xs font-semibold uppercase">Uncertain / disputed ({analysis.uncertain.length})</div>
-              <ul className="list-disc space-y-1 pl-4 text-xs">{analysis.uncertain.map((u, i) => <li key={i}>{u}</li>)}</ul>
+              {analysis.uncertain.length ? <ul className="list-disc space-y-1 pl-4 text-xs">{analysis.uncertain.map((u, i) => <li key={i}>{u}</li>)}</ul> : <p className="text-muted text-xs">none</p>}
             </div>
             <div>
               <div className="text-muted mb-1 text-xs font-semibold uppercase">Estimates ({analysis.estimates.length})</div>
-              <ul className="list-disc space-y-1 pl-4 text-xs">{analysis.estimates.map((u, i) => <li key={i}>{u}</li>)}</ul>
+              {analysis.estimates.length ? <ul className="list-disc space-y-1 pl-4 text-xs">{analysis.estimates.map((u, i) => <li key={i}>{u}</li>)}</ul> : <p className="text-muted text-xs">none</p>}
             </div>
           </div>
         ) : (
           <p className="text-muted text-sm">Not analysed yet.</p>
         )}
       </Card>
+    </div>
+  );
+}
+
+/**
+ * A cited URL without ChatGPT's tracking parameters (`?utm_source=chatgpt.com`): ChatGPT cites the same page with
+ * and without them, so the list showed most pages twice (owner screenshot).
+ */
+export function withoutTracking(url: string): string {
+  try {
+    const u = new URL(url);
+    for (const k of [...u.searchParams.keys()]) if (/^utm_/i.test(k)) u.searchParams.delete(k);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+function SourceList({ urls }: { urls: string[] }) {
+  const pages = [...new Set(urls.map(withoutTracking))];
+  return (
+    <div>
+      <div className="text-muted mb-1.5 text-xs font-semibold uppercase">
+        Sources ({pages.length} page{pages.length === 1 ? '' : 's'}{pages.length !== urls.length ? `, ${urls.length} cited` : ''})
+      </div>
+      <ul className="divide-y divide-[var(--border)] text-xs">
+        {pages.map((url) => {
+          let host = url;
+          let rest = '';
+          try {
+            const u = new URL(url);
+            host = u.hostname.replace(/^www\./, '');
+            rest = `${u.pathname}${u.search}`.replace(/^\/$/, '');
+          } catch {
+            /* not a URL: shown as it is */
+          }
+          return (
+            <li key={url} className="py-1.5">
+              <a className="group block min-w-0" href={url} target="_blank" rel="noreferrer" title={url}>
+                <span className="font-medium group-hover:underline">{host}</span>
+                {rest ? <span className="text-muted block truncate">{rest}</span> : null}
+              </a>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

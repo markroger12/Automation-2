@@ -26,7 +26,7 @@ export interface WebsiteFormValues {
   active: boolean;
   notes: string;
   settingsOverrides: {
-    content: { maxArticleWordCount?: number; faqCount?: number; quickBioRows?: number };
+    content: { maxArticleWordCount?: number; faqCount?: number; quickBioRows?: number; humanizerEnabled?: boolean };
     seo: { articleImages?: boolean; imagesRequired?: boolean; externalLinks?: boolean; internalLinks?: boolean; rankMathTargetScore?: number; reviewThreshold?: number; rankMathMode?: 'required' | 'if-installed' | 'off' };
     workflow: { manualTitleApproval?: boolean; manualArticleApproval?: boolean };
   };
@@ -90,7 +90,7 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
       const res = values.id
         ? await api<{ website: { id: string } }>(`/api/websites/${values.id}`, { method: 'PUT', body })
         : await api<{ website: { id: string } }>('/api/websites', { method: 'POST', body });
-      toast('success', values.id ? 'Website saved.' : 'Website added. Next: Log in once in the visible window.');
+      toast('success', values.id ? 'Website saved.' : 'Website added. Next: save its WordPress sign-in on the Session tab.');
       onSaved?.(res.website.id);
       router.refresh();
     } catch (error) {
@@ -212,6 +212,7 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
           </Field>
           {(
             [
+              ['content', 'humanizerEnabled', 'Humanizer'],
               ['seo', 'articleImages', 'Article images'],
               ['seo', 'imagesRequired', 'Missing images → review'],
               ['seo', 'externalLinks', 'External links'],

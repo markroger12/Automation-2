@@ -301,7 +301,7 @@ export function HumanizerPage({ initialTaskId, initialRunId }: { initialTaskId?:
                 <Chip>{run.language === 'de' ? 'German' : 'English'}</Chip>
                 <Chip>{run.scope === 'flagged' ? 'flagged only' : 'all paragraphs'}</Chip>
                 {run.task ? (
-                  <Link className="text-indigo-600 underline" href={`/articles/${run.task.id}`}>
+                  <Link className="link" href={`/articles/${run.task.id}`}>
                     Open article
                   </Link>
                 ) : null}

@@ -4,6 +4,7 @@ import { AppError, type ApiErrorBody } from './errors';
 import { checkDashboardRequest } from './security';
 import { ensurePragmas } from './db';
 import { errorMessage, log } from './log';
+import { ensureCustomWriters } from './writers/store';
 
 const MAX_BODY_BYTES = 2_000_000;
 
@@ -29,6 +30,8 @@ export function route<S extends z.ZodType | undefined = undefined>(
       const check = checkDashboardRequest(req);
       if (!check.ok) throw new AppError(check.status, 'FORBIDDEN', check.message);
       await ensurePragmas();
+      // The owner's writers (Writers → New writer): known before any input naming a writer is checked.
+      await ensureCustomWriters();
       let body: unknown = undefined;
       if (options.body) {
         const length = Number(req.headers.get('content-length') ?? '0');

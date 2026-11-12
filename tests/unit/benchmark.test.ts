@@ -15,7 +15,7 @@ beforeAll(async () => {
   const websites = await import('@/lib/websites');
   const create = await import('@/lib/tasks/create');
   const siteId = (await websites.createWebsite({ name: 'Celeb News', publicUrl: 'https://celeb.example', language: 'en', targetCountry: 'United States', timezone: 'UTC' })).id;
-  const cat = await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Stars' } });
+  const cat = await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Celebrity' } });
   // 6 verified in the first hour, 5 in the second, one just outside, one stopped for a WordPress login.
   const minutes = [5, 15, 25, 35, 45, 55, 65, 75, 85, 95, 105, 125];
   for (const [i, m] of minutes.entries()) {

@@ -6,6 +6,7 @@ import { wordCount, stripTags } from '@/lib/content/text';
 import { TransientError } from '@/lib/pipeline-errors';
 import type { PipelineContext, PipelineDefinition, PipelineStage } from '../pipeline/types';
 import { articleApproval, assembly, bind, duplicatePrecheck, finalizeTask, precheck, qualityGate, seoCheck, stageFrom, syncTaskVariables, waiting } from './common';
+import { categoryStage } from './category';
 import { laterStages } from './later-stages';
 import { buildLedger } from '@/lib/research/ledger';
 
@@ -108,6 +109,7 @@ const stages: PipelineStage[] = [
       return { outcome: 'completed', prompt: res.prompt, output: res.text, outputHtml: parsed.html, data: { rows: parsed.rows, warnings: parsed.problems }, message: `${parsed.rows.length} rows` };
     },
   }),
+  bind(S('CATEGORY'), categoryStage),
   ...laterStages(celebrityManifest.stages),
   assembly(S('ASSEMBLY')),
   seoCheck(S('SEO_CHECK')),

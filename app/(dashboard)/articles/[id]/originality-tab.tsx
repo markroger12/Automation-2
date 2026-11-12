@@ -41,7 +41,7 @@ export function OriginalityTab({ task }: { task: SerializedTaskDetail }) {
       <ul className="space-y-2 text-sm">
         {(checks ?? []).map((c) => (
           <li key={c.id} className="flex flex-wrap items-center justify-between gap-2">
-            <Link className="min-w-0 truncate text-indigo-600 underline" href={`/plagiarism?check=${c.id}`}>
+            <Link className="min-w-0 truncate link" href={`/plagiarism?check=${c.id}`}>
               {c.message ?? c.title}
             </Link>
             <span className="flex shrink-0 items-center gap-2">

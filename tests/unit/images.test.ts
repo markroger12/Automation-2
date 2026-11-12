@@ -172,6 +172,28 @@ describe('production renderer', () => {
     await expectColor(png, 1700, 200, [0, 0, 0]); // hidden layer not drawn
   });
 
+  it('owner request: a circle photo place cuts the photo to a circle with a ring; the preset puts the second photo there', async () => {
+    const t = templateSchema.parse({
+      background: '#000000',
+      accent: '#3b48ff',
+      layers: [
+        { id: 'bg', type: 'photo', slot: 0, x: 0, y: 0, width: 1920, height: 1080 },
+        { id: 'c', type: 'photo', slot: 1, x: 1000, y: 100, width: 800, height: 800, shape: 'circle', stroke: 'accent', strokeWidth: 20 },
+      ],
+    });
+    const png = await renderCanvas({ template: t, photos: [await photo(255, 255, 255), await photo(255, 0, 0)] });
+    await expectColor(png, 1400, 500, [255, 0, 0]); // inside the circle: the second photo
+    await expectColor(png, 1030, 130, [255, 255, 255]); // the box's corner, outside the circle: the main photo shows
+    await expectColor(png, 1400, 108, [59, 72, 255]); // the ring at the top edge, in the accent colour
+    // The preset: main photo across the canvas, the second photo in the circle.
+    const { presetPhotoCircle } = await import('@/lib/image-template');
+    const preset = presetPhotoCircle('#3b48ff');
+    expect(preset.layers.filter((l) => l.type === 'photo').map((l) => (l.type === 'photo' ? [l.slot, l.shape] : null))).toEqual([[0, 'rect'], [1, 'circle']]);
+    const p2 = await renderCanvas({ template: preset, photos: [await photo(255, 255, 255), await photo(255, 0, 0)] });
+    await expectColor(p2, 1450, 540, [255, 0, 0]);
+    await expectColor(p2, 400, 540, [255, 255, 255]);
+  });
+
   it('clips rotated and off-canvas layers instead of failing, and draws fixed photos and the logo plate', async () => {
     const t = templateSchema.parse({
       layers: [
@@ -285,5 +307,315 @@ describe('template editor logic', () => {
     let big = initHistory(0);
     for (let i = 1; i <= HISTORY_LIMIT + 20; i++) big = commit(big, i);
     expect(big.past.length).toBe(HISTORY_LIMIT);
+  });
+});
+
+describe('earlier tool (automation-old): Tigram plan lines, featured title, tall photos', () => {
+  it('reads “IMAGE n PROMPT / ALT” lines and the edited “FEATURED: … | ALT: …” form', async () => {
+    const { parseImagePlan } = await import('@/worker/pipelines/images');
+    const old = parseImagePlan('**IMAGE 1 PROMPT:** A header with the text "Install WordPress"\nIMAGE 1 ALT: Install WordPress header\n- IMAGE 2 PROMPT: A flat laptop\nIMAGE 2 ALT: Laptop illustration\nIMAGE 3 PROMPT: A flat checklist');
+    expect(old).toEqual([
+      { slot: 'FEATURED', direction: 'A header with the text "Install WordPress"', alt: 'Install WordPress header' },
+      { slot: 'BODY1', direction: 'A flat laptop', alt: 'Laptop illustration' },
+      { slot: 'BODY2', direction: 'A flat checklist', alt: '' },
+    ]);
+    expect(parseImagePlan('FEATURED: Desk | ALT: A tidy desk')[0]).toEqual({ slot: 'FEATURED', direction: 'Desk', alt: 'A tidy desk' });
+  });
+
+  it('short featured title: the head before “:”, at most ~45 characters, never ending on a small word', async () => {
+    const { featuredImageTitle } = await import('@/worker/pipelines/images');
+    expect(featuredImageTitle('How to Install WordPress: The Complete Guide')).toBe('How to Install WordPress');
+    expect(featuredImageTitle('The Ultimate Comparison of Project Management Software Cost in 2026')).toBe('The Ultimate Comparison of Project Management');
+  });
+
+  it('a photo much taller than its place is shown whole on a blurred copy of itself (not cropped to its middle)', async () => {
+    const { renderCleanImage } = await import('@/images/render');
+    // Top half red, bottom half blue: cropping to 16:9 would keep only the middle (both colours, no ends).
+    const tall = await sharp({ create: { width: 400, height: 1000, channels: 3, background: '#ff0000' } }).composite([{ input: await sharp({ create: { width: 400, height: 500, channels: 3, background: '#0000ff' } }).png().toBuffer(), top: 500, left: 0 }]).png().toBuffer();
+    const r = await renderCleanImage(tall, { width: 1200, height: 675, maxBytes: 500_000 });
+    const { data, info } = await sharp(r.buffer).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const at = (x: number, y: number) => { const i = (y * info.width + x) * 3; return [data[i], data[i + 1], data[i + 2]]; };
+    const top = at(600, 15);
+    const bottom = at(600, 660);
+    expect(top[0]).toBeGreaterThan(200); // the very top of the photo is still there (red)
+    expect(bottom[2]).toBeGreaterThan(200); // and its bottom (blue)
+  });
+});
+
+describe('owner request: a Celebrity and a Tigram image template', () => {
+  it('saved settings without Tigram templates read as before; Tigram then uses the Celebrity designs with the featured design on', async () => {
+    const { parseSiteImageSettings, templateSet, withTemplateSet, presetSplit } = await import('@/lib/image-template');
+    const old = parseSiteImageSettings(JSON.stringify({ featured: presetSplit('#123456'), body: null, logoAssetId: null }));
+    expect(old.tigram).toBeNull();
+    expect(templateSet(old, 'tigram')).toEqual({ featured: old.featured, body: null, useFeatured: true });
+    // Editing Tigram creates its own set; the Celebrity designs stay as they were.
+    const own = withTemplateSet(old, 'tigram', { ...templateSet(old, 'tigram'), featured: presetSingle('#123456'), useFeatured: false });
+    expect(own.featured).toEqual(old.featured);
+    expect(templateSet(own, 'tigram')).toMatchObject({ featured: { name: 'Single photo · corner logo' }, useFeatured: false });
+    expect(templateSet(own, 'celebrity').featured.name).toBe(old.featured.name);
+  });
+
+  it('the plan’s featured description loses what it says about written title text (the design writes the title)', async () => {
+    const { withoutTitleText } = await import('@/worker/pipelines/images');
+    const out = withoutTitleText('Modern blog header illustration featuring the exact title text "Pulsamento" in large, bold letters. A drummer on a stage with warm lights and a rhythmic pattern in the background.', 'FALLBACK');
+    expect(out).not.toMatch(/title text|Pulsamento/);
+    expect(out).toMatch(/^A drummer on a stage/);
+    expect(out).toMatch(/No text, letters, words or numbers anywhere in the picture/);
+    expect(withoutTitleText('Large bold title text: "How to Install WordPress".', 'FALLBACK')).toBe('FALLBACK');
+  });
+});
+
+describe('owner request: more fonts for text (Helvetica-like and others), the same on every computer', () => {
+  it('every bundled font weight is shipped with its license, and the nearest weight stands in for a missing one', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { FONT_CHOICES, fontChoice, nearestWeight } = await import('@/lib/fonts');
+    const { loadFont } = await import('@/images/fonts');
+    const bundled = FONT_CHOICES.filter((f) => f.bundled);
+    expect(bundled.length).toBeGreaterThanOrEqual(20);
+    for (const f of bundled) {
+      expect(fs.existsSync(path.join('public', 'fonts', f.id, 'LICENSE.txt')), `${f.id} license`).toBe(true);
+      for (const w of f.weights) expect(loadFont(f.id, w), `${f.id} ${w}`).not.toBeNull();
+    }
+    expect(nearestWeight(fontChoice('bebas-neue'), 700)).toBe(400);
+    expect(nearestWeight(fontChoice('lato'), 600)).toBe(700);
+    expect(nearestWeight(fontChoice('arimo'), 800)).toBe(700);
+    expect(loadFont('sans', 700)).toBeNull(); // the system fonts stay system fonts
+    expect(templateSchema.parse({ layers: [{ id: 't', type: 'text', text: 'x', fontFamily: 'montserrat', x: 0, y: 0, width: 100, height: 100 }] }).layers[0]).toMatchObject({ fontFamily: 'montserrat' });
+    expect(() => templateSchema.parse({ layers: [{ id: 't', type: 'text', text: 'x', fontFamily: 'comic-sans', x: 0, y: 0, width: 100, height: 100 }] })).toThrow();
+  });
+
+  it('a bundled font is drawn from its file and lines break by its real letter widths; a missing letter falls back to system fonts', async () => {
+    const { loadFont, wrapMeasured, covers } = await import('@/images/fonts');
+    const mont = loadFont('montserrat', 700)!;
+    // Same number of letters, very different widths: only real widths tell them apart.
+    expect(wrapMeasured(mont, 'iiiiiiii iiiiiiii', 80, 700, 3)).toHaveLength(1);
+    expect(wrapMeasured(mont, 'WWWWWWWW WWWWWWWW', 80, 700, 3)).toHaveLength(2);
+    expect(wrapMeasured(mont, 'one two three four five six seven eight nine ten eleven twelve', 80, 700, 2)[1].endsWith('…')).toBe(true);
+    expect(covers(mont, 'Größe Malaak Compton-Rock')).toBe(true);
+    expect(covers(mont, 'Beijing 北京')).toBe(false);
+
+    const inkWidth = async (fontFamily: string, text = 'MALAAK COMPTON-ROCK') => {
+      const t = templateSchema.parse({ background: '#000000', layers: [{ id: 't', type: 'text', text, fontFamily, fontWeight: 700, fontSize: 120, maxLines: 1, x: 0, y: 0, width: 1920, height: 300, color: '#ffffff' }] });
+      const png = await renderCanvas({ template: t, photos: [] });
+      const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+      let left = info.width;
+      let right = -1;
+      for (let y = 0; y < 300; y++)
+        for (let x = 0; x < info.width; x++)
+          if (data[(y * info.width + x) * info.channels] > 128) {
+            left = Math.min(left, x);
+            right = Math.max(right, x);
+          }
+      return right - left;
+    };
+    const montserrat = await inkWidth('montserrat');
+    const bebas = await inkWidth('bebas-neue');
+    expect(montserrat).toBeGreaterThan(1000);
+    expect(bebas).toBeGreaterThan(300);
+    expect(bebas).toBeLessThan(montserrat * 0.75); // a condensed display font really is narrower
+    // A letter the font lacks: drawn with system fonts instead, never a box or an error.
+    expect(await inkWidth('montserrat', 'Beijing 北京')).toBeGreaterThan(100);
+  });
+});
+
+describe('owner report: in a group photo the faces at both edges were cut in half (Michael Joseph Consuelos, featured image)', () => {
+  // Four people side by side in a wide photo (1500×1000), each face a colour; the place is the split design's half (952×1080).
+  const FACES = [
+    { colour: [230, 30, 30], x: 180 },
+    { colour: [30, 200, 30], x: 530 },
+    { colour: [30, 30, 230], x: 830 },
+    { colour: [230, 210, 30], x: 1180 },
+  ];
+  const group = () =>
+    sharp({ create: { width: 1500, height: 1000, channels: 3, background: { r: 128, g: 128, b: 128 } } })
+      .composite(FACES.map((f) => ({ input: { create: { width: 140, height: 150, channels: 3 as const, background: { r: f.colour[0], g: f.colour[1], b: f.colour[2] } } }, left: f.x, top: 300 })))
+      .png()
+      .toBuffer();
+  const fr = (f: { x: number }) => ({ left: f.x / 1500, right: (f.x + 140) / 1500, top: 0.3, bottom: 0.45 });
+  const focus = { x: 0.5, y: 0.375, area: { left: 180 / 1500, right: 1320 / 1500, top: 0.3, bottom: 0.45 }, faces: FACES.map(fr) };
+
+  /** How much of each face shows in the left place (1 = whole, 0 = not there), at the scale the photo is shown. */
+  async function shown(png: Buffer, scale: number) {
+    const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const full = 140 * 150 * scale ** 2;
+    return FACES.map((f) => {
+      let n = 0;
+      for (let y = 0; y < 1080; y++)
+        for (let x = 0; x < 952; x++) {
+          const i = (y * info.width + x) * 3;
+          if (Math.abs(data[i] - f.colour[0]) < 12 && Math.abs(data[i + 1] - f.colour[1]) < 12 && Math.abs(data[i + 2] - f.colour[2]) < 12) n++;
+        }
+      return Math.round((n / full) * 100) / 100;
+    });
+  }
+
+  it('faces too wide for the place: the whole photo is shown on a blurred copy, every face whole (before: both edge faces cut)', async () => {
+    const t = presetSplit('#0066ff');
+    t.layers = t.layers.filter((l) => l.type === 'photo');
+    const png = await renderCanvas({ template: t, photos: [await group(), await photo(10, 10, 10)], focus: [focus, null] });
+    // Shown whole across the place's width: 1500 → 952 px.
+    const parts = await shown(png, 952 / 1500);
+    for (const p of parts) expect(p, `face shares in the place: ${parts.join(', ')}`).toBeGreaterThan(0.9);
+    // Without face positions (older stage results, no detector) the crop is as before: a cover crop, no blurred band.
+    const plain = await renderCanvas({ template: t, photos: [await group(), await photo(10, 10, 10)], focus: [{ x: 0.5, y: 0.375, area: focus.area }, null] });
+    const cut = await shown(plain, 1080 / 1000);
+    expect(cut[0]).toBeLessThan(0.5);
+  });
+
+  it('crop box: the 16:9 place keeps all four faces; the narrow place has no good crop; without face boxes as before', async () => {
+    const { cropBox } = await import('@/images/render');
+    expect(cropBox(1500, 1000, 1920, 1080, focus)).toMatchObject({ left: 0 });
+    expect(cropBox(1500, 1000, 952, 1080, focus)).toBeNull();
+    // Two of the faces fit the narrow place: cropped around them, both whole.
+    const pair = { ...focus, faces: [fr(FACES[1]), fr(FACES[2])], area: { left: 530 / 1500, right: 970 / 1500, top: 0.3, bottom: 0.45 } };
+    const box = cropBox(1500, 1000, 952, 1080, pair)!;
+    const s = box.rw / 1500;
+    for (const f of [FACES[1], FACES[2]]) expect((f.x - 28) * s >= box.left && (f.x + 168) * s <= box.left + 952).toBe(true);
+    // Stage results saved before face boxes were stored: centred on the area, as before.
+    expect(cropBox(1500, 1000, 952, 1080, { ...focus, faces: undefined })).toMatchObject({ left: Math.round(0.5 * Math.ceil(1500 * 1.08) - 476) });
+  });
+
+  it('each place takes, of equally good photos, one whose faces fit it whole; the wide group photo moves to the 16:9 body place', async () => {
+    const { fitsPlace, photosForPlaces } = await import('@/worker/pipelines/images');
+    const half = { width: 952, height: 1080 };
+    const body = { width: 1920, height: 1080 };
+    const groupFacts = { faces: FACES.map(fr), aspect: 1.5 };
+    const pairFacts = { faces: [fr({ x: 600 }), fr({ x: 800 })], aspect: 1.5 };
+    expect(fitsPlace(groupFacts, half)).toBe(false);
+    expect(fitsPlace(groupFacts, body)).toBe(true);
+    expect(fitsPlace(pairFacts, half)).toBe(true);
+    expect(fitsPlace(undefined, half)).toBe(true); // no face boxes (older run, or no detector): as before
+    const facts: Record<string, { faces: ReturnType<typeof fr>[]; aspect: number }> = { group: groupFacts, pair: pairFacts, solo: { faces: [fr({ x: 700 })], aspect: 1.5 } };
+    const fits = (id: string, place: { width: number; height: number }) => fitsPlace(facts[id], place);
+    // The group photo has the biggest faces and comes first; the featured halves take the two that fit.
+    const featured = photosForPlaces(['group', 'pair', 'solo'], [half, half], fits, () => 'face');
+    expect(featured).toEqual({ picked: ['pair', 'solo'], rest: ['group'], moved: 2 });
+    expect(photosForPlaces(featured.rest, [body, body], fits, () => 'face').picked).toEqual(['group']);
+    // A worse photo (another tier: soft, watermark, no face) is never taken over a better one just because it fits.
+    expect(photosForPlaces(['group', 'pair'], [half], fits, (id) => (id === 'group' ? 'sharp' : 'soft')).picked).toEqual(['group']);
+  });
+});
+
+describe('owner request: a two-photo featured image shows at most 2 people per photo (then 3, then 4 …)', () => {
+  const half = { width: 952, height: 1080 };
+  const any = () => true;
+  const same = () => 'face';
+  // Photos named by how many people they show, in the order the pipeline prefers them.
+  const people = (id: string) => Number(/^p(\d+)/.exec(id)?.[1] ?? NaN);
+  const o = { fits: any, tier: same, people: (id: string) => (Number.isNaN(people(id)) ? undefined : people(id)), upload: (id: string) => id.startsWith('upload') };
+
+  it('two places: photos with at most 2 people first; the others keep their order for the body images', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    const r = chooseFeatured(['p4', 'p3', 'p1', 'p5', 'p2', 'p1b'], [half, half], o);
+    expect(r.picked).toEqual(['p1', 'p2']);
+    expect(r.rest).toEqual(['p4', 'p3', 'p5', 'p1b']);
+    expect(r.mostPeople).toBe(2);
+    expect(r.skippedGroups).toBe(3);
+  });
+
+  it('not enough photos with 2 people: the limit goes up one person at a time, place by place', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    // One photo with 2 people, then the best with 3 (not the earlier one with 5).
+    expect(chooseFeatured(['p5', 'p4', 'p2', 'p3'], [half, half], o).picked).toEqual(['p2', 'p3']);
+    // None with 2 or 3: two with 4.
+    expect(chooseFeatured(['p6', 'p4', 'p5', 'p4b'], [half, half], o)).toMatchObject({ picked: ['p4', 'p4b'], mostPeople: 4 });
+  });
+
+  it('one photo in the featured design: any number of people (the first photo, as before)', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    expect(chooseFeatured(['p6', 'p1'], [half], o).picked).toEqual(['p6']);
+  });
+
+  it('your uploads keep their places, and photos without a face count (unknown) are not moved', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    expect(chooseFeatured(['upload-group', 'p4', 'p1'], [half, half], o).picked).toEqual(['upload-group', 'p1']);
+    expect(chooseFeatured(['unknown-a', 'p3', 'unknown-b'], [half, half], o).picked).toEqual(['unknown-a', 'unknown-b']);
+  });
+
+  it('within the limit, the place still takes a photo whose faces fit it whole', async () => {
+    const { chooseFeatured } = await import('@/worker/pipelines/images');
+    const fits = (id: string) => id !== 'p2wide';
+    expect(chooseFeatured(['p2wide', 'p1', 'p2', 'p5'], [half, half], { ...o, fits }).picked).toEqual(['p1', 'p2']);
+  });
+});
+
+describe('owner request: a pen tool (like Illustrator) for custom photo places and shapes', () => {
+  it('drawn points become a layer box and fractions; curves count in the box; the template keeps them', async () => {
+    const { canvasPoints, cornerPoint, penBounds, penGeometry, penLayer } = await import('@/lib/template-editor');
+    const tri = [cornerPoint(100, 100), cornerPoint(500, 100), cornerPoint(300, 400)];
+    expect(penGeometry(tri, true)).toMatchObject({ x: 100, y: 100, width: 400, height: 300, points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.5, y: 1 }] });
+    // A curve bulging below its points: the box holds the curve, not just the points.
+    const arc = [{ ...cornerPoint(100, 100), ox: 0, oy: 200 }, { ...cornerPoint(500, 100), ix: 0, iy: 200 }];
+    expect(penBounds(arc, false).height).toBeGreaterThan(140);
+    // Back to the canvas, exactly.
+    const g = penGeometry(arc, false);
+    const back = canvasPoints({ ...g, points: g.points });
+    expect(back[1]).toMatchObject({ x: 500, y: 100, iy: expect.closeTo(200, 1) });
+    // A photo place (always closed) and a shape; both pass the template schema.
+    const photo = penLayer(tri, 'photo', { closed: false, slot: 1 });
+    expect(photo).toMatchObject({ type: 'photo', slot: 1, shape: 'path', x: 100, width: 400 });
+    const line = penLayer(arc, 'shape', { closed: false });
+    expect(line).toMatchObject({ type: 'path', closed: false, fill: 'transparent', stroke: 'accent', strokeWidth: 8 });
+    expect(() => templateSchema.parse({ layers: [photo, line] })).not.toThrow();
+  });
+
+  it('a point added on a curve keeps its shape; double-click turns a corner into a smooth point and back', async () => {
+    const { cornerPoint, insertPoint, nearestOnPath, toggleSmooth } = await import('@/lib/template-editor');
+    const curve = [{ ...cornerPoint(0, 0), ox: 0, oy: 300 }, { ...cornerPoint(600, 0), ix: 0, iy: 300 }];
+    const hit = nearestOnPath(curve, false, { x: 300, y: 225 }, 20)!;
+    expect(hit.index).toBe(0);
+    const three = insertPoint(curve, false, hit.index, hit.t);
+    expect(three).toHaveLength(3);
+    expect(three[1].x).toBeCloseTo(300, 0);
+    expect(three[1].y).toBeCloseTo(225, 0); // the middle of that curve, where it was
+    expect(Math.abs(three[1].ox)).toBeGreaterThan(0);
+    const sq = [cornerPoint(0, 0), cornerPoint(100, 0), cornerPoint(100, 100), cornerPoint(0, 100)];
+    const smooth = toggleSmooth(sq, true, 1);
+    expect(smooth[1].ox).not.toBe(0);
+    expect(toggleSmooth(smooth, true, 1)[1]).toMatchObject({ ix: 0, iy: 0, ox: 0, oy: 0 });
+  });
+
+  it('the renderer cuts the photo to the drawn shape, and draws pen shapes with fill and a border that is not cut off', async () => {
+    const { cornerPoint, penLayer } = await import('@/lib/template-editor');
+    // A triangle photo place over the whole canvas: inside it the (red) photo, outside it the background (navy).
+    const tri = [cornerPoint(0, 0), cornerPoint(1920, 0), cornerPoint(960, 1080)];
+    const place = penLayer(tri, 'photo', { closed: true, slot: 0 });
+    const t = templateSchema.parse({ background: '#000080', layers: [place] });
+    const png = await renderCanvas({ template: t, photos: [await photo(220, 20, 20)] });
+    await expectColor(png, 960, 300, [220, 20, 20]);
+    await expectColor(png, 100, 1000, [0, 0, 128]);
+    await expectColor(png, 1820, 1000, [0, 0, 128]);
+    // A pen line along the top edge of its box: its border is drawn whole (half of it is above the box).
+    const line = penLayer([cornerPoint(200, 500), cornerPoint(1700, 500)], 'shape', { closed: false });
+    const s = templateSchema.parse({ background: '#ffffff', accent: '#00aa00', layers: [{ ...line, strokeWidth: 40 }] });
+    const lp = await renderCanvas({ template: s, photos: [] });
+    await expectColor(lp, 900, 484, [0, 170, 0]); // above the line's centre, outside its (8 px) box
+    await expectColor(lp, 900, 470, [255, 255, 255]);
+  });
+});
+
+describe('people whose face was not found count for the crop (real photos: a panel guest and a B/W group were cut)', () => {
+  it('a person without a found face gets a head box at the top of their box; with a face, or far in the background, none', async () => {
+    const { headsOfPeople } = await import('@/images/faces');
+    const face = { x: 1300, y: 500, w: 80, h: 80, score: 0.9 };
+    // A panel: seated guests (upper bodies), one whose face was not found.
+    const panel = [
+      { x: 1256, y: 485, w: 290, h: 233, score: 0.83 }, // has the face above
+      { x: 511, y: 417, w: 210, h: 241, score: 0.8 }, // face not found (glasses, turned)
+      { x: 1400, y: 300, w: 40, h: 60, score: 0.6 }, // far in the background
+    ];
+    const heads = headsOfPeople(panel, [face]);
+    expect(heads).toHaveLength(1);
+    // Seated (upper body): a head about a third of the box's height, centred at its top.
+    expect(heads[0]).toMatchObject({ y: 417 });
+    expect(heads[0].w).toBeCloseTo(84.35, 1);
+    expect(heads[0].x + heads[0].w / 2).toBeCloseTo(616, 0);
+    // Standing people (tall boxes): about a seventh of the height.
+    const standing = headsOfPeople([{ x: 95, y: 408, w: 351, h: 848, score: 0.7 }, { x: 1200, y: 459, w: 325, h: 823, score: 0.81 }], []);
+    expect(standing).toHaveLength(2);
+    expect(standing[0].w).toBeCloseTo(848 * 0.14, 1);
+    // A single portrait: the person is as wide as the photo, but the found face is what counts (no head box).
+    expect(headsOfPeople([{ x: 62, y: 110, w: 1445, h: 954, score: 0.93 }], [{ x: 220, y: 300, w: 200, h: 200, score: 0.9 }])).toEqual([]);
   });
 });

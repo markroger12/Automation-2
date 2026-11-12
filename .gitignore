@@ -18,3 +18,7 @@ tests/.tmp/
 # OS
 .DS_Store
 Thumbs.db
+# desktop app build output
+desktop/node_modules/
+desktop/bundle/
+desktop/dist/

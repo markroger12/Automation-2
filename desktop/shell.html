@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self'" />
+    <title>Blog Automation Studio</title>
+    <style>
+      /* The tool's own look (app/globals.css): neutral greys, the dark main button, Segoe UI. Light and dark follow the
+         dashboard's theme toggle (main.cjs sends it), else Windows. */
+      :root {
+        color-scheme: light;
+        --bg: #f4f4f5;
+        --surface: #ffffff;
+        --surface-2: #f1f1f2;
+        --border: #e4e4e7;
+        --text: #09090b;
+        --muted: #5f5f67;
+        --primary: #18181b;
+        --primary-fg: #fafafa;
+        --nav-active: #e4e4e7;
+        --ok: #059669;
+        --warn: #b45309;
+        --bad: #b91c1c;
+        --brand: oklch(0.51 0.2 265);
+      }
+      html.dark {
+        color-scheme: dark;
+        --bg: #171717;
+        --surface: #1f1f1f;
+        --surface-2: #2a2a2a;
+        --border: #323232;
+        --text: #f5f5f5;
+        --muted: #a6a6a6;
+        --primary: #ececec;
+        --primary-fg: #18181b;
+        --nav-active: #2b2b2b;
+        --ok: #34d399;
+        --warn: #fbbf24;
+        --bad: #f87171;
+        --brand: oklch(0.7 0.15 265);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body { display: flex; flex-direction: column; background: var(--bg); color: var(--text); font: 14px/1.5 'Segoe UI Variable', 'Segoe UI', Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+      /* The tab bar: 44 px (main.cjs places the dashboard, ChatGPT and Search Console below it). */
+      nav { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 8px; background: var(--surface); border-bottom: 1px solid var(--border); flex: none; overflow: hidden; }
+      .logo { display: inline-grid; place-items: center; width: 26px; height: 26px; margin: 0 8px 0 2px; border-radius: 7px; background: var(--primary); color: var(--primary-fg); font-weight: 800; font-size: 11px; letter-spacing: 0.02em; flex: none; }
+      nav [role='tab'], nav .link { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 11px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+      nav [role='tab']:hover, nav .link:hover { background: var(--surface-2); color: var(--text); }
+      nav [role='tab'][aria-selected='true'] { background: var(--nav-active); color: var(--text); }
+      nav button:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+      nav button:disabled { opacity: 0.45; cursor: default; }
+      nav svg { width: 16px; height: 16px; flex: none; }
+      kbd { margin-left: 2px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; font: 10.5px/16px 'Cascadia Code', Consolas, monospace; color: var(--muted); }
+      .sep { width: 1px; height: 20px; margin: 0 6px; background: var(--border); flex: none; }
+      .spacer { flex: 1; min-width: 8px; }
+      .chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 30vw; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; flex: 0 1 auto; }
+      .chip + .chip { margin-left: 6px; }
+      .chip span.t { overflow: hidden; text-overflow: ellipsis; }
+      .chip[hidden] { display: none; }
+      .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+      .dot.ok { background: var(--ok); }
+      .dot.warn { background: var(--warn); }
+      .dot.bad { background: var(--bad); }
+      .dot.busy { background: var(--brand); animation: pulse 1.2s ease-in-out infinite; }
+      @keyframes pulse { 50% { opacity: 0.35; } }
+      .update { display: inline-flex; align-items: center; gap: 6px; height: 28px; margin-left: 6px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--primary); color: var(--primary-fg); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; flex: none; }
+      .update.quiet { background: var(--surface-2); color: var(--muted); cursor: default; }
+      .update[hidden] { display: none; }
+      .version { margin-left: 8px; color: var(--muted); font-size: 11.5px; flex: none; }
+      /* The start screen (before the dashboard answers). */
+      main { flex: 1; display: grid; place-items: center; padding: 24px; }
+      .card { width: min(560px, 92vw); padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); }
+      .card .logo { width: 44px; height: 44px; margin: 0; border-radius: 12px; font-size: 15px; }
+      h1 { margin: 14px 0 2px; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+      .sub { margin: 0; color: var(--muted); font-size: 13px; }
+      ol.steps { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+      ol.steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13.5px; }
+      ol.steps li .mark { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--border); border-radius: 50%; font-size: 11px; flex: none; }
+      ol.steps li.now { color: var(--text); font-weight: 600; }
+      ol.steps li.now .mark { border-color: var(--brand); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+      ol.steps li.done .mark { border-color: var(--ok); background: var(--ok); color: #fff; }
+      ol.steps li.done .mark::before { content: '✓'; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #status { margin: 18px 0 4px; font-weight: 600; }
+      #detail { margin: 0; color: var(--muted); white-space: pre-wrap; font-size: 12.5px; max-height: 36vh; overflow: auto; }
+      .bar { height: 4px; margin-top: 16px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+      .bar::before { content: ''; display: block; width: 35%; height: 100%; background: var(--primary); animation: slide 1.4s ease-in-out infinite; }
+      @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+      @media (prefers-reduced-motion: reduce) { .bar::before, .dot.busy, ol.steps li.now .mark { animation: none; } }
+    </style>
+    <script>
+      // Before the first paint: the theme the dashboard used last (main.cjs keeps it), else Windows'.
+      try {
+        const saved = localStorage.getItem('bas-theme');
+        if (saved === 'dark' || (!saved && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
+      } catch (e) {
+        /* storage unavailable */
+      }
+    </script>
+  </head>
+  <body>
+    <nav role="tablist" aria-label="Blog Automation Studio">
+      <span class="logo" aria-hidden="true">BA</span>
+      <button id="tab-dashboard" role="tab" aria-selected="true" title="Dashboard (Ctrl+1)" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>
+        Dashboard
+      </button>
+      <button id="tab-chatgpt" role="tab" aria-selected="false" title="ChatGPT (Ctrl+2): the prompts run here, several at once" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" /></svg>
+        ChatGPT
+      </button>
+      <button id="tab-search-console" role="tab" aria-selected="false" title="Search Console (Ctrl+3): sign in to Google here once; the indexing requests are made here" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+        Search Console
+      </button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="tab-google" class="link" title="Automation Chrome (Google sign-in, if the app's Search Console tab cannot be used)" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
+        Chrome
+      </button>
+      <span class="spacer"></span>
+      <span class="chip" id="chatgpt-chip" hidden title=""><span class="dot" id="chatgpt-dot" aria-hidden="true"></span><span class="t" id="chatgpt-state" aria-live="polite"></span></span>
+      <span class="chip" id="gsc-chip" hidden title=""><span class="dot" id="gsc-dot" aria-hidden="true"></span><span class="t" id="gsc-state" aria-live="polite"></span></span>
+      <button class="update" id="update" hidden></button>
+      <span class="version" id="version"></span>
+    </nav>
+    <main>
+      <section class="card" role="status" aria-live="polite">
+        <span class="logo" aria-hidden="true">BA</span>
+        <h1>Blog Automation Studio</h1>
+        <p class="sub">Your data stays on this PC. The dashboard, ChatGPT and Search Console open here when ready.</p>
+        <ol class="steps" id="steps">
+          <li data-step="data"><span class="mark"></span>Preparing your data</li>
+          <li data-step="web"><span class="mark"></span>Starting the dashboard</li>
+          <li data-step="worker"><span class="mark"></span>Starting the worker</li>
+        </ol>
+        <p id="status">Starting…</p>
+        <p id="detail"></p>
+        <div class="bar" aria-hidden="true"></div>
+      </section>
+    </main>
+    <script>
+      // The steps of the start screen, from the status text main.cjs sends.
+      const STEP = [
+        [/preparing/i, 'data'],
+        [/dashboard/i, 'web'],
+        [/worker/i, 'worker'],
+      ];
+      window.setStatus = (text, detail) => {
+        document.getElementById('status').textContent = text;
+        document.getElementById('detail').textContent = detail || '';
+        const failed = /failed|did not/i.test(text);
+        document.querySelector('.bar').hidden = failed;
+        const hit = STEP.find(([re]) => re.test(text));
+        if (!hit) return;
+        let done = true;
+        for (const li of document.querySelectorAll('#steps li')) {
+          const now = li.dataset.step === hit[1];
+          if (now) done = false;
+          li.className = now ? (failed ? '' : 'now') : done ? 'done' : '';
+        }
+      };
+      const shell = window.basShell;
+      const tabs = { dashboard: document.getElementById('tab-dashboard'), chatgpt: document.getElementById('tab-chatgpt'), 'search-console': document.getElementById('tab-search-console') };
+      for (const [name, button] of Object.entries(tabs)) button.addEventListener('click', () => shell && shell.select(name));
+      document.getElementById('tab-google').addEventListener('click', () => shell && shell.select('google'));
+      const updateButton = document.getElementById('update');
+      updateButton.addEventListener('click', () => shell && updateButton.dataset.action && shell.update(updateButton.dataset.action));
+      const chip = (id, s) => {
+        const el = document.getElementById(`${id}-chip`);
+        el.hidden = !s || !s.text;
+        if (!s) return;
+        document.getElementById(`${id}-dot`).className = `dot ${s.tone || ''}`;
+        document.getElementById(`${id}-state`).textContent = s.text || '';
+        el.title = s.text || '';
+      };
+      function showUpdate(u) {
+        updateButton.hidden = true;
+        updateButton.className = 'update';
+        delete updateButton.dataset.action;
+        if (!u) return;
+        if (u.state === 'ready') {
+          updateButton.hidden = false;
+          updateButton.textContent = `Restart to update (${u.version})`;
+          updateButton.title = 'Your prompts go back to the queue, the worker stops safely, then the new version starts. Your data stays as it is.';
+          updateButton.dataset.action = 'install';
+        } else if (u.state === 'downloading') {
+          updateButton.hidden = false;
+          updateButton.className = 'update quiet';
+          updateButton.textContent = `Downloading ${u.version} · ${u.percent || 0}%`;
+          updateButton.title = 'A new version is downloading in the background.';
+        }
+      }
+      if (shell) {
+        shell.onState((s) => {
+          for (const button of document.querySelectorAll('nav button[role="tab"], nav .link')) button.disabled = !s.ready;
+          for (const [name, button] of Object.entries(tabs)) button.setAttribute('aria-selected', String(s.tab === name));
+          chip('chatgpt', s.chatgpt);
+          chip('gsc', s.gsc);
+          showUpdate(s.update);
+          document.getElementById('version').textContent = s.version ? `v${s.version}` : '';
+          if (s.theme) {
+            document.documentElement.classList.toggle('dark', s.theme === 'dark');
+            try {
+              localStorage.setItem('bas-theme', s.theme);
+            } catch (e) {
+              /* storage unavailable */
+            }
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

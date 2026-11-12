@@ -54,7 +54,7 @@ beforeAll(async () => {
   refresh = await import('@/lib/refresh/service');
   const websites = await import('@/lib/websites');
   siteId = (await websites.createWebsite({ name: 'Celeb News', publicUrl: 'https://celeb.example', language: 'en', targetCountry: 'United States', timezone: 'UTC' })).id;
-  await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Stars' } });
+  await client.category.create({ data: { websiteId: siteId, externalId: 7, name: 'Celebrity' } });
 });
 
 afterAll(async () => {
@@ -110,7 +110,7 @@ describe('content refresh evaluation', () => {
   it('offline: dead-domain checks are skipped with a note, HTTP 404 still counts', async () => {
     const websites = await import('@/lib/websites');
     const other = (await websites.createWebsite({ name: 'Offline Blog', publicUrl: 'https://offline-blog.example', language: 'en', targetCountry: 'United States', timezone: 'UTC' })).id;
-    await client.category.create({ data: { websiteId: other, externalId: 3, name: 'News' } });
+    await client.category.create({ data: { websiteId: other, externalId: 3, name: 'Celebrity' } });
     const a = await article('Offline A', `<p><a href="${url('offline-a.example', 'x')}">a</a> <a href="${url('offline-b.example', 'y')}">b</a></p>`, { site: other });
     online = false;
     try {

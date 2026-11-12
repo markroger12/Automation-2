@@ -7,7 +7,7 @@ import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Alert, Card, Chip, EmptyState, KeyValue, formatDateTime } from '@/components/ui';
 
-type Mode = 'resave' | 'overwrite-remote' | 'recreate' | 'adopt';
+type Mode = 'resave' | 'overwrite-remote' | 'keep-remote' | 'recreate' | 'adopt';
 
 interface Candidate {
   id: number;
@@ -23,6 +23,11 @@ const MODE_TEXT: Record<Mode, { title: string; body: string; confirm: string }> 
     title: 'Overwrite the WordPress draft?',
     body: 'Edits made in WordPress after the app saved this draft will be replaced by the version shown in the Editor tab. WordPress keeps a revision of the replaced text.',
     confirm: 'Overwrite draft',
+  },
+  'keep-remote': {
+    title: 'Keep the WordPress version?',
+    body: 'The text edited in WordPress becomes this article’s text in the app and stays in WordPress (the app’s version is kept as a revision). The WordPress steps then finish: featured image, Rank Math and the final check.',
+    confirm: 'Keep WordPress version',
   },
   recreate: { title: 'Create a new draft?', body: 'A NEW WordPress draft is created for this article. Use this only when the old draft is gone or none of the found posts is the right one.', confirm: 'Create new draft' },
   adopt: { title: 'Use this post?', body: 'The app links this article to the chosen post and updates that draft. No new post is created.', confirm: 'Use this post' },
@@ -75,7 +80,7 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
               {
                 label: 'Post',
                 value: (
-                  <a className="inline-flex items-center gap-1 text-indigo-600 underline" href={task.wpEditUrl ?? '#'} target="_blank" rel="noreferrer">
+                  <a className="inline-flex items-center gap-1 link" href={task.wpEditUrl ?? '#'} target="_blank" rel="noreferrer">
                     #{task.wpPostId} <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 ),
@@ -101,9 +106,14 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
         {!task.legacy && (remoteEdited || gone) ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {remoteEdited ? (
-              <Button size="sm" variant="danger" onClick={() => setPending({ mode: 'overwrite-remote' })}>
-                Overwrite WordPress draft…
-              </Button>
+              <>
+                <Button size="sm" variant="primary" onClick={() => setPending({ mode: 'keep-remote' })}>
+                  Keep the WordPress version…
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => setPending({ mode: 'overwrite-remote' })}>
+                  Overwrite with the app version…
+                </Button>
+              </>
             ) : null}
             {gone ? (
               <Button size="sm" onClick={() => setPending({ mode: 'recreate' })}>
@@ -128,7 +138,7 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
           <ul className="mt-3 space-y-2 text-sm">
             {candidates.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center justify-between gap-2">
-                <a className="inline-flex items-center gap-1 text-indigo-600 underline" href={c.editUrl} target="_blank" rel="noreferrer">
+                <a className="inline-flex items-center gap-1 link" href={c.editUrl} target="_blank" rel="noreferrer">
                   #{c.id} · {c.status} · {c.slug} <ExternalLink className="h-3.5 w-3.5" />
                 </a>
                 <Button size="sm" onClick={() => setPending({ mode: 'adopt', postId: c.id })}>
@@ -214,7 +224,7 @@ export function WordPressTab({ task, onChanged }: { task: SerializedTaskDetail; 
                 {r.reasons?.length ? <p className="mt-1 text-amber-700 dark:text-amber-300">Why: {r.reasons.join('; ')}</p> : null}
                 {r.before && r.after ? (
                   <details className="mt-2">
-                    <summary className="cursor-pointer text-indigo-600">Before / after</summary>
+                    <summary className="cursor-pointer link-plain">Before / after</summary>
                     <div className="mt-2 grid gap-3 md:grid-cols-2">
                       <pre className="surface-2 max-h-64 overflow-auto rounded p-2 text-xs whitespace-pre-wrap">{r.before}</pre>
                       <pre className="surface-2 max-h-64 overflow-auto rounded p-2 text-xs whitespace-pre-wrap">{r.after}</pre>

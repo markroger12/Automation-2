@@ -1,12 +1,12 @@
-import { db } from '@/lib/db';
 import { tigramManifest } from '@/modules/tigram-writer/manifest';
 import { regenerationPlan } from '@/modules/types';
-import { matchCategory, parseTigramArticle } from '@/modules/tigram-writer/parsers';
+import { parseTigramArticle } from '@/modules/tigram-writer/parsers';
 import { cleanModelMarkdown, markdownToHtml } from '@/lib/content/markdown';
 import { stripTags, wordCount } from '@/lib/content/text';
-import { NeedsReviewError, TransientError } from '@/lib/pipeline-errors';
+import { TransientError } from '@/lib/pipeline-errors';
 import type { PipelineContext, PipelineDefinition, PipelineStage } from '../pipeline/types';
 import { articleApproval, assembly, bind, duplicatePrecheck, finalizeTask, precheck, qualityGate, seoCheck, stageFrom, syncTaskVariables, waiting } from './common';
+import { categoryStage } from './category';
 import { laterStages } from './later-stages';
 
 const S = (key: string) => stageFrom(tigramManifest.stages, key);
@@ -40,34 +40,7 @@ const stages: PipelineStage[] = [
       return { outcome: 'completed', prompt: res.prompt, output: md, outputHtml: html, data: { seoTitle: parsed.seoTitle, metaDescription: parsed.metaDescription, slug: parsed.slug, words, warnings: parsed.warnings }, message: `${words} words` };
     },
   }),
-  bind(S('CATEGORY'), {
-    // Skip when the owner already chose a category (no unnecessary prompt).
-    shouldRun: (ctx) => !ctx.task.categoryId,
-    run: async (ctx) => {
-      const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId }, include: { categories: { orderBy: { name: 'asc' } } } });
-      const cats = site.categories;
-      if (cats.length === 0) throw new NeedsReviewError(`${site.name} has no synchronized categories.`, ['No categories synced'], 'Sync categories on the website page, then Retry.');
-      const choose = async (c: { id: string; name: string; externalId: number }, how: string) => {
-        await ctx.updateTask({ categoryId: c.id, categoryName: c.name, categoryExternalId: c.externalId });
-        return { outcome: 'completed' as const, data: { category: c.name, how }, message: `Category: ${c.name} (${how})` };
-      };
-      if (cats.length === 1) return choose(cats[0], 'only category');
-      const res = await ctx.askChatGPT('CATEGORY', { categories: cats.map((c) => c.name).join('\n') });
-      if (res.status === 'waiting') return waiting('Waiting for ChatGPT: category');
-      const match = matchCategory(res.text, cats);
-      if (match) {
-        const cat = cats.find((c) => c.id === match.id)!;
-        const out = await choose(cat, 'chosen by ChatGPT from the synced list');
-        return { ...out, prompt: res.prompt, output: res.text };
-      }
-      const fallback = site.defaultCategoryId ? cats.find((c) => c.id === site.defaultCategoryId) : undefined;
-      if (fallback) {
-        const out = await choose(fallback, `site default — ChatGPT answered “${res.text.slice(0, 60)}”, which is not an existing category`);
-        return { ...out, prompt: res.prompt, output: res.text, data: { ...out.data, warnings: [`ChatGPT proposed a category that does not exist; the site default “${fallback.name}” was used.`] } };
-      }
-      throw new NeedsReviewError(`ChatGPT proposed “${res.text.slice(0, 80)}”, which is not an existing category, and the site has no default.`, ['Category needs your choice'], 'Choose a category for this article (Overview), then Retry.');
-    },
-  }),
+  bind(S('CATEGORY'), categoryStage),
   ...laterStages(tigramManifest.stages),
   assembly(S('ASSEMBLY')),
   seoCheck(S('SEO_CHECK')),

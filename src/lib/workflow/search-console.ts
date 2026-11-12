@@ -1,7 +1,7 @@
 /**
- * Search Console helpers (pure; used by the server and the browser). The tool
- * never requests indexing or reads index status on its own: it builds the URL
- * Inspection link for the owner, who records what Search Console showed.
+ * Search Console helpers (pure; used by the server and the browser): properties and the property's Search Console
+ * page (opened by the owner, or by Automation Chrome to inspect a URL and click “Request indexing”,
+ * src/lib/gsc/request-indexing.ts).
  */
 
 /** A URL-prefix property ("https://example.com/") or a domain property ("sc-domain:example.com"). */
@@ -28,7 +28,11 @@ export function inspectionProperty(configured: string | null | undefined, websit
   return normalizeSearchConsoleProperty(configured) ?? normalizeSearchConsoleProperty(websiteUrl) ?? websiteUrl;
 }
 
-/** Search Console URL Inspection for one published URL (opened by the owner, in their own browser). */
-export function inspectionUrl(property: string, pageUrl: string): string {
-  return `https://search.google.com/search-console/inspect?resource_id=${encodeURIComponent(property)}&id=${encodeURIComponent(pageUrl)}`;
+/**
+ * The property's page in Search Console, with the “Inspect any URL in …” box. A URL Inspection link cannot be built
+ * from the post's URL: its `id` is Google's own token (owner report: …/inspect?…&id=<post URL> answers 404). Google's
+ * URL Inspection API returns a working one (`inspectionResultLink`).
+ */
+export function searchConsoleHome(property: string): string {
+  return `https://search.google.com/search-console?resource_id=${encodeURIComponent(property)}`;
 }

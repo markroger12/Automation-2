@@ -6,10 +6,11 @@ import { parseJson } from '../json';
 import { findPromptDefault, type PromptVariableDoc } from '@/modules/prompt-defaults';
 import { TemplateSyntaxError, parseTemplate, referencedVariables } from './template';
 import { promptHash } from './seed';
+import { isCustomKey } from '../writers/types';
 
 /** Prompts of a retired writer (Celebrity Writer 2.0) stay readable as an archive and are never edited or used. */
 export function isArchivedPromptModule(moduleKey: string): boolean {
-  return !['celebrity-writer', 'tigram-writer', 'shared'].includes(moduleKey);
+  return !isCustomKey(moduleKey) && !['celebrity-writer', 'celebrity2-writer', 'tigram-writer', 'shared'].includes(moduleKey);
 }
 
 function assertEditable(row: { moduleKey: string }) {
@@ -18,7 +19,10 @@ function assertEditable(row: { moduleKey: string }) {
 
 export async function listPrompts() {
   const rows = await db.promptTemplate.findMany({ orderBy: [{ moduleKey: 'asc' }, { stageKey: 'asc' }] });
-  return rows.map((r) => {
+  // A prompt no writer sends any more is left out of the list (kept in the database): the Celebrity writer's CATEGORY
+  // prompt, since celebrity articles always go into “Celebrity” (owner decision 2026-11-04).
+  // The owner's writers' prompts are listed too (their writer's page edits them as well).
+  return rows.filter((r) => isArchivedPromptModule(r.moduleKey) || isCustomKey(r.moduleKey) || findPromptDefault(r.moduleKey, r.stageKey)).map((r) => {
     const def = findPromptDefault(r.moduleKey, r.stageKey);
     return {
       id: r.id,

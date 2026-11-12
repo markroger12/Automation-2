@@ -4956,17 +4956,18 @@ Owner request: “app ko final kr ke main branch me krde or npm vale ko dusri br
 - **App updates (`desktop/updates.cjs`, electron-updater 6.8.12):**
   - The installed app checks the repository's GitHub Releases 30 s after start and every 6 h (and *Check for updates* in the menus), downloads in the background, then shows **Restart to update**; that stops the work as Quit does, then installs silently and starts the new version. Off in the smoke test and when started from the repository.
   - Each workflow run sets the version to 3.3.*run number*; `electron-builder.yml` has the GitHub `publish` settings.
-  - **Not done:** publishing the release from the workflow (`contents: write` and a release step). It gives the workflow write access to the repository, so it waits for the owner's go-ahead. Until then the updater finds nothing, and the owner updates with the newer installer.
+  - **Releases (owner's go-ahead: “haan, release publish kro”):** a new `publish` job in the Windows workflow, after the build job passed, for `main` only. It is the only job with `contents: write`, runs on Ubuntu, checks out nothing and runs no code of the repository or its packages: it downloads the build's update artifact and runs `gh release create v3.3.N` with the installer, its blockmap and `latest.yml`. The build job checks on every branch that the three files exist and that `latest.yml` names the version and the installer.
 - **The tool's theme in the app's tab bar (`desktop/shell.html`):**
   - The dashboard's greys, dark main button and Segoe UI font; light and dark follow the dashboard's own switch (read from its page every 3 s) or Windows.
   - Icons on the tabs; status chips for ChatGPT and Search Console (green, amber, red, or pulsing while working; hover for the whole text); the version; the update button.
   - The start card shows the three start steps and stops its bar on a failure.
 - **Tests:**
+  - The first Windows run of this head failed at `tsc`: the test's `Agent` type lacked `capabilities()` (fixed in 424cdcd).
   - unit `desktop-agent` 14/14: new watchdog tests (sent prompt held as uncertain, unsent prompt back to the queue, never while the owner is needed), and the Search Console tab (proof before the result, sign-in page, no capability without the tab).
   - unit `desktop-updates` 2/2 (states, install only when downloaded), `desktop-google` 2/2.
   - unit `agent`: the app with the capability gets the request, the extension gets `in-app`. Unit `chrome-autostart`: no Chrome when the app does both. Unit `indexing-signin` and `search-console-live` pass.
   - `tsc` 0 errors. The tab bar was checked in a browser in light and dark, with the chips and the update button at 1280 px.
-- **Not verified:** Google's indexing pages in the app on the owner's PC; an update from one release to the next (no release is published yet).
+- **Not verified:** Google's indexing pages in the app on the owner's PC; an update from one release to the next (the first release is made when this reaches `main`); whether Smart App Control lets the unsigned update installer run.
 
 **Commands run**
 ```

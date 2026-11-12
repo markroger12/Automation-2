@@ -1,5 +1,6 @@
 # Builds the Windows installer of the desktop app (owner request: “open the .exe and the app opens; no cmd”).
-# The installer is attached to the run as the artifact “Blog-Automation-Studio-Setup”.
+# The installer is attached to the run as the artifact “Blog-Automation-Studio-Setup”. A build of main is also published
+# as a GitHub release, which the installed app updates from (owner's go-ahead, 2026-11-12: “haan, release publish kro”).
 name: Desktop app (Windows installer)
 
 on:
@@ -97,3 +98,59 @@ jobs:
           path: desktop/dist/*.exe
           retention-days: 30
           if-no-files-found: error
+
+      # What the installed app's updater reads: latest.yml (version, file name, checksum), the installer and its
+      # blockmap (for smaller downloads). Checked on every build; for builds of main the publish job below puts them in a
+      # release.
+      - name: Check the update files
+        shell: pwsh
+        run: |
+          $version = "3.3.${{ github.run_number }}"
+          foreach ($name in @("Blog-Automation-Studio-Setup-$version.exe", "Blog-Automation-Studio-Setup-$version.exe.blockmap", 'latest.yml')) {
+            if (-not (Test-Path "desktop/dist/$name")) { throw "Missing desktop/dist/$name" }
+          }
+          $latest = Get-Content desktop/dist/latest.yml -Raw
+          Write-Host $latest
+          if ($latest -notmatch "(?m)^version: $([regex]::Escape($version))\s*$") { throw "latest.yml does not name version $version" }
+          if ($latest -notmatch "(?m)^path: Blog-Automation-Studio-Setup-$([regex]::Escape($version))\.exe\s*$") { throw 'latest.yml does not name the installer' }
+
+      - uses: actions/upload-artifact@v4.6.2
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: Blog-Automation-Studio-Update
+          path: |
+            desktop/dist/Blog-Automation-Studio-Setup-*.exe
+            desktop/dist/Blog-Automation-Studio-Setup-*.exe.blockmap
+            desktop/dist/latest.yml
+          retention-days: 7
+          if-no-files-found: error
+
+  # Each build of main becomes a GitHub release (v3.3.<run number>) with the installer, its blockmap and latest.yml;
+  # the installed app finds it, downloads it and offers “Restart to update”. Only this job may write to the repository,
+  # and it runs no code of the repository or of its packages: it only uploads the files the build above checked.
+  publish:
+    needs: windows
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: Blog-Automation-Studio-Update
+          path: release
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: 3.3.${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          setup="release/Blog-Automation-Studio-Setup-$VERSION.exe"
+          ls -la release
+          test -f "$setup" && test -f "$setup.blockmap" && test -f release/latest.yml
+          gh release create "v$VERSION" "$setup" "$setup.blockmap" release/latest.yml \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "Blog Automation Studio $VERSION" \
+            --notes "Desktop app $VERSION, built from ${GITHUB_SHA::7} on main. An installed app downloads it by itself and shows Restart to update; a new install: download Blog-Automation-Studio-Setup-$VERSION.exe below. Your data folder is never touched."

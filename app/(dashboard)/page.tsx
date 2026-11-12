@@ -8,6 +8,7 @@ import { Card, Chip, EmptyState, LinkButton, PageHeader, ProgressBar, Stat, Stat
 import { ensureCustomWriters } from '@/lib/writers/store';
 import { setupState } from '@/lib/setup';
 import { SetupBanner } from '@/components/setup-checklist';
+import { ErrorBoundary } from '@/components/error-boundary';
 
 export const metadata = { title: 'Overview' };
 
@@ -44,7 +45,9 @@ export default async function OverviewPage() {
         }
       />
 
-      <SetupBanner initial={setup} />
+      <ErrorBoundary name="setup checklist banner">
+        <SetupBanner initial={setup} />
+      </ErrorBoundary>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="All articles" value={counts.total} hint="Article History" href="/history" />

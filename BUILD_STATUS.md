@@ -5184,3 +5184,39 @@ Owner request: “readme bhi app ke hisab bana dena new”.
   - every page and setting, and the desktop app in detail, went to `docs/user-guide.md`. Its data-folder table gains `credentials\` and `cache\`.
   - npm requirements, install, run, the npm first run, git updating, npm troubleshooting, scripts, the disposable-WordPress test, building the installer, command-line backup and restore, and the technical security notes went to `docs/development.md`.
 - Every menu and button the README names was checked against the app's code (File → Run ChatGPT prompts in this app, Help → Troubleshooting → Copy details for a report, Logs / Diagnostics → Download diagnostic bundle, Setup checklist).
+
+## Desktop app (2026-11-12): the dashboard no longer falls over; errors reach the log
+
+Owner report (3.3.31): after saving the Gemini key and asking “how do i add website”, the dashboard tab showed only “Application error: a client-side exception has occurred while loading localhost”.
+
+- **Not reproduced here.** These showed the same flow with list answers, follow-up questions and reopening the panel, all without an error:
+  - the dev server, from Settings and from the Overview, with Gemini-style Markdown answers in English and Roman Urdu;
+  - the answer renderer minified with Next.js's own SWC minifier and rendered.
+  The exact cause on Windows is still open: the changes below keep the page alive and record the error with its stack.
+- **Error boundaries everywhere it matters:**
+  - **Pages:** `app/(dashboard)/error.tsx` shows “This page ran into a problem” with Try again, Reload the page, Copy details and Go to the Overview. The menu and the top bar stay.
+  - **The frame:** `app/global-error.tsx` replaces Next.js's bare message with a calm page and Reload.
+  - **The new parts** have their own `ErrorBoundary`: the help assistant, an answer (falls back to plain text), the pause button, the setup banner, and the article timeline.
+  - If the assistant panel fails, it closes, its saved conversation is forgotten, and an amber **Ask** button opens a fresh panel.
+- **Errors go to the app's log:**
+  - `reportClientError` sends `/api/client-error` → `log({ level: 'error', category: 'dashboard', … })`, with the place, the page, the message and the first 15 stack lines. Secrets are redacted by `log()`, and at most 5 a minute are sent.
+  - The frame also reports errors outside rendering: `window` `error` and `unhandledrejection`.
+  - Checked here by forcing an error in an answer and in the panel: the page stayed up, the answer showed as plain text, the panel reopened fresh, and both “Dashboard error in help assistant …” lines with stacks were in the log.
+- **Answers:**
+  - `src/lib/assistant/format.ts` (`answerBlocks`, `inlineParts`, with tests) turns Gemini Markdown into blocks:
+    - numbered lists keep their numbers after indented sub-points and blank lines (before, item 4 started again at 1);
+    - code fences, Windows line ends and non-text values are handled;
+    - unclosed `**` stays text.
+  - A non-text answer or context from the server is never put into the conversation. Stored conversations are checked on load, and history sent back is trimmed to what the server accepts (10 turns, 6,000 characters each).
+- **Test runs no longer fill the disk:**
+  - `tests/helpers/run-tmp.ts` (globalSetup of the unit, integration and e2e configs) gives each run one temporary folder and removes it at the end.
+  - Before, every run left dozens of `bas-test-*` / `bas-isolated-*` folders behind; here they had grown to 26 GB.
+- **`docs/windows-qa-prompt.md`** was rewritten for the owner's AI agent: tray and taskbar, the setup checklist and its tab buttons, pause and quiet hours, the help assistant with the steps to capture a crash (Developer tools console, the “Dashboard error” log lines), real ChatGPT, Search Console and Gemini, updates and memory.
+- **Checked here:** the unit suite in batches, 77 files / 526 tests, leaving no temporary folders; `tsc` 0 errors.
+- **Not verified here:** the owner's crash itself; the QA prompt's section H captures it.
+
+**Commands run**
+```
+TMPDIR=<scratch> npx vitest run <8 files at a time>   # 77 files, 526 tests
+npx tsc --noEmit                                       # 0 errors
+```

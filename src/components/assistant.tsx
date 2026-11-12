@@ -1,14 +1,24 @@
 'use client';
 
 import Link from 'next/link';
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUp, Eraser, KeyRound, Loader2, Sparkles, X } from 'lucide-react';
 import { api, ApiClientError } from '@/lib/client/api';
 import { CopyButton } from './client';
 import { cx } from './ui';
+import { ErrorBoundary } from './error-boundary';
+import { answerBlocks, inlineParts } from '@/lib/assistant/format';
 
 /** Opens the help assistant from anywhere (the search's quick action, the Help page). */
 export const OPEN_ASSISTANT_EVENT = 'bas:open-assistant';
+/** After an error in the panel: start a fresh conversation, so a saved one cannot bring the error back. */
+export const forgetAssistantChat = () => {
+  try {
+    sessionStorage.removeItem(STORE);
+  } catch {
+    /* storage unavailable */
+  }
+};
 export const openAssistant = (question?: string) => window.dispatchEvent(new CustomEvent(OPEN_ASSISTANT_EVENT, { detail: { question } }));
 
 interface Turn {
@@ -22,66 +32,91 @@ interface Overview {
 }
 
 const STORE = 'bas-assistant-chat';
+const isTurn = (t: unknown): t is Turn => Boolean(t) && typeof t === 'object' && ((t as Turn).role === 'user' || (t as Turn).role === 'model') && typeof (t as Turn).text === 'string';
 const SUGGESTIONS = ['Why did my last article stop?', 'ChatGPT is not connected. What should I do?', 'How do I add a new WordPress website?', 'Mera article draft kyun nahi bana?'];
 
-/* ---------------- A small, safe Markdown view (no HTML from the answer is ever rendered as HTML) ---------------- */
+/* ---------------- The answer, from simple Markdown (no HTML from the answer is ever used as HTML) ---------------- */
 
-function inline(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const t = m[0];
-    out.push(
-      t.startsWith('**') ? (
-        <strong key={m.index}>{t.slice(2, -2)}</strong>
-      ) : (
-        <code key={m.index} className="surface-2 rounded px-1 py-0.5 font-mono text-[0.85em]">
-          {t.slice(1, -1)}
-        </code>
-      ),
-    );
-    last = m.index + t.length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
+function Inline({ text }: { text: string }) {
+  return (
+    <>
+      {inlineParts(text).map((part, i) =>
+        part.kind === 'bold' ? (
+          <strong key={i}>{part.text}</strong>
+        ) : part.kind === 'code' ? (
+          <code key={i} className="surface-2 rounded px-1 py-0.5 font-mono text-[0.85em]">
+            {part.text}
+          </code>
+        ) : (
+          <Fragment key={i}>{part.text}</Fragment>
+        ),
+      )}
+    </>
+  );
 }
 
 function Answer({ text }: { text: string }) {
-  const blocks: ReactNode[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
-  const flush = () => {
-    if (!list) return;
-    const L = list.ordered ? 'ol' : 'ul';
-    blocks.push(
-      <L key={blocks.length} className={cx('space-y-1 pl-5', list.ordered ? 'list-decimal' : 'list-disc')}>
-        {list.items.map((item, i) => (
-          <li key={i}>{inline(item)}</li>
-        ))}
-      </L>,
-    );
-    list = null;
-  };
-  for (const raw of text.split('\n')) {
-    const line = raw.trimEnd();
-    const ordered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*•]\s+(.*)$/.exec(line);
-    if (ordered || bullet) {
-      const isOrdered = Boolean(ordered);
-      if (list && list.ordered !== isOrdered) flush();
-      list ??= { ordered: isOrdered, items: [] };
-      list.items.push((ordered ?? bullet)![1]);
-      continue;
-    }
-    flush();
-    if (!line.trim()) continue;
-    const heading = /^#{1,4}\s+(.*)$/.exec(line);
-    blocks.push(heading ? <p key={blocks.length} className="font-semibold">{inline(heading[1])}</p> : <p key={blocks.length}>{inline(line)}</p>);
-  }
-  flush();
-  return <div className="space-y-2 leading-relaxed">{blocks.map((b, i) => <Fragment key={i}>{b}</Fragment>)}</div>;
+  const blocks = answerBlocks(text);
+  return (
+    <div className="space-y-2 leading-relaxed">
+      {blocks.map((b, i) =>
+        b.kind === 'list' ? (
+          b.ordered ? (
+            <ol key={i} start={b.start} className="list-decimal space-y-1 pl-5">
+              {b.items.map((item, j) => (
+                <li key={j}>
+                  <Inline text={item.text} />
+                  {item.sub.length ? (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                      {item.sub.map((sub, k) => (
+                        <li key={k}>
+                          <Inline text={sub} />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <ul key={i} className="list-disc space-y-1 pl-5">
+              {b.items.map((item, j) => (
+                <li key={j}>
+                  <Inline text={item.text} />
+                  {item.sub.length ? (
+                    <ul className="mt-1 list-[circle] space-y-0.5 pl-5">
+                      {item.sub.map((sub, k) => (
+                        <li key={k}>
+                          <Inline text={sub} />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )
+        ) : b.kind === 'h' ? (
+          <p key={i} className="font-semibold">
+            <Inline text={b.text} />
+          </p>
+        ) : (
+          <p key={i}>
+            <Inline text={b.text} />
+          </p>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** An answer that cannot be shown as formatted text is shown as plain text, never as a broken page. */
+function SafeAnswer({ text }: { text: string }) {
+  return (
+    <ErrorBoundary name="help assistant answer" fallback={() => <p className="whitespace-pre-wrap">{text}</p>}>
+      <Answer text={text} />
+    </ErrorBoundary>
+  );
 }
 
 /* ---------------- The panel ---------------- */
@@ -103,8 +138,8 @@ export function AssistantButton() {
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(sessionStorage.getItem(STORE) ?? '[]') as Turn[];
-      if (Array.isArray(saved)) setTurns(saved.slice(-20));
+      const saved = JSON.parse(sessionStorage.getItem(STORE) ?? '[]') as unknown;
+      if (Array.isArray(saved)) setTurns(saved.filter(isTurn).slice(-20));
     } catch {
       /* storage unavailable */
     }
@@ -119,7 +154,8 @@ export function AssistantButton() {
 
   const loadOverview = useCallback(async () => {
     try {
-      setOverview(await api<Overview>('/api/assistant'));
+      const o = await api<Overview>('/api/assistant');
+      if (o && o.settings && typeof o.context === 'string') setOverview(o);
     } catch {
       /* shown as not set up below; the next opening tries again */
     }
@@ -129,14 +165,18 @@ export function AssistantButton() {
     async (question: string) => {
       const q = question.trim();
       if (!q || busy) return;
-      const history = turns.filter((t) => !t.error).map(({ role, text }) => ({ role, text }));
+      // The last 10 turns, each at most 6,000 characters (what the server accepts).
+      const history = turns
+        .filter((t) => !t.error)
+        .slice(-10)
+        .map(({ role, text }) => ({ role, text: text.slice(0, 6000) }));
       setTurns((t) => [...t.filter((x) => !x.error), { role: 'user', text: q }]);
       setDraft('');
       setBusy(true);
       try {
         const res = await api<{ answer: string; context: string; model: string }>('/api/assistant', { body: { question: q, history } });
-        setTurns((t) => [...t, { role: 'model', text: res.answer }]);
-        setOverview((o) => (o ? { ...o, context: res.context } : o));
+        setTurns((t) => [...t, { role: 'model', text: typeof res?.answer === 'string' && res.answer ? res.answer : 'The assistant sent no answer. Try again.' }]);
+        if (typeof res?.context === 'string') setOverview((o) => (o ? { ...o, context: res.context } : o));
       } catch (error) {
         const message = error instanceof ApiClientError ? error.message : 'Something went wrong. Try again.';
         if (error instanceof ApiClientError && error.code === 'ASSISTANT_NOT_SET_UP') void loadOverview();
@@ -252,7 +292,7 @@ export function AssistantButton() {
               ) : (
                 <div key={i} className="group mr-4">
                   <div className="surface-2 rounded-xl rounded-bl-sm px-3 py-2">
-                    <Answer text={t.text} />
+                    <SafeAnswer text={t.text} />
                   </div>
                   <div className="mt-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                     <CopyButton text={t.text} />

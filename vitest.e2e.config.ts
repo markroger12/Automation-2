@@ -8,6 +8,7 @@ export default defineConfig({
     include: ['tests/e2e/**/*.test.ts'],
     environment: 'node',
     setupFiles: ['tests/helpers/isolate-data.ts'],
+    globalSetup: ['tests/helpers/run-tmp.ts'],
     testTimeout: 300000,
     hookTimeout: 300000,
     pool: 'forks',

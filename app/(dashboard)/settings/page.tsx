@@ -4,6 +4,8 @@ import { connectionKeyInfo } from '@/lib/agent/keys';
 import { Card, PageHeader } from '@/components/ui';
 import { ExtensionPairing } from '@/components/extension-pairing';
 import { AppUpdates } from '@/components/app-updates';
+import { DesktopAppUpdates } from '@/components/desktop-updates';
+import { inDesktopApp } from '@/lib/runtime';
 import { updateInfo } from '@/lib/update/service';
 import { readAutoCheck } from '@/lib/update/auto-check';
 import { SettingsForm } from './settings-form';
@@ -11,14 +13,16 @@ import { SettingsForm } from './settings-form';
 export const metadata = { title: 'Settings' };
 
 export default async function SettingsPage() {
-  const [settings, key, update, autoCheck] = await Promise.all([getSettings(), connectionKeyInfo(), updateInfo(), readAutoCheck().catch(() => null)]);
+  // Inside the desktop app the app updates itself (its own card); git and its checks are for the npm copy only.
+  const desktop = inDesktopApp();
+  const [settings, key, update, autoCheck] = await Promise.all([getSettings(), connectionKeyInfo(), desktop ? null : updateInfo(), desktop ? null : readAutoCheck().catch(() => null)]);
   return (
     <>
       <PageHeader
         title="Settings"
         description="Global defaults. Website pages can override content/SEO/workflow values for their own tasks only. Each task freezes its effective configuration when it starts."
       />
-      <AppUpdates initial={update} auto={autoCheck} />
+      {update ? <AppUpdates initial={update} auto={autoCheck} /> : <DesktopAppUpdates version={process.env.BAS_APP_VERSION ?? null} />}
       <Card
         title="ChatGPT extension connection key"
         className="mb-6"

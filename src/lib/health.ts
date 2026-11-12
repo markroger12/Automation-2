@@ -117,7 +117,8 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
     warnings.push({ tone: 'warning', title: `${loginTasks} task(s) waiting for a login`, detail: 'ChatGPT or WordPress asked for sign-in or a human check.', href: '/queue?group=paused', action: 'Open queue' });
   }
   // A new app version on GitHub (owner request: tell me when the tool has an update). Last, after what blocks work.
-  const update = updateNotice(autoCheck, readStatus());
+  // The git copy's “App update available” (its hourly look): not in the desktop app, which updates itself.
+  const update = inDesktopApp() ? null : updateNotice(autoCheck, readStatus());
   if (update) warnings.push(update);
   return warnings;
 }

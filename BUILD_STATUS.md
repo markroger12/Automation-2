@@ -5092,3 +5092,35 @@ npx vitest run tests/unit/desktop-*.test.ts     # 34 pass
 npx tsc --noEmit                                # 0 errors
 ```
 
+## Desktop app (2026-11-12): “The data could not be prepared” in C:\Program Files, and the App updates card in the app
+
+Owner reports:
+- In the app, Settings → App updates showed “Installed: unknown (git did not answer)” and “Could not check: This folder is not a git copy …”.
+- After installing into `C:\Program Files\Blog Automation Studio`, the app stopped at “The data could not be prepared”: `EPERM: operation not permitted, mkdir 'C:\Program Files\Blog Automation Studio\resources\app\node_modules\.cache\prisma'`, then `prisma migrate deploy failed`.
+
+- **Cause of the stop:**
+  - On Windows, the Prisma CLI's engine cache uses find-cache-dir. That finds `node_modules\.cache\prisma` next to the program and creates it.
+  - Windows' `access(W_OK)` does not read folder permissions, so the folder looks writable, and `mkdir` then fails in Program Files.
+  - The start-up steps ran the CLI at every start, even with no migration pending.
+- **Fix (`scripts/migrate.ts`, `desktop/main.cjs`, `desktop/check-bundle.mjs`):**
+  - With every shipped migration applied, the Prisma CLI is not started at all: 0.36 s here instead of a CLI start.
+  - When it runs, its caches go to the data folder: `CACHE_DIR=<data>\cache`, which find-cache-dir honours, and `JITI_FS_CACHE`. The app sets both for all its processes.
+  - The Windows workflow now denies the runner's user write access to the installed app folder (`icacls … /deny …:(OI)(CI)W`) before the smoke test, as Program Files does. A write into the installation then fails the build.
+- **The App updates card in the app** (`src/components/desktop-updates.tsx`, `desktop/dashboard-preload.cjs`):
+  - The card shows the installed version (`BAS_APP_VERSION`) and the updater's state: newest with the time of the check, looking, downloading with its percentage and a bar, ready with **Restart to update**, an error, or “this copy does not update itself”.
+  - It has **Check for updates** and a What's new link.
+  - The dashboard tab's preload exposes only `basApp.updates` (state, check, install, onState). `main.cjs` answers only the dashboard tab's own main frame on the local origin.
+  - Settings no longer runs git in the app, and the git copy's “App update available” banner is not shown there.
+- **Checked here:**
+  - unit suite 71 files / 504 tests; `tsc` 0 errors;
+  - the card rendered in Chromium in four states (no bridge, newest, downloading 42 %, ready);
+  - migrations on a new data folder (CLI with the data cache), then again (skipped, 0.36 s).
+- **Not verified here:** Program Files itself; the workflow's read-only installation stands in for it.
+
+**Commands run**
+```
+npx vitest run                      # 71 files, 504 tests
+npx tsc --noEmit                    # 0 errors
+BAS_DATA_DIR=… npx tsx scripts/migrate.ts   # twice: applied, then skipped in 0.36 s
+```
+

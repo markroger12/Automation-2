@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { PrismaClient } from '@prisma/client';
-import { dataPaths, ensureDataDirs, projectRoot, resolveDatabaseUrl } from '../src/lib/paths';
+import { dataDir, dataPaths, ensureDataDirs, projectRoot, resolveDatabaseUrl } from '../src/lib/paths';
 import { loadEnv } from '../src/lib/env';
 import { createBackup } from '../src/lib/backup';
 
@@ -31,6 +31,8 @@ export async function runMigrations(): Promise<void> {
   ensureDataDirs();
   const url = resolveDatabaseUrl();
   const dbFile = url.slice('file:'.length).split('?')[0];
+  // Every shipped migration is applied already: the Prisma CLI is not started at all (a faster start).
+  let upToDate = false;
   if (fs.existsSync(dbFile) && fs.statSync(dbFile).size > 0) {
     const client = new PrismaClient({ datasources: { db: { url } } });
     try {
@@ -40,6 +42,7 @@ export async function runMigrations(): Promise<void> {
         console.log(`  ${pending.length} pending migration(s). Backup saved: ${path.relative(projectRoot(), dir)}`);
       } else {
         console.log('  No pending migrations — no backup needed.');
+        upToDate = true;
       }
     } finally {
       await client.$disconnect();
@@ -47,13 +50,20 @@ export async function runMigrations(): Promise<void> {
   } else {
     console.log('  No existing database — a new one will be created.');
   }
-  const prismaCli = path.join(projectRoot(), 'node_modules', 'prisma', 'build', 'index.js');
-  const result = spawnSync(process.execPath, [prismaCli, 'migrate', 'deploy'], {
-    cwd: projectRoot(),
-    env: { ...process.env, DATABASE_URL: `file:${dbFile}` },
-    stdio: 'inherit',
-  });
-  if (result.status !== 0) throw new Error(`prisma migrate deploy failed (see output above). Your data was not reset; a backup is in ${dataPaths.backups()}.`);
+  if (!upToDate) {
+    const prismaCli = path.join(projectRoot(), 'node_modules', 'prisma', 'build', 'index.js');
+    // Owner report (2026-11-12, the app installed in C:\Program Files): the Prisma CLI made a cache folder inside the
+    // installation (node_modules\.cache\prisma), which Windows refuses there (EPERM), so the app did not start. Its
+    // caches go to the data folder instead (CACHE_DIR, JITI_FS_CACHE), never into the program's own folder.
+    const cache = path.join(dataDir(), 'cache');
+    fs.mkdirSync(cache, { recursive: true });
+    const result = spawnSync(process.execPath, [prismaCli, 'migrate', 'deploy'], {
+      cwd: projectRoot(),
+      env: { ...process.env, DATABASE_URL: `file:${dbFile}`, CACHE_DIR: process.env.CACHE_DIR || cache, JITI_FS_CACHE: process.env.JITI_FS_CACHE || path.join(cache, 'jiti') },
+      stdio: 'inherit',
+    });
+    if (result.status !== 0) throw new Error(`prisma migrate deploy failed (see output above). Your data was not reset; a backup is in ${dataPaths.backups()}.`);
+  }
   const client = new PrismaClient({ datasources: { db: { url } } });
   try {
     await client.$queryRawUnsafe('PRAGMA journal_mode = WAL;');

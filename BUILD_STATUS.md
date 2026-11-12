@@ -5011,3 +5011,39 @@ npm run build                                                      # compiled
 node crawl.cjs   # 27 pages in desktop mode: 200, no console errors
 ```
 
+## Desktop app (2026-11-12): less lag and less memory, from the installer on
+
+Owner request: “app ka sara lagg khatam kr de installar sa la kr app ke z tek or ramm free bhi bana da”.
+- **What was measured first:**
+  - Windows run 43134633799: installing took about **110 s** for 787 MB (the start itself took about 6 s).
+  - The bundle had **18,037 files / 464 MB**, of which about 7,500 files / 117 MB were only for developers.
+- **Installer (`desktop/prepare.mjs`, `desktop/bundle-rules.mjs`):**
+  - Packages are copied without source maps, TypeScript sources and declarations (Node.js never runs .ts inside node_modules), read-me and change-log files (licences stay), and top-level `test`, `docs` and `example` folders.
+  - The TypeScript sources (`src`, `scripts`) and tsx with its esbuild are no longer carried.
+  - Bundle now **9,688 files / 353 MB** (counted here on Linux).
+- **Start:**
+  - The worker and the start-up steps are compiled once into `dist/worker.mjs` and `dist/preflight.mjs` (esbuild, packages left outside); `main.cjs` and `check-bundle.mjs` start these.
+  - A script that starts itself when run directly (migrate, seed, install-tools) would also start inside another bundle, because its `import.meta.url` becomes the bundle's. `entryGuardPlugin` keeps that test only for the entry; a test proves a bundled helper no longer starts itself and fails without the plugin.
+  - Measured here: the worker ready in ~0.65 s instead of ~1.0 s (1.5 s with a cold tsx cache), using ~150 MB instead of 185–234 MB (tsx also ran esbuild beside it).
+- **Memory:**
+  - The dashboard server and the worker start with `--max-semi-space-size=2` and no total limit. The dashboard server measured 252 → 223 MB at rest and 319 → 259 MB after rendering all 27 pages, all pages clean.
+  - Memory saver every minute (`main.cjs`):
+    - Search Console's page goes to about:blank 10 minutes after it was last shown or used (sign-in kept; loads again on opening or for a request).
+    - The dashboard page is put away after 10 minutes in the tray and restored at the same page when the window is shown.
+    - A ChatGPT tab that is not shown, idle for 5 minutes (`agent.isIdle`) and over 700 MB loads chatgpt.com afresh, at most every 30 minutes.
+  - Extra ChatGPT tabs close after 5 minutes idle instead of 10.
+  - The tab bar's theme check skips while the window is hidden.
+- **Checked here:**
+  - the real trimmed bundle (`node desktop/prepare.mjs`), run in place: start-up steps on a new data folder (all migrations), the dashboard (HTTP 200) and the worker (running); then every page (27) in Chromium, all 200 with no console errors;
+  - unit `desktop-bundle` (5), `desktop-agent` (16, incl. the idle check and the 5-minute close), all desktop tests 34/34; `tsc` 0 errors.
+- **Not measured here:** the Windows install time after the change (the workflow's install step prints it), and the memory saver inside Electron (it uses Electron's process metrics).
+
+**Commands run**
+```
+node desktop/prepare.mjs                       # 101 packages, 9,688 files, 353 MB
+node dist/preflight.mjs; next start; node dist/worker.mjs   # in desktop/bundle/app: migrations ok, 200, worker running
+node crawl.cjs                                 # 27 pages: 200, no console errors
+npx vitest run tests/unit/desktop-*.test.ts    # 34 pass
+npx tsc --noEmit                               # 0 errors
+```
+

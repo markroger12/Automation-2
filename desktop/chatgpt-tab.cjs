@@ -266,6 +266,18 @@ function createChatGPTTabs(o) {
     version,
     /** Load a page in the first tab. */
     load: (url) => firstTab().wc.loadURL(url),
+    /** The open tabs' ids (app-1, app-2 …). */
+    ids: () => [...tabs.keys()],
+    /** A tab's renderer process (memory saver, main.cjs). */
+    processId: (id) => {
+      const t = tabs.get(id);
+      return t && !t.wc.isDestroyed() ? t.wc.getOSProcessId() : null;
+    },
+    /** A tab with nothing to do loads ChatGPT's start page afresh: a long conversation's page gives its memory back. */
+    freshen: (id) => {
+      const t = tabs.get(id);
+      if (t && !t.wc.isDestroyed()) void t.wc.loadURL('https://chatgpt.com/').catch(() => {});
+    },
     destroy() {
       ipcMain.removeHandler('bas-chatgpt:message');
       for (const name of ['port-open', 'port-post', 'port-close', 'respond']) ipcMain.removeListener(`bas-chatgpt:${name}`, handlers[name]);

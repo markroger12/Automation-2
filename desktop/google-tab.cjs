@@ -122,7 +122,19 @@ function createGoogleTab(o = {}) {
   let loaded = false;
   return {
     view,
-    /** Search Console, the first time the tab is shown. */
+    /** Whether Search Console's page is loaded (it is, from the first time the tab is shown or a request is made). */
+    loaded: () => loaded,
+    /**
+     * Memory saver (main.cjs): Search Console's page is put away while it is not shown and has nothing to do. The
+     * Google sign-in stays (it is in the tab's own storage); the page loads again when the tab is shown or a request
+     * is made.
+     */
+    unload() {
+      if (!loaded || wc.isDestroyed()) return;
+      loaded = false;
+      void wc.loadURL('about:blank').catch(() => {});
+    },
+    /** Search Console, the first time the tab is shown (and after the memory saver put it away). */
     open() {
       if (loaded || wc.isDestroyed()) return;
       loaded = true;

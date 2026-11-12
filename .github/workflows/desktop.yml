@@ -48,7 +48,7 @@ jobs:
       # extension's ChatGPT scripts against a fake ChatGPT page and the dashboard's agent handlers (no live ChatGPT).
       - name: Test the ChatGPT tab (Electron, fake ChatGPT page)
         run: |
-          npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-google.test.ts tests/unit/desktop-updates.test.ts tests/unit/desktop-ux.test.ts
+          npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-google.test.ts tests/unit/desktop-updates.test.ts tests/unit/desktop-ux.test.ts tests/unit/desktop-bundle.test.ts
           npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts
 
       - name: Assemble the bundle (the tool and the packages it loads)
@@ -75,12 +75,14 @@ jobs:
         run: |
           $setup = Get-ChildItem desktop/dist/*.exe | Select-Object -First 1
           Write-Host "Installer: $($setup.Name), $([math]::Round($setup.Length / 1MB)) MB"
+          $clock = [Diagnostics.Stopwatch]::StartNew()
           Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          Write-Host "Install time: $([math]::Round($clock.Elapsed.TotalSeconds)) s"
           Get-Process -Name 'Blog Automation Studio' -ErrorAction SilentlyContinue | Stop-Process -Force
           $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'Blog Automation Studio.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) { throw 'The app was not installed.' }
-          $installed = (Get-ChildItem $exe.DirectoryName -Recurse -File | Measure-Object -Property Length -Sum).Sum
-          Write-Host "Installed: $($exe.DirectoryName), $([math]::Round($installed / 1MB)) MB"
+          $files = Get-ChildItem $exe.DirectoryName -Recurse -File | Measure-Object -Property Length -Sum
+          Write-Host "Installed: $($exe.DirectoryName), $([math]::Round($files.Sum / 1MB)) MB in $($files.Count) files"
           $env:BAS_DESKTOP_DATA_DIR = Join-Path $env:RUNNER_TEMP 'bas-smoke-data'
           $result = Join-Path $env:RUNNER_TEMP 'bas-smoke.json'
           $app = Start-Process -FilePath $exe.FullName -ArgumentList '--smoke-test', "--smoke-result=$result" -PassThru

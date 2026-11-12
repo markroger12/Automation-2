@@ -61,6 +61,15 @@ let chatgptState = { tone: '', text: '' };
 let gscState = null;
 let shellTheme = null;
 let themeTimer = null;
+/** Memory saver (owner request 2026-11-12: “ram free”): see memorySaver(). */
+let memoryTimer = null;
+let lastAgentStatus = null;
+let gscActiveAt = Date.now();
+let hiddenSince = null;
+let dashboardParked = false;
+/** The dashboard page shown last (it comes back there after a reconnect or the memory saver). */
+let dashboardUrl = null;
+const freshenedAt = new Map();
 const TAB_BAR = 44;
 /** The key this app gives its dashboard for the ChatGPT tab (made at each start, never stored). */
 const agentKey = randomBytes(32).toString('base64url');
@@ -184,6 +193,22 @@ function spawnNode(name, args, env, ipc = false) {
   child.stderr.on('data', (d) => logLine(name, d));
   child.on('error', (e) => logLine(name, `could not start: ${e.message}`));
   return child;
+}
+
+/**
+ * How a part of the tool starts: the installed app runs it compiled (dist/, prepare.mjs) — no TypeScript compiled at
+ * every start, no compiler in memory; a copy started from the repository runs the TypeScript with tsx.
+ */
+/**
+ * Memory (owner request 2026-11-12: “ramm free”): a small young generation for the dashboard server and the worker.
+ * Measured on the dashboard server: 252 → 223 MB at rest and 319 → 259 MB after showing every page, with no limit on
+ * what a process may use in all (so nothing runs out of memory).
+ */
+const NODE_MEMORY = ['--max-semi-space-size=2'];
+
+function toolEntry(name, source) {
+  const compiled = path.join(appDir, 'dist', `${name}.mjs`);
+  return fs.existsSync(compiled) ? [compiled] : ['--import', 'tsx', source];
 }
 
 function runToEnd(name, args, env) {
@@ -372,24 +397,72 @@ function zoomShown(step) {
  */
 function guardDashboard(view) {
   const wc = view.webContents;
-  let lastUrl = ORIGIN;
+  dashboardUrl = ORIGIN;
   wc.on('did-navigate', (_e, url) => {
-    if (isLocal(url)) lastUrl = url;
+    if (isLocal(url)) dashboardUrl = url;
   });
   wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
-    if (isMainFrame && isLocal(url)) lastUrl = url;
+    if (isMainFrame && isLocal(url)) dashboardUrl = url;
   });
   wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
     // -3: the load was replaced by another (not an error).
     if (!isMainFrame || code === -3 || !isLocal(url)) return;
     logLine('app', `The dashboard page did not load (${description}); reconnecting.`);
-    void wc.loadFile(path.join(__dirname, 'offline.html'), { query: { to: url || lastUrl, theme: shellTheme || (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') } }).catch(() => {});
+    void wc.loadFile(path.join(__dirname, 'offline.html'), { query: { to: url || dashboardUrl, theme: shellTheme || (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') } }).catch(() => {});
   });
   wc.on('render-process-gone', (_e, details) => {
     if (details.reason === 'clean-exit') return;
     logLine('app', `The dashboard page stopped (${details.reason}); it is loaded again.`);
-    setTimeout(() => !wc.isDestroyed() && void wc.loadURL(lastUrl).catch(() => {}), 1000);
+    setTimeout(() => !wc.isDestroyed() && !dashboardParked && void wc.loadURL(dashboardUrl).catch(() => {}), 1000);
   });
+}
+
+/**
+ * Memory saver (owner request 2026-11-12: “app ka sara lagg khatam kr de … ramm free”). Every minute, pages that are
+ * not shown and have nothing to do give their memory back; nothing the owner sees or a job needs is touched:
+ * - Search Console: put away 10 minutes after it was last shown or made a request (the Google sign-in stays; the
+ *   page loads again when the tab is opened or a request comes).
+ * - The dashboard: put away while the window has been hidden in the tray for 10 minutes; it comes back at the same
+ *   page when the window is opened. The work (server, worker, ChatGPT) goes on meanwhile.
+ * - A ChatGPT tab that is not shown, has had nothing to do for 5 minutes and uses more than 700 MB (a long
+ *   conversation): it loads ChatGPT's start page afresh, at most once every 30 minutes.
+ */
+const MINUTE = 60_000;
+function memorySaver() {
+  if (!win || win.isDestroyed()) return;
+  const now = Date.now();
+  if (activeTab === 'search-console' && win.isVisible()) gscActiveAt = now;
+  if (lastAgentStatus && lastAgentStatus.gsc && lastAgentStatus.gsc.running) gscActiveAt = now;
+  if (googleTab && googleTab.loaded() && now - gscActiveAt > 10 * MINUTE) {
+    googleTab.unload();
+    logLine('app', 'Memory saver: the Search Console page is put away until it is needed again.');
+  }
+  if (dashboardView && !dashboardParked && hiddenSince && now - hiddenSince > 10 * MINUTE) parkDashboard();
+  if (chatgpt && chatgpt.agent && chatgpt.ids && !(activeTab === 'chatgpt' && win.isVisible())) {
+    const memory = new Map(app.getAppMetrics().map((m) => [m.pid, m.memory && m.memory.workingSetSize]));
+    for (const id of chatgpt.ids()) {
+      const mb = Math.round((memory.get(chatgpt.processId(id)) || 0) / 1024);
+      if (mb < 700 || !chatgpt.agent.isIdle(id, 5 * MINUTE) || now - (freshenedAt.get(id) || 0) < 30 * MINUTE) continue;
+      freshenedAt.set(id, now);
+      logLine('app', `Memory saver: ChatGPT tab ${id} used ${mb} MB with nothing to do; it loads ChatGPT afresh.`);
+      chatgpt.freshen(id);
+    }
+  }
+}
+
+function parkDashboard() {
+  const wc = dashboardView && dashboardView.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  if (isLocal(wc.getURL())) dashboardUrl = wc.getURL();
+  dashboardParked = true;
+  void wc.loadURL('about:blank').catch(() => {});
+  logLine('app', 'Memory saver: the dashboard page is put away while the window is hidden.');
+}
+
+function unparkDashboard() {
+  if (!dashboardParked || !dashboardView || dashboardView.webContents.isDestroyed()) return;
+  dashboardParked = false;
+  void dashboardView.webContents.loadURL(dashboardUrl || ORIGIN).catch(() => {});
 }
 
 // ------------------------------------------------------------------ the tabs
@@ -445,7 +518,8 @@ function chatgptTabsChanged(views) {
 
 /** The tab bar follows the dashboard's light/dark toggle (the class on its page, read in a separate world). */
 function followDashboardTheme() {
-  if (!dashboardView || dashboardView.webContents.isDestroyed() || dashboardView.webContents.isLoading()) return;
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+  if (!dashboardView || dashboardView.webContents.isDestroyed() || dashboardView.webContents.isLoading() || !isLocal(dashboardView.webContents.getURL())) return;
   dashboardView.webContents
     .executeJavaScriptInIsolatedWorld(999, [{ code: "document.documentElement.classList.contains('dark') ? 'dark' : 'light'" }])
     .then((theme) => {
@@ -489,6 +563,7 @@ function selectTab(tab, focusId = null) {
 
 function showDashboard(page = '') {
   if (!dashboardView) return;
+  dashboardParked = false;
   void dashboardView.webContents.loadURL(`${ORIGIN}${page}`).catch(() => {});
   selectTab('dashboard');
 }
@@ -577,6 +652,7 @@ function attachTabs(ownServer) {
       if (!win.isVisible() || win.isMinimized()) win.showInactive();
     },
     onStatus: (s) => {
+      lastAgentStatus = s;
       chatgptState = chatgptSummary(s);
       gscState = gscSummary(s.gsc);
       shellState();
@@ -614,6 +690,20 @@ function createWindow(hidden) {
   win.on('page-title-updated', (e) => e.preventDefault());
   for (const change of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, layout);
   // Shown once the tab bar has painted (no white flash), maximized if it was.
+  // Memory saver: how long the window has been hidden (in the tray or minimized), and the check every minute.
+  hiddenSince = hidden ? Date.now() : null;
+  win.on('hide', () => (hiddenSince = Date.now()));
+  win.on('minimize', () => (hiddenSince = Date.now()));
+  win.on('show', () => {
+    hiddenSince = null;
+    unparkDashboard();
+  });
+  win.on('restore', () => {
+    hiddenSince = null;
+    unparkDashboard();
+  });
+  clearInterval(memoryTimer);
+  memoryTimer = setInterval(memorySaver, MINUTE);
   win.once('ready-to-show', () => {
     if (hidden) return;
     if (saved && saved.maximized) win.maximize();
@@ -640,6 +730,7 @@ function createWindow(hidden) {
     win = null;
     dashboardView = null;
     clearInterval(themeTimer);
+    clearInterval(memoryTimer);
     if (chatgpt) {
       const agent = chatgpt.agent;
       chatgpt.destroy();
@@ -904,7 +995,7 @@ async function start() {
   delete env.NODE_OPTIONS;
 
   status('Preparing your data…', 'Migrations with a backup first, settings, the face and person detectors (once).');
-  const prepared = await runToEnd('setup', ['--import', 'tsx', 'scripts/preflight.ts'], env);
+  const prepared = await runToEnd('setup', toolEntry('preflight', 'scripts/preflight.ts'), env);
   if (prepared !== 0) {
     status('Preparing failed.', recent.slice(-10).join('\n'));
     await fail('The data could not be prepared.', `Nothing was deleted. Last lines of the log (${logFile}):\n\n${recent.slice(-12).join('\n')}`);
@@ -912,9 +1003,9 @@ async function start() {
   }
   status('Starting the dashboard…');
   // With a channel to this app, so the server stops by itself when the app is gone (desktop-child-guard.cjs).
-  keepRunning('web', () => spawnNode('web', ['--require', childGuard, 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], env, true));
+  keepRunning('web', () => spawnNode('web', [...NODE_MEMORY, '--require', childGuard, 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], env, true));
   status('Starting the worker…');
-  keepRunning('worker', () => spawnNode('worker', ['--import', 'tsx', 'src/worker/index.ts'], env, true));
+  keepRunning('worker', () => spawnNode('worker', [...NODE_MEMORY, ...toolEntry('worker', 'src/worker/index.ts')], env, true));
   if (!(await waitForDashboard(120_000))) {
     status('The dashboard did not start.', recent.slice(-10).join('\n'));
     if (smoke) smokeDone(false, 'the dashboard did not start');

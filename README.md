@@ -74,7 +74,7 @@ The same tool as one Windows program, like Discord: no command window, and nothi
     - When more prompts wait, the app opens more ChatGPT tabs, up to **Settings → ChatGPT tabs** (1–5, default 3) and the article slots of High-Throughput mode. It opens one at a time, and only while ChatGPT is signed in without a check.
     - Each tab runs its own prompt. All share your one sign-in.
     - The **ChatGPT** tab shows them side by side: 2 or 3 in columns, 4 or 5 in two rows. ChatGPT draws pictures only in a page that is shown.
-    - An extra tab with nothing to do closes after 10 minutes; one closes at once when you lower the setting.
+    - An extra tab with nothing to do closes after 5 minutes; one closes at once when you lower the setting.
     - The top line says e.g. “working on 2 prompts at once (3 tabs)”.
   - A sign-in page or a human check is never automated: the app shows the ChatGPT tab and a notification, and the job waits for you as in Chrome. Links in answers open in your default browser.
   - While the app's ChatGPT is connected, Automation Chrome's extension (3.4.6) opens no ChatGPT tab and takes no prompt (badge “APP”).
@@ -101,6 +101,15 @@ The same tool as one Windows program, like Discord: no command window, and nothi
   - **Restart to update** stops the work safely first (prompts back to the queue, the worker stopped), installs the new version silently and starts it. Your data folder is never touched; uninstalling never deletes it either.
   - Each build of the Windows workflow gets its own version (3.3.*run number*). Every build of `main` that passes its checks (tests, installer installed and started once) is published as a **GitHub release** `v3.3.N` with the installer, so the installed app finds it by itself. A new install: download **Blog-Automation-Studio-Setup-3.3.N.exe** from the repository's *Releases* page.
   - The app updates from version 3.3.N on; an older install (3.2.0) is updated once by running the new installer.
+- **Light and quick:**
+  - **Installer:** it carries only what runs: no source maps, type declarations, TypeScript sources, read-me, test or example files of the packages. That is about 9,700 files instead of 18,000, so installing and updating take far less time.
+  - **Start:** the worker and the start-up steps are compiled in advance, so nothing is compiled at start. The worker is ready in about 0.65 s instead of 1–1.5 s and uses about 150 MB instead of 185–235 MB.
+  - **Smaller memory use:** the dashboard server and the worker run with a smaller memory nursery. The dashboard server measured 252 → 223 MB at rest and 319 → 259 MB after showing every page.
+  - **Memory saver, every minute:**
+    - Search Console's page is put away 10 minutes after it was last used; the Google sign-in stays.
+    - The dashboard page is put away while the window has been in the tray for 10 minutes, and comes back at the same page when you open the window.
+    - A ChatGPT tab that is not shown, has had nothing to do for 5 minutes and uses over 700 MB loads ChatGPT afresh.
+    - The work itself (server, worker, prompts) never stops for it.
 - **What is inside:** the built dashboard, the worker, the migrations and settings steps (run at every start, with a backup first), and only the packages those load. Electron 44.7.0 provides the window and, with its built-in Node.js 24.21, runs the tool; the whole test suite passes on that Node.js too. The window's texts are English only.
 - **Building it yourself:** in the repository root run `npm ci` and `npm run build`. In `desktop\` run `npm ci`. Back in the root run `node desktop/prepare.mjs` and `node desktop/check-bundle.mjs`, which runs a copy of the bundle outside the repository, as the installed app does. Then in `desktop\` run `npm run dist:win`. The installer is written to `desktop\dist`. The GitHub workflow also runs the ChatGPT tab against a fake ChatGPT page (`tests/integration/desktop-chatgpt.test.ts`), installs the app and starts it once (`--smoke-test`, which also checks that the ChatGPT tab reaches the dashboard).
 

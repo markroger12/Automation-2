@@ -25,6 +25,9 @@ export const dataPaths = {
   /** WordPress sign-ins the owner chose to save (encrypted; src/lib/wp-credentials.ts) and their key. */
   wpCredentials: () => path.join(dataDir(), 'credentials', 'wordpress-logins.json'),
   wpCredentialsKey: () => path.join(dataDir(), 'credentials', 'wordpress-logins.key'),
+  /** The help assistant's Gemini API key (encrypted; src/lib/assistant/settings.ts) and its key. */
+  assistantKeyFile: () => path.join(dataDir(), 'credentials', 'assistant.json'),
+  assistantKeyKey: () => path.join(dataDir(), 'credentials', 'assistant.key'),
   media: () => path.join(dataDir(), 'media'),
   screenshots: () => path.join(dataDir(), 'screenshots'),
   logs: () => path.join(dataDir(), 'logs'),

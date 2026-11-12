@@ -5124,3 +5124,49 @@ npx tsc --noEmit                    # 0 errors
 BAS_DATA_DIR=… npx tsx scripts/migrate.ts   # twice: applied, then skipped in 0.36 s
 ```
 
+
+## Desktop app (2026-11-12): setup checklist, tray and taskbar status, live article timeline, pause and quiet hours, help assistant
+
+Owner request: “1, 3, 4, 5 krde … Gemini Flash krde 6 bhi add krde” (from the list of ideas for a more advanced, user-friendly app).
+
+- **1 · Setup checklist** (`src/lib/setup.ts`, `src/components/setup-checklist.tsx`, `/setup`, `/api/setup`):
+  - Every step is read from the app's real state:
+    - required: ChatGPT connected, a website added (and whether WordPress asks to sign in again), the first article finished;
+    - optional: settings saved once, Search Console (an indexing request made, or waiting for the Google sign-in), the help assistant's key.
+  - The Overview shows the next needed step with its button until those are done; **×** hides it (setting `setup.dismissed`).
+  - The full list is under Logs / Diagnostics → Setup checklist and in Ctrl+K. It reads the state again every 8 s while it is shown.
+  - In the desktop app, **Open the ChatGPT tab** / **Open the Search Console tab** switch the app's tab. The dashboard preload gained `basApp.tabs.show`, and `main.cjs` accepts only those two tabs, only from the dashboard's own page.
+- **3 · Tray and taskbar** (`desktop/status.cjs`, `desktop/tray/*.png`, `main.cjs`):
+  - From `/api/work` every 15 s:
+    - the tray icon and tooltip show idle, busy, needs-you or paused;
+    - the taskbar shows the running articles' progress bar (yellow while paused) and an overlay badge, and flashes once when something starts needing the owner while the window is in the background.
+  - The tray and File menus have the status line and Pause / Resume, and the tab bar gets a work chip.
+- **4 · Live article timeline** (`app/(dashboard)/articles/[id]/timeline.tsx`, `src/lib/tasks/timeline*.ts`):
+  - The card shows every step with its state and time, the running step's time so far against its usual time, a progress bar, and the time left.
+  - Estimates are the median of this PC's own finished runs of each step (at least 3 runs, else no estimate).
+- **5 · Pause and quiet hours** (`src/lib/work-pause.ts`, `/api/work`, `src/components/work-pause.tsx`, `src/lib/agent/handler.ts`):
+  - While paused (the switch, or Settings → Workflow → Quiet hours, which wrap past midnight), `claim` and `gsc-claim` hand out no new job, and `hello` reports `claimsPaused`, `pauseReason` and `pausedUntil`. Running prompts finish.
+  - Found and fixed while checking in Chromium: `/api/work` spread the paused-article count over the `paused` switch, which read `0`, so the button and the tray never showed “paused”. The two values are now `paused` and `pausedArticles` (`workView`, with a test).
+- **6 · Help assistant with Google Gemini** (`src/lib/assistant/*`, `/api/assistant`, `/api/assistant/settings`, `/api/assistant/test`, `src/components/assistant*.tsx`):
+  - **The owner's API key:**
+    - stored AES-256-GCM in `data/credentials/assistant.json` (mode 600) with its own random key file;
+    - write-only to the dashboard, which sees only the last 4 characters;
+    - sent only in the `x-goog-api-key` header, never in the address. Logs also redact `AIza…` keys and `x-goog-api-key`. Backups copy only the database and media.
+  - **Models:** default `gemini-flash-latest`, with `gemini-flash-lite-latest` or any typed name. Plain messages for a refused key, a used-up free quota, an unknown model, no answer, or an unreachable service.
+  - **What a question sends:** the question, the last 10 turns, and `appContext()`, a short status (worker, ChatGPT, pause, counts, website names and session states, a few settings, stopped or waiting articles with the app's own messages, the last day's warnings). No passwords, keys, cookies, prompts or article texts. The panel shows that text under “What the assistant sees”.
+  - **Where to ask:** the top bar's **Ask** (Sparkles), Ctrl+K “Ask the help assistant”, or Help / Setup. Suggested questions include Roman Urdu.
+  - **What it does:** it explains and points to pages; it cannot change anything. The ChatGPT tab stays for articles only.
+- **Checked here:**
+  - unit suite 76 files / 523 tests, with the new tests: setup checklist, help assistant with mocked fetch (header, errors, encryption, redaction), work pause, desktop status, article timeline;
+  - `tsc` 0 errors; `next build` (standalone) green.
+  - In Chromium against a fresh data folder in desktop mode: Overview banner, checklist (light, dark, 390 px), the assistant panel (not set up, ready, dark), the Settings card (save, saved state), Ctrl+K “gemini” opening the panel, the live timeline with estimates from 3 seeded finished articles, Pause → “Paused · Resume” → Resume.
+  - A question with a made-up key reached Google and came back as “Google refused the API key …”. The key appeared in no log.
+- **Not verified here:** a real Gemini answer (no key here); the tray, taskbar and tab switching on Windows (the Windows workflow builds and smoke-tests the app; the look is checked on the owner's PC).
+
+**Commands run**
+```
+npx vitest run                                  # 76 files, 523 tests
+npx tsc --noEmit                                # 0 errors
+BAS_STANDALONE=1 npx next build                 # green
+BAS_DATA_DIR=<scratch> npx tsx scripts/setup.ts # fresh data folder for the Chromium checks
+```

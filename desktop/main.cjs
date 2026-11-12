@@ -33,6 +33,7 @@ const { createChatGPTTabs, isChatGPTContents } = require('./chatgpt-tab.cjs');
 const { createGoogleTab, isGoogleContents } = require('./google-tab.cjs');
 const { createUpdates } = require('./updates.cjs');
 const { SHORTCUTS, contextMenuTemplate, debounce, restoreBounds, updatedFrom } = require('./ux.cjs');
+const { needsMore, workSummary } = require('./status.cjs');
 
 /** Ports the dashboard may use; the extension looks for it on the same ones. */
 const PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
@@ -70,6 +71,11 @@ let dashboardParked = false;
 /** The dashboard page shown last (it comes back there after a reconnect or the memory saver). */
 let dashboardUrl = null;
 const freshenedAt = new Map();
+/** The work at a glance (status.cjs): the dashboard's /api/work, read every 15 seconds for the tray and the taskbar. */
+let work = null;
+let workTimer = null;
+/** The app's own CSRF token for its requests to its dashboard (the double-submit check: cookie and header match). */
+const appCsrf = randomBytes(24).toString('hex');
 const TAB_BAR = 44;
 /** The key this app gives its dashboard for the ChatGPT tab (made at each start, never stored). */
 const agentKey = randomBytes(32).toString('base64url');
@@ -466,6 +472,79 @@ function unparkDashboard() {
   void dashboardView.webContents.loadURL(dashboardUrl || ORIGIN).catch(() => {});
 }
 
+/** A request of the app itself to its dashboard (same origin, its own CSRF token), answered as JSON. */
+function dashboardApi(method, pathname, body) {
+  return new Promise((resolve, reject) => {
+    const data = body === undefined ? null : JSON.stringify(body);
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: PORT,
+        path: pathname,
+        method,
+        timeout: 8000,
+        headers: { host: `localhost:${PORT}`, accept: 'application/json', origin: ORIGIN, cookie: `bas_csrf=${appCsrf}`, 'x-csrf-token': appCsrf, ...(data ? { 'content-type': 'application/json' } : {}) },
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (text += chunk));
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(text);
+            if (res.statusCode && res.statusCode >= 400) reject(new Error((json && json.error && json.error.message) || `HTTP ${res.statusCode}`));
+            else resolve(json);
+          } catch {
+            reject(new Error(`HTTP ${res.statusCode}: not JSON`));
+          }
+        });
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('timed out')));
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+const trayImage = (state) => nativeImage.createFromPath(path.join(__dirname, 'tray', `tray-${state}.png`));
+const overlayImage = (name) => nativeImage.createFromPath(path.join(__dirname, 'tray', `overlay-${name}.png`));
+
+/** Reads /api/work and shows it: the tray icon and its tooltip, the taskbar button's progress and dot (status.cjs). */
+async function refreshWork() {
+  const before = work;
+  work = await dashboardApi('GET', '/api/work').catch(() => null);
+  const s = workSummary(work);
+  if (tray && !tray.isDestroyed()) {
+    tray.setImage(trayImage(s.state));
+    tray.setToolTip(s.tooltip);
+  }
+  if (win && !win.isDestroyed()) {
+    win.setProgressBar(s.progress, { mode: s.mode });
+    win.setOverlayIcon(s.overlay ? overlayImage(s.overlay) : null, s.overlay === 'attention' ? 'Something needs you' : s.overlay === 'paused' ? 'Work is paused' : '');
+    // More articles need the owner than before: the taskbar button flashes until the window is opened.
+    if (needsMore(before, work) && !win.isFocused()) win.flashFrame(true);
+  }
+  shellState();
+}
+
+/** The owner's pause switch, from the tray or the menu: the dashboard's own (Pause in its top bar). */
+async function setWorkPaused(paused) {
+  try {
+    work = await dashboardApi('PUT', '/api/work', { paused });
+  } catch (e) {
+    logLine('app', `Could not ${paused ? 'pause' : 'resume'} the work: ${e.message}`);
+  }
+  await refreshWork();
+}
+
+/** The tray's and the File menu's pause item: Pause all work / Resume work, or the quiet hours (Settings). */
+function pauseMenuItem() {
+  const s = workSummary(work);
+  if (s.quiet) return { label: `${s.line.split(' · ')[0]} (Settings → Workflow)`, click: () => (showWindow(), showDashboard('/settings')) };
+  return { label: s.paused ? 'Resume work' : 'Pause all work', enabled: Boolean(work), click: () => void setWorkPaused(!s.paused) };
+}
+
 // ------------------------------------------------------------------ the tabs
 
 /** The ChatGPT tabs' views in the window (one per ChatGPT tab; the agent opens more while prompts wait). */
@@ -530,7 +609,9 @@ function shellState() {
   const busy = (lastAgentStatus && lastAgentStatus.busyIds) || [];
   const chatgptTabs = chatgptIds().map((id) => ({ id, busy: busy.includes(id) }));
   if (chatgptTabs.length && !chatgptTabs.some((t) => t.id === activeChatgpt)) activeChatgpt = chatgptTabs[0].id;
-  win.webContents.send('bas-shell:state', { ready: Boolean(dashboardView), tab: activeTab, chatgptTabs, activeChatgpt, chatgpt: chatgptState, gsc: gscState, theme: shellTheme, update: updates ? updates.state() : null, version: app.getVersion() });
+  const ws = workSummary(work);
+  const workChip = work && (ws.paused || work.needsYou > 0) ? { tone: ws.state === 'attention' ? 'warn' : '', text: ws.line } : null;
+  win.webContents.send('bas-shell:state', { ready: Boolean(dashboardView), tab: activeTab, chatgptTabs, activeChatgpt, work: workChip, chatgpt: chatgptState, gsc: gscState, theme: shellTheme, update: updates ? updates.state() : null, version: app.getVersion() });
 }
 
 /** Both tabs stay in the window (ChatGPT keeps working behind the dashboard); the one shown is on top. `focusId`: the
@@ -669,6 +750,10 @@ function attachTabs(ownServer) {
   if (!ownServer) chatgptState = { tone: '', text: 'ChatGPT: prompts run in Automation Chrome while npm run start:all runs' };
   // The smoke test needs no ChatGPT page (only the connection to the dashboard).
   if (!smoke) void chatgpt.load('https://chatgpt.com/').catch(() => {});
+  // The work at a glance on the tray and the taskbar (status.cjs), every 15 seconds; the menus follow it.
+  clearInterval(workTimer);
+  workTimer = setInterval(() => void refreshWork().then(() => appMenu()), 15_000);
+  setTimeout(() => void refreshWork().then(() => appMenu()), 3000);
   if (chatgpt.agent) {
     void chatgpt.agent.start();
     if (readConfig().chatgptInApp === false) void chatgpt.agent.setPaused(true);
@@ -736,6 +821,7 @@ function createWindow(hidden) {
     dashboardView = null;
     clearInterval(themeTimer);
     clearInterval(memoryTimer);
+    clearInterval(workTimer);
     if (chatgpt) {
       const agent = chatgpt.agent;
       chatgpt.destroy();
@@ -766,6 +852,9 @@ function buildTray(dataDir, logFile) {
   tray.setToolTip(TITLE);
   const menu = () =>
     Menu.buildFromTemplate([
+      { label: workSummary(work).line, enabled: false },
+      pauseMenuItem(),
+      { type: 'separator' },
       { label: `Open ${TITLE}`, click: showWindow },
       { label: 'ChatGPT', click: () => (showWindow(), selectTab('chatgpt')) },
       { label: 'Search Console (in this app)', click: () => (showWindow(), selectTab('search-console')) },
@@ -888,6 +977,7 @@ function appMenu() {
           { label: 'Search Console', accelerator: 'CmdOrCtrl+3', click: go('search-console') },
           { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => (showWindow(), showDashboard('/settings')) },
           { type: 'separator' },
+          pauseMenuItem(),
           {
             // Owner's way back: if ChatGPT does not work in the app, Automation Chrome's extension takes the prompts again.
             label: 'Run ChatGPT prompts in this app',
@@ -1037,7 +1127,7 @@ async function start() {
       updater = false;
     }
     const gscTab = Boolean(googleTab && chatgpt && chatgpt.agent && chatgpt.agent.capabilities().includes('gsc-request-indexing'));
-    const pages = fs.existsSync(path.join(__dirname, 'offline.html')) && fs.existsSync(path.join(__dirname, 'dashboard-preload.cjs'));
+    const pages = ['offline.html', 'dashboard-preload.cjs', 'status.cjs', path.join('tray', 'tray-busy.png'), path.join('tray', 'overlay-attention.png')].every((f) => fs.existsSync(path.join(__dirname, f)));
     const ok = worker && connected && info && info.dataId === dataFolderId(dataDir) && updater && gscTab && pages;
     return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}; updater ${updater ? 'loaded' : 'missing'}; Search Console tab ${gscTab ? 'ready for indexing requests' : 'missing'}; reconnect page ${pages ? 'present' : 'missing'}; version ${app.getVersion()}`);
   }
@@ -1103,6 +1193,10 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle('bas-app:update-check', async (event) => (fromDashboard(event) && updates ? updates.check() : null));
   ipcMain.on('bas-app:update-install', (event) => {
     if (fromDashboard(event)) restartToUpdate();
+  });
+  // The setup checklist's buttons: only these two tabs, only from the dashboard's own page.
+  ipcMain.on('bas-app:show-tab', (event, tab) => {
+    if (fromDashboard(event) && (tab === 'chatgpt' || tab === 'search-console')) selectTab(tab);
   });
   ipcMain.on('bas-shell:update', (event, action) => {
     if (!win || event.sender !== win.webContents) return;

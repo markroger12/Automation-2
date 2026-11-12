@@ -5,6 +5,8 @@ import { Card, PageHeader } from '@/components/ui';
 import { ExtensionPairing } from '@/components/extension-pairing';
 import { AppUpdates } from '@/components/app-updates';
 import { DesktopAppUpdates } from '@/components/desktop-updates';
+import { AssistantSettingsCard } from '@/components/assistant-settings';
+import { assistantSettings } from '@/lib/assistant/settings';
 import { inDesktopApp } from '@/lib/runtime';
 import { updateInfo } from '@/lib/update/service';
 import { readAutoCheck } from '@/lib/update/auto-check';
@@ -23,6 +25,7 @@ export default async function SettingsPage() {
         description="Global defaults. Website pages can override content/SEO/workflow values for their own tasks only. Each task freezes its effective configuration when it starts."
       />
       {update ? <AppUpdates initial={update} auto={autoCheck} /> : <DesktopAppUpdates version={process.env.BAS_APP_VERSION ?? null} />}
+      <AssistantSettingsCard initial={assistantSettings()} />
       <Card
         title="ChatGPT extension connection key"
         className="mb-6"

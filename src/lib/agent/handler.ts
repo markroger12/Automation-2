@@ -2,7 +2,8 @@ import type { QueueJob } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '../db';
 import { log, errorMessage } from '../log';
-import { getSettings, getValue } from '../settings';
+import { getSettings } from '../settings';
+import { pauseMessage, workPause } from '../work-pause';
 import { isLoopbackHost } from '../security';
 import { parsePayload } from '../queue';
 import { allowedSlots, inBackoff, recordRateLimit } from '../chatgpt/rate';
@@ -29,7 +30,7 @@ const MAX_BODY = 4_000_000;
 const RATE_LIMIT = { windowMs: 60_000, max: 600 };
 const buckets = new Map<string, { start: number; count: number }>();
 
-export const CLAIMS_PAUSED_KEY = 'extension.claimsPaused';
+export { CLAIMS_PAUSED_KEY } from '../work-pause';
 
 function corsHeaders(origin: string | null): Record<string, string> {
   if (!origin || !origin.startsWith('chrome-extension://')) return {};
@@ -114,7 +115,9 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
     case 'claim': {
       const mismatch = await versionMismatch(body.installId);
       if (mismatch) return { job: null, reason: 'version-mismatch', message: mismatch };
-      if (await getValue<boolean>(CLAIMS_PAUSED_KEY, false)) return { job: null, reason: 'paused', message: 'New claims are paused from the dashboard.' };
+      // Paused by the owner, or in the quiet hours: no new prompt (src/lib/work-pause.ts).
+      const pause = await workPause();
+      if (pause.paused) return { job: null, reason: 'paused', message: pauseMessage(pause) };
       if (body.installId !== DESKTOP_AGENT_ID && (await chatgptInApp())) return { job: null, reason: 'in-app', message: 'ChatGPT runs in the desktop app.' };
       const result = await claimChatGPTJob({ installId: body.installId, tabId: body.tabId, openConversationUrls: body.openConversationUrls });
       if (!('job' in result)) {
@@ -128,6 +131,8 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
       const inApp = await searchConsoleInApp();
       if (body.installId === DESKTOP_AGENT_ID && !inApp) return { job: null, reason: 'not-here' };
       if (body.installId !== DESKTOP_AGENT_ID && inApp) return { job: null, reason: 'in-app', message: 'Search Console runs in the desktop app.' };
+      const gscPause = await workPause();
+      if (gscPause.paused) return { job: null, reason: 'paused', message: pauseMessage(gscPause) };
       const mismatch = await versionMismatch(body.installId);
       if (mismatch) return { job: null, reason: 'version-mismatch', message: mismatch };
       return { job: await claimIndexingRequest(body.installId) };
@@ -204,7 +209,7 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'ACTIVE' } }),
     allowedSlots(),
     inBackoff(),
-    getValue<boolean>(CLAIMS_PAUSED_KEY, false),
+    workPause(now),
     waitingIndexingRequests(now),
     desktop ? false : chatgptInApp(now),
     desktop ? false : searchConsoleInApp(now),
@@ -228,10 +233,12 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
       humanCheckPauseMinutes: settings.advanced.humanCheckPauseMinutes,
       composerReadyTimeoutSec: settings.advanced.composerReadyTimeoutSec,
       backoffUntil: backoffUntil?.toISOString() ?? null,
-      claimsPaused: paused,
+      claimsPaused: paused.paused,
+      pauseReason: paused.reason,
+      pausedUntil: paused.until,
       waitingJobs: waiting,
       // Search Console “Request indexing” requests waiting for Automation Chrome.
-      gscWaiting: gscForThis,
+      gscWaiting: paused.paused ? 0 : gscForThis,
       // The desktop app's Search Console tab makes the indexing requests: Automation Chrome makes none.
       searchConsoleInApp: gscInApp,
       // The desktop app's ChatGPT tab is connected: Automation Chrome opens no ChatGPT tab and claims no prompt.

@@ -96,6 +96,10 @@ The same tool as one Windows program, like Discord: no command window, and nothi
   - *Keep running when the window is closed*;
   - *Use another data folder…*;
   - **Quit**, which stops the worker safely, then the server.
+- **The work at a glance (tray and taskbar):**
+  - The tray icon shows the state: grey at rest, blue while articles are written, amber when something needs you (a review, an approval, a sign-in or a check), and a pause sign while new work is paused. Hovering it says e.g. “2 articles running · 1 needs you”.
+  - The taskbar button shows the running articles' progress as a bar (yellow while paused), an amber badge when something needs you, and flashes once when that starts while the window is in the background.
+  - The tray menu and the *File* menu start with that line and **Pause new work** / **Resume work**. The tab bar shows a chip while work is paused or waits for you.
 - **Updating the app:**
   - The installed app looks for a newer version on this repository's GitHub **Releases** 30 seconds after it starts and then every 6 hours (also *Check for updates* in the App and tray menus). A newer one downloads in the background; the bar at the top shows “Downloading 3.3.N · 40%”, then a **Restart to update** button and a Windows notification.
   - **Restart to update** stops the work safely first (prompts back to the queue, the worker stopped), installs the new version silently and starts it. Your data folder is never touched; uninstalling never deletes it either.
@@ -117,6 +121,8 @@ The same tool as one Windows program, like Discord: no command window, and nothi
 
 ## First run
 
+The **Setup checklist** shows what is still needed before the first article and ticks each step off by itself, from the app's real state: ChatGPT connected, a WordPress website added (and signed in), the first article finished; then the optional ones (the main settings, Search Console, the help assistant). Until the needed steps are done, the Overview shows the next one with its button (in the desktop app, e.g. **Open the ChatGPT tab**); **×** hides it there. The whole list is under **Logs / Diagnostics → Setup checklist** (or **Ctrl+K** → “Setup checklist”).
+
 1. **Automation Chrome** (sidebar): follow the five checked steps — start the dedicated Chrome window, load the unpacked extension from the `extension\` folder, paste the one-time connection key, sign in to ChatGPT yourself. “Send test prompt” proves the round trip.
    After setup you do not need to keep it open: when you queue an article, or a Search Console indexing request is due, the worker opens Automation Chrome by itself, and closes it again (normally, never forced) 2 minutes after the queue is done. When Chrome still runs in the background with its windows closed, a window is opened in it for the waiting work. A Chrome window you opened yourself is never closed. Both switches are in **Settings → Browser**; when Chrome was not opened, **Logs** says why once.
 2. **Websites → Add website**: the address (the name is filled in from it), language, country and time zone, and the WordPress **user name and password**. **Add and log in**: the app signs in by itself (with “Remember me”) and syncs the categories; pick a default category on the Settings tab. If WordPress shows a CAPTCHA or asks for a 2-step code, a window opens with the user name and password filled in and you do that step. Without a saved sign-in, **Log in yourself** on the Session tab opens the window for the whole sign-in.
@@ -132,6 +138,20 @@ The same tool as one Windows program, like Discord: no command window, and nothi
 - a new app version is on GitHub (“App update available”, once per new version; see Updating below).
 
 A click opens the page. The worker shows them while it runs (Windows PowerShell's own notification, nothing is installed and nothing goes to an outside service); what was already waiting when they were turned on is not notified again. **Send a test notification** shows one right away; when it does not appear, Windows Focus assist / Do not disturb may be holding it back.
+
+## Pausing work and quiet hours
+
+- **Pause** in the top bar (also in the desktop app's tray and *File* menus) pauses new work with one click: no new ChatGPT prompt starts and no indexing request is made. Prompts already running finish, and everything else waits in the queue; nothing is lost. **Paused · Resume** starts it again.
+- **Settings → Workflow → Quiet hours** does the same every night between two times (e.g. 23:00–07:00, this PC's clock; a range past midnight is fine). The top bar then says **Quiet hours**, and work goes on by itself when they end.
+
+## Help assistant (Google Gemini, optional)
+
+The **Ask** button in the top bar (also **Ctrl+K** → “Ask the help assistant”, and **Help / Setup**) opens a panel where you can ask how to do something or why something stopped, in English or Roman Urdu. It answers with steps that name the page and the button, using the app's current state.
+
+- **Set up once:** open [aistudio.google.com](https://aistudio.google.com/app/apikey), sign in with your Google account, **Get API key → Create API key**, and paste it in **Settings → Help assistant → Save**. **Test connection** checks it. Gemini Flash (newest) is the default; Flash-Lite allows more free questions per day.
+- **The key** is stored encrypted (AES-256-GCM) in `data\credentials`, like the WordPress passwords. It is never shown again (only its last 4 characters), never logged, never put in a backup, and goes only to Google, in a request header.
+- **What is sent:** your question, the conversation so far, and a short status of the app: the worker and ChatGPT states, the pause, article counts, the websites' names and sign-in states, a few settings, the articles that stopped or wait (keyword, step, the app's own message) and the last day's warnings. Never a password, key, cookie, prompt or article text. **What the assistant sees** at the bottom of the panel shows exactly that text.
+- On Google's free tier, Google may use questions to improve its products; do not type private information in a question. The assistant only explains: it cannot change a setting or start work.
 
 ## Updating
 
@@ -327,6 +347,7 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
 
 - **Tabs** stay on one row: Overview, Titles, Research, Editor, SEO, Images, Links, Humanizer, Originality and WordPress. The technical tabs (**Stages**, **Prompt / Response**, **Logs**, **Conversation**) are under **More**.
 - **Overview:**
+  - **Progress** on top shows every step of this article in order: done (with its time), running (its time so far and the usual time), waiting, failed or still to do, a progress bar, and about how long is left. The estimates come from this PC's own finished articles (the median per step; a step needs 3 finished runs before it gets one), and the card updates every second while a step runs;
   - the secondary keywords show as chips (8, then **+N more**) and the options in words;
   - the scores show as chips (Rank Math only when read from WordPress);
   - the timeline shows the time between steps;

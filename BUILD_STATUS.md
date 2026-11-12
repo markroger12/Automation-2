@@ -4975,3 +4975,39 @@ npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-updates.test.
 npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts tests/unit/indexing-signin.test.ts tests/unit/search-console-live.test.ts   # pass
 npx tsc --noEmit                                                                                                        # 0 errors
 ```
+
+## Desktop app (2026-11-12): a professional finish, and a test prompt for the owner's PC
+
+Owner request: “installer sa la kr app ke z tek isko professional, smooth, advanced and user friendly bana da … asa lage ke hum koi professional app use kr rahe han … additional features bhi add krde or sare bugs bhi check kr le … agher tu check nahi kr sakhta toh mujhe koi prompt da de”.
+- **First release:** `main` (f27c0b6) built and published **v3.3.19** with the installer, its blockmap and `latest.yml` (run 43134633799, `publish` job green).
+- **The window (`desktop/ux.cjs`, `desktop/main.cjs`):**
+  - Right-click menu in every page but the tab bar: undo/redo/cut/copy/paste/select all in text boxes, Copy for a selection, Copy link address, and Open link in browser for website links (never other schemes).
+  - Ctrl+1/2/3 switch tabs (the tab bar's tooltips already promised them; the old menu used Ctrl+Shift+H/G). Ctrl+, opens Settings.
+  - Reload (Ctrl+R, F5) and zoom (Ctrl+=, Ctrl+-, Ctrl+0) act on the page shown. The old View menu's roles acted on the tab bar.
+  - The window's size, place and maximized state are saved (debounced) and restored only if they still fit on a connected screen. It is shown once painted, on the tool's own background colour.
+  - Menus File / Edit / View / Help, with About (version, Electron, Node.js, Windows, the data folder, Copy details), Keyboard shortcuts, User guide, and Troubleshooting (open the log, copy details with the last log lines, developer tools of the page shown).
+  - What's new: the first start of a newer version notifies once, with a link to that version's release.
+  - The dashboard tab: a failed load shows `desktop/offline.html` (“Reconnecting to the dashboard…”, in the tool's look) and retries every 5 s; a crashed page is loaded again at the same address. The Search Console tab reloads after a crash too.
+  - A friendlier first-start dialog; the installer's copyright and the uninstall entry's name (“Blog Automation Studio 3.3.N”).
+  - The smoke test also checks that the reconnect page is in the installed app.
+- **The dashboard:**
+  - The top bar search shows **Quick actions** as soon as it opens (New article, Add a website, New bulk campaign, Plan keywords, Writers, Queue, Settings, Help), found by name or keyword too (`QUICK_ACTIONS`, `searchActions`).
+  - Inside the app (`BAS_DESKTOP=1`, `src/lib/runtime.ts`): the worker, ChatGPT and database messages name the app and its tabs instead of `npm run …` and Automation Chrome (health banner, Single Article, Productivity, task API, Recovery); Help / Setup has the app's own cards (start, the tabs and shortcuts, ChatGPT and Search Console, updates, backups, troubleshooting).
+  - Everywhere: a network error says the dashboard may be restarting; the sidebar no longer shows a stale “Studio 3.0”; the settings warning uses an icon instead of an emoji.
+- **Checked here:**
+  - unit suite: 69 files / 486 tests before the changes, **70 files / 498 tests after** (new: `desktop-ux` 10, quick actions 2).
+  - `tsc` 0 errors; `next build` compiled.
+  - Every sidebar page (27) loaded in desktop mode at 1024 × 700 in Chromium: all 200, no console errors, no sideways scrolling; `npm run` appears only where it belongs (the npm copy).
+  - Screenshots of the search with quick actions (light and dark), Help / Setup and Single Article in desktop mode.
+- **Not run here:** Electron itself (no room for it in this container); the Windows workflow runs the Electron tests, builds, installs and starts the app.
+- **For the owner's PC:** `docs/windows-qa-prompt.md`, a full test prompt for an AI agent with access to the PC: install with the checksum, first start, the window, every page, ChatGPT and Search Console with the owner, updates and robustness, and a report in a fixed format. Its safety rules: no passwords, no CAPTCHA, drafts only, no Windows security changes, nothing deleted outside its own test folder.
+
+**Commands run**
+```
+npx vitest run                                                     # 69 files / 486 tests before, 70 files / 498 tests after
+npx vitest run tests/unit/desktop-ux.test.ts tests/unit/nav-search.test.ts   # pass
+npx tsc --noEmit                                                   # 0 errors
+npm run build                                                      # compiled
+node crawl.cjs   # 27 pages in desktop mode: 200, no console errors
+```
+

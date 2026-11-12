@@ -1,3 +1,4 @@
+import { startWorkerHint } from '../runtime';
 import { db } from '@/lib/db';
 import { parseJson } from '@/lib/json';
 import { getRateState, allowedSlots } from '@/lib/chatgpt/rate';
@@ -120,7 +121,7 @@ export async function productivityReport(now = new Date()): Promise<Productivity
   // Alerts: stalls, error rate, stopped processes.
   const alerts: ProductivityReport['alerts'] = [];
   const inBackoff = Boolean(rate.backoffUntil && new Date(rate.backoffUntil) > now);
-  if (!workerOnline) alerts.push({ level: 'critical', message: 'The worker is not running: nothing is processed. Start it with npm run dev:all (or start:all).' });
+  if (!workerOnline) alerts.push({ level: 'critical', message: `The worker is not running: nothing is processed. ${startWorkerHint()}` });
   const oldestWaiting = await db.queueJob.findFirst({ where: { queue: 'article', status: 'WAITING', runAt: { lt: new Date(now.getTime() - 15 * MIN) } }, orderBy: { runAt: 'asc' } });
   if (oldestWaiting && workerOnline && !inBackoff) alerts.push({ level: 'warning', message: `An article job has waited ${Math.round((now.getTime() - oldestWaiting.runAt.getTime()) / MIN)} min past its start time (queue stall?). All article slots may be taken by waiting tasks.` });
   const lastHour = stageRows.filter((r) => r.endedAt > new Date(now.getTime() - 60 * MIN));

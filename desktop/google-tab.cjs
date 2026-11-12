@@ -113,7 +113,11 @@ function createGoogleTab(o = {}) {
     else if (/^https?:/i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
-  wc.on('render-process-gone', (_e, details) => log(`The Search Console page stopped (${details.reason}).`));
+  wc.on('render-process-gone', (_e, details) => {
+    // A crashed page is loaded again (a request in progress is offered to the new page, as after Google's own reload).
+    log(`The Search Console page stopped (${details.reason}); it is loaded again.`);
+    setTimeout(() => !wc.isDestroyed() && wc.reload(), 1500);
+  });
 
   let loaded = false;
   return {

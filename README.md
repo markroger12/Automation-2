@@ -59,6 +59,14 @@ The same tool as one Windows program, like Discord: no command window, and nothi
   - The bar has the tool's own look (the same greys, buttons and Segoe UI font as the dashboard) and follows the dashboard's light/dark switch.
   - On the right, two small status chips say what ChatGPT and Search Console are doing (a green, amber or red dot; hover for the whole text), then the app's version.
   - While the app starts, a card shows the three steps (data, dashboard, worker) and what each one is doing.
+- **Like other Windows programs:**
+  - **Ctrl+1 / Ctrl+2 / Ctrl+3** switch to Dashboard, ChatGPT and Search Console; **Ctrl+K** in the dashboard opens the search with quick actions (New article, Add a website, New bulk campaign …).
+  - Right-click gives Cut, Copy, Paste and a link's address; **Ctrl+R** or **F5** reloads the page shown, **Ctrl+= / Ctrl+- / Ctrl+0** zoom it.
+  - The window opens where it was, at the same size (maximized if it was).
+  - Press **Alt** for the menus: *File* (tabs, Settings, the data folder, Quit), *Edit*, *View* (reload, zoom, full screen), *Help* (Check for updates, What's new, Keyboard shortcuts, User guide, Troubleshooting with the log and **Copy details for a report**, About).
+  - If the dashboard stops answering for a moment (it restarts by itself after a crash), its tab shows **Reconnecting to the dashboard…** and comes back to the same page.
+  - After an update, a notification offers what is new in that version.
+  - Inside the app, the dashboard's texts name the app and its tabs (no `npm run …` commands), and **Help / Setup** describes the app.
 - **ChatGPT inside the app (3.2.0):**
   - Open the **ChatGPT** tab once and sign in to ChatGPT with your **email and password**. The sign-in stays in the app, apart from Chrome; “Continue with Google” does not work there, because Google refuses sign-ins in a browser built into an app.
   - The prompts then run in that tab, with the same ChatGPT scripts as the extension, and the dashboard tab keeps working meanwhile. The dot and the text at the top say whether ChatGPT is ready, needs your sign-in or a check, or is working.

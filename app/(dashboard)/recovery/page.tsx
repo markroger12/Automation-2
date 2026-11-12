@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { RUNNING_STATUSES } from '@/lib/domain';
 import { listBackups } from '@/lib/backup';
+import { inDesktopApp } from '@/lib/runtime';
 import { Card, Chip, EmptyState, PageHeader, StatusChip, formatDateTime, formatRelative } from '@/components/ui';
 import { IncidentActions, StalledTaskActions } from './actions';
 
@@ -147,7 +148,7 @@ export default async function RecoveryPage() {
           </table>
         )}
       </Card>
-      <Card title="Local backups" className="mt-6" description="Create backups from Diagnostics or `npm run db:backup -- --media`. Profile folders are never deleted automatically.">
+      <Card title="Local backups" className="mt-6" description={`Create backups from Logs / Diagnostics${inDesktopApp() ? '' : ' or `npm run db:backup -- --media`'}. Profile folders are never deleted automatically.`}>
         {backups.length === 0 ? <p className="text-muted text-sm">No backups yet.</p> : <ul className="text-sm">{backups.map((b) => <li key={b.name}>{b.name} · {(b.sizeBytes / 1024).toFixed(0)} KB</li>)}</ul>}
       </Card>
     </>

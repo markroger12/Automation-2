@@ -120,7 +120,7 @@ export function SingleArticleForm({
   sites: SiteOption[];
   writers: Writer[];
   defaults: { maxWords: number; faqCount: number; tigramFaqCount: number; quickBioRows: number; reviewThreshold: number; rankMathTargetScore: number };
-  health: { worker: string; extension: string };
+  health: { worker: string; extension: string; desktop?: boolean; workerHint?: string };
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -519,13 +519,19 @@ export function SingleArticleForm({
         </Card>
         {health.worker !== 'online' ? (
           <Alert tone="danger" title="Worker not running">
-            Start <code>npm run dev:all</code>. You can still queue; nothing is lost.
+            {health.workerHint ?? 'Start it with npm run start:all.'} You can still queue; nothing is lost.
           </Alert>
         ) : null}
         {health.extension !== 'connected' ? (
-          <Alert tone="warning" title="ChatGPT extension not connected" action={<Link className="font-semibold underline" href="/automation-chrome">Set up</Link>}>
-            ChatGPT stages wait until Automation Chrome is running with the paired extension.
-          </Alert>
+          health.desktop ? (
+            <Alert tone="warning" title="ChatGPT not connected">
+              Open the ChatGPT tab at the top of the app (Ctrl+2) and sign in. ChatGPT steps wait until it connects.
+            </Alert>
+          ) : (
+            <Alert tone="warning" title="ChatGPT extension not connected" action={<Link className="font-semibold underline" href="/automation-chrome">Set up</Link>}>
+              ChatGPT stages wait until Automation Chrome is running with the paired extension.
+            </Alert>
+          )
         ) : null}
         {site && site.session !== 'ACTIVE' ? (
           <Alert tone="warning" title={`${site.name}: WordPress session ${site.session === 'LOGIN_REQUIRED' ? 'needs login' : 'not verified'}`} action={<Link className="font-semibold underline" href={`/websites/${site.id}`}>Log in</Link>}>

@@ -1,7 +1,7 @@
 # Blog Automation Studio — Windows installer (npm run dist:win in desktop/, after node prepare.mjs).
 appId: local.blogautomationstudio.desktop
 productName: Blog Automation Studio
-copyright: Private tool
+copyright: Copyright © 2026 Blog Automation Studio
 directories:
   output: dist
 # The window, its tabs (dashboard, ChatGPT, Search Console) and the tray only; the tool itself comes in as a resource (prepare.mjs) and
@@ -18,6 +18,8 @@ files:
   - google-hosts.cjs
   - google-preload.cjs
   - updates.cjs
+  - ux.cjs
+  - offline.html
   - content-shim.js
   - icon.png
   - package.json
@@ -53,6 +55,8 @@ nsis:
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: Blog Automation Studio
+  # Apps & features shows the name and the version, as for other programs.
+  uninstallDisplayName: Blog Automation Studio ${version}
   # The data folder is never inside the installation, and uninstalling never deletes it.
   deleteAppDataOnUninstall: false
 linux:

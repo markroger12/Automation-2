@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BellRing, Save, RotateCcw } from 'lucide-react';
+import { AlertTriangle, BellRing, Save, RotateCcw } from 'lucide-react';
 import { api, ApiClientError } from '@/lib/client/api';
 import { SETTING_GROUPS, type SettingField } from '@/lib/settings-fields';
 import type { Settings } from '@/lib/settings-schema';
@@ -157,7 +157,11 @@ export function SettingsForm({ initial }: { initial: Settings }) {
                       invalid={Boolean(error)}
                     />
                   )}
-                  {warn ? <p className="text-xs font-medium text-amber-700">⚠ {warn}</p> : null}
+                  {warn ? (
+                    <p className="flex items-start gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                      <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden /> {warn}
+                    </p>
+                  ) : null}
                 </Field>
               );
             })}

@@ -39,7 +39,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { NAV_ITEMS, SOON_ROUTES, navGroups, searchPages, type NavItem } from './nav-config';
+import { NAV_ITEMS, QUICK_ACTIONS, SOON_ROUTES, navGroups, searchActions, searchPages, type NavItem } from './nav-config';
 import { cx } from './ui';
 import { ThemeToggle } from './client';
 
@@ -152,7 +152,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-[var(--primary)] text-xs font-bold text-[var(--primary-fg)]">BA</span>
             <span className="min-w-0 leading-tight lg:collapsed:sr-only">
               <span className="block truncate text-sm font-semibold">Blog Automation</span>
-              <span className="text-muted block text-[11px]">Studio 3.0 · local</span>
+              <span className="text-muted block text-[11px]">Studio</span>
             </span>
           </Link>
           <button type="button" aria-label="Close navigation" onClick={onClose} className="rounded-md p-1 hover:bg-[var(--surface-2)] lg:hidden">
@@ -209,7 +209,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   );
 }
 
-/** The top bar's search (Ctrl+K or “/”): pages by name, and articles by keyword in Article History. */
+/**
+ * The top bar's search (Ctrl+K or “/”): quick actions as soon as it opens (New article, Add a website …), then pages by
+ * name, and articles by keyword in Article History.
+ */
 function SearchBox() {
   const router = useRouter();
   const [query, setQuery] = useState('');
@@ -219,7 +222,12 @@ function SearchBox() {
   const box = useRef<HTMLDivElement>(null);
   const q = query.trim();
   const hits = searchPages(NAV_ITEMS, q).slice(0, 8);
-  const options = [...hits.map((h) => ({ href: h.href, label: h.label, parent: h.parent, icon: h.icon })), ...(q.length >= 2 ? [{ href: `/history?q=${encodeURIComponent(q)}`, label: `Articles: “${q}”`, parent: 'Article History', icon: 'Search' }] : [])];
+  const actions = searchActions(QUICK_ACTIONS, q).slice(0, q ? 3 : QUICK_ACTIONS.length);
+  const options = [
+    ...actions.map((a) => ({ href: a.href, label: a.label, parent: 'Quick action', icon: a.icon })),
+    ...hits.filter((h) => !actions.some((a) => a.href === h.href)).map((h) => ({ href: h.href, label: h.label, parent: h.parent, icon: h.icon })),
+    ...(q.length >= 2 ? [{ href: `/history?q=${encodeURIComponent(q)}`, label: `Articles: “${q}”`, parent: 'Article History', icon: 'Search' }] : []),
+  ];
   const go = (href: string) => {
     router.push(href);
     setQuery('');
@@ -252,7 +260,7 @@ function SearchBox() {
           ref={ref}
           type="search"
           role="combobox"
-          aria-expanded={openList && Boolean(q)}
+          aria-expanded={openList}
           aria-controls="top-search-list"
           aria-activedescendant={openList && options[active] ? `top-search-${active}` : undefined}
           value={query}
@@ -283,8 +291,9 @@ function SearchBox() {
         />
         <kbd className="hidden shrink-0 sm:inline">Ctrl K</kbd>
       </label>
-      {openList && q ? (
+      {openList ? (
         <ul id="top-search-list" role="listbox" aria-label="Search results" className="surface border-app absolute top-full left-0 z-50 mt-1 w-full overflow-hidden rounded-lg border p-1 shadow-xl">
+          {!q ? <li className="text-muted px-2.5 pt-1.5 pb-1 text-[11px] font-semibold tracking-wide uppercase" role="presentation">Quick actions</li> : null}
           {options.length === 0 ? <li className="text-muted px-2.5 py-2 text-sm">No page matches.</li> : null}
           {options.map((o, i) => {
             const Icon = ICONS[o.icon] ?? Search;

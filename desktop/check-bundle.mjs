@@ -61,7 +61,15 @@ function finish(code) {
 }
 
 console.log(`▸ Start-up steps on a new data folder (bundle copied to ${where})…`);
-const setup = spawnSync(node, ['--import', 'tsx', 'scripts/preflight.ts'], { cwd: app, env, encoding: 'utf8', windowsHide: true, timeout: 10 * 60_000 });
+// As the installed app starts them: the compiled worker and start-up steps (prepare.mjs), never TypeScript at run time.
+for (const name of ['preflight', 'worker']) {
+  if (!fs.existsSync(path.join(app, 'dist', `${name}.mjs`))) {
+    console.log(`✖ dist/${name}.mjs is missing from the bundle.`);
+    process.exit(1);
+  }
+}
+if (fs.existsSync(path.join(app, 'node_modules', 'tsx'))) console.log('  (tsx is in the bundle, but nothing uses it)');
+const setup = spawnSync(node, ['dist/preflight.mjs'], { cwd: app, env, encoding: 'utf8', windowsHide: true, timeout: 10 * 60_000 });
 logs.setup = `${setup.stdout ?? ''}${setup.stderr ?? ''}`;
 if (setup.status !== 0) {
   console.log(`✖ The start-up steps failed (exit ${setup.status}).`);
@@ -77,8 +85,9 @@ if (setup.status !== 0) {
     });
     children.push(child);
   };
-  start('web', ['--require', './desktop-child-guard.cjs', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(port)]);
-  start('worker', ['--import', 'tsx', 'src/worker/index.ts']);
+  // The same memory option as main.cjs (NODE_MEMORY), so the app's own Node.js is checked with it.
+  start('web', ['--max-semi-space-size=2', '--require', './desktop-child-guard.cjs', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(port)]);
+  start('worker', ['--max-semi-space-size=2', 'dist/worker.mjs']);
   const answers = () =>
     new Promise((resolve) => {
       const req = http.get({ host: '127.0.0.1', port, path: '/', headers: { host: `localhost:${port}` }, timeout: 5000 }, (res) => {

@@ -4975,3 +4975,80 @@ npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-updates.test.
 npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts tests/unit/indexing-signin.test.ts tests/unit/search-console-live.test.ts   # pass
 npx tsc --noEmit                                                                                                        # 0 errors
 ```
+
+## Desktop app (2026-11-12): a professional finish, and a test prompt for the owner's PC
+
+Owner request: “installer sa la kr app ke z tek isko professional, smooth, advanced and user friendly bana da … asa lage ke hum koi professional app use kr rahe han … additional features bhi add krde or sare bugs bhi check kr le … agher tu check nahi kr sakhta toh mujhe koi prompt da de”.
+- **First release:** `main` (f27c0b6) built and published **v3.3.19** with the installer, its blockmap and `latest.yml` (run 43134633799, `publish` job green).
+- **The window (`desktop/ux.cjs`, `desktop/main.cjs`):**
+  - Right-click menu in every page but the tab bar: undo/redo/cut/copy/paste/select all in text boxes, Copy for a selection, Copy link address, and Open link in browser for website links (never other schemes).
+  - Ctrl+1/2/3 switch tabs (the tab bar's tooltips already promised them; the old menu used Ctrl+Shift+H/G). Ctrl+, opens Settings.
+  - Reload (Ctrl+R, F5) and zoom (Ctrl+=, Ctrl+-, Ctrl+0) act on the page shown. The old View menu's roles acted on the tab bar.
+  - The window's size, place and maximized state are saved (debounced) and restored only if they still fit on a connected screen. It is shown once painted, on the tool's own background colour.
+  - Menus File / Edit / View / Help, with About (version, Electron, Node.js, Windows, the data folder, Copy details), Keyboard shortcuts, User guide, and Troubleshooting (open the log, copy details with the last log lines, developer tools of the page shown).
+  - What's new: the first start of a newer version notifies once, with a link to that version's release.
+  - The dashboard tab: a failed load shows `desktop/offline.html` (“Reconnecting to the dashboard…”, in the tool's look) and retries every 5 s; a crashed page is loaded again at the same address. The Search Console tab reloads after a crash too.
+  - A friendlier first-start dialog; the installer's copyright and the uninstall entry's name (“Blog Automation Studio 3.3.N”).
+  - The smoke test also checks that the reconnect page is in the installed app.
+- **The dashboard:**
+  - The top bar search shows **Quick actions** as soon as it opens (New article, Add a website, New bulk campaign, Plan keywords, Writers, Queue, Settings, Help), found by name or keyword too (`QUICK_ACTIONS`, `searchActions`).
+  - Inside the app (`BAS_DESKTOP=1`, `src/lib/runtime.ts`): the worker, ChatGPT and database messages name the app and its tabs instead of `npm run …` and Automation Chrome (health banner, Single Article, Productivity, task API, Recovery); Help / Setup has the app's own cards (start, the tabs and shortcuts, ChatGPT and Search Console, updates, backups, troubleshooting).
+  - Everywhere: a network error says the dashboard may be restarting; the sidebar no longer shows a stale “Studio 3.0”; the settings warning uses an icon instead of an emoji.
+- **Checked here:**
+  - unit suite: 69 files / 486 tests before the changes, **70 files / 498 tests after** (new: `desktop-ux` 10, quick actions 2).
+  - `tsc` 0 errors; `next build` compiled.
+  - Every sidebar page (27) loaded in desktop mode at 1024 × 700 in Chromium: all 200, no console errors, no sideways scrolling; `npm run` appears only where it belongs (the npm copy).
+  - Screenshots of the search with quick actions (light and dark), Help / Setup and Single Article in desktop mode.
+- **Not run here:** Electron itself (no room for it in this container); the Windows workflow runs the Electron tests, builds, installs and starts the app.
+- **For the owner's PC:** `docs/windows-qa-prompt.md`, a full test prompt for an AI agent with access to the PC: install with the checksum, first start, the window, every page, ChatGPT and Search Console with the owner, updates and robustness, and a report in a fixed format. Its safety rules: no passwords, no CAPTCHA, drafts only, no Windows security changes, nothing deleted outside its own test folder.
+
+**Commands run**
+```
+npx vitest run                                                     # 69 files / 486 tests before, 70 files / 498 tests after
+npx vitest run tests/unit/desktop-ux.test.ts tests/unit/nav-search.test.ts   # pass
+npx tsc --noEmit                                                   # 0 errors
+npm run build                                                      # compiled
+node crawl.cjs   # 27 pages in desktop mode: 200, no console errors
+```
+
+## Desktop app (2026-11-12): less lag and less memory, from the installer on
+
+Owner request: “app ka sara lagg khatam kr de installar sa la kr app ke z tek or ramm free bhi bana da”.
+- **What was measured first:**
+  - Windows run 43134633799: installing took about **110 s** for 787 MB (the start itself took about 6 s).
+  - The bundle had **18,037 files / 464 MB**, of which about 7,500 files / 117 MB were only for developers.
+- **Installer (`desktop/prepare.mjs`, `desktop/bundle-rules.mjs`):**
+  - Packages are copied without source maps, TypeScript sources and declarations (Node.js never runs .ts inside node_modules), read-me and change-log files (licences stay), and top-level `test`, `docs` and `example` folders.
+  - The TypeScript sources (`src`, `scripts`) and tsx with its esbuild are no longer carried.
+  - Bundle now **9,688 files / 353 MB** (counted here on Linux).
+- **Start:**
+  - The worker and the start-up steps are compiled once into `dist/worker.mjs` and `dist/preflight.mjs` (esbuild, packages left outside); `main.cjs` and `check-bundle.mjs` start these.
+  - A script that starts itself when run directly (migrate, seed, install-tools) would also start inside another bundle, because its `import.meta.url` becomes the bundle's. `entryGuardPlugin` keeps that test only for the entry; a test proves a bundled helper no longer starts itself and fails without the plugin.
+  - Measured here: the worker ready in ~0.65 s instead of ~1.0 s (1.5 s with a cold tsx cache), using ~150 MB instead of 185–234 MB (tsx also ran esbuild beside it).
+- **Memory:**
+  - The dashboard server and the worker start with `--max-semi-space-size=2` and no total limit. The dashboard server measured 252 → 223 MB at rest and 319 → 259 MB after rendering all 27 pages, all pages clean.
+  - Memory saver every minute (`main.cjs`):
+    - Search Console's page goes to about:blank 10 minutes after it was last shown or used (sign-in kept; loads again on opening or for a request).
+    - The dashboard page is put away after 10 minutes in the tray and restored at the same page when the window is shown.
+    - A ChatGPT tab that is not shown, idle for 5 minutes (`agent.isIdle`) and over 700 MB loads chatgpt.com afresh, at most every 30 minutes.
+  - Extra ChatGPT tabs close after 5 minutes idle instead of 10.
+  - The tab bar's theme check skips while the window is hidden.
+- **Checked here:**
+  - the real trimmed bundle (`node desktop/prepare.mjs`), run in place: start-up steps on a new data folder (all migrations), the dashboard (HTTP 200) and the worker (running); then every page (27) in Chromium, all 200 with no console errors;
+  - unit `desktop-bundle` (5), `desktop-agent` (16, incl. the idle check and the 5-minute close), all desktop tests 34/34; `tsc` 0 errors.
+- **Windows run [43161313119](https://github.com/markroger12/Automation-2/actions/runs/43161313119) (48e6ca4, green):**
+  - installer 221 → **191 MB**;
+  - install time about 110 → **72 s**;
+  - installed 787 → **652 MB in 9,706 files**.
+  - The bundle check and the smoke test passed on the compiled worker and start-up steps: “updater loaded; Search Console tab ready for indexing requests; reconnect page present; version 3.3.21”.
+- **Not measured:** the memory saver inside Electron (it uses Electron's process metrics), and the owner's PC.
+
+**Commands run**
+```
+node desktop/prepare.mjs                       # 101 packages, 9,688 files, 353 MB
+node dist/preflight.mjs; next start; node dist/worker.mjs   # in desktop/bundle/app: migrations ok, 200, worker running
+node crawl.cjs                                 # 27 pages: 200, no console errors
+npx vitest run tests/unit/desktop-*.test.ts    # 34 pass
+npx tsc --noEmit                               # 0 errors
+```
+

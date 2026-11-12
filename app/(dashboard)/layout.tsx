@@ -6,6 +6,7 @@ import { ensurePragmas } from '@/lib/db';
 import { cx } from '@/components/ui';
 import { WritersHydrator } from '@/components/writers-hydrator';
 import { ensureCustomWriters } from '@/lib/writers/store';
+import { databaseHint } from '@/lib/runtime';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +23,7 @@ function HealthBanner({ warnings, dbError }: { warnings: HealthWarning[]; dbErro
   if (dbError) {
     return (
       <div className="border-b border-rose-200 bg-rose-50 px-6 py-2 text-sm text-rose-900 lg:rounded-t-xl dark:border-rose-900 dark:bg-rose-950 dark:text-rose-100" role="alert">
-        <strong>Database unavailable.</strong> Run <code>npm run setup</code> to create/migrate data/app.db. ({dbError.slice(0, 200)})
+        <strong>Database unavailable.</strong> {databaseHint()} ({dbError.slice(0, 200)})
       </div>
     );
   }
@@ -56,7 +57,7 @@ function HealthBanner({ warnings, dbError }: { warnings: HealthWarning[]; dbErro
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [health, writers] = await Promise.all([loadHealth(), ensureCustomWriters().catch(() => [])]);
-  const notices = health.dbError ? [{ tone: 'danger' as const, title: 'Database unavailable', detail: 'Run npm run setup to create/migrate data/app.db.' }] : health.warnings;
+  const notices = health.dbError ? [{ tone: 'danger' as const, title: 'Database unavailable', detail: databaseHint() }] : health.warnings;
   return (
     <WritersHydrator writers={writers}>
       <ToastProvider>

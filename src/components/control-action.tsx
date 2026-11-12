@@ -64,7 +64,7 @@ export function ControlActionButton({
           const { job } = await api<{ job: JobState }>(`/api/control/${jobId}`);
           if (job.status === 'ACTIVE') setState('running');
           if (job.status === 'WAITING' && Date.now() - started.current > 20_000) {
-            toast('error', 'The worker has not picked this up. Is `npm run dev:all` running? The action stays queued.');
+            toast('error', 'The worker has not picked this up yet. The action stays queued and runs as soon as the worker is back (see the banner at the top).');
             started.current = Date.now() + 10 * 60_000;
           }
           if (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED') {

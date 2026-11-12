@@ -21,7 +21,7 @@
  * Node access (sandboxed, context-isolated), the dashboard tab only shows the local dashboard and the ChatGPT tab only
  * ChatGPT; every other address opens in the default browser.
  */
-const { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, dialog, ipcMain, nativeImage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -32,12 +32,15 @@ const { createHash, randomBytes } = require('node:crypto');
 const { createChatGPTTabs, isChatGPTContents } = require('./chatgpt-tab.cjs');
 const { createGoogleTab, isGoogleContents } = require('./google-tab.cjs');
 const { createUpdates } = require('./updates.cjs');
+const { SHORTCUTS, contextMenuTemplate, debounce, restoreBounds, updatedFrom } = require('./ux.cjs');
 
 /** Ports the dashboard may use; the extension looks for it on the same ones. */
 const PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
 let PORT = 3000;
 let ORIGIN = `http://localhost:${PORT}`;
 const TITLE = 'Blog Automation Studio';
+/** Where the releases are (What's new, Help). */
+const RELEASES = 'https://github.com/markroger12/Automation-2/releases';
 const packaged = app.isPackaged;
 /** The tool itself: next to this file when run from the repository, in the app's resources once installed. */
 const appDir = packaged ? path.join(process.resourcesPath, 'app') : path.resolve(__dirname, '..');
@@ -58,6 +61,15 @@ let chatgptState = { tone: '', text: '' };
 let gscState = null;
 let shellTheme = null;
 let themeTimer = null;
+/** Memory saver (owner request 2026-11-12: “ram free”): see memorySaver(). */
+let memoryTimer = null;
+let lastAgentStatus = null;
+let gscActiveAt = Date.now();
+let hiddenSince = null;
+let dashboardParked = false;
+/** The dashboard page shown last (it comes back there after a reconnect or the memory saver). */
+let dashboardUrl = null;
+const freshenedAt = new Map();
 const TAB_BAR = 44;
 /** The key this app gives its dashboard for the ChatGPT tab (made at each start, never stored). */
 const agentKey = randomBytes(32).toString('base64url');
@@ -69,6 +81,8 @@ let stopped = false;
 /** App updates (updates.cjs); `installAfterQuit`: the owner chose “Restart to update”. */
 let updates = null;
 let installAfterQuit = false;
+/** The data folder and the log (Help menu, About). */
+const paths = { dataDir: null, logFile: null };
 let logStream = null;
 const children = { web: null, worker: null };
 
@@ -96,9 +110,9 @@ async function dataFolder() {
   const r = await dialog.showMessageBox({
     type: 'question',
     title: TITLE,
-    message: 'Which data should the app use?',
+    message: 'Welcome to Blog Automation Studio',
     detail:
-      'If you already use Blog Automation Studio with npm run start:all, choose its data folder (for example F:\\claude\\Automation-2\\data). Your websites, articles, settings and the Automation Chrome profile are used as they are; while npm run start:all runs, this window shows it.\n\nOr start with a new, empty data folder.',
+      'Where should your websites, articles and settings be kept?\n\nAlready using Blog Automation Studio? Choose its data folder (for example F:\\claude\\Automation-2\\data) and everything is used as it is.\n\nNew here? Start with a new data folder. You can change this later from the tray menu.',
     buttons: ['Choose my data folder…', 'Start with a new data folder', 'Quit'],
     defaultId: 0,
     cancelId: 2,
@@ -179,6 +193,22 @@ function spawnNode(name, args, env, ipc = false) {
   child.stderr.on('data', (d) => logLine(name, d));
   child.on('error', (e) => logLine(name, `could not start: ${e.message}`));
   return child;
+}
+
+/**
+ * How a part of the tool starts: the installed app runs it compiled (dist/, prepare.mjs) — no TypeScript compiled at
+ * every start, no compiler in memory; a copy started from the repository runs the TypeScript with tsx.
+ */
+/**
+ * Memory (owner request 2026-11-12: “ramm free”): a small young generation for the dashboard server and the worker.
+ * Measured on the dashboard server: 252 → 223 MB at rest and 319 → 259 MB after showing every page, with no limit on
+ * what a process may use in all (so nothing runs out of memory).
+ */
+const NODE_MEMORY = ['--max-semi-space-size=2'];
+
+function toolEntry(name, source) {
+  const compiled = path.join(appDir, 'dist', `${name}.mjs`);
+  return fs.existsSync(compiled) ? [compiled] : ['--import', 'tsx', source];
 }
 
 function runToEnd(name, args, env) {
@@ -331,6 +361,110 @@ function secureContents(contents) {
   });
 }
 
+/** The right-click menu (ux.cjs): cut, copy, paste, and a link's address, in every page but the tab bar. */
+function contextMenu(contents) {
+  // F5 reloads the page, as in a browser (Ctrl+R is in the View menu).
+  contents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || input.key !== 'F5' || input.control || input.alt || input.meta) return;
+    if (win && !win.isDestroyed() && contents === win.webContents) return;
+    e.preventDefault();
+    contents.reload();
+  });
+  contents.on('context-menu', (_e, params) => {
+    if (win && !win.isDestroyed() && contents === win.webContents) return;
+    const items = contextMenuTemplate(params, { openExternal: (url) => void shell.openExternal(url), copyText: (text) => clipboard.writeText(text) });
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win || undefined });
+  });
+}
+
+/** The page shown now: the dashboard, the ChatGPT page that has the focus (else the first), or Search Console. */
+function shownContents() {
+  if (activeTab === 'chatgpt' && chatgptViews.length) return (chatgptViews.find((v) => v.webContents.isFocused()) || chatgptViews[0]).webContents;
+  if (activeTab === 'search-console' && googleTab) return googleTab.view.webContents;
+  return dashboardView ? dashboardView.webContents : null;
+}
+
+function zoomShown(step) {
+  const wc = shownContents();
+  if (!wc) return;
+  wc.setZoomLevel(step === 0 ? 0 : Math.max(-3, Math.min(4, wc.getZoomLevel() + step)));
+}
+
+/**
+ * The dashboard is never left as a blank or broken page: when its page stops (crash) it is loaded again, and when the
+ * dashboard does not answer (it is restarting after a crash of the server, which keepRunning does by itself) a
+ * “Reconnecting…” page in the tool's look tries again every few seconds and comes back to the same page.
+ */
+function guardDashboard(view) {
+  const wc = view.webContents;
+  dashboardUrl = ORIGIN;
+  wc.on('did-navigate', (_e, url) => {
+    if (isLocal(url)) dashboardUrl = url;
+  });
+  wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+    if (isMainFrame && isLocal(url)) dashboardUrl = url;
+  });
+  wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
+    // -3: the load was replaced by another (not an error).
+    if (!isMainFrame || code === -3 || !isLocal(url)) return;
+    logLine('app', `The dashboard page did not load (${description}); reconnecting.`);
+    void wc.loadFile(path.join(__dirname, 'offline.html'), { query: { to: url || dashboardUrl, theme: shellTheme || (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') } }).catch(() => {});
+  });
+  wc.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit') return;
+    logLine('app', `The dashboard page stopped (${details.reason}); it is loaded again.`);
+    setTimeout(() => !wc.isDestroyed() && !dashboardParked && void wc.loadURL(dashboardUrl).catch(() => {}), 1000);
+  });
+}
+
+/**
+ * Memory saver (owner request 2026-11-12: “app ka sara lagg khatam kr de … ramm free”). Every minute, pages that are
+ * not shown and have nothing to do give their memory back; nothing the owner sees or a job needs is touched:
+ * - Search Console: put away 10 minutes after it was last shown or made a request (the Google sign-in stays; the
+ *   page loads again when the tab is opened or a request comes).
+ * - The dashboard: put away while the window has been hidden in the tray for 10 minutes; it comes back at the same
+ *   page when the window is opened. The work (server, worker, ChatGPT) goes on meanwhile.
+ * - A ChatGPT tab that is not shown, has had nothing to do for 5 minutes and uses more than 700 MB (a long
+ *   conversation): it loads ChatGPT's start page afresh, at most once every 30 minutes.
+ */
+const MINUTE = 60_000;
+function memorySaver() {
+  if (!win || win.isDestroyed()) return;
+  const now = Date.now();
+  if (activeTab === 'search-console' && win.isVisible()) gscActiveAt = now;
+  if (lastAgentStatus && lastAgentStatus.gsc && lastAgentStatus.gsc.running) gscActiveAt = now;
+  if (googleTab && googleTab.loaded() && now - gscActiveAt > 10 * MINUTE) {
+    googleTab.unload();
+    logLine('app', 'Memory saver: the Search Console page is put away until it is needed again.');
+  }
+  if (dashboardView && !dashboardParked && hiddenSince && now - hiddenSince > 10 * MINUTE) parkDashboard();
+  if (chatgpt && chatgpt.agent && chatgpt.ids && !(activeTab === 'chatgpt' && win.isVisible())) {
+    const memory = new Map(app.getAppMetrics().map((m) => [m.pid, m.memory && m.memory.workingSetSize]));
+    for (const id of chatgpt.ids()) {
+      const mb = Math.round((memory.get(chatgpt.processId(id)) || 0) / 1024);
+      if (mb < 700 || !chatgpt.agent.isIdle(id, 5 * MINUTE) || now - (freshenedAt.get(id) || 0) < 30 * MINUTE) continue;
+      freshenedAt.set(id, now);
+      logLine('app', `Memory saver: ChatGPT tab ${id} used ${mb} MB with nothing to do; it loads ChatGPT afresh.`);
+      chatgpt.freshen(id);
+    }
+  }
+}
+
+function parkDashboard() {
+  const wc = dashboardView && dashboardView.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  if (isLocal(wc.getURL())) dashboardUrl = wc.getURL();
+  dashboardParked = true;
+  void wc.loadURL('about:blank').catch(() => {});
+  logLine('app', 'Memory saver: the dashboard page is put away while the window is hidden.');
+}
+
+function unparkDashboard() {
+  if (!dashboardParked || !dashboardView || dashboardView.webContents.isDestroyed()) return;
+  dashboardParked = false;
+  void dashboardView.webContents.loadURL(dashboardUrl || ORIGIN).catch(() => {});
+}
+
 // ------------------------------------------------------------------ the tabs
 
 /** The ChatGPT tabs' views in the window (one per ChatGPT tab; the agent opens more while prompts wait). */
@@ -384,7 +518,8 @@ function chatgptTabsChanged(views) {
 
 /** The tab bar follows the dashboard's light/dark toggle (the class on its page, read in a separate world). */
 function followDashboardTheme() {
-  if (!dashboardView || dashboardView.webContents.isDestroyed() || dashboardView.webContents.isLoading()) return;
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+  if (!dashboardView || dashboardView.webContents.isDestroyed() || dashboardView.webContents.isLoading() || !isLocal(dashboardView.webContents.getURL())) return;
   dashboardView.webContents
     .executeJavaScriptInIsolatedWorld(999, [{ code: "document.documentElement.classList.contains('dark') ? 'dark' : 'light'" }])
     .then((theme) => {
@@ -428,6 +563,7 @@ function selectTab(tab, focusId = null) {
 
 function showDashboard(page = '') {
   if (!dashboardView) return;
+  dashboardParked = false;
   void dashboardView.webContents.loadURL(`${ORIGIN}${page}`).catch(() => {});
   selectTab('dashboard');
 }
@@ -488,6 +624,7 @@ function attachTabs(ownServer) {
   win.contentView.addChildView(dashboardView);
   void dashboardView.webContents.loadURL(ORIGIN).catch(() => {});
   dashboardView.webContents.on('did-finish-load', followDashboardTheme);
+  guardDashboard(dashboardView);
   clearInterval(themeTimer);
   themeTimer = setInterval(followDashboardTheme, 3000);
   // The Search Console tab (owner, 2026-11-12: signed in to Google in the app): the app makes the indexing requests in it.
@@ -515,6 +652,7 @@ function attachTabs(ownServer) {
       if (!win.isVisible() || win.isMinimized()) win.showInactive();
     },
     onStatus: (s) => {
+      lastAgentStatus = s;
       chatgptState = chatgptSummary(s);
       gscState = gscSummary(s.gsc);
       shellState();
@@ -535,21 +673,49 @@ function attachTabs(ownServer) {
 }
 
 function createWindow(hidden) {
+  // The size and place it had last time (ux.cjs), if that still fits on a screen.
+  const saved = restoreBounds(readConfig().windowState, screen.getAllDisplays());
   win = new BrowserWindow({
-    width: 1440,
-    height: 920,
+    ...(saved ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height } : { width: 1440, height: 920, center: true }),
     minWidth: 1024,
     minHeight: 640,
     title: TITLE,
     icon,
-    show: !hidden,
+    show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#0b1020',
+    // The tool's own background (light or dark), so no other colour flashes before the tab bar paints.
+    backgroundColor: (shellTheme || (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')) === 'dark' ? '#171717' : '#f4f4f5',
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, preload: path.join(__dirname, 'shell-preload.cjs') },
   });
   win.on('page-title-updated', (e) => e.preventDefault());
   for (const change of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(change, layout);
+  // Shown once the tab bar has painted (no white flash), maximized if it was.
+  // Memory saver: how long the window has been hidden (in the tray or minimized), and the check every minute.
+  hiddenSince = hidden ? Date.now() : null;
+  win.on('hide', () => (hiddenSince = Date.now()));
+  win.on('minimize', () => (hiddenSince = Date.now()));
+  win.on('show', () => {
+    hiddenSince = null;
+    unparkDashboard();
+  });
+  win.on('restore', () => {
+    hiddenSince = null;
+    unparkDashboard();
+  });
+  clearInterval(memoryTimer);
+  memoryTimer = setInterval(memorySaver, MINUTE);
+  win.once('ready-to-show', () => {
+    if (hidden) return;
+    if (saved && saved.maximized) win.maximize();
+    win.show();
+  });
+  const saveState = debounce(() => {
+    if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+    writeConfig({ ...readConfig(), windowState: { ...win.getNormalBounds(), maximized: win.isMaximized() } });
+  }, 600);
+  for (const change of ['resize', 'move', 'maximize', 'unmaximize']) win.on(change, () => saveState());
   win.on('close', (e) => {
+    saveState.flush();
     if (quitting || readConfig().keepInTray === false) return;
     // The workflow keeps running in the background; the tray icon brings the window back.
     e.preventDefault();
@@ -564,6 +730,7 @@ function createWindow(hidden) {
     win = null;
     dashboardView = null;
     clearInterval(themeTimer);
+    clearInterval(memoryTimer);
     if (chatgpt) {
       const agent = chatgpt.agent;
       chatgpt.destroy();
@@ -675,15 +842,46 @@ const updateMenuItems = () => [
   { label: `Version ${app.getVersion()}`, enabled: false },
 ];
 
+/** A message box over the window when it is open (else on its own). */
+const messageBox = (options) => (win && !win.isDestroyed() && win.isVisible() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
+
+/** About: the version and what it runs on, with “Copy details” for a report. */
+async function showAbout() {
+  const details = [
+    `${TITLE} ${app.getVersion()}`,
+    `Electron ${process.versions.electron}, Node.js ${process.versions.node}, Chromium ${process.versions.chrome}`,
+    `Windows ${process.getSystemVersion()} (${process.arch})`,
+    `Data folder: ${paths.dataDir || 'not chosen yet'}`,
+    `Dashboard: ${ORIGIN}${attachedToRunning ? ' (the copy started with npm run start:all)' : ''}`,
+  ].join('\n');
+  const r = await messageBox({ type: 'info', title: `About ${TITLE}`, message: TITLE, detail: `Version ${app.getVersion()}\n\n${details.split('\n').slice(1).join('\n')}\n\nYour articles, settings and sign-ins stay on this computer.`, buttons: ['OK', 'Copy details'], defaultId: 0, cancelId: 0, noLink: true, icon });
+  if (r.response === 1) clipboard.writeText(details);
+}
+
+/** For a problem report: the version and the last lines of the app's log (no keys or passwords are logged). */
+function copyDiagnostics() {
+  clipboard.writeText([`${TITLE} ${app.getVersion()} (Electron ${process.versions.electron}, Windows ${process.getSystemVersion()})`, `Dashboard: ${ORIGIN}`, '', 'Last lines of the log:', ...recent].join('\n'));
+  notifyOwner('Details copied', 'The version and the last lines of the log are on the clipboard, ready to paste into a report.');
+}
+
+function showShortcuts() {
+  void messageBox({ type: 'none', title: 'Keyboard shortcuts', message: 'Keyboard shortcuts', detail: SHORTCUTS.map(([keys, what]) => `${keys}\t${what}`).join('\n'), buttons: ['OK'], noLink: true, icon });
+}
+
 function appMenu() {
+  const go = (tab) => () => {
+    showWindow();
+    selectTab(tab);
+  };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
-        label: 'App',
+        label: 'File',
         submenu: [
-          { label: 'Dashboard', accelerator: 'CmdOrCtrl+Shift+H', click: () => showDashboard() },
-          { label: 'ChatGPT', accelerator: 'CmdOrCtrl+Shift+G', click: () => selectTab('chatgpt') },
-          { label: 'Search Console (in this app)', click: () => selectTab('search-console') },
+          { label: 'Dashboard', accelerator: 'CmdOrCtrl+1', click: go('dashboard') },
+          { label: 'ChatGPT', accelerator: 'CmdOrCtrl+2', click: go('chatgpt') },
+          { label: 'Search Console', accelerator: 'CmdOrCtrl+3', click: go('search-console') },
+          { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => (showWindow(), showDashboard('/settings')) },
           { type: 'separator' },
           {
             // Owner's way back: if ChatGPT does not work in the app, Automation Chrome's extension takes the prompts again.
@@ -696,13 +894,46 @@ function appMenu() {
             },
           },
           { type: 'separator' },
-          ...updateMenuItems(),
+          { label: 'Open the data folder', enabled: Boolean(paths.dataDir), click: () => void shell.openPath(paths.dataDir) },
           { type: 'separator' },
+          { label: 'Close window', accelerator: 'CmdOrCtrl+W', click: () => win && !win.isDestroyed() && win.close() },
           { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: quitApp },
         ],
       },
       { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
-      { label: 'View', submenu: [{ role: 'reload' }, { role: 'forceReload' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }, { role: 'toggleDevTools' }] },
+      {
+        label: 'View',
+        // Reload and zoom act on the page shown (the dashboard, ChatGPT or Search Console), never on the tab bar.
+        submenu: [
+          { label: 'Reload this page', accelerator: 'CmdOrCtrl+R', click: () => shownContents()?.reload() },
+          { type: 'separator' },
+          { label: 'Actual size', accelerator: 'CmdOrCtrl+0', click: () => zoomShown(0) },
+          { label: 'Zoom in', accelerator: 'CmdOrCtrl+=', click: () => zoomShown(0.5) },
+          { label: 'Zoom out', accelerator: 'CmdOrCtrl+-', click: () => zoomShown(-0.5) },
+          { type: 'separator' },
+          { role: 'togglefullscreen' },
+        ],
+      },
+      {
+        label: 'Help',
+        submenu: [
+          ...updateMenuItems(),
+          { label: "What's new", click: () => void shell.openExternal(RELEASES) },
+          { label: 'Keyboard shortcuts', click: showShortcuts },
+          { label: 'User guide', click: () => (showWindow(), showDashboard('/help')) },
+          { type: 'separator' },
+          {
+            label: 'Troubleshooting',
+            submenu: [
+              { label: 'Open the log', enabled: Boolean(paths.logFile), click: () => void shell.openPath(paths.logFile) },
+              { label: 'Copy details for a report', click: copyDiagnostics },
+              { label: 'Developer tools (page shown)', accelerator: 'CmdOrCtrl+Shift+I', click: () => shownContents()?.toggleDevTools() },
+            ],
+          },
+          { type: 'separator' },
+          { label: `About ${TITLE}`, click: () => void showAbout() },
+        ],
+      },
     ]),
   );
 }
@@ -717,9 +948,20 @@ async function start() {
   const dataDir = await dataFolder();
   if (!dataDir) return quitApp();
   const logFile = openLog(dataDir);
+  paths.dataDir = dataDir;
+  paths.logFile = logFile;
+  appMenu();
   buildTray(dataDir, logFile);
   await createWindow(hidden);
   logLine('app', `Starting version ${app.getVersion()} (data: ${dataDir}, tool: ${appDir}, built-in Node.js ${process.versions.node}).`);
+  // What's new: the first start after an update says so once, with a link to that version's notes.
+  const before = readConfig().lastVersion;
+  if (!smoke) writeConfig({ ...readConfig(), lastVersion: app.getVersion() });
+  const from = smoke ? null : updatedFrom(before, app.getVersion());
+  if (from) {
+    logLine('update', `Updated from ${from} to ${app.getVersion()}.`);
+    setTimeout(() => notifyOwner(`Updated to version ${app.getVersion()}`, 'Click to see what is new in this version.', () => void shell.openExternal(`${RELEASES}/tag/v${app.getVersion()}`)), 4000);
+  }
   // Owner request: updates. Only an installed app updates itself (not the smoke test, not a copy run from the repository).
   updates = createUpdates({
     log: (line) => logLine('update', line),
@@ -753,7 +995,7 @@ async function start() {
   delete env.NODE_OPTIONS;
 
   status('Preparing your data…', 'Migrations with a backup first, settings, the face and person detectors (once).');
-  const prepared = await runToEnd('setup', ['--import', 'tsx', 'scripts/preflight.ts'], env);
+  const prepared = await runToEnd('setup', toolEntry('preflight', 'scripts/preflight.ts'), env);
   if (prepared !== 0) {
     status('Preparing failed.', recent.slice(-10).join('\n'));
     await fail('The data could not be prepared.', `Nothing was deleted. Last lines of the log (${logFile}):\n\n${recent.slice(-12).join('\n')}`);
@@ -761,9 +1003,9 @@ async function start() {
   }
   status('Starting the dashboard…');
   // With a channel to this app, so the server stops by itself when the app is gone (desktop-child-guard.cjs).
-  keepRunning('web', () => spawnNode('web', ['--require', childGuard, 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], env, true));
+  keepRunning('web', () => spawnNode('web', [...NODE_MEMORY, '--require', childGuard, 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], env, true));
   status('Starting the worker…');
-  keepRunning('worker', () => spawnNode('worker', ['--import', 'tsx', 'src/worker/index.ts'], env, true));
+  keepRunning('worker', () => spawnNode('worker', [...NODE_MEMORY, ...toolEntry('worker', 'src/worker/index.ts')], env, true));
   if (!(await waitForDashboard(120_000))) {
     status('The dashboard did not start.', recent.slice(-10).join('\n'));
     if (smoke) smokeDone(false, 'the dashboard did not start');
@@ -784,8 +1026,9 @@ async function start() {
       updater = false;
     }
     const gscTab = Boolean(googleTab && chatgpt && chatgpt.agent && chatgpt.agent.capabilities().includes('gsc-request-indexing'));
-    const ok = worker && connected && info && info.dataId === dataFolderId(dataDir) && updater && gscTab;
-    return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}; updater ${updater ? 'loaded' : 'missing'}; Search Console tab ${gscTab ? 'ready for indexing requests' : 'missing'}; version ${app.getVersion()}`);
+    const pages = fs.existsSync(path.join(__dirname, 'offline.html'));
+    const ok = worker && connected && info && info.dataId === dataFolderId(dataDir) && updater && gscTab && pages;
+    return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}; updater ${updater ? 'loaded' : 'missing'}; Search Console tab ${gscTab ? 'ready for indexing requests' : 'missing'}; reconnect page ${pages ? 'present' : 'missing'}; version ${app.getVersion()}`);
   }
 }
 
@@ -836,6 +1079,7 @@ if (!app.requestSingleInstanceLock()) {
       });
   });
   app.on('web-contents-created', (_e, contents) => {
+    contextMenu(contents);
     // The ChatGPT and Search Console tabs have their own rules (chatgpt-tab.cjs, google-tab.cjs).
     if (!isChatGPTContents(contents) && !isGoogleContents(contents)) secureContents(contents);
   });

@@ -19,6 +19,7 @@ interface Agent {
   onPortMessage: (id: string, msg: unknown, tabId?: string) => void;
   status: () => { connected: boolean; paused: boolean };
   capabilities: () => string[];
+  isIdle: (tabId: string, ms?: number) => boolean;
 }
 
 function harness(opts: { url?: string; down?: boolean; claim?: unknown } = {}) {
@@ -226,6 +227,28 @@ describe("the desktop app's ChatGPT tabs: several prompts at once", () => {
     await h.agent.stop();
   });
 
+  it('memory saver: a tab counts as idle only with no prompt, no job channel and nothing waiting', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const h = poolHarness({ jobs: ['job-i'], config: { maxTabs: 1, wantedTabs: 1 } });
+    await h.agent.start();
+    await h.ready('app-1');
+    await h.agent.tick();
+    await h.ready('app-1');
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    expect(h.agent.isIdle('app-1', 0)).toBe(false); // working on its prompt
+    expect(h.agent.isIdle('app-9', 0)).toBe(false); // no such tab
+    await h.agent.stop();
+    const fresh = poolHarness({ jobs: [], config: { maxTabs: 1, wantedTabs: 1 } });
+    await fresh.agent.start();
+    await fresh.ready('app-1');
+    await fresh.agent.tick();
+    expect(fresh.agent.isIdle('app-1', 5 * 60_000)).toBe(false); // not long enough
+    vi.setSystemTime(Date.now() + 6 * 60_000);
+    expect(fresh.agent.isIdle('app-1', 5 * 60_000)).toBe(true);
+    await fresh.agent.stop();
+  });
+
   it('never while ChatGPT waits for the owner (sign-in or check)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const h = poolHarness({ jobs: ['job-h'], config: { maxTabs: 1, wantedTabs: 1 } });
@@ -254,10 +277,11 @@ describe("the desktop app's ChatGPT tabs: several prompts at once", () => {
     await h.agent.tick();
     expect(h.open).toEqual(['app-1', 'app-2']);
     await h.ready('app-2');
-    vi.setSystemTime(Date.now() + 5 * 60_000);
+    vi.setSystemTime(Date.now() + 4 * 60_000);
     await h.agent.tick();
     expect(h.closed).toEqual([]);
-    vi.setSystemTime(Date.now() + 6 * 60_000);
+    // Owner request (2026-11-12, less RAM): an extra tab with nothing to do closes after 5 minutes.
+    vi.setSystemTime(Date.now() + 2 * 60_000);
     await h.agent.tick();
     expect(h.closed).toEqual(['app-2']);
     expect(h.open).toEqual(['app-1']);

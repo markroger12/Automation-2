@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { getSettings } from '@/lib/settings';
 import { getExtensionHealth, getWorkerHealth } from '@/lib/health';
+import { inDesktopApp, startWorkerHint } from '@/lib/runtime';
 import { writerManifests } from '@/modules/registry';
 import { ensureCustomWriters } from '@/lib/writers/store';
 import { PageHeader } from '@/components/ui';
@@ -47,7 +48,7 @@ export default async function SingleArticlePage() {
           reviewThreshold: settings.seo.reviewThreshold,
           rankMathTargetScore: settings.seo.rankMathTargetScore,
         }}
-        health={{ worker: worker.state, extension: extension.state }}
+        health={{ worker: worker.state, extension: extension.state, desktop: inDesktopApp(), workerHint: startWorkerHint() }}
       />
     </>
   );

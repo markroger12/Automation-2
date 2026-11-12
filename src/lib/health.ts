@@ -1,3 +1,4 @@
+import { inDesktopApp, startWorkerHint } from './runtime';
 import { db } from './db';
 import { parseJson } from './json';
 import { readAutoCheck, updateNotice } from './update/auto-check';
@@ -85,7 +86,7 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
       detail:
         worker.state === 'stale'
           ? `Last heartbeat ${worker.lastSeenAt?.toLocaleTimeString() ?? 'unknown'}. Queued work will not progress until the worker is back.`
-          : 'Start it with `npm run dev:all` (or `npm run worker`). Tasks stay safely queued meanwhile.',
+          : `${startWorkerHint()} Tasks stay safely queued meanwhile.`,
       href: '/diagnostics',
       action: 'Diagnostics',
     });
@@ -93,10 +94,17 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
   if (extension.state !== 'connected') {
     warnings.push({
       tone: 'warning',
-      title: extension.state === 'never' ? 'ChatGPT extension not connected yet' : 'ChatGPT extension is not responding',
-      detail: 'Open Automation Chrome with the extension loaded and paired. ChatGPT stages wait until it connects.',
-      href: '/automation-chrome',
-      action: 'Set up',
+      ...(inDesktopApp()
+        ? {
+            title: extension.state === 'never' ? 'ChatGPT is not connected yet' : 'ChatGPT is not responding',
+            detail: 'Open the ChatGPT tab at the top of the app (Ctrl+2) and sign in. ChatGPT steps wait until it connects.',
+          }
+        : {
+            title: extension.state === 'never' ? 'ChatGPT extension not connected yet' : 'ChatGPT extension is not responding',
+            detail: 'Open Automation Chrome with the extension loaded and paired. ChatGPT stages wait until it connects.',
+            href: '/automation-chrome',
+            action: 'Set up',
+          }),
     });
   }
   if (siteCount === 0) {

@@ -140,3 +140,31 @@ export function navGroups(items: NavItem[]): { section: string | null; items: Na
   }
   return groups;
 }
+
+/** A quick action of the top bar's search: a page that starts a task (owner request 2026-11-12: a professional app). */
+export interface QuickAction {
+  href: string;
+  label: string;
+  icon: string;
+  /** Other words it is found by (“write”, “post” for New article). */
+  keywords: string;
+}
+
+/** Shown when the search opens, and found by name or keyword. Each one opens an existing page or dialog. */
+export const QUICK_ACTIONS: QuickAction[] = [
+  { href: '/single-article', label: 'New article', icon: 'PenLine', keywords: 'write post single generate keyword' },
+  { href: '/websites?add=1', label: 'Add a website', icon: 'Globe', keywords: 'wordpress site connect login' },
+  { href: '/campaigns/new', label: 'New bulk campaign', icon: 'Layers', keywords: 'bulk many keywords batch' },
+  { href: '/workflow', label: 'Plan keywords for the week', icon: 'CalendarClock', keywords: 'workflow schedule calendar queue daily' },
+  { href: '/writers', label: 'New or imported writer', icon: 'Bot', keywords: 'writer prompt custom import export' },
+  { href: '/queue', label: 'See articles in progress', icon: 'ListOrdered', keywords: 'queue running status jobs' },
+  { href: '/settings', label: 'Settings and app updates', icon: 'Settings', keywords: 'preferences options update chatgpt tabs notifications' },
+  { href: '/help', label: 'Help and setup guide', icon: 'CircleHelp', keywords: 'guide how manual support' },
+];
+
+/** The quick actions a search finds (every word in the name or the keywords); all of them without a search. */
+export function searchActions(actions: QuickAction[], query: string): QuickAction[] {
+  const words = queryWords(query);
+  if (!words.length) return actions;
+  return actions.filter((a) => words.every((w) => fold(`${a.label} ${a.keywords}`).includes(w)));
+}

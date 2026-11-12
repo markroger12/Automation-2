@@ -22,7 +22,9 @@ const TAB_ID = 'app-1';
 /** At most this many tabs, whatever the dashboard allows (as the extension: Settings → ChatGPT tabs is 1–5). */
 const MAX_TABS = 5;
 /** An extra tab with nothing to do for this long is closed (each ChatGPT tab costs memory). */
-const IDLE_CLOSE_MS = 10 * 60_000;
+// Owner request 2026-11-12 (“ram free”): an extra tab with nothing to do closes after 5 minutes (it opens again in a
+// few seconds when prompts wait).
+const IDLE_CLOSE_MS = 5 * 60_000;
 /**
  * Owner report (2026-11-12: ChatGPT in the app sometimes got stuck): the page's script reports a prompt's progress every
  * 5 s while it waits. A busy tab silent for this long has a stuck page: it is loaded again (the prompt is looked for,
@@ -743,6 +745,14 @@ function createChatGPTAgent(deps) {
     },
     tick,
     status,
+    /**
+     * A tab with nothing to do for `ms` (no prompt, no job channel, nothing waiting for the owner, no prompt waiting
+     * in the queue): main.cjs may load it fresh to give memory back (owner request 2026-11-12: less RAM).
+     */
+    isIdle(tabId, ms = 2 * 60_000) {
+      const t = tabs.get(tabId);
+      return Boolean(t && !t.busy && !t.port && !t.waitingHuman && (serverCfg.waitingJobs || 0) === 0 && Date.now() - t.idleSince >= ms);
+    },
     onGscMessage,
     onGscNavigate,
     onMessage,

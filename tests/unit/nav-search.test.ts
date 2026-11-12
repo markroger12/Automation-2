@@ -50,3 +50,22 @@ describe('top bar search and menu groups', () => {
     expect(groups.flatMap((g) => g.items)).toEqual(NAV_ITEMS);
   });
 });
+
+/** Owner request (2026-11-12): a professional app — the search offers the usual tasks as soon as it opens. */
+describe('quick actions in the top bar search', () => {
+  it('all of them without a search, each opening a page of the dashboard', async () => {
+    const { QUICK_ACTIONS, searchActions } = await import('@/components/nav-config');
+    expect(searchActions(QUICK_ACTIONS, '  ')).toBe(QUICK_ACTIONS);
+    for (const a of QUICK_ACTIONS) expect(a.href).toMatch(/^\/[a-z-]*(\/new)?(\?add=1)?$/);
+  });
+
+  it('found by name or by another word, ignoring case', async () => {
+    const { QUICK_ACTIONS, searchActions } = await import('@/components/nav-config');
+    const labels = (q: string) => searchActions(QUICK_ACTIONS, q).map((a) => a.label);
+    expect(labels('website')).toEqual(['Add a website']);
+    expect(labels('WordPress')).toEqual(['Add a website']);
+    expect(labels('write')).toEqual(['New article', 'New or imported writer']);
+    expect(labels('bulk')).toEqual(['New bulk campaign']);
+    expect(labels('anika bissel')).toEqual([]);
+  });
+});

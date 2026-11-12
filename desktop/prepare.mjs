@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { devOnly, entryGuardPlugin } from './bundle-rules.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const bundle = path.join(import.meta.dirname, 'bundle');
@@ -22,7 +23,8 @@ if (!fs.existsSync(path.join(root, '.next', 'BUILD_ID'))) {
 }
 
 // ---- the tool
-const KEEP = ['package.json', 'tsconfig.json', '.env.example', 'middleware.ts', 'prisma', 'src', 'scripts', 'public', 'extension', '.next'];
+// The TypeScript sources (src, scripts) are not carried: the worker and the start-up steps run from dist/ (below).
+const KEEP = ['package.json', '.env.example', 'prisma', 'public', 'extension', '.next'];
 const skip = (rel) => {
   const parts = rel.split(path.sep);
   // The build cache, and the server's source maps (only for debugging the build).
@@ -55,7 +57,9 @@ const packageOf = (spec) => {
   return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
 };
 
-const roots = new Set(['next', 'react', 'react-dom', '@prisma/client', 'prisma', 'tsx']);
+// No tsx: the worker and the start-up steps are compiled to JavaScript below (dist/), so the app does not compile
+// TypeScript at every start and carries no esbuild (owner request 2026-11-12: no lag, less memory).
+const roots = new Set(['next', 'react', 'react-dom', '@prisma/client', 'prisma']);
 const esbuild = await import(pathToFileURL(requireFromRoot.resolve('esbuild')).href);
 
 // The Next.js settings as JavaScript: `next start` loads a next.config.ts with Next.js's compiler, which the app does
@@ -77,6 +81,33 @@ const scan = await esbuild.build({
   logLevel: 'silent',
 });
 for (const output of Object.values(scan.metafile.outputs)) for (const i of output.imports) if (i.external && packageOf(i.path)) roots.add(packageOf(i.path));
+
+// The worker and the start-up steps as JavaScript (dist/worker.mjs, dist/preflight.mjs; main.cjs starts these): what tsx
+// did at every start, done once here. The packages stay outside (loaded from node_modules as before). A script that
+// starts itself when run directly (`import.meta.url === …argv[1]`) only does so as its own entry: bundled into
+// another, that test would be true there too.
+for (const [entry, name] of [
+  ['src/worker/index.ts', 'worker'],
+  ['scripts/preflight.ts', 'preflight'],
+]) {
+  const entryFile = path.join(root, entry);
+  await esbuild.build({
+    entryPoints: [entryFile],
+    absWorkingDir: root,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    packages: 'external',
+    tsconfig: path.join(root, 'tsconfig.json'),
+    outfile: path.join(app, 'dist', `${name}.mjs`),
+    // CommonJS packages that call require() from the bundled code.
+    banner: { js: "import { createRequire as __basCreateRequire } from 'node:module';\nconst require = __basCreateRequire(import.meta.url);" },
+    logLevel: 'warning',
+    plugins: [entryGuardPlugin(entryFile)],
+  });
+  console.log(`  app/dist/${name}.mjs (from ${entry})`);
+}
 const serverFiles = [];
 const walk = (dir) => {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -129,7 +160,14 @@ const packages = [...found].sort();
 for (const dir of packages) {
   const rel = path.relative(root, dir);
   // A package's own nested node_modules are copied only for the packages found above.
-  fs.cpSync(dir, path.join(app, rel), { recursive: true, verbatimSymlinks: true, filter: (src) => !path.relative(dir, src).split(path.sep).includes('node_modules') });
+  fs.cpSync(dir, path.join(app, rel), {
+    recursive: true,
+    verbatimSymlinks: true,
+    filter: (src) => {
+      const inPackage = path.relative(dir, src);
+      return !inPackage.split(path.sep).includes('node_modules') && !(inPackage && fs.lstatSync(src).isFile() && devOnly(inPackage));
+    },
+  });
 }
 // The generated Prisma client (@prisma/client loads it from here).
 fs.cpSync(path.join(root, 'node_modules', '.prisma'), path.join(app, 'node_modules', '.prisma'), { recursive: true });

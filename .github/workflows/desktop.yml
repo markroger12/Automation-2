@@ -86,8 +86,11 @@ jobs:
           if (-not $exe) { throw 'The app was not installed.' }
           $files = Get-ChildItem $exe.DirectoryName -Recurse -File | Measure-Object -Property Length -Sum
           Write-Host "Installed: $($exe.DirectoryName), $([math]::Round($files.Sum / 1MB)) MB in $($files.Count) files"
-          # As in C:\Program Files (owner report: EPERM there): the app may not write into its own installation.
-          icacls $exe.DirectoryName /deny "$($env:USERNAME):(OI)(CI)W" /T /Q | Out-Null
+          # As in C:\Program Files (owner report: EPERM there): the app may not create files or folders in its own
+          # installation. Only those two rights are denied (WD, AD): the simple right W would also deny what starting
+          # a program needs. icacls passes the inheritable entry on to everything inside.
+          icacls $exe.DirectoryName /deny "$($env:USERNAME):(OI)(CI)(WD,AD)" /Q | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'icacls could not make the installation read-only.' }
           $env:BAS_DESKTOP_DATA_DIR = Join-Path $env:RUNNER_TEMP 'bas-smoke-data'
           $result = Join-Path $env:RUNNER_TEMP 'bas-smoke.json'
           $app = Start-Process -FilePath $exe.FullName -ArgumentList '--smoke-test', "--smoke-result=$result" -PassThru

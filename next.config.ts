@@ -17,6 +17,10 @@ const csp = [
 ].join('; ');
 
 const nextConfig: NextConfig = {
+  // The desktop app's build (BAS_STANDALONE=1, the Windows workflow): Next.js also writes the server with only the files
+  // it needs (.next/standalone), so the installer carries a few hundred files of Next.js instead of thousands
+  // (owner request 2026-11-12: a faster install). `npm run build` without it is unchanged.
+  ...(process.env.BAS_STANDALONE === '1' ? { output: 'standalone' as const } : {}),
   reactStrictMode: true,
   poweredByHeader: false,
   serverExternalPackages: ['@prisma/client', 'sharp', 'playwright', 'playwright-core', 'opentype.js'],

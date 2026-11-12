@@ -21,10 +21,17 @@ if (!fs.existsSync(path.join(root, '.next', 'BUILD_ID'))) {
   console.error('There is no production build: run `npm run build` in the repository root first.');
   process.exit(1);
 }
+// The dashboard's server with only the files it needs (next.config.ts: output 'standalone' when BAS_STANDALONE=1).
+const standalone = path.join(root, '.next', 'standalone');
+if (!fs.existsSync(path.join(standalone, 'server.js'))) {
+  console.error('The build has no standalone server: build it with BAS_STANDALONE=1 (in PowerShell: $env:BAS_STANDALONE=1; npm run build).');
+  process.exit(1);
+}
 
 // ---- the tool
 // The TypeScript sources (src, scripts) are not carried: the worker and the start-up steps run from dist/ (below).
-const KEEP = ['package.json', '.env.example', 'prisma', 'public', 'extension', '.next'];
+// The dashboard's built files come from the standalone server (below), not from .next.
+const KEEP = ['package.json', '.env.example', 'prisma', 'public', 'extension'];
 const skip = (rel) => {
   const parts = rel.split(path.sep);
   // The build cache, and the server's source maps (only for debugging the build).
@@ -38,6 +45,13 @@ for (const item of KEEP) {
   fs.cpSync(from, path.join(app, item), { recursive: true, verbatimSymlinks: true, filter: (src) => !skip(path.relative(root, src)) });
   console.log(`  app/${item}`);
 }
+// The dashboard's server (owner request 2026-11-12: a faster install): Next.js's own standalone server, server.js, with
+// the built server files (.next) and the browser files (.next/static). Never its copy of a .env (it copies the
+// project's, which may hold keys): only these are taken.
+fs.copyFileSync(path.join(standalone, 'server.js'), path.join(app, 'server.js'));
+fs.cpSync(path.join(standalone, '.next'), path.join(app, '.next'), { recursive: true, filter: (src) => !skip(path.join('.next', path.relative(path.join(standalone, '.next'), src))) });
+fs.cpSync(path.join(root, '.next', 'static'), path.join(app, '.next', 'static'), { recursive: true });
+console.log('  app/server.js, app/.next (the standalone server and the built pages)');
 // Lets the dashboard server stop by itself when the app is gone (see main.cjs).
 fs.copyFileSync(path.join(import.meta.dirname, 'child-guard.cjs'), path.join(app, 'desktop-child-guard.cjs'));
 
@@ -59,14 +73,13 @@ const packageOf = (spec) => {
 
 // No tsx: the worker and the start-up steps are compiled to JavaScript below (dist/), so the app does not compile
 // TypeScript at every start and carries no esbuild (owner request 2026-11-12: no lag, less memory).
-const roots = new Set(['next', 'react', 'react-dom', '@prisma/client', 'prisma']);
+// No Next.js or React either: the dashboard's server takes the files it needs from the standalone build (below).
+const roots = new Set(['@prisma/client', 'prisma']);
+/** Packages taken only as Next.js traced them (the standalone build), never whole. */
+const TRACED_ONLY = new Set(['next']);
 const esbuild = await import(pathToFileURL(requireFromRoot.resolve('esbuild')).href);
 
-// The Next.js settings as JavaScript: `next start` loads a next.config.ts with Next.js's compiler, which the app does
-// not carry (it is only for building); without it Next.js tried to install packages by itself.
-const config = await esbuild.build({ entryPoints: [path.join(root, 'next.config.ts')], bundle: true, packages: 'external', platform: 'node', format: 'esm', write: false, logLevel: 'silent' });
-fs.writeFileSync(path.join(app, 'next.config.mjs'), config.outputFiles[0].text);
-console.log('  app/next.config.mjs (from next.config.ts)');
+// The Next.js settings are inside server.js (the standalone build writes them there): no next.config at run time.
 const scan = await esbuild.build({
   entryPoints: ['src/worker/index.ts', 'scripts/preflight.ts', 'scripts/install-tools.ts'].map((f) => path.join(root, f)),
   absWorkingDir: root,
@@ -120,7 +133,7 @@ walk(path.join(root, '.next', 'server'));
 // Next.js's own optional ones (e.g. @builder.io/partytown) are tried in the built files; only installed ones count.
 const serverRoots = new Set();
 for (const file of serverFiles) {
-  for (const m of fs.readFileSync(file, 'utf8').matchAll(/(?:require|import)\(\s*["'`]([^"'`\s]+)["'`]\s*\)/g)) if (packageOf(m[1]) && !roots.has(packageOf(m[1]))) serverRoots.add(packageOf(m[1]));
+  for (const m of fs.readFileSync(file, 'utf8').matchAll(/(?:require|import)\(\s*["'`]([^"'`\s]+)["'`]\s*\)/g)) if (packageOf(m[1]) && !roots.has(packageOf(m[1])) && !TRACED_ONLY.has(packageOf(m[1]))) serverRoots.add(packageOf(m[1]));
 }
 
 /** The folder Node.js loads `name` from when `from` (a package folder) requires it; null when it is not installed. */
@@ -139,7 +152,7 @@ const missing = [];
 const queue = [...[...roots].map((name) => ({ name, from: root, optional: false })), ...[...serverRoots].map((name) => ({ name, from: root, optional: true }))];
 while (queue.length) {
   const { name, from, optional } = queue.shift();
-  if (BUILD_ONLY(name)) continue;
+  if (BUILD_ONLY(name) || TRACED_ONLY.has(name)) continue;
   const dir = resolvePackage(name, from);
   if (!dir) {
     // Optional packages for other systems (e.g. the Linux build of sharp on Windows) are not installed.
@@ -157,6 +170,9 @@ while (queue.length) {
 }
 if (missing.length) throw new Error(`Packages the tool needs are not installed (run npm ci): ${missing.join(', ')}`);
 const packages = [...found].sort();
+// First the packages exactly as Next.js traced them for its server (Next.js itself: about 1,200 of its 7,000 files);
+// then the whole packages the worker, the start-up steps and the server's own imports load, over them.
+fs.cpSync(path.join(standalone, 'node_modules'), path.join(app, 'node_modules'), { recursive: true, verbatimSymlinks: true, filter: (src) => !src.endsWith('.map') });
 for (const dir of packages) {
   const rel = path.relative(root, dir);
   // A package's own nested node_modules are copied only for the packages found above.

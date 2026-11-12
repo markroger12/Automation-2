@@ -5052,3 +5052,43 @@ npx vitest run tests/unit/desktop-*.test.ts    # 34 pass
 npx tsc --noEmit                               # 0 errors
 ```
 
+## Desktop app (2026-11-12): an installer that asks where to install, ChatGPT tabs as in Chrome, fewer files again
+
+Owner reports:
+- “install me itna time kyu lag rha ha or isne pucha bhi nahi kaha install krna ha … har chiz user friendly hone chahiya ha or advanced”;
+- “ya koi 5 min sa yahi per ruka howa ha” (the one-click installer at about 60 %);
+- “yaha per chatgpt ke 2 tabs krde or agher settings me 1 active tab ho toh dusra hat jai asa chrome ki tarha ek hi tab me dono use na ho”.
+
+- **Installer (`desktop/electron-builder.yml`, `desktop/build/`):**
+  - An assisted installer instead of one click: welcome, the install folder, progress and a last page that starts the app, with the tool's own sidebar and header images (drawn to 164 × 314 and 150 × 57 BMP).
+  - A first install suggests `…\AppData\Local\Programs\Blog Automation Studio`. `installer.nsh` writes it as the install location only when none is recorded, so an app already installed is updated in its folder.
+  - Per user, no administrator. The app's own updates and the workflow still install silently (`/S`).
+- **Fewer files:**
+  - The desktop build sets `BAS_STANDALONE=1`, so `next.config.ts` adds `output: 'standalone'`. `prepare.mjs` then takes Next.js's standalone `server.js`, its `.next` and the traced `node_modules` (Next.js: 1,158 of its files instead of 3,485).
+  - The worker's packages are copied whole over them, as before. `.next/static` is added; the project's `.env`, which the standalone build copies, is never taken (`check-bundle.mjs` fails if a `.env` is in the bundle).
+  - `main.cjs` and `check-bundle.mjs` start `server.js` with `PORT` and `HOSTNAME=127.0.0.1`, set by the app, never taken from the computer.
+  - Bundle: **6,482 files / 294 MB** (was 9,683 / 353 MB; 18,037 / 464 MB before the earlier trim).
+- **The 5-minute stop:** not reproduced here. Likely causes are Windows' scan of each new unsigned file, or an older copy still running from the tray and holding its files. Fewer files helps with the first; the owner was told to quit the tray app before installing.
+- **ChatGPT tabs (`desktop/main.cjs`, `desktop/shell.html`):**
+  - Each open ChatGPT page has its own tab button: “ChatGPT 1”, “ChatGPT 2” …, or just “ChatGPT” when one is open, with a pulsing dot while it works (`busyIds` in the agent's status).
+  - One is shown at a time at full size; the others stay attached underneath, at full size, so they keep working, as ChatGPT kept working behind the dashboard before. There is no side-by-side grid any more.
+  - The number of buttons follows the open tabs, which Settings → ChatGPT tabs caps; with 1 there is one. `front(id)` and `chatgpt:<id>` select a given tab.
+  - The memory saver skips only the ChatGPT tab shown.
+  - The Electron test harness now stacks the tabs the same way, so the Windows test “two prompts at once in two tabs” checks this layout.
+- **Checked here:**
+  - `BAS_STANDALONE=1 npm run build`, then `node desktop/prepare.mjs`, then the bundle run in place: start-up steps on a new data folder; `server.js` on 127.0.0.1 answered 200; the worker running; all 27 pages in Chromium with no console errors; API routes 200.
+  - The standalone server used 234 MB after all pages (`next start`: 259 MB with the same option, 319 MB without).
+  - The tab bar with one and two ChatGPT tabs, rendered in Chromium.
+  - Desktop unit tests 34/34 (the agent's `busyIds`); `tsc` 0 errors.
+- **Not verified here:** the assisted installer's pages and its install time on Windows; the workflow builds, installs silently and starts it.
+
+**Commands run**
+```
+BAS_STANDALONE=1 npm run build                  # compiled; .next/standalone written
+node desktop/prepare.mjs                        # 6,482 files, 294 MB, no .env
+node dist/preflight.mjs; node server.js; node dist/worker.mjs   # in desktop/bundle/app: ok, 200 on 127.0.0.1, worker running
+node crawl.cjs                                  # 27 pages: 200, no console errors
+npx vitest run tests/unit/desktop-*.test.ts     # 34 pass
+npx tsc --noEmit                                # 0 errors
+```
+

@@ -14,7 +14,7 @@
  * - chatgpt-agent.cjs is the background: it talks to the dashboard and answers the scripts.
  * - Several tabs (owner report 2026-11-08: only one prompt ran at a time): app-1 is always there (the owner signs in
  *   there); the agent opens app-2 … app-5 while prompts wait (Settings → ChatGPT tabs) and closes an idle extra one.
- *   All share the one sign-in (the same partition). The window shows them side by side.
+ *   All share the one sign-in (the same partition). The window shows them as separate tabs, one at a time (main.cjs).
  */
 const { WebContentsView, ipcMain, session, shell } = require('electron');
 const fs = require('node:fs');

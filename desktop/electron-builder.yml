@@ -48,9 +48,17 @@ win:
   icon: icon.png
   artifactName: Blog-Automation-Studio-Setup-${version}.${ext}
 nsis:
-  # One click, like Discord: installs for this Windows user (no administrator) and starts the app.
-  oneClick: true
+  # Owner request (2026-11-12): an installer that asks where to install, like other programs: a welcome page, the
+  # folder (a first install suggests …\Programs\Blog Automation Studio, build/installer.nsh), the progress, and a
+  # last page that starts the app. For this Windows user only (no administrator). The app's own updates install
+  # silently into the same folder.
+  oneClick: false
   perMachine: false
+  allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp
+  installerHeader: build/installerHeader.bmp
   runAfterFinish: true
   createDesktopShortcut: always
   createStartMenuShortcut: true

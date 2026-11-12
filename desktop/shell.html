@@ -52,6 +52,8 @@
       nav button:disabled { opacity: 0.45; cursor: default; }
       nav svg { width: 16px; height: 16px; flex: none; }
       kbd { margin-left: 2px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; font: 10.5px/16px 'Cascadia Code', Consolas, monospace; color: var(--muted); }
+      .tabgroup { display: inline-flex; gap: 2px; }
+      .tabdot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); animation: pulse 1.2s ease-in-out infinite; }
       .sep { width: 1px; height: 20px; margin: 0 6px; background: var(--border); flex: none; }
       .spacer { flex: 1; min-width: 8px; }
       .chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 30vw; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; flex: 0 1 auto; }
@@ -106,10 +108,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>
         Dashboard
       </button>
-      <button id="tab-chatgpt" role="tab" aria-selected="false" title="ChatGPT (Ctrl+2): the prompts run here, several at once" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" /></svg>
-        ChatGPT
-      </button>
+      <!-- One tab per open ChatGPT page, as in Chrome (shown from the app's state below). -->
+      <span id="chatgpt-tabs" class="tabgroup">
+        <button role="tab" aria-selected="false" data-chatgpt="app-1" title="ChatGPT (Ctrl+2)" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" /></svg>
+          ChatGPT
+        </button>
+      </span>
       <button id="tab-search-console" role="tab" aria-selected="false" title="Search Console (Ctrl+3): sign in to Google here once; the indexing requests are made here" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
         Search Console
@@ -162,7 +167,39 @@
         }
       };
       const shell = window.basShell;
-      const tabs = { dashboard: document.getElementById('tab-dashboard'), chatgpt: document.getElementById('tab-chatgpt'), 'search-console': document.getElementById('tab-search-console') };
+      const tabs = { dashboard: document.getElementById('tab-dashboard'), 'search-console': document.getElementById('tab-search-console') };
+      // The ChatGPT tabs: one button per open ChatGPT page (Settings → ChatGPT tabs is the most); “ChatGPT” alone when
+      // there is one, “ChatGPT 1”, “ChatGPT 2” … when there are more. A pulsing dot: that page is working on a prompt.
+      const chatgptGroup = document.getElementById('chatgpt-tabs');
+      const sparkle = chatgptGroup.querySelector('svg').outerHTML;
+      let chatgptKey = '';
+      function showChatgptTabs(s) {
+        const list = s.chatgptTabs && s.chatgptTabs.length ? s.chatgptTabs : [{ id: 'app-1', busy: false }];
+        const key = JSON.stringify([list, s.tab, s.activeChatgpt, s.ready]);
+        if (key === chatgptKey) return;
+        chatgptKey = key;
+        chatgptGroup.replaceChildren(
+          ...list.map((t, i) => {
+            const b = document.createElement('button');
+            b.setAttribute('role', 'tab');
+            b.dataset.chatgpt = t.id;
+            const name = list.length > 1 ? `ChatGPT ${i + 1}` : 'ChatGPT';
+            b.innerHTML = sparkle;
+            b.append(name);
+            if (t.busy) {
+              const dot = document.createElement('span');
+              dot.className = 'tabdot';
+              dot.setAttribute('aria-label', 'working');
+              b.append(dot);
+            }
+            b.title = `${name}${i === 0 ? ' (Ctrl+2)' : ''}${t.busy ? ': working on a prompt' : ''}`;
+            b.setAttribute('aria-selected', String(s.tab === 'chatgpt' && (s.activeChatgpt || 'app-1') === t.id));
+            b.disabled = !s.ready;
+            b.addEventListener('click', () => shell && shell.select(`chatgpt:${t.id}`));
+            return b;
+          }),
+        );
+      }
       for (const [name, button] of Object.entries(tabs)) button.addEventListener('click', () => shell && shell.select(name));
       document.getElementById('tab-google').addEventListener('click', () => shell && shell.select('google'));
       const updateButton = document.getElementById('update');
@@ -196,6 +233,7 @@
         shell.onState((s) => {
           for (const button of document.querySelectorAll('nav button[role="tab"], nav .link')) button.disabled = !s.ready;
           for (const [name, button] of Object.entries(tabs)) button.setAttribute('aria-selected', String(s.tab === name));
+          showChatgptTabs(s);
           chip('chatgpt', s.chatgpt);
           chip('gsc', s.gsc);
           showUpdate(s.update);

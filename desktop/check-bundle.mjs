@@ -62,6 +62,15 @@ function finish(code) {
 
 console.log(`▸ Start-up steps on a new data folder (bundle copied to ${where})…`);
 // As the installed app starts them: the compiled worker and start-up steps (prepare.mjs), never TypeScript at run time.
+// Never a secret in the bundle (the standalone build copies the project's .env; prepare.mjs must not take it).
+if (fs.existsSync(path.join(app, '.env'))) {
+  console.log('✖ The bundle has a .env file: it must never ship with the app.');
+  process.exit(1);
+}
+if (!fs.existsSync(path.join(app, 'server.js'))) {
+  console.log('✖ server.js (the standalone dashboard server) is missing from the bundle.');
+  process.exit(1);
+}
 for (const name of ['preflight', 'worker']) {
   if (!fs.existsSync(path.join(app, 'dist', `${name}.mjs`))) {
     console.log(`✖ dist/${name}.mjs is missing from the bundle.`);
@@ -76,8 +85,8 @@ if (setup.status !== 0) {
   finish(1);
 } else {
   console.log('  ✓ migrations and settings');
-  const start = (name, args) => {
-    const child = spawn(node, args, { cwd: app, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const start = (name, args, extraEnv = {}) => {
+    const child = spawn(node, args, { cwd: app, env: { ...env, ...extraEnv }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     child.stdout.on('data', (d) => (logs[name] += d));
     child.stderr.on('data', (d) => (logs[name] += d));
     child.on('exit', (code) => {
@@ -86,7 +95,8 @@ if (setup.status !== 0) {
     children.push(child);
   };
   // The same memory option as main.cjs (NODE_MEMORY), so the app's own Node.js is checked with it.
-  start('web', ['--max-semi-space-size=2', '--require', './desktop-child-guard.cjs', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(port)]);
+  // Next.js's standalone server, as main.cjs starts it: only on 127.0.0.1.
+  start('web', ['--max-semi-space-size=2', '--require', './desktop-child-guard.cjs', 'server.js'], { PORT: String(port), HOSTNAME: '127.0.0.1' });
   start('worker', ['--max-semi-space-size=2', 'dist/worker.mjs']);
   const answers = () =>
     new Promise((resolve) => {

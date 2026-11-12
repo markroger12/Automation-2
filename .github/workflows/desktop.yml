@@ -31,7 +31,10 @@ jobs:
       - name: Install the tool
         run: npm ci --no-audit --no-fund
 
+      # With Next.js's standalone server (only the files it needs: a faster install; next.config.ts).
       - name: Build the dashboard
+        env:
+          BAS_STANDALONE: '1'
         run: npm run build
 
       - name: Typecheck

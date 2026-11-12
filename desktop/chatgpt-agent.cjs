@@ -382,7 +382,7 @@ function createChatGPTAgent(deps) {
   function status() {
     const list = ids().map((id) => tabState(id));
     const busyTabs = list.filter((t) => t.busy).length;
-    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: busyTabs > 0, busyTabs, tabs: list.length, ready: list.some((t) => t.ready), loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil, gsc: deps.gsc ? { running: gsc.running, waiting: serverCfg.gscWaiting || 0, last: gsc.last } : null };
+    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: busyTabs > 0, busyTabs, busyIds: ids().filter((id) => tabState(id).busy), tabs: list.length, ready: list.some((t) => t.ready), loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil, gsc: deps.gsc ? { running: gsc.running, waiting: serverCfg.gscWaiting || 0, last: gsc.last } : null };
     if (deps.onStatus) deps.onStatus(s);
     return s;
   }

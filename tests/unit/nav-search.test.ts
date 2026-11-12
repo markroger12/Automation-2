@@ -53,10 +53,12 @@ describe('top bar search and menu groups', () => {
 
 /** Owner request (2026-11-12): a professional app — the search offers the usual tasks as soon as it opens. */
 describe('quick actions in the top bar search', () => {
-  it('all of them without a search, each opening a page of the dashboard', async () => {
-    const { QUICK_ACTIONS, searchActions } = await import('@/components/nav-config');
+  it('all of them without a search, each opening a page of the dashboard (or the help assistant)', async () => {
+    const { ASSISTANT_ACTION, QUICK_ACTIONS, searchActions } = await import('@/components/nav-config');
     expect(searchActions(QUICK_ACTIONS, '  ')).toBe(QUICK_ACTIONS);
-    for (const a of QUICK_ACTIONS) expect(a.href).toMatch(/^\/[a-z-]*(\/new)?(\?add=1)?$/);
+    for (const a of QUICK_ACTIONS.filter((x) => x.href !== ASSISTANT_ACTION)) expect(a.href).toMatch(/^\/[a-z-]*(\/new)?(\?add=1)?$/);
+    expect(searchActions(QUICK_ACTIONS, 'gemini').map((a) => a.href)).toEqual([ASSISTANT_ACTION]);
+    expect(searchActions(QUICK_ACTIONS, 'getting started').map((a) => a.href)).toEqual(['/setup']);
   });
 
   it('found by name or by another word, ignoring case', async () => {

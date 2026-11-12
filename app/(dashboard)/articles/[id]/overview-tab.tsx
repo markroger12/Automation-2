@@ -6,6 +6,7 @@ import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Card, Chip, KeyValue, cx, formatDateTime, formatDuration, type ChipTone } from '@/components/ui';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
 import { QualityCard } from './quality-card';
+import { ArticleTimeline } from './timeline';
 
 const SOURCE_LABEL: Record<string, string> = { SINGLE: 'Single Article', BULK: 'Bulk campaign', WORKFLOW: 'Workflow', BENCHMARK: 'Benchmark', REFRESH: 'Content refresh' };
 
@@ -128,6 +129,9 @@ export function OverviewTab({ task, onTab }: { task: SerializedTaskDetail; onTab
   const issues = task.incidents.length + task.errorList.length;
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <div className="lg:col-span-2">
+        <ArticleTimeline task={task} />
+      </div>
       <div className="lg:col-span-2">
         <QualityCard taskId={task.id} onTab={onTab} />
       </div>

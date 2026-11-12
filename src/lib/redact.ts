@@ -9,6 +9,8 @@ const PATTERNS: [RegExp, string][] = [
   [/-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA )?PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]'],
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1[REDACTED]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
+  [/\bAIza[0-9A-Za-z_-]{30,}\b/g, '[REDACTED_GOOGLE_KEY]'],
+  [/(x-goog-api-key["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, '$1[REDACTED]'],
   [/((?:cookie|set-cookie)\s*[:=]\s*)[^\n]+/gi, '$1[REDACTED]'],
   [/((?:password|passwd|pwd|secret|token|api[_-]?key|session[_-]?secret|authorization)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, '$1[REDACTED]'],
   [/(wordpress_logged_in_[a-f0-9]+=)[^;\s]+/gi, '$1[REDACTED]'],

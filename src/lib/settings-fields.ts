@@ -20,6 +20,9 @@ export interface SettingGroup {
   fields: SettingField[];
 }
 
+/** The hours offered for the quiet hours (every full hour). */
+const QUIET_HOURS = [{ value: '00:00', label: '12:00 AM' },{ value: '01:00', label: '1:00 AM' },{ value: '02:00', label: '2:00 AM' },{ value: '03:00', label: '3:00 AM' },{ value: '04:00', label: '4:00 AM' },{ value: '05:00', label: '5:00 AM' },{ value: '06:00', label: '6:00 AM' },{ value: '07:00', label: '7:00 AM' },{ value: '08:00', label: '8:00 AM' },{ value: '09:00', label: '9:00 AM' },{ value: '10:00', label: '10:00 AM' },{ value: '11:00', label: '11:00 AM' },{ value: '12:00', label: '12:00 PM' },{ value: '13:00', label: '1:00 PM' },{ value: '14:00', label: '2:00 PM' },{ value: '15:00', label: '3:00 PM' },{ value: '16:00', label: '4:00 PM' },{ value: '17:00', label: '5:00 PM' },{ value: '18:00', label: '6:00 PM' },{ value: '19:00', label: '7:00 PM' },{ value: '20:00', label: '8:00 PM' },{ value: '21:00', label: '9:00 PM' },{ value: '22:00', label: '10:00 PM' },{ value: '23:00', label: '11:00 PM' }];
+
 export const SETTING_GROUPS: SettingGroup[] = [
   {
     id: 'workflow',
@@ -32,6 +35,9 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: 'adaptiveConcurrency', label: 'Adaptive concurrency', type: 'boolean', help: 'Automatically reduce slots on 429/usage limits and recover slowly when healthy.' },
       { key: 'maxTaskConcurrency', label: 'Maximum article slots', type: 'number', min: 1, max: 5, warnAbove: { value: 3, message: 'Above 3 slots ChatGPT may rate-limit the whole account.' } },
       { key: 'targetArticlesPerHour', label: 'Target verified drafts per hour', type: 'number', min: 1, max: 60, help: 'Measured objective, not a guarantee.' },
+      { key: 'quietHours', label: 'Quiet hours', type: 'boolean', help: 'Between the two times below (this computer’s clock) no new ChatGPT prompt starts and no indexing request is made. Prompts already running finish; everything else waits and goes on afterwards. The pause button at the top pauses at any time.' },
+      { key: 'quietFrom', label: 'Quiet from', type: 'select', options: QUIET_HOURS },
+      { key: 'quietTo', label: 'Quiet until', type: 'select', options: QUIET_HOURS },
       { key: 'manualTitleApproval', label: 'Manual title approval', type: 'boolean', help: 'Pause after TITLES so you can pick or edit the title.' },
       { key: 'manualArticleApproval', label: 'Manual article approval', type: 'boolean', help: 'Pause before the WordPress draft is created.' },
       { key: 'holdForReview', label: 'Hold articles for review', type: 'boolean', help: 'Off (default): review reasons never stop an article. They are shown as notes, the draft is saved and the article completes. A draft with a serious problem is saved but never published automatically by a workflow. On: the old behaviour (Needs review).' },

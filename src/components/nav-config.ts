@@ -65,6 +65,7 @@ export const NAV_ITEMS: NavItem[] = [
       { href: '/logs', label: 'Logs', icon: 'ScrollText' },
       { href: '/recovery', label: 'Recovery Center', icon: 'LifeBuoy' },
       { href: '/automation-chrome', label: 'Automation Chrome', icon: 'AppWindow' },
+      { href: '/setup', label: 'Setup checklist', icon: 'ListChecks' },
       { href: '/help', label: 'Help / Setup', icon: 'CircleHelp' },
     ],
   },
@@ -151,6 +152,9 @@ export interface QuickAction {
 }
 
 /** Shown when the search opens, and found by name or keyword. Each one opens an existing page or dialog. */
+/** The quick action that opens the help assistant's panel instead of a page. */
+export const ASSISTANT_ACTION = '#assistant';
+
 export const QUICK_ACTIONS: QuickAction[] = [
   { href: '/single-article', label: 'New article', icon: 'PenLine', keywords: 'write post single generate keyword' },
   { href: '/websites?add=1', label: 'Add a website', icon: 'Globe', keywords: 'wordpress site connect login' },
@@ -159,6 +163,8 @@ export const QUICK_ACTIONS: QuickAction[] = [
   { href: '/writers', label: 'New or imported writer', icon: 'Bot', keywords: 'writer prompt custom import export' },
   { href: '/queue', label: 'See articles in progress', icon: 'ListOrdered', keywords: 'queue running status jobs' },
   { href: '/settings', label: 'Settings and app updates', icon: 'Settings', keywords: 'preferences options update chatgpt tabs notifications' },
+  { href: '/setup', label: 'Setup checklist', icon: 'ListChecks', keywords: 'start first getting started wizard onboarding steps' },
+  { href: ASSISTANT_ACTION, label: 'Ask the help assistant', icon: 'Sparkles', keywords: 'ai gemini question problem why help chat ask' },
   { href: '/help', label: 'Help and setup guide', icon: 'CircleHelp', keywords: 'guide how manual support' },
 ];
 

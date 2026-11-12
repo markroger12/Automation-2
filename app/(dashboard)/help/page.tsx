@@ -1,5 +1,7 @@
+import Link from 'next/link';
 import { Card, PageHeader } from '@/components/ui';
 import { inDesktopApp } from '@/lib/runtime';
+import { AskAssistantButton } from '@/components/assistant';
 
 export const metadata = { title: 'Help / Setup' };
 
@@ -16,6 +18,9 @@ function DesktopStart() {
           <li>Open <strong>Blog Automation Studio</strong> from the Start menu or the desktop. The dashboard and the worker start by themselves; there is nothing else to install or keep open.</li>
           <li>The first start asks for the <strong>data folder</strong>: your articles, settings and sign-ins. <strong>Help → About</strong> shows which one is in use.</li>
           <li>Closing the window keeps the app running in the tray, next to the clock, so the workflow keeps going. Right-click the tray icon → <strong>Quit</strong> stops it safely.</li>
+          <li>
+            The <Link className="link" href="/setup">Setup checklist</Link> shows what is still needed before the first article (ChatGPT, a website, the first article) and ticks each step off by itself.
+          </li>
         </ol>
       </Card>
       <Card title="2 · The tabs at the top">
@@ -35,7 +40,11 @@ export default function HelpPage() {
   const desktop = inDesktopApp();
   return (
     <>
-      <PageHeader title="Help / Setup" description={desktop ? 'How to use the app. Everything runs on this computer; nothing is sent to a cloud service by the app itself.' : 'Windows-first setup for this private, local tool. Nothing is sent to a cloud service by the app itself.'} />
+      <PageHeader
+        title="Help / Setup"
+        description={`${desktop ? 'How to use the app. Everything runs on this computer.' : 'Windows-first setup for this private, local tool.'} Only the optional help assistant sends a question, with a short status of the app, to Google Gemini.`}
+        actions={<AskAssistantButton />}
+      />
       <div className="grid gap-6 lg:grid-cols-2">
         {desktop ? <DesktopStart /> : null}
         <Card title="1 · Install (once)" className={desktop ? 'hidden' : undefined}>

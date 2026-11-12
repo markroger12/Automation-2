@@ -20,6 +20,8 @@ files:
   - updates.cjs
   - ux.cjs
   - dashboard-preload.cjs
+  - status.cjs
+  - tray/*.png
   - offline.html
   - content-shim.js
   - icon.png

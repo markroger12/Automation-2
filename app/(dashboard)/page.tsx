@@ -6,13 +6,15 @@ import { siteSummaries, taskGroupCounts } from '@/lib/stats';
 import { LANGUAGE_LABELS, moduleDisplayName, type Language } from '@/lib/domain';
 import { Card, Chip, EmptyState, LinkButton, PageHeader, ProgressBar, Stat, StatusChip, formatRelative } from '@/components/ui';
 import { ensureCustomWriters } from '@/lib/writers/store';
+import { setupState } from '@/lib/setup';
+import { SetupBanner } from '@/components/setup-checklist';
 
 export const metadata = { title: 'Overview' };
 
 export default async function OverviewPage() {
   await ensureCustomWriters();
   // The health warnings are in the banner above every page (app/(dashboard)/layout.tsx), not repeated here.
-  const [counts, worker, extension, sites, recent] = await Promise.all([
+  const [counts, worker, extension, sites, recent, setup] = await Promise.all([
     taskGroupCounts(),
     getWorkerHealth(),
     getExtensionHealth(),
@@ -22,6 +24,7 @@ export default async function OverviewPage() {
       take: 10,
       select: { id: true, keyword: true, status: true, percent: true, moduleKey: true, updatedAt: true, message: true, website: { select: { name: true } } },
     }),
+    setupState(),
   ]);
 
   return (
@@ -40,6 +43,8 @@ export default async function OverviewPage() {
           </>
         }
       />
+
+      <SetupBanner initial={setup} />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="All articles" value={counts.total} hint="Article History" href="/history" />

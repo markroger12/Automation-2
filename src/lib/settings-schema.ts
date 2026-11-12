@@ -38,6 +38,13 @@ export const workflowSettingsSchema = z.object({
   maxTaskConcurrency: z.number().int().min(1).max(5).default(5),
   targetArticlesPerHour: z.number().min(1).max(60).default(6),
   highThroughputMode: z.boolean().default(true),
+  /**
+   * Quiet hours (owner request 2026-11-12): between these times (this computer's clock) no new ChatGPT prompt starts
+   * and no indexing request is made; running prompts finish, the rest waits (src/lib/work-pause.ts).
+   */
+  quietHours: z.boolean().default(false),
+  quietFrom: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default('23:00'),
+  quietTo: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default('07:00'),
   throughputProfile: z.enum(['throughput-first', 'quality-first']).default('throughput-first'),
   retryAttempts: z.number().int().min(0).max(10).default(2),
   retryBaseDelaySec: z.number().int().min(1).max(3600).default(30),

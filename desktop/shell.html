@@ -125,6 +125,7 @@
         Chrome
       </button>
       <span class="spacer"></span>
+      <span class="chip" id="work-chip" hidden title=""><span class="dot" id="work-dot" aria-hidden="true"></span><span class="t" id="work-state" aria-live="polite"></span></span>
       <span class="chip" id="chatgpt-chip" hidden title=""><span class="dot" id="chatgpt-dot" aria-hidden="true"></span><span class="t" id="chatgpt-state" aria-live="polite"></span></span>
       <span class="chip" id="gsc-chip" hidden title=""><span class="dot" id="gsc-dot" aria-hidden="true"></span><span class="t" id="gsc-state" aria-live="polite"></span></span>
       <button class="update" id="update" hidden></button>
@@ -234,6 +235,7 @@
           for (const button of document.querySelectorAll('nav button[role="tab"], nav .link')) button.disabled = !s.ready;
           for (const [name, button] of Object.entries(tabs)) button.setAttribute('aria-selected', String(s.tab === name));
           showChatgptTabs(s);
+          chip('work', s.work);
           chip('chatgpt', s.chatgpt);
           chip('gsc', s.gsc);
           showUpdate(s.update);

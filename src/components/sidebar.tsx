@@ -23,6 +23,7 @@ import {
   LayoutGrid,
   LifeBuoy,
   LineChart,
+  ListChecks,
   ListOrdered,
   Menu,
   MessageSquareText,
@@ -39,9 +40,11 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { NAV_ITEMS, QUICK_ACTIONS, SOON_ROUTES, navGroups, searchActions, searchPages, type NavItem } from './nav-config';
+import { ASSISTANT_ACTION, NAV_ITEMS, QUICK_ACTIONS, SOON_ROUTES, navGroups, searchActions, searchPages, type NavItem } from './nav-config';
 import { cx } from './ui';
 import { ThemeToggle } from './client';
+import { WorkPauseButton } from './work-pause';
+import { AssistantButton, openAssistant } from './assistant';
 
 const ICONS: Record<string, LucideIcon> = {
   Activity,
@@ -61,6 +64,7 @@ const ICONS: Record<string, LucideIcon> = {
   LayoutGrid,
   LifeBuoy,
   LineChart,
+  ListChecks,
   ListOrdered,
   MessageSquareText,
   PenLine,
@@ -229,7 +233,8 @@ function SearchBox() {
     ...(q.length >= 2 ? [{ href: `/history?q=${encodeURIComponent(q)}`, label: `Articles: “${q}”`, parent: 'Article History', icon: 'Search' }] : []),
   ];
   const go = (href: string) => {
-    router.push(href);
+    if (href === ASSISTANT_ACTION) openAssistant();
+    else router.push(href);
     setQuery('');
     setOpenList(false);
     ref.current?.blur();
@@ -415,6 +420,8 @@ export function Shell({ notices, children }: { notices: Notice[]; children: Reac
           </button>
           <SearchBox />
           <div className="ml-auto flex items-center gap-1">
+            <WorkPauseButton />
+            <AssistantButton />
             <Notifications notices={notices} />
           </div>
         </header>

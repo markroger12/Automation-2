@@ -5170,3 +5170,17 @@ npx tsc --noEmit                                # 0 errors
 BAS_STANDALONE=1 npx next build                 # green
 BAS_DATA_DIR=<scratch> npx tsx scripts/setup.ts # fresh data folder for the Chromium checks
 ```
+
+### Follow-up: a README for the app
+
+Owner request: “readme bhi app ke hisab bana dena new”.
+
+- **`README.md`** is now about the desktop app:
+  - the download link, a short Roman Urdu quick start, and a feature table;
+  - installing, the first start and the Setup checklist;
+  - everyday use: tabs, Ctrl+K, tray and taskbar, articles, pause and quiet hours, help;
+  - updates, the data folder, privacy and security, an app troubleshooting table, and links.
+- **Nothing was dropped.** The detailed sections moved word for word:
+  - every page and setting, and the desktop app in detail, went to `docs/user-guide.md`. Its data-folder table gains `credentials\` and `cache\`.
+  - npm requirements, install, run, the npm first run, git updating, npm troubleshooting, scripts, the disposable-WordPress test, building the installer, command-line backup and restore, and the technical security notes went to `docs/development.md`.
+- Every menu and button the README names was checked against the app's code (File → Run ChatGPT prompts in this app, Help → Troubleshooting → Copy details for a report, Logs / Diagnostics → Download diagnostic bundle, Setup checklist).

@@ -19,6 +19,7 @@ files:
   - google-preload.cjs
   - updates.cjs
   - ux.cjs
+  - dashboard-preload.cjs
   - offline.html
   - content-shim.js
   - icon.png

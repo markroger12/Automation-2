@@ -35,7 +35,7 @@ if (!fs.existsSync(node)) {
 }
 const app = path.join(bundle, 'app');
 const port = 3123;
-const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1', NEXT_TELEMETRY_DISABLED: '1', BAS_DATA_DIR: path.join(where, 'data'), BAS_PROJECT_ROOT: app, NODE_ENV: 'production', BAS_DESKTOP: '1', APP_ORIGIN: `http://localhost:${port}` };
+const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1', NEXT_TELEMETRY_DISABLED: '1', BAS_DATA_DIR: path.join(where, 'data'), BAS_PROJECT_ROOT: app, NODE_ENV: 'production', BAS_DESKTOP: '1', APP_ORIGIN: `http://localhost:${port}`, CACHE_DIR: path.join(where, 'data', 'cache'), JITI_FS_CACHE: path.join(where, 'data', 'cache', 'jiti') };
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;
 

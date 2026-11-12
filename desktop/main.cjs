@@ -624,7 +624,8 @@ function agentStore() {
 /** The dashboard and ChatGPT tabs, once the dashboard answers. `ownServer`: the dashboard this app started. */
 function attachTabs(ownServer) {
   if (!win || win.isDestroyed() || dashboardView) return;
-  dashboardView = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false } });
+  // Its preload gives the dashboard's App updates card the app's updater, and nothing else (dashboard-preload.cjs).
+  dashboardView = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, preload: path.join(__dirname, 'dashboard-preload.cjs') } });
   win.contentView.addChildView(dashboardView);
   void dashboardView.webContents.loadURL(ORIGIN).catch(() => {});
   dashboardView.webContents.on('did-finish-load', followDashboardTheme);
@@ -969,9 +970,11 @@ async function start() {
   // Owner request: updates. Only an installed app updates itself (not the smoke test, not a copy run from the repository).
   updates = createUpdates({
     log: (line) => logLine('update', line),
-    onState: () => {
+    onState: (state) => {
       shellState();
       appMenu();
+      // The dashboard's App updates card follows the download.
+      if (dashboardView && !dashboardView.webContents.isDestroyed()) dashboardView.webContents.send('bas-app:update-state', state);
     },
     notify: (title, body) => notifyOwner(title, body),
     enabled: app.isPackaged && !smoke,
@@ -995,7 +998,7 @@ async function start() {
     return;
   }
 
-  const env = { ...process.env, ...envFileVars(dataDir), BAS_DATA_DIR: dataDir, BAS_PROJECT_ROOT: appDir, NODE_ENV: 'production', APP_ORIGIN: ORIGIN, BAS_DESKTOP: '1', BAS_DESKTOP_AGENT_KEY: agentKey, NEXT_TELEMETRY_DISABLED: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1' };
+  const env = { ...process.env, ...envFileVars(dataDir), BAS_DATA_DIR: dataDir, BAS_PROJECT_ROOT: appDir, NODE_ENV: 'production', APP_ORIGIN: ORIGIN, BAS_DESKTOP: '1', BAS_APP_VERSION: app.getVersion(), CACHE_DIR: path.join(dataDir, 'cache'), JITI_FS_CACHE: path.join(dataDir, 'cache', 'jiti'), BAS_DESKTOP_AGENT_KEY: agentKey, NEXT_TELEMETRY_DISABLED: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1' };
   delete env.NODE_OPTIONS;
 
   status('Preparing your data…', 'Migrations with a backup first, settings, the face and person detectors (once).');
@@ -1034,7 +1037,7 @@ async function start() {
       updater = false;
     }
     const gscTab = Boolean(googleTab && chatgpt && chatgpt.agent && chatgpt.agent.capabilities().includes('gsc-request-indexing'));
-    const pages = fs.existsSync(path.join(__dirname, 'offline.html'));
+    const pages = fs.existsSync(path.join(__dirname, 'offline.html')) && fs.existsSync(path.join(__dirname, 'dashboard-preload.cjs'));
     const ok = worker && connected && info && info.dataId === dataFolderId(dataDir) && updater && gscTab && pages;
     return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}; updater ${updater ? 'loaded' : 'missing'}; Search Console tab ${gscTab ? 'ready for indexing requests' : 'missing'}; reconnect page ${pages ? 'present' : 'missing'}; version ${app.getVersion()}`);
   }
@@ -1093,6 +1096,13 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.on('bas-shell:select', (event, tab) => {
     if (win && event.sender === win.webContents) selectTab(tab);
+  });
+  // The dashboard's App updates card (dashboard-preload.cjs): only the dashboard tab's own page is answered.
+  const fromDashboard = (event) => Boolean(dashboardView) && event.sender === dashboardView.webContents && Boolean(event.senderFrame) && event.senderFrame === dashboardView.webContents.mainFrame && isLocal(event.senderFrame.url);
+  ipcMain.handle('bas-app:update-state', (event) => (fromDashboard(event) && updates ? updates.state() : null));
+  ipcMain.handle('bas-app:update-check', async (event) => (fromDashboard(event) && updates ? updates.check() : null));
+  ipcMain.on('bas-app:update-install', (event) => {
+    if (fromDashboard(event)) restartToUpdate();
   });
   ipcMain.on('bas-shell:update', (event, action) => {
     if (!win || event.sender !== win.webContents) return;

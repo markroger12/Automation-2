@@ -175,6 +175,8 @@ describe("the desktop app's ChatGPT tabs: several prompts at once", () => {
     await h.agent.tick();
     expect(h.open).toEqual(['app-1', 'app-2']); // Settings → ChatGPT tabs (and the slots) allow 2
     expect(h.agent.status()).toMatchObject({ busyTabs: 2, tabs: 2 });
+    // The tab bar marks each working ChatGPT tab (owner request 2026-11-12: tabs as in Chrome).
+    expect((h.agent.status() as unknown as { busyIds: string[] }).busyIds).toEqual(['app-1', 'app-2']);
     await h.agent.stop();
   });
 

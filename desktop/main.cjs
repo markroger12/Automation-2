@@ -379,7 +379,7 @@ function contextMenu(contents) {
 
 /** The page shown now: the dashboard, the ChatGPT page that has the focus (else the first), or Search Console. */
 function shownContents() {
-  if (activeTab === 'chatgpt' && chatgptViews.length) return (chatgptViews.find((v) => v.webContents.isFocused()) || chatgptViews[0]).webContents;
+  if (activeTab === 'chatgpt' && shownChatgptView()) return shownChatgptView().webContents;
   if (activeTab === 'search-console' && googleTab) return googleTab.view.webContents;
   return dashboardView ? dashboardView.webContents : null;
 }
@@ -438,9 +438,10 @@ function memorySaver() {
     logLine('app', 'Memory saver: the Search Console page is put away until it is needed again.');
   }
   if (dashboardView && !dashboardParked && hiddenSince && now - hiddenSince > 10 * MINUTE) parkDashboard();
-  if (chatgpt && chatgpt.agent && chatgpt.ids && !(activeTab === 'chatgpt' && win.isVisible())) {
+  if (chatgpt && chatgpt.agent && chatgpt.ids) {
     const memory = new Map(app.getAppMetrics().map((m) => [m.pid, m.memory && m.memory.workingSetSize]));
     for (const id of chatgpt.ids()) {
+      if (activeTab === 'chatgpt' && id === activeChatgpt && win.isVisible()) continue;
       const mb = Math.round((memory.get(chatgpt.processId(id)) || 0) / 1024);
       if (mb < 700 || !chatgpt.agent.isIdle(id, 5 * MINUTE) || now - (freshenedAt.get(id) || 0) < 30 * MINUTE) continue;
       freshenedAt.set(id, now);
@@ -469,37 +470,30 @@ function unparkDashboard() {
 
 /** The ChatGPT tabs' views in the window (one per ChatGPT tab; the agent opens more while prompts wait). */
 let chatgptViews = [];
+/** The ChatGPT tab shown when the ChatGPT tabs are on top (app-1, app-2 …). */
+let activeChatgpt = 'app-1';
+/** The open ChatGPT tabs' ids, and the view of the one shown (else the first). */
+const chatgptIds = () => (chatgpt && chatgpt.ids ? chatgpt.ids() : []);
+function shownChatgptView() {
+  if (!chatgpt) return null;
+  if (!chatgptIds().includes(activeChatgpt)) activeChatgpt = chatgptIds()[0] || 'app-1';
+  return chatgpt.viewOf(activeChatgpt) || chatgptViews[0] || null;
+}
 /** The Search Console tab (google-tab.cjs), made the first time it is opened. */
 let googleTab = null;
 
 /**
- * The dashboard fills the window. The ChatGPT tabs share the same place side by side (owner report 2026-11-08: one
- * prompt at a time): every ChatGPT page is shown at once when the ChatGPT tab is on top, as ChatGPT draws pictures only
- * in a page that is shown — 1 to 3 tabs in columns, 4 or 5 in two rows.
+ * Every tab fills the space under the tab bar. The ChatGPT pages (app-1, app-2 …) are separate tabs, as in Chrome
+ * (owner request 2026-11-12: “chatgpt ke 2 tabs … ek hi tab me dono use na ho”): one is shown at a time, and the
+ * others stay in the window underneath at full size, so ChatGPT keeps working and drawing pictures in them.
  */
-function chatgptGrid(area, count) {
-  const cols = count <= 3 ? count : Math.ceil(count / 2);
-  const rows = count <= 3 ? 1 : 2;
-  const gap = count > 1 ? 2 : 0;
-  const w = Math.floor((area.width - gap * (cols - 1)) / cols);
-  const h = Math.floor((area.height - gap * (rows - 1)) / rows);
-  return Array.from({ length: count }, (_, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = area.x + col * (w + gap);
-    const y = area.y + row * (h + gap);
-    return { x, y, width: col === cols - 1 ? area.x + area.width - x : w, height: row === rows - 1 ? area.y + area.height - y : h };
-  });
-}
-
 function layout() {
   if (!win || win.isDestroyed()) return;
   const { width, height } = win.getContentBounds();
   const bounds = { x: 0, y: TAB_BAR, width, height: Math.max(0, height - TAB_BAR) };
   if (dashboardView) dashboardView.setBounds(bounds);
   if (googleTab) googleTab.view.setBounds(bounds);
-  const cells = chatgptGrid(bounds, chatgptViews.length);
-  chatgptViews.forEach((view, i) => view.setBounds(cells[i]));
+  for (const view of chatgptViews) view.setBounds(bounds);
 }
 
 /** A ChatGPT tab was opened or closed: the window shows exactly the open ones, the tab shown stays on top. */
@@ -509,7 +503,7 @@ function chatgptTabsChanged(views) {
   for (const view of views) if (!chatgptViews.includes(view)) win.contentView.addChildView(view);
   chatgptViews = [...views];
   // A new view was added on top: put back on top the one shown.
-  if (activeTab === 'chatgpt') for (const view of chatgptViews) win.contentView.addChildView(view);
+  if (activeTab === 'chatgpt' && shownChatgptView()) win.contentView.addChildView(shownChatgptView());
   else if (activeTab === 'search-console' && googleTab) win.contentView.addChildView(googleTab.view);
   else if (dashboardView) win.contentView.addChildView(dashboardView);
   layout();
@@ -533,13 +527,21 @@ function followDashboardTheme() {
 
 function shellState() {
   if (!win || win.isDestroyed()) return;
-  win.webContents.send('bas-shell:state', { ready: Boolean(dashboardView), tab: activeTab, chatgpt: chatgptState, gsc: gscState, theme: shellTheme, update: updates ? updates.state() : null, version: app.getVersion() });
+  const busy = (lastAgentStatus && lastAgentStatus.busyIds) || [];
+  const chatgptTabs = chatgptIds().map((id) => ({ id, busy: busy.includes(id) }));
+  if (chatgptTabs.length && !chatgptTabs.some((t) => t.id === activeChatgpt)) activeChatgpt = chatgptTabs[0].id;
+  win.webContents.send('bas-shell:state', { ready: Boolean(dashboardView), tab: activeTab, chatgptTabs, activeChatgpt, chatgpt: chatgptState, gsc: gscState, theme: shellTheme, update: updates ? updates.state() : null, version: app.getVersion() });
 }
 
 /** Both tabs stay in the window (ChatGPT keeps working behind the dashboard); the one shown is on top. `focusId`: the
  * ChatGPT tab (app-1, app-2 …) that asked to be shown. */
 function selectTab(tab, focusId = null) {
   if (!win || win.isDestroyed() || !dashboardView) return;
+  // A ChatGPT tab of the tab bar: “chatgpt:app-2”.
+  if (typeof tab === 'string' && tab.startsWith('chatgpt:')) {
+    focusId = tab.slice('chatgpt:'.length);
+    tab = 'chatgpt';
+  }
   if (tab === 'google') {
     // Google and Search Console: Automation Chrome (its sign-in and the indexing panel are on this page).
     tab = 'dashboard';
@@ -553,11 +555,13 @@ function selectTab(tab, focusId = null) {
   }
   if (tab === 'search-console') googleTab.open();
   activeTab = tab === 'chatgpt' && chatgpt ? 'chatgpt' : tab === 'search-console' ? 'search-console' : 'dashboard';
-  // The one shown goes on top: the dashboard, all ChatGPT tabs side by side, or Search Console.
-  if (activeTab === 'chatgpt') for (const view of chatgptViews) win.contentView.addChildView(view);
-  else if (activeTab === 'search-console') win.contentView.addChildView(googleTab.view);
-  else win.contentView.addChildView(dashboardView);
-  (activeTab === 'chatgpt' ? (focusId && chatgpt.viewOf(focusId)) || chatgptViews[0] : activeTab === 'search-console' ? googleTab.view : dashboardView).webContents.focus();
+  if (activeTab === 'chatgpt' && focusId && chatgptIds().includes(focusId)) activeChatgpt = focusId;
+  // The one shown goes on top: the dashboard, one ChatGPT tab, or Search Console.
+  const shown = activeTab === 'chatgpt' ? shownChatgptView() : activeTab === 'search-console' ? googleTab.view : dashboardView;
+  if (shown) {
+    win.contentView.addChildView(shown);
+    shown.webContents.focus();
+  }
   shellState();
 }
 
@@ -1003,7 +1007,11 @@ async function start() {
   }
   status('Starting the dashboard…');
   // With a channel to this app, so the server stops by itself when the app is gone (desktop-child-guard.cjs).
-  keepRunning('web', () => spawnNode('web', [...NODE_MEMORY, '--require', childGuard, 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], env, true));
+  // The installed app runs Next.js's standalone server (server.js, prepare.mjs); a copy started from the repository runs
+  // `next start`. Either way only on 127.0.0.1 (HOSTNAME is set here, never taken from the computer's environment).
+  const standaloneServer = path.join(appDir, 'server.js');
+  const webArgs = fs.existsSync(standaloneServer) ? [standaloneServer] : ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)];
+  keepRunning('web', () => spawnNode('web', [...NODE_MEMORY, '--require', childGuard, ...webArgs], { ...env, PORT: String(PORT), HOSTNAME: '127.0.0.1' }, true));
   status('Starting the worker…');
   keepRunning('worker', () => spawnNode('worker', [...NODE_MEMORY, ...toolEntry('worker', 'src/worker/index.ts')], env, true));
   if (!(await waitForDashboard(120_000))) {

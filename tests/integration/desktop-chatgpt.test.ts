@@ -125,7 +125,7 @@ describe.skipIf(!fs.existsSync(electron))("the desktop app's ChatGPT tab against
     expect(page.runtime).toBe('undefined');
   });
 
-  it('owner report (2026-11-08): two prompts at once run in two ChatGPT tabs side by side, each sent once', async () => {
+  it('owner report (2026-11-08): two prompts at once run in two ChatGPT tabs (one shown, the other underneath), each sent once', async () => {
     // A slow answer: the first prompt is still running when the second waits.
     launch({ variant: 'standard', mode: 'normal', answerDelayMs: 8000 });
     const a = await request('First parallel prompt about Tom Kaulitz');

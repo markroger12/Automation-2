@@ -50,7 +50,7 @@ Open **http://localhost:3000**. Only one worker can own the `data\` folder; a se
 
 The same tool as one Windows program, like Discord: no command window, and nothing else to install (no Node.js, no npm). The Node.js way above keeps working. While `npm run start:all` runs on the same data folder, the app's window just shows it.
 
-- **Install:** download **Blog-Automation-Studio-Setup-….exe** from the repository's *Releases* page (the newest release). Every run of GitHub Actions' “Desktop app (Windows installer)” also has it under *Artifacts*. Run it: it installs with one click for your Windows user only (no administrator), adds a desktop and a Start-menu shortcut, and starts the app. The installer is not code-signed, so Windows SmartScreen may say “unknown publisher”: *More info* → *Run anyway*.
+- **Install:** download **Blog-Automation-Studio-Setup-….exe** from the repository's *Releases* page (the newest release). Every run of GitHub Actions' “Desktop app (Windows installer)” also has it under *Artifacts*. Run it: the installer asks where to install (it suggests `…\AppData\Local\Programs\Blog Automation Studio`; an app that is already installed is updated where it is), installs for your Windows user only (no administrator), adds a desktop and a Start-menu shortcut, and starts the app on its last page. The installer is not code-signed, so Windows SmartScreen may say “unknown publisher”: *More info* → *Run anyway*.
 - **First start:** the app asks for the **data folder**.
   - **Choose my data folder…** uses the one `npm run start:all` uses (for example `F:\claude\Automation-2\data`), with the same websites, articles, settings and Automation Chrome profile.
   - **Start with a new data folder** creates an empty one in the app's own folder.
@@ -73,7 +73,7 @@ The same tool as one Windows program, like Discord: no command window, and nothi
   - **Several prompts at once** (as in Chrome):
     - When more prompts wait, the app opens more ChatGPT tabs, up to **Settings → ChatGPT tabs** (1–5, default 3) and the article slots of High-Throughput mode. It opens one at a time, and only while ChatGPT is signed in without a check.
     - Each tab runs its own prompt. All share your one sign-in.
-    - The **ChatGPT** tab shows them side by side: 2 or 3 in columns, 4 or 5 in two rows. ChatGPT draws pictures only in a page that is shown.
+    - Each open ChatGPT page has its own tab at the top, as in Chrome: **ChatGPT 1**, **ChatGPT 2** … (just **ChatGPT** when one is open), with a pulsing dot while it works on a prompt. One is shown at a time; the others keep working underneath. With **Settings → ChatGPT tabs** at 1 there is only one.
     - An extra tab with nothing to do closes after 5 minutes; one closes at once when you lower the setting.
     - The top line says e.g. “working on 2 prompts at once (3 tabs)”.
   - A sign-in page or a human check is never automated: the app shows the ChatGPT tab and a notification, and the job waits for you as in Chrome. Links in answers open in your default browser.
@@ -102,7 +102,7 @@ The same tool as one Windows program, like Discord: no command window, and nothi
   - Each build of the Windows workflow gets its own version (3.3.*run number*). Every build of `main` that passes its checks (tests, installer installed and started once) is published as a **GitHub release** `v3.3.N` with the installer, so the installed app finds it by itself. A new install: download **Blog-Automation-Studio-Setup-3.3.N.exe** from the repository's *Releases* page.
   - The app updates from version 3.3.N on; an older install (3.2.0) is updated once by running the new installer.
 - **Light and quick:**
-  - **Installer:** it carries only what runs: no source maps, type declarations, TypeScript sources, read-me, test or example files of the packages. That is about 9,700 files instead of 18,000, so installing and updating take far less time.
+  - **Installer:** it carries only what runs: Next.js's own standalone server with just the files it needs, and no source maps, type declarations, TypeScript sources, read-me, test or example files of the packages. That is about 6,500 files instead of 18,000, so installing and updating take far less time. Windows' virus scan checks each new file, so the first install of an unsigned app can still take a minute or two.
   - **Start:** the worker and the start-up steps are compiled in advance, so nothing is compiled at start. The worker is ready in about 0.65 s instead of 1–1.5 s and uses about 150 MB instead of 185–235 MB.
   - **Smaller memory use:** the dashboard server and the worker run with a smaller memory nursery. The dashboard server measured 252 → 223 MB at rest and 319 → 259 MB after showing every page.
   - **Memory saver, every minute:**
@@ -111,7 +111,7 @@ The same tool as one Windows program, like Discord: no command window, and nothi
     - A ChatGPT tab that is not shown, has had nothing to do for 5 minutes and uses over 700 MB loads ChatGPT afresh.
     - The work itself (server, worker, prompts) never stops for it.
 - **What is inside:** the built dashboard, the worker, the migrations and settings steps (run at every start, with a backup first), and only the packages those load. Electron 44.7.0 provides the window and, with its built-in Node.js 24.21, runs the tool; the whole test suite passes on that Node.js too. The window's texts are English only.
-- **Building it yourself:** in the repository root run `npm ci` and `npm run build`. In `desktop\` run `npm ci`. Back in the root run `node desktop/prepare.mjs` and `node desktop/check-bundle.mjs`, which runs a copy of the bundle outside the repository, as the installed app does. Then in `desktop\` run `npm run dist:win`. The installer is written to `desktop\dist`. The GitHub workflow also runs the ChatGPT tab against a fake ChatGPT page (`tests/integration/desktop-chatgpt.test.ts`), installs the app and starts it once (`--smoke-test`, which also checks that the ChatGPT tab reaches the dashboard).
+- **Building it yourself:** in the repository root run `npm ci` and, in PowerShell, `$env:BAS_STANDALONE=1; npm run build` (Next.js then also writes its standalone server, which the app carries). In `desktop\` run `npm ci`. Back in the root run `node desktop/prepare.mjs` and `node desktop/check-bundle.mjs`, which runs a copy of the bundle outside the repository, as the installed app does. Then in `desktop\` run `npm run dist:win`. The installer is written to `desktop\dist`. The GitHub workflow also runs the ChatGPT tab against a fake ChatGPT page (`tests/integration/desktop-chatgpt.test.ts`), installs the app and starts it once (`--smoke-test`, which also checks that the ChatGPT tab reaches the dashboard).
 
 ## First run
 

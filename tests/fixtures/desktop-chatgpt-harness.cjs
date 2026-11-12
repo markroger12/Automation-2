@@ -60,13 +60,14 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1200, height: 800, show: true, webPreferences: { sandbox: true, contextIsolation: true } });
   const storeFile = path.join(dir, 'agent.json');
   let shown = [];
-  // As the app: every ChatGPT tab in the window, side by side.
+  // As the app (owner request 2026-11-12, tabs as in Chrome): every ChatGPT tab fills the window, one on top of the
+  // other; the first stays on top, the others work underneath.
   const tabsChanged = (views) => {
     for (const v of shown) if (!views.includes(v)) win.contentView.removeChildView(v);
     for (const v of views) if (!shown.includes(v)) win.contentView.addChildView(v);
     shown = [...views];
-    const w = Math.floor(1200 / Math.max(1, views.length));
-    views.forEach((v, i) => v.setBounds({ x: i * w, y: 0, width: w, height: 800 }));
+    for (const v of views) v.setBounds({ x: 0, y: 0, width: 1200, height: 800 });
+    if (views[0]) win.contentView.addChildView(views[0]);
     console.log(`TABS ${views.length}`);
   };
   const tab = createChatGPTTabs({

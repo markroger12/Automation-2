@@ -44,7 +44,9 @@ import { ASSISTANT_ACTION, NAV_ITEMS, QUICK_ACTIONS, SOON_ROUTES, navGroups, sea
 import { cx } from './ui';
 import { ThemeToggle } from './client';
 import { WorkPauseButton } from './work-pause';
-import { AssistantButton, openAssistant } from './assistant';
+import { AssistantButton, forgetAssistantChat, openAssistant } from './assistant';
+import { ErrorBoundary } from './error-boundary';
+import { reportClientError } from '@/lib/client/report-error';
 
 const ICONS: Record<string, LucideIcon> = {
   Activity,
@@ -398,6 +400,17 @@ export function Shell({ notices, children }: { notices: Notice[]; children: Reac
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   useEffect(() => setOpen(false), [pathname]);
+  // Errors outside React's rendering (a click handler, a timer, a promise) go to the app's log too.
+  useEffect(() => {
+    const onError = (e: ErrorEvent) => reportClientError(e.error ?? e.message, 'page script');
+    const onRejection = (e: PromiseRejectionEvent) => reportClientError(e.reason, 'page script (promise)');
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, []);
   const toggleCollapsed = () => {
     const collapsed = !document.documentElement.classList.contains('sb-collapsed');
     document.documentElement.classList.toggle('sb-collapsed', collapsed);
@@ -420,8 +433,26 @@ export function Shell({ notices, children }: { notices: Notice[]; children: Reac
           </button>
           <SearchBox />
           <div className="ml-auto flex items-center gap-1">
-            <WorkPauseButton />
-            <AssistantButton />
+            <ErrorBoundary name="pause button">
+              <WorkPauseButton />
+            </ErrorBoundary>
+            <ErrorBoundary
+              name="help assistant"
+              onError={forgetAssistantChat}
+              fallback={(_error, reset) => (
+                <button
+                  type="button"
+                  onClick={reset}
+                  title="The help assistant had a problem and was closed. Click to open it again."
+                  className="text-muted inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+                >
+                  <Sparkles className="h-4 w-4 text-amber-500" aria-hidden />
+                  <span className="hidden sm:inline">Ask</span>
+                </button>
+              )}
+            >
+              <AssistantButton />
+            </ErrorBoundary>
             <Notifications notices={notices} />
           </div>
         </header>

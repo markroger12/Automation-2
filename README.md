@@ -138,6 +138,7 @@ Treat the data folder like a password: it holds your signed-in sessions.
 | “WordPress login required” | Open the website's page. With a saved password the app signs in again by itself; a CAPTCHA or 2-step code opens a window for you. |
 | Nothing starts | Check **Pause** in the top bar and the quiet hours in **Settings → Workflow**. |
 | “Reconnecting to the dashboard…” | The dashboard restarts by itself after a crash, usually within 30 seconds. |
+| “This page ran into a problem” | **Try again** or **Reload the page**; your work keeps running in the background. If it comes back, **Copy details** and send them: the error is also in the app's log. |
 | An article stopped | Its page says why and what to do. **Retry** continues it, and the **Ask** button explains the message. |
 | Anything else | **Help → Troubleshooting → Copy details for a report**, plus **Logs / Diagnostics → Download diagnostic bundle** (secrets removed). |
 

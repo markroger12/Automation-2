@@ -7,6 +7,7 @@ import { dataPaths } from '../paths';
 import { enqueue } from '../queue';
 import { errorMessage, log } from '../log';
 import { agentJson, checkAgentRequest } from '../agent/handler';
+import { DESKTOP_AGENT_ID, bearerKey, isDesktopAgentKey } from '../agent/desktop';
 import { GSC_QUEUE, type IndexingJobPayload } from './request-indexing';
 
 /**
@@ -36,6 +37,8 @@ export async function handleGscProof(req: Request): Promise<Response> {
   const parsed = proofSchema.safeParse(raw);
   if (!parsed.success) return agentJson({ error: 'Invalid proof upload' }, 400, origin);
   const { installId, jobId, mhtmlBase64 } = parsed.data;
+  // The desktop app's key and install id belong together, as for every agent request.
+  if ((installId === DESKTOP_AGENT_ID) !== isDesktopAgentKey(bearerKey(req))) return agentJson({ error: 'This connection key does not belong to this install id.' }, 403, origin);
   const job = await db.queueJob.findUnique({ where: { id: jobId } });
   if (!job || job.queue !== GSC_QUEUE || job.status !== 'ACTIVE' || job.lockedBy !== `extension:${installId}`) {
     return agentJson({ error: 'The proof must belong to a request this extension is making now.' }, 403, origin);

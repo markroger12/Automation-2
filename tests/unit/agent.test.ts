@@ -68,7 +68,7 @@ describe('extension agent endpoint', () => {
     expect((await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-2', version: '3.0.0' }))).status).toBe(200);
   });
 
-  it("the desktop app's ChatGPT tab: its own key and install id, prompts only to it while connected, never Search Console", async () => {
+  it("the desktop app's ChatGPT tab: its own key and install id, prompts only to it while connected; Search Console only when it says it makes the requests", async () => {
     const { EXPECTED_EXTENSION_VERSION } = await import('@/lib/agent/version');
     const { enqueue } = await import('@/lib/queue');
     const app = 'k'.repeat(43);
@@ -93,6 +93,26 @@ describe('extension agent endpoint', () => {
       expect(claimed.job?.id).toBe(job.id);
       const gsc = (await (await handler.handleAgentRequest(req({ action: 'gsc-claim', installId: 'desktop-app' }, { key: app, origin: null }))).json()) as { job: null; reason: string };
       expect(gsc).toMatchObject({ job: null, reason: 'not-here' });
+      // Owner (2026-11-12): signed in to Google in the app's Search Console tab. An app that says it makes the requests
+      // gets them; Automation Chrome's extension is told so and gets none.
+      const { createWebsite } = await import('../helpers/fixtures');
+      const site = await createWebsite(client);
+      const wf = await client.workflow.create({ data: { websiteId: site.id, name: 'Desktop gsc' } });
+      const kw = await client.workflowKeyword.create({ data: { workflowId: wf.id, keyword: 'App Request', normalizedKeyword: 'app request', position: 1, status: 'PUBLISHED', publishedUrl: 'https://site.example/app-request/' } });
+      const { job: request } = await enqueue({ queue: 'gsc', kind: 'gsc.request-indexing', idempotencyKey: `gsc-index:${kw.id}`, websiteId: site.id, payload: { keywordId: kw.id, url: 'https://site.example/app-request/', property: 'sc-domain:site.example', websiteId: site.id } });
+      const gscHello = (await (await handler.handleAgentRequest(req({ ...appHello, capabilities: ['claim', 'gsc-request-indexing'] }, { key: app, origin: null }))).json()) as { config: { gscWaiting: number } };
+      expect(gscHello.config.gscWaiting).toBe(1);
+      const extSeesApp = (await (await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-3', version }))).json()) as { config: { gscWaiting: number; searchConsoleInApp: boolean } };
+      expect(extSeesApp.config).toMatchObject({ gscWaiting: 0, searchConsoleInApp: true });
+      const extRefused = (await (await handler.handleAgentRequest(req({ action: 'gsc-claim', installId: 'inst-3' }))).json()) as { job: null; reason: string };
+      expect(extRefused).toMatchObject({ job: null, reason: 'in-app' });
+      const appClaimed = (await (await handler.handleAgentRequest(req({ action: 'gsc-claim', installId: 'desktop-app' }, { key: app, origin: null }))).json()) as { job: { id: string } | null };
+      expect(appClaimed.job?.id).toBe(request.id);
+      expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).indexingStatus).toMatch(/^The app is requesting indexing in Search Console/);
+      // Back to the app without Search Console: Automation Chrome takes the requests again.
+      await handler.handleAgentRequest(req(appHello, { key: app, origin: null }));
+      const extAgain = (await (await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-3', version }))).json()) as { config: { searchConsoleInApp: boolean } };
+      expect(extAgain.config.searchConsoleInApp).toBe(false);
       // Gone for 75 s+ (app closed): the extension takes ChatGPT again.
       await client.workerStatus.update({ where: { id: 'extension:desktop-app' }, data: { lastSeenAt: new Date(Date.now() - 80_000) } });
       const again = (await (await handler.handleAgentRequest(req({ action: 'hello', installId: 'inst-3', version }))).json()) as { config: { chatgptInApp: boolean } };

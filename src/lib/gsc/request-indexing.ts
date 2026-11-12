@@ -4,6 +4,11 @@ import { savePageCopy } from '../page-copies';
 import { enqueue } from '../queue';
 import { inspectionProperty, searchConsoleHome } from '../workflow/search-console';
 import { resolveWebsiteProperty } from './property';
+import { DESKTOP_AGENT_ID } from '../agent/desktop';
+
+/** Who makes a request, and where the owner signs in for it: the desktop app's Search Console tab, or Automation Chrome. */
+const maker = (installId: string) => (installId === DESKTOP_AGENT_ID ? 'The app' : 'Automation Chrome');
+const signInPlace = (installId: string) => (installId === DESKTOP_AGENT_ID ? "the app's Search Console tab" : 'Automation Chrome');
 
 /**
  * “Request indexing” as the owner does it (owner request): open the URL in Search Console's URL Inspection and click
@@ -134,7 +139,7 @@ export async function claimIndexingRequest(installId: string, now = new Date()):
     }
     const taken = await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'ACTIVE', lockedBy: `extension:${installId}`, leaseUntil: new Date(now.getTime() + LEASE_MS), attempts: { increment: 1 }, startedAt: now } });
     if (!taken.count) return null;
-    await setKeyword(p.keywordId, { indexingStatus: `Automation Chrome is requesting indexing in Search Console (URL Inspection → Request indexing) · ${now.toISOString()}` });
+    await setKeyword(p.keywordId, { indexingStatus: `${maker(installId)} is requesting indexing in Search Console (URL Inspection → Request indexing) · ${now.toISOString()}` });
     // As the owner does it (owner's video): the property's page, where the URL is typed into “Inspect any URL in …”;
     // Google's own inspection link as the fallback.
     return { id: job.id, url: p.url, property: p.property, inspectUrl: searchConsoleHome(p.property), altUrl: p.inspectLink ?? null };
@@ -179,14 +184,14 @@ export async function reportIndexingRequest(input: { jobId: string; installId: s
       await retry(20 * HOUR, `Search Console's daily limit for indexing requests was reached.${said}`);
       break;
     case 'NOT_SIGNED_IN':
-      await retry(HOUR, 'Sign in to Google (Search Console) in Automation Chrome, then the request is made automatically.');
+      await retry(HOUR, `Sign in to Google (Search Console) in ${signInPlace(input.installId)}, then the request is made automatically.`);
       break;
     case 'HUMAN_CHECK':
-      await retry(HOUR, `Google showed a check (“I'm not a robot”) in Automation Chrome that was not completed in time.${said} Press “Request now” and complete it in the Automation Chrome window that comes to the front.`);
+      await retry(HOUR, `Google showed a check (“I'm not a robot”) in ${signInPlace(input.installId)} that was not completed in time.${said} Press “Request now” and complete it in ${signInPlace(input.installId)}, which comes to the front.`);
       break;
     case 'NO_ACCESS':
       await db.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: now, leaseUntil: null, error: `No access to ${p.property}`, errorCode: input.outcome } });
-      await setKeyword(p.keywordId, { indexingStatus: `The Google account in Automation Chrome cannot use ${p.property} in Search Console.${said} Sign in with the account that owns the property, then retry the keyword.` });
+      await setKeyword(p.keywordId, { indexingStatus: `The Google account in ${signInPlace(input.installId)} cannot use ${p.property} in Search Console.${said} Sign in with the account that owns the property, then retry the keyword.` });
       break;
     default:
       // The click may have reached Google: the next try is a day later (one request per article per day).

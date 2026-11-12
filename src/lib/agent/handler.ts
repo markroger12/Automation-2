@@ -10,7 +10,7 @@ import { claimChatGPTJob, completeChatGPTJob, failChatGPTJob, reportChatGPTProgr
 import { resumeLoginPausedTasks } from '../tasks/lifecycle';
 import { openIncident } from '../recovery';
 import { verifyConnectionKey } from './keys';
-import { DESKTOP_AGENT_ID, bearerKey, chatgptInApp, isDesktopAgentKey } from './desktop';
+import { DESKTOP_AGENT_ID, SEARCH_CONSOLE_CAPABILITY, bearerKey, chatgptInApp, isDesktopAgentKey, searchConsoleInApp } from './desktop';
 import { claimIndexingRequest, reportIndexingRequest, waitingIndexingRequests } from '../gsc/request-indexing';
 import { agentRequestSchema, type AgentRequest } from './schemas';
 import { AGENT_PROTOCOL_VERSION, EXPECTED_EXTENSION_VERSION } from './version';
@@ -123,8 +123,11 @@ async function dispatch(body: AgentRequest): Promise<unknown> {
       return { job: await describeJob(result.job, result.payload, result.reconcile, result.leaseUntil) };
     }
     case 'gsc-claim': {
-      // Google refuses sign-ins in a browser built into an app: Search Console stays in Automation Chrome.
-      if (body.installId === DESKTOP_AGENT_ID) return { job: null, reason: 'not-here' };
+      // The app requests indexing in its own Search Console tab when it says it can (the owner signed in to Google
+      // there); then Automation Chrome's extension takes none. An app that does not say so takes none.
+      const inApp = await searchConsoleInApp();
+      if (body.installId === DESKTOP_AGENT_ID && !inApp) return { job: null, reason: 'not-here' };
+      if (body.installId !== DESKTOP_AGENT_ID && inApp) return { job: null, reason: 'in-app', message: 'Search Console runs in the desktop app.' };
       const mismatch = await versionMismatch(body.installId);
       if (mismatch) return { job: null, reason: 'version-mismatch', message: mismatch };
       return { job: await claimIndexingRequest(body.installId) };
@@ -196,7 +199,7 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
   }
   const versionOk = body.version === EXPECTED_EXTENSION_VERSION;
   const desktop = body.installId === DESKTOP_AGENT_ID;
-  const [waiting, active, slots, backoffUntil, paused, gscWaiting, inApp] = await Promise.all([
+  const [waiting, active, slots, backoffUntil, paused, gscWaiting, inApp, gscInApp] = await Promise.all([
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: now } } }),
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'ACTIVE' } }),
     allowedSlots(),
@@ -204,7 +207,10 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
     getValue<boolean>(CLAIMS_PAUSED_KEY, false),
     waitingIndexingRequests(now),
     desktop ? false : chatgptInApp(now),
+    desktop ? false : searchConsoleInApp(now),
   ]);
+  // Search Console requests: to the app when it makes them, else to Automation Chrome's extension.
+  const gscForThis = desktop ? (body.capabilities.includes(SEARCH_CONSOLE_CAPABILITY) ? gscWaiting : 0) : gscInApp ? 0 : gscWaiting;
   return {
     ok: true,
     versionOk,
@@ -225,7 +231,9 @@ async function hello(body: Extract<AgentRequest, { action: 'hello' }>) {
       claimsPaused: paused,
       waitingJobs: waiting,
       // Search Console “Request indexing” requests waiting for Automation Chrome.
-      gscWaiting: desktop ? 0 : gscWaiting,
+      gscWaiting: gscForThis,
+      // The desktop app's Search Console tab makes the indexing requests: Automation Chrome makes none.
+      searchConsoleInApp: gscInApp,
       // The desktop app's ChatGPT tab is connected: Automation Chrome opens no ChatGPT tab and claims no prompt.
       chatgptInApp: inApp,
       warning: settings.browser.chatgptTabs > 3 ? 'More than 3 ChatGPT tabs can trigger account-wide rate limiting.' : null,

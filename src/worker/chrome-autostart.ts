@@ -6,7 +6,7 @@ import { getSettings } from '@/lib/settings';
 import { log } from '@/lib/log';
 import { dataPaths } from '@/lib/paths';
 import { SEARCH_CONSOLE_URL, closeAutomationChrome, isAutomationChromeRunning, launchAutomationChrome } from '@/lib/automation-chrome';
-import { DESKTOP_AGENT_ID, chatgptInApp } from '@/lib/agent/desktop';
+import { DESKTOP_AGENT_ID, chatgptInApp, searchConsoleInApp } from '@/lib/agent/desktop';
 
 /**
  * Automation Chrome (the owner's ChatGPT window with the extension) follows the queue (owner request):
@@ -79,7 +79,7 @@ const fileStore = {
 };
 
 export async function currentWork(now = new Date()): Promise<Work> {
-  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff, indexing, indexingNow, stalledRequest, inApp] = await Promise.all([
+  const [queued, running, waitingPrompts, openPrompts, claimed, runs, stalled, backoff, indexing, indexingNow, stalledRequest, inApp, gscInApp] = await Promise.all([
     db.articleTask.count({ where: { status: 'QUEUED', legacy: false } }),
     db.articleTask.count({ where: { status: { in: RUNNING_STATUSES }, legacy: false } }),
     db.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING', runAt: { lte: now } } }),
@@ -93,7 +93,10 @@ export async function currentWork(now = new Date()): Promise<Work> {
     db.queueJob.count({ where: { queue: 'gsc', status: 'ACTIVE' } }),
     db.queueJob.findFirst({ where: { queue: 'gsc', status: 'WAITING', runAt: { lte: new Date(now.getTime() - STALLED_MS) } }, orderBy: { runAt: 'asc' }, select: { id: true } }),
     chatgptInApp(now),
+    searchConsoleInApp(now),
   ]);
+  // The desktop app makes the prompts and the indexing requests itself (owner, 2026-11-12): no Chrome at all.
+  if (inApp && gscInApp) return { needsChrome: false, busy: false, waitingPrompts: 0, stalledPromptId: null, stalledRequestId: null, chatgptInApp: true };
   if (inApp) {
     return { needsChrome: indexing > 0, busy: indexing > 0, waitingPrompts: 0, stalledPromptId: null, stalledRequestId: stalledRequest && !indexingNow ? stalledRequest.id : null, chatgptInApp: true };
   }

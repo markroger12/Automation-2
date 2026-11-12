@@ -56,6 +56,8 @@ const isChatGPTContents = (contents) => contents.session === session.fromPartiti
  * @param {(title: string, body: string) => void} o.notify
  * @param {(id: string) => void} o.front  show the ChatGPT tabs (without taking the focus); `id`: the tab that asks
  * @param {(views: import('electron').WebContentsView[]) => void} [o.onTabsChanged]  a tab was opened or closed
+ * @param {object} [o.gsc]  the Search Console tab's port (google-tab.cjs): the app makes the indexing requests there
+ * @param {() => void} [o.gscFront]  show the Search Console tab
  * @param {(status: object) => void} [o.onStatus]
  * @param {(line: string) => void} [o.log]
  * @param {string} [o.partition]
@@ -72,6 +74,8 @@ function createChatGPTTabs(o) {
   const version = JSON.parse(read(path.join(extension, 'manifest.json'))).version;
   const scripts = [
     { code: read(path.join(__dirname, 'content-shim.js')), url: 'bas-desktop://chatgpt/content-shim.js' },
+    // As the extension's manifest: the page-structure helper first (gallery copies when photos are missing).
+    { code: read(path.join(extension, 'outline.js')), url: 'bas-desktop://chatgpt/outline.js' },
     { code: read(path.join(extension, 'adapter.js')), url: 'bas-desktop://chatgpt/adapter.js' },
     { code: read(path.join(extension, 'content.js')), url: 'bas-desktop://chatgpt/content.js' },
   ];
@@ -116,6 +120,19 @@ function createChatGPTTabs(o) {
       if (!scriptsRunOn(current)) return;
       wc.executeJavaScriptInIsolatedWorld(CONTENT_WORLD, scripts).catch((e) => log(`The ChatGPT scripts did not start on ${current} (${id}): ${e.message}`));
     });
+    // A page that stops answering (its script frozen): loaded again after a minute (the agent resumes its prompt).
+    let frozen = null;
+    wc.on('unresponsive', () => {
+      log(`The ChatGPT page of ${id} is not responding.`);
+      clearTimeout(frozen);
+      frozen = setTimeout(() => {
+        if (wc.isDestroyed()) return;
+        log(`The ChatGPT page of ${id} did not respond for a minute; it is loaded again.`);
+        if (agent) agent.onPageLoading(id);
+        wc.reload();
+      }, 60_000);
+    });
+    wc.on('responsive', () => clearTimeout(frozen));
     wc.on('render-process-gone', (_e, details) => {
       log(`The ChatGPT page of ${id} stopped (${details.reason}); it is loaded again.`);
       if (agent) agent.onPageLoading(id);
@@ -192,6 +209,8 @@ function createChatGPTTabs(o) {
         store: o.store,
         notify: o.notify,
         onStatus: o.onStatus,
+        gsc: o.gsc || null,
+        gscFront: o.gscFront,
         log,
       })
     : null;

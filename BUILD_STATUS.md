@@ -4937,3 +4937,40 @@ Owner request: “search console ko bhi app me add krde, check krta hon login kr
 npx vitest run tests/unit/desktop-google.test.ts tests/unit/desktop-agent.test.ts   # 10 pass
 npx tsc --noEmit                                                                     # 0 errors
 ```
+
+## Desktop app (2026-11-12): the app on the main line, Search Console requests in the app, a stuck-tab watchdog, app updates, the tool's theme
+
+Owner request: “app ko final kr ke main branch me krde or npm vale ko dusri branch me kr de. or app me bhi update vala feature add krde. or search console app vala hi use ho … chatgpt app me kabhi kabhi stuck ho jata ha ya bhi fix krde. or app ko fully advanced user friendly or uski theme bhi set kr de tool vali krde.”
+- **Branches:**
+  - `claude/npm-version`: the npm-only version as it was before the app joined the main line (d564901).
+  - `claude/confident-brown-pwlrz6` (PR #2 → `main`) now carries the app too (the desktop line was fast-forwarded into it, so PR #3 is merged with it).
+  - The Windows workflow now also runs on pushes to `main` and `claude/confident-brown-pwlrz6`.
+- **Search Console requests in the app:**
+  - The app's agent says it can make them (capability `gsc-request-indexing`, only when it has its own Search Console tab). The dashboard then gives the requests to the app (`gscWaiting`), the extension's `gsc-claim` answers `in-app`, and the worker opens no Automation Chrome for them (`chrome-autostart`).
+  - `desktop/google-tab.cjs` now runs the extension's Search Console script (`gsc.js`, with `content-shim.js` and `outline.js`) in a separate world on Search Console pages only, through `google-preload.cjs` (IPC `bas-gsc:*`). The agent claims a request, loads the property's inspection page, hands the job to the page's script, saves the proof first (`/api/extension/gsc-proof`, with the app's key) and reports through its outbox, as the extension does.
+  - A Google sign-in page or Search Console's signed-out page ends the request with `NOT_SIGNED_IN`; the owner's texts now name “the app's Search Console tab” when the app made the request. Google's checks are never handled.
+- **Stuck ChatGPT tab:**
+  - A busy tab with no word from its page for 3 minutes (progress, checkpoint, page load, URL change), and no sign-in or check waiting for the owner, is reloaded once (the script finds the prompt there, never sends it twice).
+  - Still nothing 3 minutes later: the tab is freed and reloaded. A prompt that was not sent yet is failed as `ERROR` (released and retried by the dashboard); one whose checkpoint shows a send step is failed as `uncertain` (held for the owner, never resent blindly).
+  - A page that stops responding is reloaded after 1 minute.
+- **App updates (`desktop/updates.cjs`, electron-updater 6.8.12):**
+  - The installed app checks the repository's GitHub Releases 30 s after start and every 6 h (and *Check for updates* in the menus), downloads in the background, then shows **Restart to update**; that stops the work as Quit does, then installs silently and starts the new version. Off in the smoke test and when started from the repository.
+  - Each workflow run sets the version to 3.3.*run number*; `electron-builder.yml` has the GitHub `publish` settings.
+  - **Not done:** publishing the release from the workflow (`contents: write` and a release step). It gives the workflow write access to the repository, so it waits for the owner's go-ahead. Until then the updater finds nothing, and the owner updates with the newer installer.
+- **The tool's theme in the app's tab bar (`desktop/shell.html`):**
+  - The dashboard's greys, dark main button and Segoe UI font; light and dark follow the dashboard's own switch (read from its page every 3 s) or Windows.
+  - Icons on the tabs; status chips for ChatGPT and Search Console (green, amber, red, or pulsing while working; hover for the whole text); the version; the update button.
+  - The start card shows the three start steps and stops its bar on a failure.
+- **Tests:**
+  - unit `desktop-agent` 14/14: new watchdog tests (sent prompt held as uncertain, unsent prompt back to the queue, never while the owner is needed), and the Search Console tab (proof before the result, sign-in page, no capability without the tab).
+  - unit `desktop-updates` 2/2 (states, install only when downloaded), `desktop-google` 2/2.
+  - unit `agent`: the app with the capability gets the request, the extension gets `in-app`. Unit `chrome-autostart`: no Chrome when the app does both. Unit `indexing-signin` and `search-console-live` pass.
+  - `tsc` 0 errors. The tab bar was checked in a browser in light and dark, with the chips and the update button at 1280 px.
+- **Not verified:** Google's indexing pages in the app on the owner's PC; an update from one release to the next (no release is published yet).
+
+**Commands run**
+```
+npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-updates.test.ts tests/unit/desktop-google.test.ts   # 18 pass
+npx vitest run tests/unit/agent.test.ts tests/unit/chrome-autostart.test.ts tests/unit/indexing-signin.test.ts tests/unit/search-console-live.test.ts   # pass
+npx tsc --noEmit                                                                                                        # 0 errors
+```

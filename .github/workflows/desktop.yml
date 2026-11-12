@@ -4,7 +4,8 @@ name: Desktop app (Windows installer)
 
 on:
   push:
-    branches: [claude/desktop-app]
+    # Owner request (2026-11-12): the app is the main line now; the npm-only tool stays on claude/npm-version.
+    branches: [main, claude/confident-brown-pwlrz6, claude/desktop-app]
   workflow_dispatch:
 
 permissions:
@@ -46,7 +47,7 @@ jobs:
       # extension's ChatGPT scripts against a fake ChatGPT page and the dashboard's agent handlers (no live ChatGPT).
       - name: Test the ChatGPT tab (Electron, fake ChatGPT page)
         run: |
-          npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-google.test.ts
+          npx vitest run tests/unit/desktop-agent.test.ts tests/unit/desktop-google.test.ts tests/unit/desktop-updates.test.ts
           npx vitest run --config vitest.integration.config.ts tests/integration/desktop-chatgpt.test.ts
 
       - name: Assemble the bundle (the tool and the packages it loads)
@@ -57,6 +58,11 @@ jobs:
       # bundle stopped the app).
       - name: Check the bundle outside the repository
         run: node desktop/check-bundle.mjs
+
+      # Every build gets its own version (3.3.<run number>), so an installed app can tell a newer one.
+      - name: Set the app version
+        working-directory: desktop
+        run: npm version "3.3.${{ github.run_number }}" --no-git-tag-version --allow-same-version
 
       - name: Build the installer
         working-directory: desktop

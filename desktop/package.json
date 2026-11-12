@@ -19,5 +19,8 @@
   },
   "allowScripts": {
     "electron@44.7.0": true
+  },
+  "dependencies": {
+    "electron-updater": "6.8.12"
   }
 }

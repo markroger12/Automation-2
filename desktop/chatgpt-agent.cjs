@@ -23,6 +23,12 @@ const TAB_ID = 'app-1';
 const MAX_TABS = 5;
 /** An extra tab with nothing to do for this long is closed (each ChatGPT tab costs memory). */
 const IDLE_CLOSE_MS = 10 * 60_000;
+/**
+ * Owner report (2026-11-12: ChatGPT in the app sometimes got stuck): the page's script reports a prompt's progress every
+ * 5 s while it waits. A busy tab silent for this long has a stuck page: it is loaded again (the prompt is looked for,
+ * never sent twice); still silent after as long again, the prompt goes back to the queue and the tab is freed.
+ */
+const STUCK_MS = 3 * 60_000;
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'continue-generating', 'outbox', 'in-app'];
 const IMAGE_HOSTS = (host) => /\.oaiusercontent\.com$/.test(host) || host === 'oaidalleapiprodscus.blob.core.windows.net' || host === 'chatgpt.com' || host === 'images.openai.com' || /(^|\.)mm\.bing\.net$/.test(host);
 
@@ -47,6 +53,9 @@ function sameConversation(a, b) {
  *   tab's id, close(id), load(id, url), reload(id), url(id), send(id, msg) → Promise(answer), post(id, portId, msg),
  *   front(id) (show it: ChatGPT draws pictures only in a page that is shown)
  * @param {object} [deps.tab]  one tab only (load(url), reload(), url(), send(msg), post(portId, msg), front()): app-1
+ * @param {object} [deps.gsc]  the Search Console tab (google-tab.cjs `port`): load(url), send(msg) → Promise(answer),
+ *   url(), saveProof() → base64 MHTML. With it the app makes the indexing requests (owner, 2026-11-12).
+ * @param {() => void} [deps.gscFront]  show the Search Console tab (a check Google shows is the owner's)
  * @param {(url: string) => Promise<{ ok: boolean, status: number, mime: string, bytes: Buffer }>} deps.fetchImage
  *   a picture with the ChatGPT tab's own sign-in (its session)
  * @param {{ read: () => object, write: (state: object) => void }} deps.store  the outbox and checkpoints on disk
@@ -82,7 +91,12 @@ function createChatGPTAgent(deps) {
   };
   /** Each tab's state (as the extension's tabState). */
   const tabs = new Map();
-  const newTab = () => ({ ready: false, url: '', busy: false, started: false, jobId: null, job: null, port: null, freshPage: false, reloads: 0, lastReloadAt: 0, loadedAt: Date.now(), idleSince: Date.now(), waiters: [] });
+  const newTab = () => ({ ready: false, url: '', busy: false, started: false, jobId: null, job: null, port: null, freshPage: false, reloads: 0, lastReloadAt: 0, loadedAt: Date.now(), idleSince: Date.now(), waiters: [], lastActivity: 0, stuckReloads: 0, waitingHuman: false });
+  /** The tab's page said something (progress, a message, a new page): it is not stuck. */
+  const touch = (id) => {
+    const t = tabs.get(id);
+    if (t) t.lastActivity = Date.now();
+  };
   function tabState(id) {
     if (!tabs.has(id)) tabs.set(id, newTab());
     return tabs.get(id);
@@ -195,6 +209,9 @@ function createChatGPTAgent(deps) {
     t.busy = true;
     t.jobId = job.id;
     t.job = job;
+    t.stuckReloads = 0;
+    t.waitingHuman = false;
+    touch(id);
     const cp = checkpoint(job.id, { tabId: id, operationId: job.operationId, job, step: 'claimed' });
     try {
       const target = targetUrl(job);
@@ -212,6 +229,7 @@ function createChatGPTAgent(deps) {
         await waitReady(id, 60_000);
       }
       t.started = true;
+      touch(id);
       await sendRun(id, job, cp, job.reconcile ? 'the app offered the job again (the earlier run did not report back)' : null);
     } catch (e) {
       t.busy = false;
@@ -238,6 +256,8 @@ function createChatGPTAgent(deps) {
       t.jobId = null;
       t.job = null;
       t.idleSince = Date.now();
+      t.stuckReloads = 0;
+      t.waitingHuman = false;
     }
     dropCheckpoint(jobId);
   }
@@ -247,6 +267,31 @@ function createChatGPTAgent(deps) {
     const open = new Set(ids());
     for (const id of [...tabs.keys()]) if (!open.has(id)) tabs.delete(id);
     for (const id of open) tabState(id);
+  }
+
+  /** A busy tab whose page said nothing for STUCK_MS (never while it waits for the owner's sign-in or check). */
+  async function watchStuckTabs() {
+    for (const id of ids()) {
+      const t = tabState(id);
+      if (!t.busy || !t.started || t.waitingHuman || !t.lastActivity || Date.now() - t.lastActivity < STUCK_MS) continue;
+      const jobId = t.jobId;
+      if (t.stuckReloads < 1) {
+        t.stuckReloads++;
+        t.lastActivity = Date.now();
+        log(`ChatGPT tab ${id} showed no progress for ${STUCK_MS / 60_000} minutes: its page is loaded again (the prompt is looked for there, never sent twice).`);
+        pool.reload(id);
+        continue;
+      }
+      // Not sent yet (no send step in its checkpoint): back to the queue, and it runs again by itself. Maybe sent: held
+      // as uncertain, so the dashboard checks the conversation and it is never sent twice.
+      const cp = getCheckpoint(jobId);
+      const maybeSent = Boolean(cp && (cp.sentAt || cp.userTurnsBefore !== undefined || cp.step === 'sending' || cp.step === 'sent'));
+      log(`ChatGPT tab ${id} still showed no progress after loading again: ${maybeSent ? 'its prompt may have been sent, so it waits for a check (never sent twice)' : 'its prompt was not sent yet and goes back to the queue'}.`);
+      t.freshPage = true;
+      await outboxPush('fail', { tabId: id, jobId, code: 'ERROR', message: `The ChatGPT tab of the app showed no progress for ${(2 * STUCK_MS) / 60_000} minutes, also after loading its page again.`, uncertain: maybeSent });
+      finishTab(id, jobId);
+      pool.reload(id);
+    }
   }
 
   /**
@@ -311,7 +356,7 @@ function createChatGPTAgent(deps) {
     const res = await api('hello', {
       version: deps.version,
       protocol: 1,
-      capabilities: CAPABILITIES,
+      capabilities: capabilities(),
       tabs: ids().map((id) => {
         const t = tabState(id);
         return { tabId: id, url: t.url || null, state: t.busy ? 'busy' : t.ready ? 'idle' : 'loading', jobId: t.jobId };
@@ -321,7 +366,7 @@ function createChatGPTAgent(deps) {
       claimsPaused: paused,
       backoffUntil: serverCfg.backoffUntil,
       lastError,
-      diagnostics: { outbox: state().outbox.length, inApp: true, tabs: ids().length },
+      diagnostics: { outbox: state().outbox.length, inApp: true, tabs: ids().length, searchConsole: Boolean(deps.gsc), gsc: gsc.last },
     });
     lastHelloAt = Date.now();
     serverCfg = Object.assign({}, serverCfg, res.config || {});
@@ -329,10 +374,13 @@ function createChatGPTAgent(deps) {
     return res;
   }
 
+  /** What this app can do for the dashboard: ChatGPT prompts, and indexing requests when it has a Search Console tab. */
+  const capabilities = () => (deps.gsc ? [...CAPABILITIES, 'gsc-request-indexing'] : [...CAPABILITIES]);
+
   function status() {
     const list = ids().map((id) => tabState(id));
     const busyTabs = list.filter((t) => t.busy).length;
-    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: busyTabs > 0, busyTabs, tabs: list.length, ready: list.some((t) => t.ready), loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil };
+    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: busyTabs > 0, busyTabs, tabs: list.length, ready: list.some((t) => t.ready), loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil, gsc: deps.gsc ? { running: gsc.running, waiting: serverCfg.gscWaiting || 0, last: gsc.last } : null };
     if (deps.onStatus) deps.onStatus(s);
     return s;
   }
@@ -353,9 +401,13 @@ function createChatGPTAgent(deps) {
           pool.reload(id);
         }
       }
+      await watchStuckTabs();
       const anyBusy = ids().some((id) => tabState(id).busy);
       if (anyBusy || paused || Date.now() - lastHelloAt > 20_000 || !lastHelloAt) await hello();
-      if (versionMessage || paused || serverCfg.claimsPaused) return;
+      if (versionMessage || paused) return;
+      // Search Console requests (the app's Search Console tab), one at a time, apart from ChatGPT's limits.
+      if (deps.gsc && (serverCfg.gscWaiting || 0) > 0 && !gsc.running) void runGscJob();
+      if (serverCfg.claimsPaused) return;
       if (serverCfg.backoffUntil && new Date(serverCfg.backoffUntil) > new Date()) return;
       // Before opening a tab: what the pages show now (not only at the last hello).
       if (pool.open && (pageLogin !== true || pageHumanCheck) && (serverCfg.waitingJobs || 0) > 0) await pageSignals();
@@ -388,8 +440,109 @@ function createChatGPTAgent(deps) {
   function schedule() {
     if (timer) clearTimeout(timer);
     if (!running) return;
-    const busy = ids().some((id) => tabState(id).busy) || (serverCfg.waitingJobs || 0) > 0;
+    const busy = ids().some((id) => tabState(id).busy) || (serverCfg.waitingJobs || 0) > 0 || gsc.running || (deps.gsc && (serverCfg.gscWaiting || 0) > 0);
     timer = setTimeout(() => void tick(), Math.max(1, busy ? serverCfg.pollBusySec || 3 : serverCfg.pollIdleSec || 30) * 1000);
+  }
+
+  // ---------------- Search Console: request indexing (the app's Search Console tab) ----------------
+  /**
+   * As the extension's background (runGscJob): claim a request, open the property's Search Console page in the tab,
+   * hand the job to the page's script (gsc.js) on each page it shows, and report what Google answered. A sign-in page
+   * or Google's check is never handled here: the owner is told. The proof (the page as it stands) goes first.
+   */
+  const gsc = { running: false, onReady: null, onDone: null, onNavigate: null, last: null };
+  const pageCopyOf = (msg) => (typeof msg.pageCopy === 'string' && msg.pageCopy.length <= 300000 ? msg.pageCopy : undefined);
+
+  async function saveGscProof(jobId) {
+    try {
+      await sleep(800); // let Google's dialog finish opening
+      const mhtmlBase64 = await deps.gsc.saveProof();
+      if (!mhtmlBase64) throw new Error('no page copy');
+      await api('gsc-proof', { jobId, mhtmlBase64 }, '/api/extension/gsc-proof', 60_000);
+    } catch (e) {
+      lastError = 'Search Console screenshot not saved: ' + e.message;
+    }
+  }
+
+  async function runGscJob() {
+    gsc.running = true;
+    status();
+    try {
+      const res = await api('gsc-claim', {});
+      const job = res && res.job;
+      if (!job) return;
+      log(`Search Console: requesting indexing for ${job.url}.`);
+      const result = await new Promise((resolve) => {
+        let timer = null;
+        const finish = (r) => {
+          clearTimeout(timer);
+          gsc.onReady = null;
+          gsc.onDone = null;
+          gsc.onNavigate = null;
+          resolve(r);
+        };
+        // How long the owner has for a check Google shows (Settings → Advanced, as for ChatGPT), twice at most.
+        const humanWaitMs = Math.round((serverCfg.humanCheckPauseMinutes || 10) * 60_000);
+        timer = setTimeout(() => finish({ outcome: 'ERROR', message: 'Search Console did not finish in time.' }), 6 * 60_000 + 2 * humanWaitMs);
+        // Google's sign-in page, or Search Console's start page that a signed-out visitor gets.
+        gsc.onNavigate = (url) => {
+          if (/^https:\/\/accounts\.google\.com\/|^https:\/\/search\.google\.com\/search-console\/about/.test(url)) finish({ outcome: 'NOT_SIGNED_IN', message: "Search Console asked to sign in to Google (in the app's Search Console tab)." });
+        };
+        // Each page asks for the job: the property's page (type the URL), and after Google's 404 or a box that did
+        // nothing, the next address. A few pages at most.
+        let pages = 0;
+        gsc.onReady = async () => {
+          pages++;
+          if (pages > 4) return finish({ outcome: 'ERROR', message: 'Search Console kept changing pages; the URL could not be inspected.' });
+          const r = await deps.gsc.send({ type: 'gsc-run', jobId: job.id, typeUrl: job.url, altUrl: job.altUrl || null, attempt: pages, humanWaitMs }).catch((e) => ({ ok: false, error: e.message }));
+          if (!r || (!r.ok && r.error !== 'busy')) finish({ outcome: 'ERROR', message: 'The Search Console page did not take the request: ' + ((r && r.error) || 'no answer') });
+        };
+        gsc.onDone = (msg) => {
+          if (msg.jobId === job.id) finish({ outcome: msg.outcome, message: msg.message || null, shown: msg.shown || null, pageCopy: pageCopyOf(msg) });
+        };
+        deps.gsc.load(job.inspectUrl);
+      });
+      if (result.outcome === 'REQUESTED' || result.outcome === 'QUOTA') await saveGscProof(job.id);
+      gsc.last = { url: job.url, outcome: result.outcome, at: new Date().toISOString() };
+      log(`Search Console: ${result.outcome} for ${job.url}${result.message ? ` (${String(result.message).slice(0, 200)})` : ''}.`);
+      await outboxPush('gsc-result', { jobId: job.id, outcome: result.outcome, message: result.message ? String(result.message).slice(0, 900) : null, pageCopy: result.pageCopy });
+      setTimeout(() => void tick(), 500);
+    } catch (e) {
+      lastError = e.message;
+    } finally {
+      gsc.running = false;
+      gsc.onReady = null;
+      gsc.onDone = null;
+      gsc.onNavigate = null;
+      status();
+    }
+  }
+
+  /** A message from the Search Console page's script (as chrome.runtime.sendMessage). */
+  async function onGscMessage(msg) {
+    if (!msg || typeof msg !== 'object') return { ok: false };
+    switch (msg.type) {
+      case 'gsc-ready':
+        if (gsc.onReady) void gsc.onReady();
+        return { ok: true };
+      case 'gsc-done':
+        if (gsc.onDone) gsc.onDone(msg);
+        return { ok: true };
+      case 'gsc-alive':
+        return { ok: true };
+      case 'gsc-check':
+        // Google shows a check (“I'm not a robot”): the owner completes it in the tab (never this app).
+        if (deps.gscFront) deps.gscFront();
+        deps.notify('Search Console wants a check', `Google shows a check (“I'm not a robot”) in the app's Search Console tab. Complete it there; indexing is requested right after. It waits up to ${serverCfg.humanCheckPauseMinutes || 10} minutes.`);
+        return { ok: true };
+      default:
+        return { ok: false, error: 'unknown message' };
+    }
+  }
+
+  /** The Search Console tab went to another page (a sign-in page ends the request: the owner signs in). */
+  function onGscNavigate(url) {
+    if (gsc.onNavigate) gsc.onNavigate(String(url || ''));
   }
 
   // ---------------- the pages' messages (as chrome.runtime) ----------------
@@ -401,6 +554,7 @@ function createChatGPTAgent(deps) {
       case 'content-ready': {
         t.ready = true;
         t.reloads = 0;
+        touch(id);
         t.url = String(msg.url || '');
         t.waiters = t.waiters.filter((w) => !w(t.url));
         // Resume a job whose page was reloaded mid-run (the script reconciles before any resend).
@@ -414,11 +568,13 @@ function createChatGPTAgent(deps) {
       }
       case 'url-changed':
         t.url = String(msg.url || '');
+        touch(id);
         return { ok: true };
       case 'come-to-front':
         pool.front(id);
         return { ok: true };
       case 'checkpoint':
+        touch(id);
         checkpoint(msg.jobId, Object.fromEntries(Object.entries({ step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore }).filter(([, v]) => v !== undefined)));
         return { ok: true };
       case 'pre-send-check': {
@@ -471,11 +627,13 @@ function createChatGPTAgent(deps) {
     // Handle this job's messages strictly in order.
     ports.set(key, { jobId: name.slice('bas-job:'.length), tabId: id, portId, chain: Promise.resolve() });
     tabState(id).port = key;
+    touch(id);
   }
 
   function onPortMessage(portId, msg, tabId) {
     const p = ports.get(portKey(tabId || first(), portId));
     if (!p || !msg || typeof msg !== 'object') return;
+    touch(p.tabId);
     p.chain = p.chain.then(() => handlePortMessage(p, msg)).catch((e) => (lastError = e.message));
   }
 
@@ -494,12 +652,15 @@ function createChatGPTAgent(deps) {
       const res = await api('progress', { tabId, jobId, step: String(msg.step || '').slice(0, 200), sent: Boolean(msg.sent), sentAt: msg.sentAt, conversationUrl: msg.conversationUrl || null, diagnostics: msg.snapshot || {} }).catch((e) => ({ ok: false, error: e.message }));
       if (res && res.cancel) pool.post(tabId, portId, { type: 'cancel' });
     } else if (msg.type === 'needs-human') {
+      // The owner's turn (sign-in or check): the tab is not stuck while it waits for them.
+      tabState(tabId).waitingHuman = true;
       pageLogin = msg.kind === 'login' ? false : pageLogin;
       pageHumanCheck = msg.kind !== 'login';
       pool.front(tabId);
       deps.notify('Blog Automation Studio needs you', `${msg.message} Please complete it in the ChatGPT tab of this window. The job waits up to ${serverCfg.humanCheckPauseMinutes || 10} minutes.`);
       await hello().catch(() => {});
     } else if (msg.type === 'human-resolved') {
+      tabState(tabId).waitingHuman = false;
       pageHumanCheck = false;
       pageLogin = true;
     } else if (msg.type === 'complete') {
@@ -582,7 +743,10 @@ function createChatGPTAgent(deps) {
     },
     tick,
     status,
+    onGscMessage,
+    onGscNavigate,
     onMessage,
+    capabilities,
     onPortOpen,
     onPortMessage,
     onPortClose,
@@ -592,4 +756,4 @@ function createChatGPTAgent(deps) {
   };
 }
 
-module.exports = { createChatGPTAgent, INSTALL_ID, TAB_ID, MAX_TABS, IDLE_CLOSE_MS, sleep };
+module.exports = { createChatGPTAgent, INSTALL_ID, TAB_ID, MAX_TABS, IDLE_CLOSE_MS, STUCK_MS, sleep };

@@ -16,6 +16,8 @@ files:
   - chatgpt-preload.cjs
   - google-tab.cjs
   - google-hosts.cjs
+  - google-preload.cjs
+  - updates.cjs
   - content-shim.js
   - icon.png
   - package.json
@@ -27,6 +29,13 @@ extraResources:
     to: app/node_modules
     filter: ['**/*']
 asar: true
+# Owner request: updates. A GitHub release of this public repository with the installer and latest.yml is what the
+# installed app looks for (updates.cjs, electron-updater).
+publish:
+  provider: github
+  owner: markroger12
+  repo: Automation-2
+  releaseType: release
 # Owner request: light. The smallest download, and the window's texts in English only (the dashboard is English).
 compression: maximum
 electronLanguages: [en-US]

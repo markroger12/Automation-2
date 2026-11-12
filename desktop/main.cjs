@@ -31,6 +31,7 @@ const path = require('node:path');
 const { createHash, randomBytes } = require('node:crypto');
 const { createChatGPTTabs, isChatGPTContents } = require('./chatgpt-tab.cjs');
 const { createGoogleTab, isGoogleContents } = require('./google-tab.cjs');
+const { createUpdates } = require('./updates.cjs');
 
 /** Ports the dashboard may use; the extension looks for it on the same ones. */
 const PORTS = Array.from({ length: 11 }, (_, i) => 3000 + i);
@@ -54,6 +55,9 @@ let dashboardView = null;
 let chatgpt = null;
 let activeTab = 'dashboard';
 let chatgptState = { tone: '', text: '' };
+let gscState = null;
+let shellTheme = null;
+let themeTimer = null;
 const TAB_BAR = 44;
 /** The key this app gives its dashboard for the ChatGPT tab (made at each start, never stored). */
 const agentKey = randomBytes(32).toString('base64url');
@@ -62,6 +66,9 @@ let quitting = false;
 /** The window shows a dashboard started elsewhere on the same data folder (npm run start:all). */
 let attachedToRunning = false;
 let stopped = false;
+/** App updates (updates.cjs); `installAfterQuit`: the owner chose “Restart to update”. */
+let updates = null;
+let installAfterQuit = false;
 let logStream = null;
 const children = { web: null, worker: null };
 
@@ -375,9 +382,23 @@ function chatgptTabsChanged(views) {
   shellState();
 }
 
+/** The tab bar follows the dashboard's light/dark toggle (the class on its page, read in a separate world). */
+function followDashboardTheme() {
+  if (!dashboardView || dashboardView.webContents.isDestroyed() || dashboardView.webContents.isLoading()) return;
+  dashboardView.webContents
+    .executeJavaScriptInIsolatedWorld(999, [{ code: "document.documentElement.classList.contains('dark') ? 'dark' : 'light'" }])
+    .then((theme) => {
+      if ((theme === 'dark' || theme === 'light') && theme !== shellTheme) {
+        shellTheme = theme;
+        shellState();
+      }
+    })
+    .catch(() => {});
+}
+
 function shellState() {
   if (!win || win.isDestroyed()) return;
-  win.webContents.send('bas-shell:state', { ready: Boolean(dashboardView), tab: activeTab, chatgpt: chatgptState });
+  win.webContents.send('bas-shell:state', { ready: Boolean(dashboardView), tab: activeTab, chatgpt: chatgptState, gsc: gscState, theme: shellTheme, update: updates ? updates.state() : null, version: app.getVersion() });
 }
 
 /** Both tabs stay in the window (ChatGPT keeps working behind the dashboard); the one shown is on top. `focusId`: the
@@ -390,7 +411,7 @@ function selectTab(tab, focusId = null) {
     void dashboardView.webContents.loadURL(`${ORIGIN}/automation-chrome`).catch(() => {});
   }
   if (tab === 'search-console' && !googleTab) {
-    // Owner request: Search Console in the app (Google may refuse the sign-in in a browser built into an app).
+    // Search Console in the app (made at start with the app's own dashboard; here for a dashboard started elsewhere).
     googleTab = createGoogleTab({ log: (line) => logLine('google', line) });
     win.contentView.addChildView(googleTab.view);
     layout();
@@ -424,6 +445,24 @@ function chatgptSummary(s) {
   return { tone: 'ok', text: s.ready ? `ChatGPT: ready${tabs}` : 'ChatGPT: loading…' };
 }
 
+/** The Search Console chip at the top: what the app's Search Console tab is doing, and Google's last answer. */
+const GSC_OUTCOME = {
+  REQUESTED: ['ok', 'indexing requested'],
+  QUOTA: ['warn', "Google's daily limit reached, next try tomorrow"],
+  NOT_SIGNED_IN: ['warn', 'sign in to Google in the Search Console tab'],
+  HUMAN_CHECK: ['warn', 'Google showed a check, complete it in the Search Console tab'],
+  NO_ACCESS: ['bad', 'this Google account has no access to the property'],
+  ERROR: ['bad', 'the last request did not finish'],
+};
+function gscSummary(g) {
+  if (!g) return null;
+  if (g.running) return { tone: 'busy', text: 'Search Console: requesting indexing…' };
+  const last = g.last && GSC_OUTCOME[g.last.outcome];
+  if (last) return { tone: last[0], text: `Search Console: ${last[1]}${g.waiting > 0 ? ` · ${g.waiting} waiting` : ''}` };
+  if (g.waiting > 0) return { tone: 'busy', text: `Search Console: ${g.waiting} waiting` };
+  return { tone: 'ok', text: 'Search Console: ready' };
+}
+
 function agentStore() {
   const file = path.join(app.getPath('userData'), 'chatgpt-agent.json');
   return {
@@ -448,30 +487,41 @@ function attachTabs(ownServer) {
   dashboardView = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false } });
   win.contentView.addChildView(dashboardView);
   void dashboardView.webContents.loadURL(ORIGIN).catch(() => {});
+  dashboardView.webContents.on('did-finish-load', followDashboardTheme);
+  clearInterval(themeTimer);
+  themeTimer = setInterval(followDashboardTheme, 3000);
+  // The Search Console tab (owner, 2026-11-12: signed in to Google in the app): the app makes the indexing requests in it.
+  if (ownServer && !googleTab) {
+    googleTab = createGoogleTab({ appDir, log: (line) => logLine('google', line) });
+    win.contentView.addChildView(googleTab.view);
+  }
   chatgpt = createChatGPTTabs({
     appDir,
     // A dashboard started elsewhere (npm run start:all) does not know this app's key: ChatGPT stays in Automation Chrome.
     origin: ownServer ? () => `http://127.0.0.1:${PORT}` : null,
     key: ownServer ? agentKey : null,
     store: agentStore(),
-    notify: (title, body) => {
-      if (!Notification.isSupported()) return;
-      const n = new Notification({ title, body, icon });
-      n.on('click', () => (showWindow(), selectTab('chatgpt')));
-      n.show();
-    },
+    notify: (title, body) => notifyOwner(title, body, () => selectTab(title.startsWith('Search Console') ? 'search-console' : 'chatgpt')),
     front: (id) => {
       if (!win || win.isDestroyed()) return;
       selectTab('chatgpt', id || null);
       if (!win.isVisible() || win.isMinimized()) win.showInactive();
     },
     onTabsChanged: (views) => chatgptTabsChanged(views),
+    gsc: ownServer && googleTab ? googleTab.port : null,
+    gscFront: () => {
+      if (!win || win.isDestroyed()) return;
+      selectTab('search-console');
+      if (!win.isVisible() || win.isMinimized()) win.showInactive();
+    },
     onStatus: (s) => {
       chatgptState = chatgptSummary(s);
+      gscState = gscSummary(s.gsc);
       shellState();
     },
     log: (line) => logLine('chatgpt', line),
   });
+  if (googleTab && chatgpt.agent) googleTab.connect(chatgpt.agent);
   chatgptTabsChanged(chatgpt.views());
   if (!ownServer) chatgptState = { tone: '', text: 'ChatGPT: prompts run in Automation Chrome while npm run start:all runs' };
   // The smoke test needs no ChatGPT page (only the connection to the dashboard).
@@ -513,6 +563,7 @@ function createWindow(hidden) {
   win.on('closed', () => {
     win = null;
     dashboardView = null;
+    clearInterval(themeTimer);
     if (chatgpt) {
       const agent = chatgpt.agent;
       chatgpt.destroy();
@@ -575,6 +626,8 @@ function buildTray(dataDir, logFile) {
         },
       },
       { type: 'separator' },
+      ...updateMenuItems(),
+      { type: 'separator' },
       { label: 'Quit', click: quitApp },
     ]);
   tray.setContextMenu(menu());
@@ -587,6 +640,40 @@ function quitApp() {
   quitting = true;
   app.quit();
 }
+
+/** A Windows notification; a click opens the window (and `onClick`). */
+function notifyOwner(title, body, onClick) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body, icon });
+  n.on('click', () => {
+    showWindow();
+    if (onClick) onClick();
+  });
+  n.show();
+}
+
+/** “Restart to update”: the app stops its work safely (prompts back to the queue, the worker stopped), then installs. */
+function restartToUpdate() {
+  if (!updates || !updates.ready()) return;
+  logLine('update', `Installing version ${updates.state().version}: stopping the work safely first.`);
+  installAfterQuit = true;
+  quitApp();
+}
+
+async function checkForUpdatesNow() {
+  if (!updates) return;
+  const s = await updates.check();
+  if (s.state === 'unavailable') await dialog.showMessageBox({ type: 'info', title: TITLE, message: 'Updates', detail: 'This copy of the app does not update itself (it was not installed with the installer).', buttons: ['OK'] });
+  else if (s.state === 'current') await dialog.showMessageBox({ type: 'info', title: TITLE, message: `You have the newest version (${app.getVersion()}).`, buttons: ['OK'] });
+  else if (s.state === 'error') await dialog.showMessageBox({ type: 'warning', title: TITLE, message: 'Could not look for updates.', detail: `${s.message || 'Unknown error'}\n\nThe app tries again by itself in a few hours.`, buttons: ['OK'] });
+}
+
+const updateMenuItems = () => [
+  updates && updates.ready()
+    ? { label: `Restart to update (version ${updates.state().version})`, click: restartToUpdate }
+    : { label: updates && updates.state().state === 'downloading' ? `Downloading update ${updates.state().version} (${updates.state().percent ?? 0}%)…` : 'Check for updates', enabled: !(updates && updates.state().state === 'downloading'), click: () => void checkForUpdatesNow() },
+  { label: `Version ${app.getVersion()}`, enabled: false },
+];
 
 function appMenu() {
   Menu.setApplicationMenu(
@@ -609,6 +696,8 @@ function appMenu() {
             },
           },
           { type: 'separator' },
+          ...updateMenuItems(),
+          { type: 'separator' },
           { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: quitApp },
         ],
       },
@@ -630,7 +719,19 @@ async function start() {
   const logFile = openLog(dataDir);
   buildTray(dataDir, logFile);
   await createWindow(hidden);
-  logLine('app', `Starting (data: ${dataDir}, tool: ${appDir}, built-in Node.js ${process.versions.node}).`);
+  logLine('app', `Starting version ${app.getVersion()} (data: ${dataDir}, tool: ${appDir}, built-in Node.js ${process.versions.node}).`);
+  // Owner request: updates. Only an installed app updates itself (not the smoke test, not a copy run from the repository).
+  updates = createUpdates({
+    log: (line) => logLine('update', line),
+    onState: () => {
+      shellState();
+      appMenu();
+    },
+    notify: (title, body) => notifyOwner(title, body),
+    enabled: app.isPackaged && !smoke,
+    version: app.getVersion(),
+  });
+  updates.start();
 
   const chosen = await choosePort(dataDir);
   if (!chosen) {
@@ -675,8 +776,16 @@ async function start() {
     const worker = workerRunning;
     const connected = Boolean(chatgpt && chatgpt.agent && chatgpt.agent.status().connected);
     const info = await instanceAt(PORT);
-    const ok = worker && connected && info && info.dataId === dataFolderId(dataDir);
-    return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}`);
+    // The installed app carries the updater and makes the Search Console tab (its files are listed one by one).
+    let updater = false;
+    try {
+      updater = typeof require('electron-updater').autoUpdater.checkForUpdates === 'function';
+    } catch {
+      updater = false;
+    }
+    const gscTab = Boolean(googleTab && chatgpt && chatgpt.agent && chatgpt.agent.capabilities().includes('gsc-request-indexing'));
+    const ok = worker && connected && info && info.dataId === dataFolderId(dataDir) && updater && gscTab;
+    return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}; updater ${updater ? 'loaded' : 'missing'}; Search Console tab ${gscTab ? 'ready for indexing requests' : 'missing'}; version ${app.getVersion()}`);
   }
 }
 
@@ -712,9 +821,18 @@ if (!app.requestSingleInstanceLock()) {
       .then(stopAll)
       .finally(() => {
         stopped = true;
-        logStream?.end();
-        if (smoke) app.exit(process.exitCode ?? 0);
-        else app.quit();
+        if (updates) updates.stop();
+        if (smoke) {
+          logStream?.end();
+          app.exit(process.exitCode ?? 0);
+        } else if (installAfterQuit && updates && updates.ready()) {
+          logLine('update', 'The work is stopped; the new version is installed and started.');
+          logStream?.end();
+          updates.install();
+        } else {
+          logStream?.end();
+          app.quit();
+        }
       });
   });
   app.on('web-contents-created', (_e, contents) => {
@@ -723,6 +841,11 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.on('bas-shell:select', (event, tab) => {
     if (win && event.sender === win.webContents) selectTab(tab);
+  });
+  ipcMain.on('bas-shell:update', (event, action) => {
+    if (!win || event.sender !== win.webContents) return;
+    if (action === 'install') restartToUpdate();
+    else if (action === 'check') void checkForUpdatesNow();
   });
   app.whenReady().then(start).catch((error) => {
     dialog.showErrorBox(TITLE, String(error && error.stack ? error.stack : error));

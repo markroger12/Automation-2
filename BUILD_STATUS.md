@@ -5296,3 +5296,17 @@ Owner (2026-11-13, with a screenshot of an English question answered in Roman Ur
 - **Text elsewhere:** the setup step, README and user guide say the same.
 - **Checked here:** `tsc` 0 errors; help assistant and setup checklist tests, 11 passed.
 - **Not checked here:** Gemini's actual reply. It follows the instruction, but no key is available here to see it.
+
+### Follow-up: "← back" returns to the page an article was opened from
+
+Owner (2026-11-13, screenshot): an article opened from Workflow had "← Article Queue", so Back went to the queue instead of Workflow.
+
+- **The trail:** `NavTrail` in the dashboard frame remembers the pages visited in this window, with their filters, in sessionStorage. A page's filter changes keep only its newest address.
+- **The link:** `BackLink` goes to the last page before this one, named as in the sidebar (`pageLabelFor`, tested). Without such a page it uses the old target.
+- **Where:** the article page (fallback Article Queue), a website's page (fallback Websites) and a campaign's page (fallback All campaigns).
+- **Checked in Chromium:**
+  - opened directly: "← Article Queue";
+  - from `/workflow?page=1`: "← Workflow / Calendar", and the click returns to `/workflow?page=1`;
+  - from `/history?q=…`: "← Article History";
+  - no page errors.
+- **Tests:** `tsc` 0 errors; nav-search tests, 11 passed.

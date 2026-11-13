@@ -17,6 +17,7 @@ import { HumanizerTab } from './humanizer-tab';
 import { OriginalityTab } from './originality-tab';
 import { OverviewTab } from './overview-tab';
 import { getManifest } from '@/modules/registry';
+import { BackLink } from '@/components/nav-trail';
 
 
 const BASE_TABS = ['overview', 'titles', 'research', 'editor', 'seo', 'links', 'images', 'humanizer', 'originality', 'wordpress', 'stages', 'prompts', 'logs', 'conversation'] as const;
@@ -137,9 +138,7 @@ export function ArticleDetailView({ initial, initialTab }: { initial: Serialized
     <>
       <PageHeader
         eyebrow={
-          <Link href="/queue" className="hover:underline">
-            ← Article Queue
-          </Link>
+          <BackLink fallbackHref="/queue" fallbackLabel="Article Queue" />
         }
         title={task.selectedTitle || task.keyword}
         description={

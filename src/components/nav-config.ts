@@ -174,3 +174,23 @@ export function searchActions(actions: QuickAction[], query: string): QuickActio
   if (!words.length) return actions;
   return actions.filter((a) => words.every((w) => fold(`${a.label} ${a.keywords}`).includes(w)));
 }
+
+/**
+ * The name of the page at `path` (with or without a query), for “← back” links (owner request 2026-11-13: an article
+ * opened from Workflow went back to Article Queue). The sidebar's own names; a detail page is named after its list.
+ */
+export function pageLabelFor(path: string): string | null {
+  const pathname = (path.split(/[?#]/)[0] || '/').replace(/\/+$/, '') || '/';
+  if (pathname === '/') return 'Overview';
+  if (pathname.startsWith('/articles/')) return 'the article';
+  const all: NavItem[] = NAV_ITEMS.flatMap((i) => [i, ...(i.children ?? [])]);
+  let best: NavItem | null = null;
+  for (const item of all) {
+    if (item.href === '/') continue;
+    const hit = pathname === item.href || pathname.startsWith(`${item.href}/`) || (item.match ?? []).some((m) => pathname === m || pathname.startsWith(`${m}/`));
+    if (hit && (!best || item.href.length > best.href.length)) best = item;
+  }
+  if (best) return best.label;
+  if (pathname === '/setup') return 'Setup checklist';
+  return null;
+}

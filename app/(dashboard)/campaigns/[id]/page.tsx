@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { PageHeader } from '@/components/ui';
 import { CampaignDetail } from './detail';
+import { BackLink } from '@/components/nav-trail';
 
 export const metadata = { title: 'Campaign' };
 
@@ -12,9 +13,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
         title="Campaign"
         description={
           <>
-            <Link href="/campaigns" className="link">
-              ← All campaigns
-            </Link>
+            <BackLink fallbackHref="/campaigns" fallbackLabel="All campaigns" className="link" />
           </>
         }
       />

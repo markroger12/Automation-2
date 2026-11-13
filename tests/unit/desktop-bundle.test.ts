@@ -60,3 +60,35 @@ describe('the compiled worker and start-up steps', () => {
     expect(text).toContain('Upscayl');
   });
 });
+
+/**
+ * The installer takes only the files named in desktop/electron-builder.yml (files:). One the app loads but the list
+ * leaves out works from the repository and breaks only in the installed app (owner rule: nothing may break).
+ */
+describe("the installer's file list", () => {
+  it('names every file the app loads from its own folder', () => {
+    const desktop = path.join(root, 'desktop');
+    const yml = fs.readFileSync(path.join(desktop, 'electron-builder.yml'), 'utf8');
+    const block = /^files:\n((?:[ \t]+- .+\n)+)/m.exec(yml);
+    expect(block).not.toBeNull();
+    const listed = block![1]
+      .split('\n')
+      .map((line) => line.replace(/^\s+-\s+/, '').trim())
+      .filter(Boolean);
+    const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.]/g, '\\.').replace(/\*/g, '[^/]*')}$`);
+    const inList = (file: string) => listed.some((p) => p === file || p.startsWith(`${file}/`) || (p.includes('*') && glob(p).test(file)));
+    for (const p of listed) expect(p.includes('*') || fs.existsSync(path.join(desktop, p)), p).toBe(true);
+
+    const used = new Set<string>();
+    for (const file of listed.filter((p) => p.endsWith('.cjs'))) {
+      const text = fs.readFileSync(path.join(desktop, file), 'utf8');
+      for (const m of text.matchAll(/require\('\.\/([^']+)'\)/g)) used.add(m[1]);
+      for (const m of text.matchAll(/path\.join\(__dirname, '([^']+)'/g)) used.add(m[1]);
+    }
+    // Run from the repository only; the installed app loads the copy prepare.mjs puts into the bundle.
+    used.delete('child-guard.cjs');
+    expect(used).toContain('updating.html');
+    expect(used).toContain('log-file.cjs');
+    expect([...used].filter((f) => !inList(f))).toEqual([]);
+  });
+});

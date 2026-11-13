@@ -5,6 +5,10 @@
  * (latest.yml). The app looks at start (after 30 s) and every 6 hours, downloads a newer version in the background and
  * says so; “Restart to update” installs it once the app has stopped its work safely (prompts back to the queue, the
  * worker stopped), then starts the new version. The data folder is never touched.
+ *
+ * Owner request 2026-11-13 (“restart to update per click krne ke baad kuch asa show ho installer ya updating jasa koi
+ * popup”): the installer is no longer silent. Its window shows the progress, asks nothing on an update (the install mode,
+ * the folder and the last page are left out: build/installer.nsh) and opens the new version by itself.
  */
 
 /**
@@ -35,6 +39,8 @@ function createUpdates(o) {
   if (updater) {
     updater.autoDownload = true;
     updater.autoInstallOnAppQuit = false;
+    // The installer opens the new version when it is done (--force-run).
+    updater.autoRunAppAfterInstall = true;
     updater.allowPrerelease = false;
     updater.logger = { info: (m) => o.log(String(m)), warn: (m) => o.log(`warning: ${m}`), error: (m) => o.log(`error: ${m}`), debug: () => {} };
     updater.on('checking-for-update', () => set({ state: 'checking', message: null }));
@@ -69,9 +75,20 @@ function createUpdates(o) {
     },
     check,
     ready: () => state.state === 'ready',
-    /** Installs the downloaded version silently and starts it (call once the app has stopped its work). */
+    /**
+     * Installs the downloaded version with the installer's window (not silent) and starts it; call once the app has
+     * stopped its work. False when nothing was started (no downloaded version, or the updater refused): the app then
+     * opens again as it was.
+     */
     install() {
-      if (updater && state.state === 'ready') updater.quitAndInstall(true, true);
+      if (!updater || state.state !== 'ready') return false;
+      try {
+        updater.quitAndInstall(false, true);
+      } catch (e) {
+        set({ state: 'error', message: String((e && e.message) || e).split('\n')[0].slice(0, 200) });
+      }
+      // The updater reports a refusal as an error event, at once.
+      return state.state === 'ready';
     },
     stop() {
       clearTimeout(first);

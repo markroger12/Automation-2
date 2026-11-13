@@ -160,7 +160,7 @@ export default function HelpPage() {
           <Card title="9 · Updates">
             <ol className="list-decimal space-y-2 pl-5 text-sm">
               <li>The app looks for a new version by itself and downloads it in the background. When it is ready, <strong>Restart to update</strong> appears at the top right (also Help → Check for updates).</li>
-              <li>Restarting stops the work safely first: prompts go back to the queue and continue after the restart. Your data folder is never touched.</li>
+              <li>Restarting stops the work safely first: prompts go back to the queue and continue after the restart. An <strong>Updating</strong> window shows each step, then the installer's window shows its progress (it asks nothing) and the new version opens by itself. Your data folder is never touched.</li>
               <li>After an update a notification offers what is new in that version.</li>
             </ol>
           </Card>

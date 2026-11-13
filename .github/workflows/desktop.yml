@@ -86,6 +86,27 @@ jobs:
           if (-not $exe) { throw 'The app was not installed.' }
           $files = Get-ChildItem $exe.DirectoryName -Recurse -File | Measure-Object -Property Length -Sum
           Write-Host "Installed: $($exe.DirectoryName), $([math]::Round($files.Sum / 1MB)) MB in $($files.Count) files"
+          # An update as “Restart to update” runs it (updates.cjs: --updated --force-run, with the installer's window,
+          # owner request 2026-11-13): it must ask nothing (a page that waits for a click never ends here), close by
+          # itself, install into the same folder (no second copy) and open the app.
+          $clock.Restart()
+          $update = Start-Process -FilePath $setup.FullName -ArgumentList '--updated', '--force-run' -PassThru
+          $null = $update.Handle
+          if (-not $update.WaitForExit(300000)) { $update.Kill(); throw 'The update with a window did not finish in 5 minutes: a page waits for a click.' }
+          Write-Host "Update with a window: $([math]::Round($clock.Elapsed.TotalSeconds)) s, exit code $($update.ExitCode)"
+          if ($update.ExitCode -ne 0) { throw "The update ended with exit code $($update.ExitCode)." }
+          $again = @(Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'Blog Automation Studio.exe' -ErrorAction SilentlyContinue)
+          if ($again.Count -ne 1 -or $again[0].FullName -ne $exe.FullName) { throw "The update did not install into the same folder: $(($again | ForEach-Object FullName) -join ', ')" }
+          $opened = $null
+          $until = (Get-Date).AddSeconds(60)
+          while (-not $opened -and (Get-Date) -lt $until) {
+            Start-Sleep -Seconds 1
+            $opened = Get-Process -Name 'Blog Automation Studio' -ErrorAction SilentlyContinue
+          }
+          Get-Process -Name 'Blog Automation Studio' -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $opened) { throw 'The update did not open the app.' }
+          Write-Host 'The update opened the app by itself.'
+          Start-Sleep -Seconds 2
           # As in C:\Program Files (owner report: EPERM there): the app may not create files or folders in its own
           # installation. Only those two rights are denied (WD, AD): the simple right W would also deny what starting
           # a program needs. icacls passes the inheritable entry on to everything inside.

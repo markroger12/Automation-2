@@ -71,3 +71,18 @@ describe('quick actions in the top bar search', () => {
     expect(labels('anika bissel')).toEqual([]);
   });
 });
+
+describe('back links name the page they return to (owner request 2026-11-13)', () => {
+  it('uses the sidebar names, also for a sub-page or an address with filters', async () => {
+    const { pageLabelFor } = await import('@/components/nav-config');
+    expect(pageLabelFor('/workflow?site=abc&page=2')).toBe('Workflow / Calendar');
+    expect(pageLabelFor('/history?q=lisa')).toBe('Article History');
+    expect(pageLabelFor('/queue')).toBe('Article Queue');
+    expect(pageLabelFor('/calendar')).toBe('Publishing Calendar');
+    expect(pageLabelFor('/campaigns/123')).toBe('Bulk Campaigns');
+    expect(pageLabelFor('/websites/xyz')).toBe('Websites');
+    expect(pageLabelFor('/')).toBe('Overview');
+    expect(pageLabelFor('/articles/t1?tab=links')).toBe('the article');
+    expect(pageLabelFor('/nowhere')).toBeNull();
+  });
+});

@@ -15,6 +15,7 @@ import { savedLogin } from '@/lib/wp-credentials';
 import { SiteHealth } from './site-health';
 import { siteHealth } from '@/lib/site-health';
 import { failedWordPressTasks } from '@/lib/wordpress-resave';
+import { BackLink } from '@/components/nav-trail';
 
 export const metadata = { title: 'Website' };
 
@@ -77,9 +78,7 @@ export default async function WebsitePage({ params, searchParams }: { params: Pr
     <>
       <PageHeader
         eyebrow={
-          <Link href="/websites" className="hover:underline">
-            ← Websites
-          </Link>
+          <BackLink fallbackHref="/websites" fallbackLabel="Websites" />
         }
         title={site.name}
         description={

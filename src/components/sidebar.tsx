@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,
   AppWindow,
@@ -46,6 +46,7 @@ import { ThemeToggle } from './client';
 import { WorkPauseButton } from './work-pause';
 import { AssistantButton, forgetAssistantChat, openAssistant } from './assistant';
 import { ErrorBoundary } from './error-boundary';
+import { NavTrail } from './nav-trail';
 import { reportClientError } from '@/lib/client/report-error';
 
 const ICONS: Record<string, LucideIcon> = {
@@ -454,6 +455,9 @@ export function Shell({ notices, children }: { notices: Notice[]; children: Reac
   };
   return (
     <div className="min-h-screen bg-[var(--bg)] lg:flex">
+      <Suspense fallback={null}>
+        <NavTrail />
+      </Suspense>
       <Sidebar open={open} onClose={() => setOpen(false)} />
       <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pr-2 lg:pb-2">
         <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 bg-[var(--bg)] px-3 lg:px-1">

@@ -15,7 +15,7 @@
  */
 'use strict';
 
-const EXTENSION_VERSION = '3.5.5';
+const EXTENSION_VERSION = '3.5.6';
 const DEFAULT_SERVER = 'http://localhost:3000';
 const CAPABILITIES = ['claim', 'progress', 'complete', 'fail', 'release', 'reconcile', 'attachments', 'images', 'gallery', 'multi-tab', 'continue-generating', 'outbox', 'gsc-request-indexing'];
 
@@ -720,6 +720,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await chrome.tabs.update(tabId, { active: true }).catch(() => {});
         return sendResponse({ ok: true });
       }
+      case 'front-done':
+        // The gallery's photos are taken. Automation Chrome leaves the tab shown, as after a drawn picture.
+        return sendResponse({ ok: true });
       case 'checkpoint':
         // Only the fields given: a step-only checkpoint (e.g. 'reloading') must never erase a recorded sentAt.
         await checkpoint(msg.jobId, Object.fromEntries(Object.entries({ step: msg.step, sentAt: msg.sentAt, userTurnsBefore: msg.userTurnsBefore }).filter(([, v]) => v !== undefined)));

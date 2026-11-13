@@ -32,7 +32,7 @@ const check = (latest: string, behind: number, over: Partial<UpdateCheck> = {}):
   ahead: 0,
   commits: behind ? [v(latest, 'Allow 30 secondary keywords instead of 20'), v('ccc3333', 'A draft changed in WordPress'), v('ddd4444', 'Third'), v('eee5555', 'Fourth')].slice(0, behind) : [],
   changes: { packages: false, extension: false, database: false, files: 3 },
-  extension: { now: '3.5.5', next: '3.5.5' },
+  extension: { now: '3.5.6', next: '3.5.6' },
   localChanges: [],
   running: 0,
   freeBytes: 10 * 1024 ** 3,

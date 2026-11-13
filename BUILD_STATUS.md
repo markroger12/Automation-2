@@ -5310,3 +5310,36 @@ Owner (2026-11-13, screenshot): an article opened from Workflow had "← Article
   - from `/history?q=…`: "← Article History";
   - no page errors.
 - **Tests:** `tsc` 0 errors; nav-search tests, 11 passed.
+
+## Desktop app (2026-11-13): a ChatGPT gallery in the app's tab gives all its photos
+
+Owner report (app 3.3.40, two screenshots: a gallery of 3 tiles with "10" on the last; ChatGPT's viewer showing "3 of 10" with ← / → at the edges). Only 3 photos were taken. The number varies by gallery (4, 5 … 10): all of them should be taken.
+
+- **Evidence:**
+  - The task log said: "Gallery: 3 picture(s) in the gallery …, 3 opened large, 6 saved …; the gallery says 10; viewer stepped by: each tile."
+  - So the viewer opened, but it never moved on to its next picture. The tool then fell back to opening each of the 3 tiles.
+  - No page structure copy was made for that article; the newest was from 12 Nov.
+- **Cause 1:**
+  - ChatGPT loads the viewer's next picture only in a tab that is shown. The app's own code already notes this for drawn pictures, and brings the tab forward for them.
+  - In the app, the ChatGPT tab sits behind the dashboard, so the gallery's viewer stood still.
+  - In Automation Chrome the ChatGPT tab was usually shown, so the same gallery worked there.
+- **Cause 2 (bug):** the app's agent dropped `pageCopy` from the answer it reports, so the app never saved a gallery structure copy. Automation Chrome forwards it.
+- **Fixes (ChatGPT scripts 3.5.6):**
+  - **Bringing the tab forward:** before opening the viewer, a hidden page asks to come to the front (`come-to-front`, reason `gallery`). It waits up to 5 s until it is shown.
+  - **Giving the window back:** when the photos are taken, it sends `front-done`. The app then shows the tab the owner had, and puts the window back in the tray or minimized if it was, unless the owner used the window meanwhile.
+  - **Page copy:** the agent forwards `pageCopy` with the answer.
+  - **Unchanged:**
+    - Automation Chrome leaves the tab shown, as after a drawn picture.
+    - A page that is already shown is not affected.
+    - All photos up to 10 are taken, per the gallery's own count and the viewer's "N of M".
+- **Tests:**
+  - **New agent unit test:** checks `front`/`unfront` with reason `gallery`, and that the page copy reaches the dashboard. It fails on the old agent (`['app-1', undefined]`) and passes now.
+  - **Gallery integration tests (fake ChatGPT page):** all 11 still pass:
+    - "+10", broken pictures, carousel, fade, lightbox;
+    - 3 tiles with "5" (arrows, keys, filmstrip);
+    - the overlay "1 of 10";
+    - the structure copy.
+  - Unit suite 78 files / 533 tests; `tsc` 0 errors.
+- **Not verified here:**
+  - Hidden pages can't be reproduced in the test browser: Playwright reports even background tabs as visible. A test built for it passed on the old code too, so it was not kept.
+  - The real check is the owner's next celebrity article in the app. Its log should say "10 opened large … stepped by: Next" (or arrow keys).

@@ -199,7 +199,8 @@ function createChatGPTTabs(o) {
             const tab = tabs.get(id);
             if (tab && !tab.wc.isDestroyed()) tab.wc.send('bas-chatgpt:event', { kind: 'port', portId, msg });
           },
-          front: (id) => o.front(id),
+          front: (id, reason) => o.front(id, reason),
+          unfront: (id) => (typeof o.unfront === 'function' ? o.unfront(id) : undefined),
         },
         fetchImage: async (url) => {
           // With the tabs' own ChatGPT sign-in, as the extension fetches with Chrome's.

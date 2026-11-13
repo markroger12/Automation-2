@@ -17,7 +17,7 @@
   if (window.__basContentLoaded) return;
   window.__basContentLoaded = true;
 
-  const EXTENSION_VERSION = '3.5.5';
+  const EXTENSION_VERSION = '3.5.6';
   const A = globalThis.BASAdapter;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -412,6 +412,18 @@
       const dialog = A.galleryDialog();
       return O ? { dialogFound: Boolean(dialog), dialog: dialog ? O.outline(dialog) : null, layers: dialog ? null : O.overlays() } : null;
     };
+    // ChatGPT loads the viewer's next picture only while its tab is shown (owner report, app 3.3.40: the app's ChatGPT
+    // tab sat behind the dashboard, the viewer never moved on, and 3 of 10 photos were saved). As for drawn pictures,
+    // the tab comes to the front for the gallery, and the app shows what it showed before once the photos are taken.
+    let fronted = false;
+    if (document.hidden) {
+      fronted = true;
+      progress('bringing the ChatGPT tab to the front for the picture gallery');
+      await chrome.runtime.sendMessage({ type: 'come-to-front', reason: 'gallery' }).catch(() => {});
+      const shownBy = Date.now() + 5000;
+      while (document.hidden && Date.now() < shownBy) await sleep(200);
+      if (!document.hidden) await sleep(500);
+    }
     try {
       // Open the viewer from a picture the page shows (a broken one may be a link that opens another tab).
       const opener = thumbs.find((img) => !A.brokenPicture(img));
@@ -534,6 +546,8 @@
     } catch (e) {
       /* the thumbnails are enough */
       if (A.galleryDialog()) A.closeGalleryDialog();
+    } finally {
+      if (fronted) chrome.runtime.sendMessage({ type: 'front-done', reason: 'gallery' }).catch(() => {});
     }
     thumbs.forEach(add);
     const images = [];

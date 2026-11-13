@@ -11,7 +11,7 @@ export const celebrity2Manifest: ModuleManifest = {
   key: 'celebrity2-writer',
   name: 'Celebrity 2 Article Writer',
   shortName: 'Celebrity 2',
-  description: 'The owner’s one-prompt celebrity article: SEO title/meta/slug, introduction, direct answer, Family Profile table, sourced sections, conclusion and five FAQs.',
+  description: 'Your own one-prompt celebrity article: SEO title/meta/slug, introduction, direct answer, Family Profile table, sourced sections, conclusion and five FAQs.',
   icon: 'UserPen',
   group: 'writer',
   active: true,

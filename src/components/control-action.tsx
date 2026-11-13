@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from './client';
+import { plural } from '@/components/ui';
 
 interface JobState {
   status: 'WAITING' | 'ACTIVE' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
@@ -18,7 +19,7 @@ const DESCRIBERS: Record<string, (r: Result) => string> = {
   refresh: (r) => `Session: ${r?.state}${r?.editor ? ` · editor ${r.editor}` : ''}`,
   'sync-categories': (r) => `Synced ${r?.count ?? 0} categories via ${r?.via ?? '?'}.`,
   'detect-editor': (r) => `Editor: ${r?.editor ?? 'unknown'}`,
-  'refresh-link-index': (r) => (r?.warning ? String(r.warning) : `Link index: ${r?.active ?? 0} published post(s) (${r?.fetched ?? 0} read via ${r?.via ?? '?'}${r?.removed ? `, ${r.removed} removed` : ''}).`),
+  'refresh-link-index': (r) => (r?.warning ? String(r.warning) : `Link index: ${plural(Number(r?.active ?? 0), 'published post')} (${r?.fetched ?? 0} read via ${r?.via ?? '?'}${r?.removed ? `, ${r.removed} removed` : ''}).`),
   'open-browser': (r) => (r?.publishingAllowed ? 'Browser window closed.' : 'Browser window closed. (Publishing was blocked in that window: this site is drafts-only.)'),
   'reset-session': (r) => `Session reset — now ${r?.state ?? 'unknown'}.`,
   'delete-profile': () => 'Browser profile deleted.',

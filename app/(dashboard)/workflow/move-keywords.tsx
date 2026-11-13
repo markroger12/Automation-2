@@ -5,7 +5,7 @@ import { ArrowRight, CalendarClock } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, Modal, useToast } from '@/components/client';
 import { Input } from '@/components/form';
-import { cx } from '@/components/ui';
+import { cx, plural } from '@/components/ui';
 import { formatInZone, zonedParts } from '@/lib/workflow/time';
 
 interface PlanRow {
@@ -79,7 +79,7 @@ export function MoveKeywords({ open, onClose, siteId, keywordIds, timezone, onMo
     try {
       const r = await api<MoveResult>(`/api/websites/${siteId}/workflow/keywords/action`, { body: { keywordIds: keywordIds, action: 'move', date } });
       const scheduled = r.plan.filter((p) => p.status === 'SCHEDULED').length;
-      toast(r.notes.length ? 'info' : 'success', `${r.changed} keyword(s) moved to ${dayLabel(date)}.${scheduled ? ` ${scheduled} post(s) get the new time in WordPress in a moment.` : ''}${r.notes.length ? ` ${r.notes.slice(0, 2).join(' ')}` : ''}`);
+      toast(r.notes.length ? 'info' : 'success', `${plural(r.changed, 'keyword')} moved to ${dayLabel(date)}.${scheduled ? ` ${plural(scheduled, 'post')} get the new time in WordPress in a moment.` : ''}${r.notes.length ? ` ${r.notes.slice(0, 2).join(' ')}` : ''}`);
       onMoved();
       onClose();
     } catch (e) {
@@ -96,7 +96,7 @@ export function MoveKeywords({ open, onClose, siteId, keywordIds, timezone, onMo
       open={open}
       onClose={onClose}
       width={640}
-      title={`Move ${keywordIds.length} keyword(s) to another day`}
+      title={`Move ${plural(keywordIds.length, 'keyword')} to another day`}
       description="They take that day's free publishing slots, in queue order (Pakistan time)."
       footer={
         <>
@@ -170,7 +170,7 @@ export function MoveKeywords({ open, onClose, siteId, keywordIds, timezone, onMo
           </table>
         </div>
 
-        {spills ? <p className="text-muted text-xs">That day has fewer free slots than keywords: {spills} go to the next day(s).</p> : null}
+        {spills ? <p className="text-muted text-xs">That day has fewer free slots than keywords: {spills} {spills === 1 ? 'goes' : 'go'} to the following day{spills === 1 ? '' : 's'}.</p> : null}
         {preview?.notes.length ? (
           <ul className="list-disc space-y-1 pl-5 text-xs text-amber-700 dark:text-amber-400">
             {preview.notes.map((n) => (

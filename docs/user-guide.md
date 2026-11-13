@@ -36,7 +36,7 @@ The same tool as one Windows program: no command window, and nothing else to ins
     - The top line says e.g. “working on 2 prompts at once (3 tabs)”.
   - A sign-in page or a human check is never automated: the app shows the ChatGPT tab and a notification, and the job waits for you as in Chrome. Links in answers open in your default browser.
   - While the app's ChatGPT is connected, Automation Chrome's extension (3.4.6) opens no ChatGPT tab and takes no prompt (badge “APP”).
-  - **Switching back:** if ChatGPT does not work in the app, untick **App → Run ChatGPT prompts in this app**, and Automation Chrome takes the prompts again.
+  - **Switching back:** if ChatGPT does not work in the app, untick **File → Run ChatGPT prompts in this app**, and Automation Chrome takes the prompts again.
   - While `npm run start:all` runs and the window only shows it, the prompts stay with Automation Chrome.
 - **Search Console in the app (indexing requests):**
   - The **Search Console** tab at the top opens Google Search Console inside the app, with its own storage, apart from ChatGPT. Sign in to Google there yourself, once.

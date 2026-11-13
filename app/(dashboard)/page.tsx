@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 import { getExtensionHealth, getWorkerHealth } from '@/lib/health';
 import { siteSummaries, taskGroupCounts } from '@/lib/stats';
 import { LANGUAGE_LABELS, moduleDisplayName, type Language } from '@/lib/domain';
-import { Card, Chip, EmptyState, LinkButton, PageHeader, ProgressBar, Stat, StatusChip, formatRelative } from '@/components/ui';
+import { Card, Chip, EmptyState, LinkButton, PageHeader, ProgressBar, Stat, StatusChip, formatRelative, plural } from '@/components/ui';
 import { ensureCustomWriters } from '@/lib/writers/store';
 import { setupState } from '@/lib/setup';
 import { SetupBanner } from '@/components/setup-checklist';
@@ -32,7 +32,7 @@ export default async function OverviewPage() {
     <>
       <PageHeader
         title="Overview"
-        description="Everything below is read from the local database and live heartbeats — no simulated numbers."
+        description="Your articles, websites and the app's health at a glance, live from this PC."
         actions={
           <>
             <LinkButton href="/single-article" variant="primary">
@@ -112,11 +112,11 @@ export default async function OverviewPage() {
                 {worker.state === 'online' ? 'Online' : worker.state === 'stale' ? 'Stale heartbeat' : 'Offline'}
               </Chip>
             </li>
-            <li className="text-muted -mt-2 text-xs">Last heartbeat: {formatRelative(worker.lastSeenAt)}{worker.pid ? ` · PID ${worker.pid}` : ''}</li>
+            <li className="text-muted -mt-2 text-xs">Last heartbeat: <span suppressHydrationWarning>{formatRelative(worker.lastSeenAt)}</span></li>
             <li className="flex items-center justify-between gap-3">
               <span>ChatGPT extension</span>
               <Chip tone={extension.state === 'connected' ? 'success' : 'warning'}>
-                {extension.state === 'connected' ? `Connected · ${extension.tabs} tab(s)` : extension.state === 'stale' ? 'Not responding' : 'Not paired'}
+                {extension.state === 'connected' ? `Connected · ${plural(extension.tabs, 'tab')}` : extension.state === 'stale' ? 'Not responding' : 'Not paired'}
               </Chip>
             </li>
             <li className="text-muted -mt-2 text-xs">
@@ -126,7 +126,7 @@ export default async function OverviewPage() {
             <li className="flex items-center justify-between gap-3">
               <span>WordPress sessions</span>
               <span className="text-muted text-xs">
-                {sites.filter((s) => s.sessionState === 'ACTIVE').length} active / {sites.length} site(s)
+                {sites.filter((s) => s.sessionState === 'ACTIVE').length} active / {plural(sites.length, 'site')}
               </span>
             </li>
           </ul>

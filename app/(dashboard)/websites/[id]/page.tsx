@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import { parseJson } from '@/lib/json';
 import { parseSiteOverrides } from '@/lib/settings';
-import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, cx, formatDateTime, formatRelative } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, KeyValue, PageHeader, cx, formatDateTime, formatRelative, plural } from '@/components/ui';
 import { ControlActionButton } from '@/components/control-action';
 import { WebsiteForm, type WebsiteFormValues } from '../website-form';
 import { PublishingPermission } from './publishing';
@@ -168,7 +168,7 @@ export default async function WebsitePage({ params, searchParams }: { params: Pr
                 {
                   label: 'Internal link index',
                   value: site.linkIndexSyncedAt
-                    ? `${linkCount('ACTIVE')} published post(s)${linkCount('BROKEN') ? ` · ${linkCount('BROKEN')} broken` : ''}${linkCount('REMOVED') ? ` · ${linkCount('REMOVED')} removed` : ''} · refreshed ${formatRelative(site.linkIndexSyncedAt)}`
+                    ? `${plural(linkCount('ACTIVE'), 'published post')}${linkCount('BROKEN') ? ` · ${linkCount('BROKEN')} broken` : ''}${linkCount('REMOVED') ? ` · ${linkCount('REMOVED')} removed` : ''} · refreshed ${formatRelative(site.linkIndexSyncedAt)}`
                     : 'not built yet (built automatically by the first article, or use Refresh link index)',
                 },
                 { label: 'Admin URL', value: site.adminUrl },

@@ -82,13 +82,13 @@
     // Images ChatGPT generated in an answer (not avatars or icons).
     generatedImage: ['img[src*="/backend-api/estuary/content"]', 'img[src*="oaiusercontent.com"]', 'img[src*="oaidalleapiprodscus"]', 'img[alt^="Generated image"]', 'img[alt^="Generiertes Bild"]'],
     fileInput: ['input[type="file"]'],
-    loginButton: ['[data-testid="login-button"]', 'a[href*="/auth/login"]', 'button[data-testid="log-in-button"]'],
+    loginButton: ['[data-testid="login-button"]', '[data-testid="signup-button"]', 'a[href*="/auth/login"]', 'button[data-testid="log-in-button"]'],
     challenge: ['iframe[src*="challenges.cloudflare.com"]', '#challenge-stage', '#cf-challenge-running', '#challenge-form', '[data-testid="human-verification"]'],
   };
 
   const TEXT = {
     continue: [/^continue generating$/i, /^continue$/i, /^weiter generieren$/i, /^fortfahren$/i],
-    login: [/^log in$/i, /^anmelden$/i, /^sign up$/i],
+    login: [/^log in$/i, /^anmelden$/i, /^sign up$/i, /^sign up for free$/i, /^kostenlos registrieren$/i, /^registrieren$/i],
     challenge: [/verify you are human/i, /bestätigen sie, dass sie ein mensch sind/i, /checking if the site connection is secure/i, /just a moment/i],
     usageLimit: [
       /you(?:'|’)ve reached (?:the|our|your) (?:current )?(?:usage cap|limit)/i,
@@ -227,7 +227,11 @@
     const path = location.pathname || '/';
     if (/^\/(auth|login)/.test(path)) return { state: 'login' };
     const composer = findComposer();
-    if (!composer && (qs(SELECTORS.loginButton) || findButtonByText(TEXT.login))) return { state: 'login' };
+    // Signed out, ChatGPT still shows its composer (anyone may chat), with “Log in” / “Sign up for free” in the header
+    // (owner's QA report, 3.3.34: the app said “ready” before any sign-in). A visible sign-in button means signed out,
+    // composer or not; a signed-in page has none.
+    const loginButton = qsAll(SELECTORS.loginButton).find((el) => isVisible(el)) || findButtonByText(TEXT.login);
+    if (loginButton) return { state: 'login' };
     if (matchAny(TEXT.lost, text)) return { state: 'lost' };
     const limit = limitInfo();
     if (limit) return { state: 'usage-limit', ...limit };

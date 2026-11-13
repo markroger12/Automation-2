@@ -172,8 +172,12 @@ export function ResearchEvidence({ initialTaskId }: { initialTaskId?: string }) 
       setError((e as Error).message);
     }
   }, [selected]);
-  useEffect(() => void loadList(), [loadList]);
-  useEffect(() => void loadDetail(), [loadDetail]);
+  useEffect(() => {
+    loadList();
+  }, [loadList]);
+  useEffect(() => {
+    loadDetail();
+  }, [loadDetail]);
 
   if (error) return <Alert tone="danger" title="Could not load">{error}</Alert>;
   if (rows === null) return <div className="surface-2 h-40 animate-pulse rounded-xl" aria-busy="true" />;

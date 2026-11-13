@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from './client';
-import { Alert, Card, Chip } from './ui';
+import { Alert, Card, Chip, plural } from './ui';
 import { ScreenshotModal } from './screenshot-modal';
 import { formatInZone } from '@/lib/workflow/time';
 
@@ -44,7 +44,7 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
         action === 'signin'
           ? 'Google sign-in opens in Automation Chrome. Sign in with the account that owns the Search Console property, then press “Request now”.'
           : r.count
-            ? `${r.count} request(s) are made now (Automation Chrome opens Search Console for each, one after another).`
+            ? `${plural(r.count, 'request')} are made now (Automation Chrome opens Search Console for each, one after another).`
             : 'Nothing was waiting for a sign-in.',
       );
       await load();
@@ -84,7 +84,7 @@ export function IndexingPanel({ version = 0 }: { version?: number } = {}) {
         </div>
         {needsSignIn ? (
           <Alert tone="warning" title="Sign in to Google once in Automation Chrome">
-            {o.notSignedIn ? `${o.notSignedIn} request(s) wait for it. ` : ''}Use the Google account that owns the website in Search Console. You type the password yourself in Chrome; the app never sees it. Then press “Request now” (or they are made within the hour).
+            {o.notSignedIn ? `${plural(o.notSignedIn, 'request')} wait for it. ` : ''}Use the Google account that owns the website in Search Console. You type the password yourself in Chrome; the app never sees it. Then press “Request now” (or they are made within the hour).
           </Alert>
         ) : null}
         {o.humanCheck ? <Alert tone="warning">Google showed a check (“I'm not a robot”) in Automation Chrome that was not completed in time. Press “Request now” and complete it in the Automation Chrome window that comes to the front.</Alert> : null}

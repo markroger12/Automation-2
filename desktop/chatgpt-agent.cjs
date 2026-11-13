@@ -355,6 +355,8 @@ function createChatGPTAgent(deps) {
 
   async function hello() {
     if (ids().some((id) => tabState(id).ready)) await pageSignals();
+    // Whether Google is signed in, in the Search Console tab (its storage; no page needs to be loaded).
+    if (deps.gsc && typeof deps.gsc.signedIn === 'function') gscSignedIn = await deps.gsc.signedIn().catch(() => null);
     const res = await api('hello', {
       version: deps.version,
       protocol: 1,
@@ -368,7 +370,7 @@ function createChatGPTAgent(deps) {
       claimsPaused: paused,
       backoffUntil: serverCfg.backoffUntil,
       lastError,
-      diagnostics: { outbox: state().outbox.length, inApp: true, tabs: ids().length, searchConsole: Boolean(deps.gsc), gsc: gsc.last },
+      diagnostics: { outbox: state().outbox.length, inApp: true, tabs: ids().length, searchConsole: Boolean(deps.gsc), gsc: gsc.last, gscSignedIn },
     });
     lastHelloAt = Date.now();
     serverCfg = Object.assign({}, serverCfg, res.config || {});
@@ -382,7 +384,7 @@ function createChatGPTAgent(deps) {
   function status() {
     const list = ids().map((id) => tabState(id));
     const busyTabs = list.filter((t) => t.busy).length;
-    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: busyTabs > 0, busyTabs, busyIds: ids().filter((id) => tabState(id).busy), tabs: list.length, ready: list.some((t) => t.ready), loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil, gsc: deps.gsc ? { running: gsc.running, waiting: serverCfg.gscWaiting || 0, last: gsc.last } : null };
+    const s = { connected: Boolean(lastHelloAt) && Date.now() - lastHelloAt < 75_000 && !lastError, paused, busy: busyTabs > 0, busyTabs, busyIds: ids().filter((id) => tabState(id).busy), tabs: list.length, ready: list.some((t) => t.ready), loggedIn: pageLogin, humanCheck: pageHumanCheck, versionMessage, lastError, outbox: state().outbox.length, backoffUntil: serverCfg.backoffUntil, gsc: deps.gsc ? { running: gsc.running, waiting: serverCfg.gscWaiting || 0, last: gsc.last, signedIn: gscSignedIn } : null };
     if (deps.onStatus) deps.onStatus(s);
     return s;
   }
@@ -453,6 +455,8 @@ function createChatGPTAgent(deps) {
    * or Google's check is never handled here: the owner is told. The proof (the page as it stands) goes first.
    */
   const gsc = { running: false, onReady: null, onDone: null, onNavigate: null, last: null };
+  /** Google signed in in the Search Console tab: true / false, or null while not known (deps.gsc.signedIn). */
+  let gscSignedIn = null;
   const pageCopyOf = (msg) => (typeof msg.pageCopy === 'string' && msg.pageCopy.length <= 300000 ? msg.pageCopy : undefined);
 
   async function saveGscProof(jobId) {

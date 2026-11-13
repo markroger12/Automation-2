@@ -16,6 +16,16 @@ export interface Toast {
 /** Windows PowerShell's own app id: its toasts need no app registration. */
 export const POWERSHELL_APP_ID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe';
 
+/**
+ * Whose name and icon the toast shows. In the desktop app, the app's own (its installer registers this id with the
+ * Start-menu shortcut): “Blog Automation Studio” with its icon, not “Windows PowerShell” (owner QA report, 3.3.34).
+ * The npm copy has no registered id and keeps PowerShell's.
+ */
+export function toastAppId(env: Record<string, string | undefined> = process.env): string {
+  const id = (env.BAS_APP_USER_MODEL_ID ?? '').trim();
+  return /^[A-Za-z0-9._-]{3,128}$/.test(id) ? id : POWERSHELL_APP_ID;
+}
+
 const xmlText = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!);
 
 /** The toast XML (ToastGeneric: title, text, “Blog Automation Studio”, an Open button). */
@@ -53,7 +63,7 @@ export function showToast(t: Toast, platform: NodeJS.Platform = process.platform
     };
     try {
       const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '-'], {
-        env: { ...process.env, BAS_TOAST_XML: Buffer.from(toastXml(t), 'utf8').toString('base64'), BAS_TOAST_APP: POWERSHELL_APP_ID },
+        env: { ...process.env, BAS_TOAST_XML: Buffer.from(toastXml(t), 'utf8').toString('base64'), BAS_TOAST_APP: toastAppId() },
         windowsHide: true,
         stdio: ['pipe', 'ignore', 'pipe'],
       });

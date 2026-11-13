@@ -10,6 +10,10 @@ import { pauseMessage, workPause } from '../work-pause';
  * so the answer fits. Only states, counts, and the short messages the app itself shows; never a password, key,
  * cookie, article text or prompt. The owner can read it in the assistant panel (“Details sent”).
  */
+/** This PC's local time (the owner's clock), not UTC (owner QA report). */
+const localTime = (d: Date, withDate = false) =>
+  d.toLocaleString('en-GB', { ...(withDate ? { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' } : {}), hour: '2-digit', minute: '2-digit', hour12: false });
+
 export async function appContext(now = new Date()): Promise<string> {
   const day = new Date(now.getTime() - 24 * 3600_000);
   const [worker, chatgpt, pause, settings, groups, stuck, logs, sites] = await Promise.all([
@@ -31,8 +35,8 @@ export async function appContext(now = new Date()): Promise<string> {
   for (const g of groups) counts[statusGroup(g.status)] = (counts[statusGroup(g.status)] ?? 0) + g._count._all;
   const short = (s: string | null | undefined, n = 180) => (s ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
   const lines = [
-    `App: Blog Automation Studio${inDesktopApp() ? ` desktop app ${process.env.BAS_APP_VERSION ?? ''}`.trimEnd() : ' (npm copy)'}; time ${now.toISOString()}.`,
-    `Worker: ${worker.state}. ChatGPT connection: ${chatgpt.state}${chatgpt.state === 'connected' ? ` (${chatgpt.tabs} tab(s))` : ''}.`,
+    `App: Blog Automation Studio${inDesktopApp() ? ` desktop app ${process.env.BAS_APP_VERSION ?? ''}`.trimEnd() : ' (npm copy)'}; this PC's time ${localTime(now, true)}.`,
+    `Worker: ${worker.state}. ChatGPT connection: ${chatgpt.state}${chatgpt.state === 'connected' ? ` (${chatgpt.tabs} tab(s), ${chatgpt.diagnostics.loggedIn === true ? 'signed in' : chatgpt.diagnostics.loggedIn === false ? 'SIGNED OUT' : 'sign-in not known yet'})` : ''}.`,
     `New work: ${pause.paused ? pauseMessage(pause) : 'running normally'}.`,
     `Articles: ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ') || 'none yet'}.`,
     `Websites: ${sites.length ? sites.map((s) => `${s.name} (WordPress session ${s.wordpressProfile?.sessionState ?? 'unknown'})`).join('; ') : 'none added yet'}.`,
@@ -44,7 +48,7 @@ export async function appContext(now = new Date()): Promise<string> {
   }
   if (logs.length) {
     lines.push('Recent warnings and errors (last 24 h, newest first):');
-    for (const l of logs) lines.push(`- ${l.createdAt.toISOString().slice(11, 16)} ${l.level} [${l.category}] ${short(l.message)}`);
+    for (const l of logs) lines.push(`- ${localTime(l.createdAt)} ${l.level} [${l.category}] ${short(l.message)}`);
   }
   return lines.join('\n');
 }

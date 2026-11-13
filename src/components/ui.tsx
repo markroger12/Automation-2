@@ -207,6 +207,11 @@ export function formatRelative(value: Date | string | null | undefined, now: Dat
   return `${Math.round(abs / 86400)}d ${suffix}`;
 }
 
+/** “1 article”, “3 articles” (owner QA report: no “article(s)” on screen). */
+export function plural(n: number, word: string, many = `${word}s`): string {
+  return `${n} ${n === 1 ? word : many}`;
+}
+
 export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
   const s = Math.round(ms / 1000);

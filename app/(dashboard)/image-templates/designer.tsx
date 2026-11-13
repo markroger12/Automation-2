@@ -207,7 +207,9 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
   const [pen, setPen] = useState<{ as: 'shape' | 'photo'; points: CanvasPoint[]; hover: { x: number; y: number } | null } | null>(null);
   const penDrag = useRef<number | null>(null);
   const pointDrag = useRef<{ id: string; kind: 'anchor' | 'in' | 'out'; index: number; before: SiteImageSettings; pts: CanvasPoint[]; moved: boolean } | null>(null);
-  useEffect(() => setPen(null), [set, which, canvasView, siteId]);
+  useEffect(() => {
+    setPen(null);
+  }, [set, which, canvasView, siteId]);
 
   const load = useCallback(async (id: string) => {
     setLoadError(null);
@@ -564,7 +566,9 @@ export function TemplateDesigner({ sites, initialSiteId }: { sites: { id: string
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewKey, siteId]);
-  useEffect(() => setFinalInfo(null), [previewKey]);
+  useEffect(() => {
+    setFinalInfo(null);
+  }, [previewKey]);
 
   async function finalRender() {
     try {
@@ -1354,7 +1358,9 @@ function LayerVisual({ layer: l, template, scale, vars, photoUrl, logoUrl }: { l
 
 function NumberField({ id, label, value, min, max, step = 1, onChange }: { id: string; label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void }) {
   const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
   return (
     <Field label={label} htmlFor={id}>
       <Input
@@ -1379,7 +1385,9 @@ function NumberField({ id, label, value, min, max, step = 1, onChange }: { id: s
 
 function ColorField({ id, label, value, accent, onChange, nullable }: { id: string; label: string; value: string | null; accent: string; onChange: (v: string | null) => void; nullable?: boolean }) {
   const [text, setText] = useState(value ?? '');
-  useEffect(() => setText(value ?? ''), [value]);
+  useEffect(() => {
+    setText(value ?? '');
+  }, [value]);
   const swatch = value === 'accent' ? accent : value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000';
   const invalid = text !== '' && !COLOR_RE.test(text.trim());
   return (

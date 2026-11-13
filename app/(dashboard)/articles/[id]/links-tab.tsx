@@ -5,7 +5,7 @@ import { ExternalLink, Unlink, Wand2 } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
-import { Alert, Card, Chip, EmptyState, KeyValue } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, KeyValue, plural } from '@/components/ui';
 
 interface ExternalData {
   candidates: number;
@@ -216,7 +216,7 @@ export function LinksTab({ task, onChanged }: { task: SerializedTaskDetail; onCh
                 },
                 { label: 'Why', value: int.data.reason ?? '—' },
                 { label: 'Contextual links', value: int.data.contextual.length ? int.data.contextual.map((c) => `“${c.anchor}” → ${c.title}`).join(' · ') : '—' },
-                { label: 'Link index', value: int.data.index ? `${int.data.index.active} published post(s) · ${int.data.index.refreshed ? `refreshed via ${int.data.index.via}` : 'cached'}` : '—' },
+                { label: 'Link index', value: int.data.index ? `${plural(int.data.index.active, 'published post')} · ${int.data.index.refreshed ? `refreshed via ${int.data.index.via}` : 'cached'}` : '—' },
               ]}
             />
             {int.data.candidates.length ? (

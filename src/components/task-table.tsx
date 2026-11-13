@@ -9,7 +9,7 @@ import type { TaskListRow } from '@/lib/tasks/query';
 import { Button, ConfirmDialog, usePersistentState, useToast, RelativeTime } from './client';
 import { Pagination, pageCount, usePageSize } from './data-table';
 import { DatePicker } from './date-picker';
-import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime } from './ui';
+import { Chip, EmptyState, ProgressBar, StatusChip, cx, formatDateTime, plural } from './ui';
 import { allCustomWriters } from '@/lib/writers/catalog';
 
 type Group = 'all' | 'queued' | 'running' | 'review' | 'paused' | 'draft' | 'failed' | 'cancelled';
@@ -79,7 +79,9 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
   }, [initialQuery]);
 
   // A new filter, search or sort starts on the first page.
-  useEffect(() => setPage(1), [filters, campaignId]);
+  useEffect(() => {
+    setPage(1);
+  }, [filters, campaignId]);
 
   const query = useMemo(() => {
     const p = new URLSearchParams({ group: filters.group, sort: filters.sort, dir: filters.dir, limit: String(pageSize), offset: String((page - 1) * pageSize) });
@@ -117,17 +119,17 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
     try {
       if (action === 'delete') {
         const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action } });
-        toast(res.failed ? 'error' : 'success', `${res.ok} article(s) deleted${res.failed ? `, ${res.failed} not deleted: ${res.results.find((r) => !r.ok)?.message ?? ''}` : ''}. A running one is deleted as soon as it stops.`);
+        toast(res.failed ? 'error' : 'success', `${plural(res.ok, 'article')} deleted${res.failed ? `, ${res.failed} not deleted: ${res.results.find((r) => !r.ok)?.message ?? ''}` : ''}. A running one is deleted as soon as it stops.`);
       } else if (action === 'approve') {
         const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action, reason: approveReason } });
         const skipped = res.results.filter((r) => !r.ok);
-        toast(res.ok ? 'success' : 'error', `${res.ok} task(s) approved${skipped.length ? `, ${skipped.length} skipped (${skipped[0].message ?? 'not waiting for an approval'})` : ''}.`);
+        toast(res.ok ? 'success' : 'error', `${plural(res.ok, 'task')} approved${skipped.length ? `, ${skipped.length} skipped (${skipped[0].message ?? 'not waiting for an approval'})` : ''}.`);
       } else if (ids.length === 1 || action === 'resume') {
         for (const id of ids) await api(`/api/tasks/${id}/${action}`, { method: 'POST' });
         toast('success', `${action === 'cancel' ? 'Cancellation requested' : action === 'retry' ? 'Retry queued' : 'Resume queued'}${ids.length > 1 ? ` for ${ids.length} tasks` : ''}.`);
       } else {
         const res = await api<{ ok: number; failed: number; results: { id: string; ok: boolean; message?: string }[] }>('/api/tasks/bulk', { body: { ids, action } });
-        toast(res.failed ? 'error' : 'success', `${res.ok} task(s) ${action === 'cancel' ? 'cancelled' : 'queued for retry'}${res.failed ? `, ${res.failed} skipped: ${res.results.find((r) => !r.ok)?.message ?? ''}` : ''}.`);
+        toast(res.failed ? 'error' : 'success', `${plural(res.ok, 'task')} ${action === 'cancel' ? 'cancelled' : 'queued for retry'}${res.failed ? `, ${res.failed} skipped: ${res.results.find((r) => !r.ok)?.message ?? ''}` : ''}.`);
       }
       setSelected(new Set());
       await load();
@@ -353,7 +355,8 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
                     <td className="text-xs">
                       {r.chatgpt ? (
                         <div>
-                          ChatGPT: {r.chatgpt.status === 'ACTIVE' ? `tab ${r.chatgpt.tab}` : `waiting${new Date(r.chatgpt.runAt) > new Date() ? ` until ${new Date(r.chatgpt.runAt).toLocaleTimeString()}` : ''}`}
+                          ChatGPT:{' '}
+                          <span suppressHydrationWarning>{r.chatgpt.status === 'ACTIVE' ? `tab ${r.chatgpt.tab}` : `waiting${new Date(r.chatgpt.runAt) > new Date() ? ` until ${new Date(r.chatgpt.runAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : ''}`}</span>
                           {r.chatgpt.errorCode ? <span className="text-amber-700"> ({r.chatgpt.errorCode})</span> : null}
                         </div>
                       ) : null}
@@ -381,7 +384,7 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
                     </td>
                   ) : null}
                   <td className="text-muted text-xs whitespace-nowrap" title={formatDateTime(mode === 'queue' ? r.updatedAt : r.createdAt)}>
-                    {mode === 'queue' ? <RelativeTime value={r.updatedAt} /> : formatDateTime(r.createdAt)}
+                    {mode === 'queue' ? <RelativeTime value={r.updatedAt} /> : <span suppressHydrationWarning>{formatDateTime(r.createdAt)}</span>}
                   </td>
                   <td className="text-right whitespace-nowrap">
                     {(r.status === 'LOGIN_REQUIRED' || r.status === 'PAUSED') && !r.legacy ? (
@@ -415,11 +418,11 @@ export function TaskTable({ storageKey, mode, websites, initialGroup, initialQue
         </div>
       ) : null}
       <div className="text-muted border-app border-t px-4 py-1.5 text-[11px]">
-        {pollMs ? `Live — refreshes every ${Math.round(pollMs / 1000)}s` : 'Static view'} · last update {lastLoad.current ? lastLoad.current.toLocaleTimeString() : '—'}
+        {pollMs ? `Live — refreshes every ${Math.round(pollMs / 1000)}s` : 'Static view'} · last update <span suppressHydrationWarning>{lastLoad.current ? lastLoad.current.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}</span>
       </div>
       <ConfirmDialog
         open={Boolean(confirm)}
-        title={confirm?.action === 'cancel' ? `Cancel ${confirm.ids.length} task(s)?` : confirm?.action === 'delete' ? `Delete ${confirm.ids.length} article(s)?` : confirm?.action === 'approve' ? `Approve ${confirm.ids.length} task(s)?` : `Retry ${confirm?.ids.length ?? 0} task(s)?`}
+        title={confirm?.action === 'cancel' ? `Cancel ${plural(confirm.ids.length, 'task')}?` : confirm?.action === 'delete' ? `Delete ${plural(confirm.ids.length, 'article')}?` : confirm?.action === 'approve' ? `Approve ${plural(confirm.ids.length, 'task')}?` : `Retry ${plural(confirm?.ids.length ?? 0, 'task')}?`}
         confirmLabel={confirm?.action === 'cancel' ? 'Cancel tasks' : confirm?.action === 'delete' ? 'Delete' : confirm?.action === 'approve' ? 'Approve' : 'Retry'}
         tone={confirm?.action === 'cancel' || confirm?.action === 'delete' ? 'danger' : 'primary'}
         busy={Boolean(busy)}

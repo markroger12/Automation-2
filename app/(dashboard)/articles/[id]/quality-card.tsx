@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { OctagonX, TriangleAlert } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { groupReviewNotes } from '@/lib/review-notes';
-import { Card, Chip, cx, formatDateTime, type ChipTone } from '@/components/ui';
+import { Card, Chip, cx, formatDateTime, type ChipTone, plural } from '@/components/ui';
 import { DuplicateMatchCard, type DuplicateMatchView } from '@/components/duplicate-match';
 import type { QualitySections } from '@/lib/quality/report';
 import { NoteGroups } from './review-notes';
@@ -69,18 +69,18 @@ export function QualityCard({ taskId, onTab }: { taskId: string; onTab?: (tab: s
   if (s.seo) checks.push({ label: 'SEO readiness', tone: s.seo.score >= s.seo.threshold ? 'ok' : 'warn', value: <>{s.seo.score}/100 <span className="text-muted text-xs">(review below {s.seo.threshold})</span>{s.seo.failed.length ? <span className="text-muted block text-xs">not met: {s.seo.failed.slice(0, 4).join('; ')}</span> : null}</> });
   if (s.structure) {
     const st = s.structure;
-    const extra = [st.quickBioRows !== null ? `Quick Bio ${st.quickBioRows} rows${st.quickBioColumnsOk === false ? ' (malformed)' : ''}` : null, st.emptyHeadings ? `${st.emptyHeadings} empty heading(s)` : null, st.duplicateSentences ? `${st.duplicateSentences} repeated sentence(s)` : null].filter(Boolean);
+    const extra = [st.quickBioRows !== null ? `Quick Bio ${st.quickBioRows} rows${st.quickBioColumnsOk === false ? ' (malformed)' : ''}` : null, st.emptyHeadings ? `${plural(st.emptyHeadings, 'empty heading')}` : null, st.duplicateSentences ? `${plural(st.duplicateSentences, 'repeated sentence')}` : null].filter(Boolean);
     checks.push({ label: 'Structure', tone: st.faqCount === st.expectedFaqCount && !st.emptyHeadings && st.quickBioColumnsOk !== false ? 'ok' : 'warn', value: <>{st.words.toLocaleString('en-US')} words · {st.faqCount}/{st.expectedFaqCount} FAQs{extra.length ? <span className="text-muted block text-xs">{extra.join(' · ')}</span> : null}</> });
   }
-  if (s.evidence) checks.push({ label: 'Research evidence', tone: s.evidence.sources ? 'ok' : 'warn', value: <>{s.evidence.sources} source URL(s)<span className="text-muted block text-xs">{s.evidence.uncertain} uncertainty note(s)</span></> });
+  if (s.evidence) checks.push({ label: 'Research evidence', tone: s.evidence.sources ? 'ok' : 'warn', value: <>{plural(s.evidence.sources, 'source URL')}<span className="text-muted block text-xs">{plural(s.evidence.uncertain, 'uncertainty note')}</span></> });
   if (s.duplicates)
     checks.push({
       label: 'Duplicates',
       tone: !s.duplicates.highest || s.duplicates.highest === 'LOW' ? 'ok' : s.duplicates.overridden ? 'warn' : 'bad',
-      value: s.duplicates.highest ? <>{s.duplicates.highest.toLowerCase()} overlap{s.duplicates.overridden ? <span className="text-muted block text-xs">kept by you (“{s.duplicates.overrideReason}”)</span> : null}<span className="text-muted block text-xs">{s.duplicates.compared} compared</span></> : <>no overlap<span className="text-muted block text-xs">{s.duplicates.compared} saved article(s) compared</span></>,
+      value: s.duplicates.highest ? <>{s.duplicates.highest.toLowerCase()} overlap{s.duplicates.overridden ? <span className="text-muted block text-xs">kept by you (“{s.duplicates.overrideReason}”)</span> : null}<span className="text-muted block text-xs">{s.duplicates.compared} compared</span></> : <>no overlap<span className="text-muted block text-xs">{plural(s.duplicates.compared, 'saved article')} compared</span></>,
     });
   if (s.links) checks.push({ label: 'Links', tone: s.links.internalLinkLine ? 'ok' : 'warn', value: <>{s.links.external} external<span className="text-muted block text-xs">internal link line {s.links.internalLinkLine ? 'present' : 'missing'}</span></> });
-  if (s.images) checks.push({ label: 'Images', tone: s.images.count >= 3 ? 'ok' : s.images.required && !s.images.count ? 'bad' : 'warn', value: <>{s.images.count} image(s)<span className="text-muted block text-xs">{s.images.withAlt} with alt text{s.images.required ? ' · required for this site' : ''}</span></> });
+  if (s.images) checks.push({ label: 'Images', tone: s.images.count >= 3 ? 'ok' : s.images.required && !s.images.count ? 'bad' : 'warn', value: <>{plural(s.images.count, 'image')}<span className="text-muted block text-xs">{s.images.withAlt} with alt text{s.images.required ? ' · required for this site' : ''}</span></> });
   if (s.rankMath) checks.push({ label: 'Rank Math', tone: s.rankMath.active === false ? undefined : s.rankMath.fieldsVerified ? 'ok' : 'warn', value: s.rankMath.active === false ? 'not active on this site' : <>{s.rankMath.score !== null ? `score ${s.rankMath.score}` : 'no score shown'}{s.rankMath.scoreVia ? ` via ${s.rankMath.scoreVia}` : ''}<span className="text-muted block text-xs">fields {s.rankMath.fieldsVerified ? 'verified' : 'not verified'} (read from the editor)</span></> });
   if (s.wordpress) checks.push({ label: 'WordPress', tone: s.wordpress.verified ? 'ok' : 'warn', value: s.wordpress.verified ? <>draft #{s.wordpress.postId} verified<span className="text-muted block text-xs">{s.wordpress.status}</span></> : 'no verified draft' });
   return (

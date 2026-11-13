@@ -72,7 +72,9 @@ export function ColorPicker({
   const bar = useRef<HTMLDivElement>(null);
   const dialogId = useId();
   const [hasDropper, setHasDropper] = useState(false);
-  useEffect(() => setHasDropper('EyeDropper' in window), []);
+  useEffect(() => {
+    setHasDropper('EyeDropper' in window);
+  }, []);
 
   // Follow a value changed outside (typed hex, undo) unless it is the color shown now.
   useEffect(() => {

@@ -5,6 +5,8 @@ import { inDesktopApp } from './runtime';
 import { DRAFT_STATUSES, STATUS_LABELS, type TaskStatus } from './domain';
 import { assistantSettings } from './assistant/settings';
 import { GSC_QUEUE } from './gsc/request-indexing';
+import { DESKTOP_AGENT_ID } from './agent/desktop';
+import { parseJson } from './json';
 
 /** The owner hid the setup checklist on the Overview (it stays under Logs / Diagnostics → Setup checklist). */
 export const SETUP_DISMISSED_KEY = 'setup.dismissed';
@@ -33,11 +35,13 @@ export interface SetupState {
 /** What the checklist reads (all of it measured; nothing assumed). */
 export interface SetupFacts {
   desktop: boolean;
-  chatgpt: { state: 'connected' | 'stale' | 'never'; tabs: number };
+  /** `loggedIn`: what the ChatGPT page shows (true signed in, false signed out, null not known yet). */
+  chatgpt: { state: 'connected' | 'stale' | 'never'; tabs: number; loggedIn: boolean | null };
   websites: { id: string; name: string; session: string }[];
   articles: { finished: number; latest: { id: string; keyword: string; status: string } | null };
   settingsSaved: boolean;
-  searchConsole: { requested: boolean; waitingForSignIn: boolean };
+  /** `signedIn`: Google signed in in the desktop app's Search Console tab (null: not known, or the npm copy). */
+  searchConsole: { requested: boolean; waitingForSignIn: boolean; signedIn: boolean | null };
   assistant: boolean;
   dismissed: boolean;
 }
@@ -52,26 +56,31 @@ export function setupSteps(f: SetupFacts): SetupState {
   const steps: SetupStep[] = [];
 
   const chatgptAction = f.desktop ? { label: 'Open the ChatGPT tab', tab: 'chatgpt' as const } : { label: 'Set up Automation Chrome', href: '/automation-chrome' };
+  const signedIn = f.chatgpt.state === 'connected' && f.chatgpt.loggedIn === true;
+  const signedOut = f.chatgpt.state === 'connected' && f.chatgpt.loggedIn === false;
   steps.push(
-    f.chatgpt.state === 'connected'
-      ? { key: 'chatgpt', title: 'Connect ChatGPT', detail: `ChatGPT is connected${f.chatgpt.tabs ? ` (${plural(f.chatgpt.tabs, 'tab')})` : ''}. Articles are written there.`, state: 'done', optional: false, action: null }
+    signedIn
+      ? { key: 'chatgpt', title: 'Connect ChatGPT', detail: `Signed in to ChatGPT${f.chatgpt.tabs ? ` (${plural(f.chatgpt.tabs, 'tab')})` : ''}. Articles are written there.`, state: 'done', optional: false, action: null }
       : {
           key: 'chatgpt',
           title: 'Connect ChatGPT',
-          detail:
-            f.chatgpt.state === 'stale'
+          detail: signedOut
+            ? `ChatGPT is open but signed out. Sign in${f.desktop ? ' in the ChatGPT tab (Ctrl+2)' : ' in Automation Chrome'} with your email and password.`
+            : f.chatgpt.state === 'stale'
               ? 'ChatGPT stopped answering. Open it and check that you are still signed in.'
-              : f.desktop
-                ? 'Sign in to ChatGPT in the ChatGPT tab at the top (Ctrl+2). The app writes your articles there, in your own account.'
-                : 'Open Automation Chrome with the extension and sign in to ChatGPT. The app writes your articles there, in your own account.',
-          state: f.chatgpt.state === 'stale' ? 'attention' : 'todo',
+              : f.chatgpt.state === 'connected'
+                ? 'Checking whether ChatGPT is signed in…'
+                : f.desktop
+                  ? 'Sign in to ChatGPT in the ChatGPT tab at the top (Ctrl+2). The app writes your articles there, in your own account.'
+                  : 'Open Automation Chrome with the extension and sign in to ChatGPT. The app writes your articles there, in your own account.',
+          state: signedOut || f.chatgpt.state === 'stale' ? 'attention' : f.chatgpt.state === 'connected' ? 'running' : 'todo',
           optional: false,
           action: chatgptAction,
         },
   );
 
   const needsLogin = f.websites.find((w) => w.session === 'LOGIN_REQUIRED');
-  const signedIn = f.websites.filter((w) => w.session === 'ACTIVE').length;
+  const sitesSignedIn = f.websites.filter((w) => w.session === 'ACTIVE').length;
   steps.push(
     f.websites.length === 0
       ? {
@@ -87,7 +96,7 @@ export function setupSteps(f: SetupFacts): SetupState {
         : {
             key: 'website',
             title: 'Add your WordPress website',
-            detail: `${f.websites.map((w) => w.name).slice(0, 3).join(', ')}${f.websites.length > 3 ? ` and ${f.websites.length - 3} more` : ''}. ${signedIn ? `Signed in to ${plural(signedIn, 'website')}.` : 'The app signs in when it saves the first draft.'}`,
+            detail: `${f.websites.map((w) => w.name).slice(0, 3).join(', ')}${f.websites.length > 3 ? ` and ${f.websites.length - 3} more` : ''}. ${sitesSignedIn ? `Signed in to ${plural(sitesSignedIn, 'website')}.` : 'The app signs in when it saves the first draft.'}`,
             state: 'done',
             optional: false,
             action: null,
@@ -119,17 +128,20 @@ export function setupSteps(f: SetupFacts): SetupState {
     action: { label: 'Open Settings', href: '/settings' },
   });
 
+  const gscDone = f.searchConsole.requested || f.searchConsole.signedIn === true;
   steps.push({
     key: 'search-console',
     title: 'Sign in to Search Console',
-    detail: f.searchConsole.requested
-      ? 'Indexing requests work: the app asks Google to index published articles.'
-      : f.searchConsole.waitingForSignIn
-        ? 'Indexing requests wait: Search Console asks you to sign in to Google.'
-        : 'After an article is published, the app can ask Google to index it. Sign in to Google once.',
-    state: f.searchConsole.requested ? 'done' : f.searchConsole.waitingForSignIn ? 'attention' : 'todo',
+    detail: f.searchConsole.waitingForSignIn
+      ? 'Indexing requests wait: Search Console asks you to sign in to Google.'
+      : f.searchConsole.requested
+        ? 'Indexing requests work: the app asks Google to index published articles.'
+        : f.searchConsole.signedIn === true
+          ? 'Signed in to Google. The app asks Google to index each article after it is published.'
+          : 'After an article is published, the app can ask Google to index it. Sign in to Google once.',
+    state: f.searchConsole.waitingForSignIn ? 'attention' : gscDone ? 'done' : 'todo',
     optional: true,
-    action: f.searchConsole.requested ? null : f.desktop ? { label: 'Open the Search Console tab', tab: 'search-console' } : { label: 'Open Automation Chrome', href: '/automation-chrome' },
+    action: gscDone && !f.searchConsole.waitingForSignIn ? null : f.desktop ? { label: 'Open the Search Console tab', tab: 'search-console' } : { label: 'Open Automation Chrome', href: '/automation-chrome' },
   });
 
   steps.push({
@@ -147,7 +159,7 @@ export function setupSteps(f: SetupFacts): SetupState {
 }
 
 export async function setupFacts(): Promise<SetupFacts> {
-  const [chatgpt, websites, finished, latest, settingsSaved, gscDone, gscLatest, dismissed] = await Promise.all([
+  const [chatgpt, websites, finished, latest, settingsSaved, gscDone, gscLatest, dismissed, desktopAgent] = await Promise.all([
     getExtensionHealth(),
     db.website.findMany({ where: { active: true }, orderBy: { createdAt: 'asc' }, select: { id: true, name: true, wordpressProfile: { select: { sessionState: true } } } }),
     db.articleTask.count({ where: { status: { in: DRAFT_STATUSES } } }),
@@ -156,14 +168,16 @@ export async function setupFacts(): Promise<SetupFacts> {
     db.queueJob.count({ where: { queue: GSC_QUEUE, status: 'COMPLETED' } }),
     db.queueJob.findFirst({ where: { queue: GSC_QUEUE }, orderBy: { updatedAt: 'desc' }, select: { status: true, errorCode: true } }),
     getValue<boolean>(SETUP_DISMISSED_KEY, false),
+    db.workerStatus.findUnique({ where: { id: `extension:${DESKTOP_AGENT_ID}` }, select: { diagnostics: true } }),
   ]);
+  const desktopDiag = parseJson<Record<string, unknown>>(desktopAgent?.diagnostics ?? null, {});
   return {
     desktop: inDesktopApp(),
-    chatgpt: { state: chatgpt.state, tabs: chatgpt.tabs },
+    chatgpt: { state: chatgpt.state, tabs: chatgpt.tabs, loggedIn: typeof chatgpt.diagnostics.loggedIn === 'boolean' ? chatgpt.diagnostics.loggedIn : null },
     websites: websites.map((w) => ({ id: w.id, name: w.name, session: w.wordpressProfile?.sessionState ?? 'UNKNOWN' })),
     articles: { finished, latest },
     settingsSaved: settingsSaved > 0,
-    searchConsole: { requested: gscDone > 0, waitingForSignIn: gscLatest?.status === 'WAITING' && gscLatest.errorCode === 'NOT_SIGNED_IN' },
+    searchConsole: { requested: gscDone > 0, waitingForSignIn: gscLatest?.status === 'WAITING' && gscLatest.errorCode === 'NOT_SIGNED_IN', signedIn: typeof desktopDiag.gscSignedIn === 'boolean' ? desktopDiag.gscSignedIn : null },
     assistant: assistantSettings().configured,
     dismissed,
   };

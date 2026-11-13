@@ -32,7 +32,7 @@ const { createHash, randomBytes } = require('node:crypto');
 const { createChatGPTTabs, isChatGPTContents } = require('./chatgpt-tab.cjs');
 const { createGoogleTab, isGoogleContents } = require('./google-tab.cjs');
 const { createUpdates } = require('./updates.cjs');
-const { SHORTCUTS, contextMenuTemplate, debounce, restoreBounds, updatedFrom } = require('./ux.cjs');
+const { SHORTCUTS, shortcutLines, contextMenuTemplate, debounce, restoreBounds, updatedFrom } = require('./ux.cjs');
 const { needsMore, workSummary } = require('./status.cjs');
 
 /** Ports the dashboard may use; the extension looks for it on the same ones. */
@@ -42,6 +42,10 @@ let ORIGIN = `http://localhost:${PORT}`;
 const TITLE = 'Blog Automation Studio';
 /** Where the releases are (What's new, Help). */
 const RELEASES = 'https://github.com/markroger12/Automation-2/releases';
+/** The app's Windows identity (electron-builder.yml appId; the installer gives the Start-menu shortcut this id). The
+ * app's own notifications and the worker's (src/lib/notify/windows.ts) show its name and icon with it. */
+const APP_USER_MODEL_ID = 'local.blogautomationstudio.desktop';
+if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 const packaged = app.isPackaged;
 /** The tool itself: next to this file when run from the repository, in the app's resources once installed. */
 const appDir = packaged ? path.join(process.resourcesPath, 'app') : path.resolve(__dirname, '..');
@@ -80,6 +84,9 @@ const TAB_BAR = 44;
 /** The key this app gives its dashboard for the ChatGPT tab (made at each start, never stored). */
 const agentKey = randomBytes(32).toString('base64url');
 let tray = null;
+/** Builds the tray's menu (set in buildTray); rebuilt when the work or the updater changes (refreshTrayMenu). */
+let trayMenu = null;
+let trayMenuKey = '';
 let quitting = false;
 /** The window shows a dashboard started elsewhere on the same data folder (npm run start:all). */
 let attachedToRunning = false;
@@ -118,7 +125,7 @@ async function dataFolder() {
     title: TITLE,
     message: 'Welcome to Blog Automation Studio',
     detail:
-      'Where should your websites, articles and settings be kept?\n\nAlready using Blog Automation Studio? Choose its data folder (for example F:\\claude\\Automation-2\\data) and everything is used as it is.\n\nNew here? Start with a new data folder. You can change this later from the tray menu.',
+      'Where should your websites, articles and settings be kept?\n\nAlready using Blog Automation Studio? Choose its data folder (the folder that holds app.db) and everything is used as it is.\n\nNew here? Start with a new data folder. You can change this later from the tray menu.',
     buttons: ['Choose my data folder…', 'Start with a new data folder', 'Quit'],
     defaultId: 0,
     cancelId: 2,
@@ -306,7 +313,8 @@ function keepRunning(name, start) {
   children[name] = child;
   child.on('exit', (code) => {
     if (quitting) return;
-    logLine('app', `${name} stopped (exit ${code}).`);
+    // Windows reports a forced end as 4294967295 (−1 read without a sign): show it as −1.
+    logLine('app', `${name} stopped (exit ${typeof code === 'number' && code > 0x7fffffff ? code - 0x100000000 : code}).`);
     // Restarted at most 3 times in 5 minutes; then the window says so.
     const now = Date.now();
     restarts[name] = restarts[name].filter((t) => now - t < 5 * 60_000);
@@ -518,6 +526,7 @@ async function refreshWork() {
   if (tray && !tray.isDestroyed()) {
     tray.setImage(trayImage(s.state));
     tray.setToolTip(s.tooltip);
+    refreshTrayMenu();
   }
   if (win && !win.isDestroyed()) {
     win.setProgressBar(s.progress, { mode: s.mode });
@@ -655,7 +664,7 @@ function showDashboard(page = '') {
 
 function chatgptSummary(s) {
   if (!s) return { tone: '', text: '' };
-  if (s.paused) return { tone: '', text: 'ChatGPT: in Automation Chrome (switched in the App menu)' };
+  if (s.paused) return { tone: '', text: 'ChatGPT: in Automation Chrome (switched in the File menu)' };
   if (s.versionMessage) return { tone: 'bad', text: 'ChatGPT: ' + s.versionMessage };
   if (s.humanCheck) return { tone: 'warn', text: 'ChatGPT shows a check: complete it in the ChatGPT tab' };
   if (s.loggedIn === false) return { tone: 'warn', text: 'ChatGPT: sign in in the ChatGPT tab (email and password)' };
@@ -678,6 +687,8 @@ const GSC_OUTCOME = {
 function gscSummary(g) {
   if (!g) return null;
   if (g.running) return { tone: 'busy', text: 'Search Console: requesting indexing…' };
+  // Not signed in to Google in the tab: say so, never “ready” (owner QA report, 3.3.34).
+  if (g.signedIn === false) return { tone: 'warn', text: 'Search Console: sign in to Google in this tab (Ctrl+3)' };
   const last = g.last && GSC_OUTCOME[g.last.outcome];
   if (last) return { tone: last[0], text: `Search Console: ${last[1]}${g.waiting > 0 ? ` · ${g.waiting} waiting` : ''}` };
   if (g.waiting > 0) return { tone: 'busy', text: `Search Console: ${g.waiting} waiting` };
@@ -784,14 +795,15 @@ function createWindow(hidden) {
   hiddenSince = hidden ? Date.now() : null;
   win.on('hide', () => (hiddenSince = Date.now()));
   win.on('minimize', () => (hiddenSince = Date.now()));
-  win.on('show', () => {
+  // Back on screen: the pages the memory saver put away come back, the Search Console tab too when it is the one
+  // shown (owner QA report: it stayed empty until its tab was clicked again).
+  const wake = () => {
     hiddenSince = null;
     unparkDashboard();
-  });
-  win.on('restore', () => {
-    hiddenSince = null;
-    unparkDashboard();
-  });
+    if (activeTab === 'search-console' && googleTab && !googleTab.loaded()) googleTab.open();
+  };
+  win.on('show', wake);
+  win.on('restore', wake);
   clearInterval(memoryTimer);
   memoryTimer = setInterval(memorySaver, MINUTE);
   win.once('ready-to-show', () => {
@@ -891,10 +903,26 @@ function buildTray(dataDir, logFile) {
       { type: 'separator' },
       { label: 'Quit', click: quitApp },
     ]);
-  tray.setContextMenu(menu());
-  tray.on('right-click', () => tray.setContextMenu(menu()));
+  trayMenu = menu;
+  refreshTrayMenu(true);
+  tray.on('right-click', () => refreshTrayMenu(true));
   tray.on('click', showWindow);
   tray.on('double-click', showWindow);
+}
+
+/**
+ * The tray menu shows the work's status line and Pause / Resume (owner QA report, 3.3.34: it stayed at “Starting…”
+ * with Pause greyed out, because Windows shows the menu that was set and it was set only once, before /api/work had
+ * answered). It is set again whenever what it shows changes.
+ */
+function refreshTrayMenu(force = false) {
+  if (!tray || tray.isDestroyed() || !trayMenu) return;
+  const s = workSummary(work);
+  const u = updates ? updates.state() : null;
+  const key = JSON.stringify([s.line, s.paused, s.quiet, Boolean(work), u && u.state, u && u.version, u && u.percent]);
+  if (!force && key === trayMenuKey) return;
+  trayMenuKey = key;
+  tray.setContextMenu(trayMenu());
 }
 
 function quitApp() {
@@ -959,7 +987,7 @@ function copyDiagnostics() {
 }
 
 function showShortcuts() {
-  void messageBox({ type: 'none', title: 'Keyboard shortcuts', message: 'Keyboard shortcuts', detail: SHORTCUTS.map(([keys, what]) => `${keys}\t${what}`).join('\n'), buttons: ['OK'], noLink: true, icon });
+  void messageBox({ type: 'none', title: 'Keyboard shortcuts', message: 'Keyboard shortcuts', detail: shortcutLines(), buttons: ['OK'], noLink: true, icon });
 }
 
 function appMenu() {
@@ -1063,6 +1091,7 @@ async function start() {
     onState: (state) => {
       shellState();
       appMenu();
+      refreshTrayMenu();
       // The dashboard's App updates card follows the download.
       if (dashboardView && !dashboardView.webContents.isDestroyed()) dashboardView.webContents.send('bas-app:update-state', state);
     },
@@ -1088,7 +1117,7 @@ async function start() {
     return;
   }
 
-  const env = { ...process.env, ...envFileVars(dataDir), BAS_DATA_DIR: dataDir, BAS_PROJECT_ROOT: appDir, NODE_ENV: 'production', APP_ORIGIN: ORIGIN, BAS_DESKTOP: '1', BAS_APP_VERSION: app.getVersion(), CACHE_DIR: path.join(dataDir, 'cache'), JITI_FS_CACHE: path.join(dataDir, 'cache', 'jiti'), BAS_DESKTOP_AGENT_KEY: agentKey, NEXT_TELEMETRY_DISABLED: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1' };
+  const env = { ...process.env, ...envFileVars(dataDir), BAS_DATA_DIR: dataDir, BAS_PROJECT_ROOT: appDir, NODE_ENV: 'production', APP_ORIGIN: ORIGIN, BAS_DESKTOP: '1', BAS_APP_VERSION: app.getVersion(), BAS_APP_USER_MODEL_ID: APP_USER_MODEL_ID, CACHE_DIR: path.join(dataDir, 'cache'), JITI_FS_CACHE: path.join(dataDir, 'cache', 'jiti'), BAS_DESKTOP_AGENT_KEY: agentKey, NEXT_TELEMETRY_DISABLED: '1', NEXT_IGNORE_INCORRECT_LOCKFILE: '1' };
   delete env.NODE_OPTIONS;
 
   status('Preparing your data…', 'Migrations with a backup first, settings, the face and person detectors (once).');
@@ -1098,15 +1127,17 @@ async function start() {
     await fail('The data could not be prepared.', `Nothing was deleted. Last lines of the log (${logFile}):\n\n${recent.slice(-12).join('\n')}`);
     return;
   }
-  status('Starting the dashboard…');
+  // Both start now; the card says what the app waits for (owner QA report: “Starting the worker…” showed for 18 s
+  // while the app was really waiting for the dashboard).
+  status('Starting the worker…');
   // With a channel to this app, so the server stops by itself when the app is gone (desktop-child-guard.cjs).
   // The installed app runs Next.js's standalone server (server.js, prepare.mjs); a copy started from the repository runs
   // `next start`. Either way only on 127.0.0.1 (HOSTNAME is set here, never taken from the computer's environment).
   const standaloneServer = path.join(appDir, 'server.js');
   const webArgs = fs.existsSync(standaloneServer) ? [standaloneServer] : ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)];
   keepRunning('web', () => spawnNode('web', [...NODE_MEMORY, '--require', childGuard, ...webArgs], { ...env, PORT: String(PORT), HOSTNAME: '127.0.0.1' }, true));
-  status('Starting the worker…');
   keepRunning('worker', () => spawnNode('worker', [...NODE_MEMORY, ...toolEntry('worker', 'src/worker/index.ts')], env, true));
+  status('Starting the dashboard…', 'Almost ready: the dashboard opens in a few seconds.');
   if (!(await waitForDashboard(120_000))) {
     status('The dashboard did not start.', recent.slice(-10).join('\n'));
     if (smoke) smokeDone(false, 'the dashboard did not start');

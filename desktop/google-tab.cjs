@@ -148,6 +148,21 @@ function createGoogleTab(o = {}) {
       },
       send,
       url: () => (wc.isDestroyed() ? '' : wc.getURL()),
+      /**
+       * Whether Google is signed in, in this tab's own storage (owner QA report, 3.3.34: the chip said “ready” while
+       * Google's public page showed, and the setup checklist never saw the sign-in). Only whether a Google session
+       * cookie exists is looked at; no cookie value is read, kept or logged. null: not known.
+       */
+      async signedIn() {
+        try {
+          for (const name of ['SID', '__Secure-1PSID', '__Secure-3PSID']) {
+            if ((await ses.cookies.get({ domain: 'google.com', name })).length) return true;
+          }
+          return false;
+        } catch {
+          return null;
+        }
+      },
       /** The page as it stands (MHTML, as Chrome's page copy), base64, for the request's proof screenshot. */
       async saveProof() {
         const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bas-gsc-')), 'page.mhtml');

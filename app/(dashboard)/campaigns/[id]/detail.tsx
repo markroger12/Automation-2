@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
 import { Input, Select } from '@/components/form';
-import { Alert, Card, Chip, ProgressBar, StatusChip, buttonClasses, cx } from '@/components/ui';
+import { Alert, Card, Chip, ProgressBar, StatusChip, buttonClasses, cx, plural } from '@/components/ui';
 import { CampaignStatusChip, RowStatusChip, writerLabel } from '../shared';
 import { writerChoices } from '@/lib/writers/options';
 
@@ -69,7 +69,7 @@ export function CampaignDetail({ id }: { id: string }) {
     setBusy(true);
     try {
       const res = await api<{ articles: number; deleted: number; deleting: number }>(`/api/campaigns/${id}`, { method: 'DELETE', body: { articles: deleteArticles } });
-      toast('success', `Campaign deleted${deleteArticles ? ` with ${res.deleted} article(s)${res.deleting ? ` (${res.deleting} still running, deleted when they stop)` : ''}` : '; its articles were kept'}. WordPress was not changed.`);
+      toast('success', `Campaign deleted${deleteArticles ? ` with ${plural(res.deleted, 'article')}${res.deleting ? ` (${res.deleting} still running, deleted when they stop)` : ''}` : '; its articles were kept'}. WordPress was not changed.`);
       router.push('/campaigns');
       router.refresh();
     } catch (e) {
@@ -99,7 +99,7 @@ export function CampaignDetail({ id }: { id: string }) {
     setBusy(true);
     try {
       const res = await api<{ changed?: number; notes?: string[] }>(`/api/campaigns/${id}/${path}`, { method: 'POST', body });
-      toast('success', done ?? `${res.changed ?? 0} row(s) updated.${res.notes?.length ? ` ${res.notes.slice(0, 3).join(' ')}` : ''}`);
+      toast('success', done ?? `${plural(res.changed ?? 0, 'row')} updated.${res.notes?.length ? ` ${res.notes.slice(0, 3).join(' ')}` : ''}`);
       setSelected(new Set());
       await load();
     } catch (e) {

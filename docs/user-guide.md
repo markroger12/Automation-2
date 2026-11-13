@@ -93,7 +93,7 @@ A click opens the page. The worker shows them while it runs (Windows PowerShell'
 
 ## Help assistant (Google Gemini, optional)
 
-The **Ask** button in the top bar (also **Ctrl+K** → “Ask the help assistant”, and **Help / Setup**) opens a panel where you can ask how to do something or why something stopped, in English or Roman Urdu. It answers with steps that name the page and the button, using the app's current state.
+The **Ask** button in the top bar (also **Ctrl+K** → “Ask the help assistant”, and **Help / Setup**) opens a panel where you can ask how to do something or why something stopped, in English or Roman Urdu. It always answers in English, with steps that name the page and the button, using the app's current state.
 
 - **Set up once:** open [aistudio.google.com](https://aistudio.google.com/app/apikey), sign in with your Google account, **Get API key → Create API key**, and paste it in **Settings → Help assistant → Save**. **Test connection** checks it. Gemini Flash (newest) is the default; Flash-Lite allows more free questions per day.
 - **The key** is stored encrypted (AES-256-GCM) in `data\credentials`, like the WordPress passwords. It is never shown again (only its last 4 characters), never logged, never put in a backup, and goes only to Google, in a request header.

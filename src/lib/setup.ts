@@ -147,7 +147,7 @@ export function setupSteps(f: SetupFacts): SetupState {
   steps.push({
     key: 'assistant',
     title: 'Turn on the help assistant',
-    detail: f.assistant ? 'Ask questions about the app with the top bar’s Ask button.' : 'Add a free Gemini API key to ask questions about the app, in English or Roman Urdu.',
+    detail: f.assistant ? 'Ask questions about the app with the top bar’s Ask button.' : 'Add a free Gemini API key to ask questions about the app (answers in English).',
     state: f.assistant ? 'done' : 'todo',
     optional: true,
     action: f.assistant ? null : { label: 'Add the key', href: '/settings#assistant' },

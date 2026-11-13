@@ -37,7 +37,7 @@ You give it keywords. It researches, writes, adds FAQs, a Quick Bio table, image
 | **Search Console** | Indexing requests in the app's Search Console tab, with proof; search performance from your own exports; content refresh suggestions. |
 | **Live progress** | Each article shows its steps live, with how long each took and about how long is left, from your own earlier articles. |
 | **Work at a glance** | The tray icon and the taskbar show what the app is doing; **Pause** stops new work with one click; **quiet hours** pause it every night. |
-| **Help assistant** | Ask questions about the app in English or Roman Urdu from the **Ask** button (optional, with your free Google Gemini key). |
+| **Help assistant** | Ask questions about the app from the **Ask** button and get answers in English, also when you ask in Roman Urdu (optional, with your free Google Gemini key). |
 
 ## Install
 

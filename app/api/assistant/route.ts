@@ -3,7 +3,7 @@ import { route } from '@/lib/api';
 import { AppError } from '@/lib/errors';
 import { log } from '@/lib/log';
 import { askGemini } from '@/lib/assistant/gemini';
-import { ASSISTANT_SYSTEM, appContext } from '@/lib/assistant/context';
+import { appContext, assistantInstructions } from '@/lib/assistant/context';
 import { assistantApiKey, assistantSettings } from '@/lib/assistant/settings';
 
 const body = z.object({
@@ -30,7 +30,7 @@ export const POST = route({ body }, async ({ body }) => {
   const answer = await askGemini({
     apiKey,
     model,
-    system: `${ASSISTANT_SYSTEM}\n\nThe app right now:\n${context}`,
+    system: assistantInstructions(context),
     turns: [...body.history.slice(-10), { role: 'user', text: body.question }],
   });
   await log({ category: 'assistant', message: `Help assistant answered in ${((Date.now() - started) / 1000).toFixed(1)} s (${model}).` });

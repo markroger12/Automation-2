@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { askGemini } from '@/lib/assistant/gemini';
 import { DEFAULT_MODEL, assistantApiKey, assistantSettings, removeAssistantKey, saveAssistantSettings } from '@/lib/assistant/settings';
 import { redactString } from '@/lib/redact';
+import { ASSISTANT_SYSTEM, assistantInstructions } from '@/lib/assistant/context';
 
 const KEY = 'AIzaSyTESTkey0123456789abcdefghijklmnopq';
 
@@ -79,5 +80,14 @@ describe('askGemini', () => {
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
     await expect(askGemini({ ...base, fetchImpl: offline })).rejects.toMatchObject({ code: 'ASSISTANT_OFFLINE' });
+  });
+});
+
+describe('help assistant instructions', () => {
+  it('always ask for answers in English, also to a question in Roman Urdu (owner rule, 2026-11-13)', () => {
+    expect(ASSISTANT_SYSTEM).toMatch(/Always answer in clear, simple English/);
+    const all = assistantInstructions('Worker: online.');
+    expect(all).toContain('The app right now:\nWorker: online.');
+    expect(all.trim().endsWith('Answer in English only, whatever language the question is in.')).toBe(true);
   });
 });

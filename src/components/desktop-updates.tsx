@@ -101,7 +101,7 @@ export function DesktopAppUpdates({ version }: { version: string | null }) {
           <div className="border-app flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3">
             <div className="min-w-0 flex-1 text-sm">
               <div className="font-semibold">Version {s.version} is ready</div>
-              <div className="text-muted text-xs">Restarting stops the work safely first: prompts go back to the queue and continue after the restart.</div>
+              <div className="text-muted text-xs">Restarting stops the work safely first: prompts go back to the queue and continue after the restart. A window shows the update until the new version opens.</div>
             </div>
             <Button size="sm" onClick={() => bridge.updates.install()}>
               <RotateCcw className="h-3.5 w-3.5" /> Restart to update

@@ -5343,3 +5343,36 @@ Owner report (app 3.3.40, two screenshots: a gallery of 3 tiles with "10" on the
 - **Not verified here:**
   - Hidden pages can't be reproduced in the test browser: Playwright reports even background tabs as visible. A test built for it passed on the old code too, so it was not kept.
   - The real check is the owner's next celebrity article in the app. Its log should say "10 opened large … stepped by: Next" (or arrow keys).
+
+## Desktop app (2026-11-13): “Restart to update” shows the update, and no longer ends with a main-process error
+
+Owner report (app 3.3.46, screenshot): after **Restart to update**, a Windows dialog said "A JavaScript error occurred in the main process … Error [ERR_STREAM_WRITE_AFTER_END]: write after end … at logLine … at NsisUpdater.quitAndInstall". It went away by itself and the update still installed. The owner also asked for something on screen after the click: "installer ya updating jasa koi popup".
+
+- **Cause of the error:**
+  - Once its work had stopped, the app closed its log file and only then called the updater.
+  - The updater's first act is to log "Install on explicit quitAndInstall". That line went to the closed file.
+  - Node.js reports a write after the end as an error event. The log had no listener for it, so it became an uncaught exception in the main process.
+- **Fix (`desktop/log-file.cjs`):**
+  - A line that comes after the log is closed is added to the file directly.
+  - A log that cannot be written (for example a full disk) never stops the app.
+- **What the owner sees now, after Restart to update:**
+  1. **An “Updating” window at once (`desktop/updating.html`).** It shows "Version 3.3.N → 3.3.M" and three steps: finishing the running work safely, installing (the installer's window shows the progress), and opening the new version. It follows the app's light or dark theme. The app's own window hides meanwhile, and the tray tooltip says it is updating.
+  2. **The installer's own window with its progress.** The update no longer installs silently: `quitAndInstall(false, true)`. On an update the installer (`build/installer.nsh`):
+     - keeps the install mode the app has, so the "who is this for" page is not shown;
+     - leaves out the folder page (electron-builder already does) and the last page;
+     - says "Updating Blog Automation Studio" in its header;
+     - opens the new version by itself (`--force-run`).
+  3. **The new version opens**, with the existing "Updated to version …" notification.
+- **First installs are unchanged.** A first install from the downloaded .exe still shows every page as before.
+- **If the installer cannot start** (no downloaded file, the updater refuses), the Updating window says why. The app then opens again as it was. Before, it stayed running without its dashboard or worker.
+- **Second start while updating:** clicking the app's icon while the update runs shows the Updating window, not the half-stopped dashboard.
+- **Packaging:** `updating.html` and `log-file.cjs` are in the installer's file list. The smoke test of the installed app now also checks that `updating.html` is there.
+- **Tests:**
+  - **Log file:** the old pattern still throws `ERR_STREAM_WRITE_AFTER_END` (checked in the test). The new log keeps both lines, and an unwritable log never throws.
+  - **Updates:** the installer is asked for with its window (`[false, true]`) and to open the app after (`autoRunAppAfterInstall`). An updater that refuses or throws makes `install()` report false, with the reason.
+  - **File-list guard (new):** every file that the app's own files require or load from their folder must be in `electron-builder.yml` `files:`. With `updating.html` removed from the list, it fails.
+  - **Installer script:** compiled here with electron-builder 26.17.0 and makensis, warnings counted as errors as in the release build. Both the uninstaller and the installer pass compile. A `!warning` put into each of the four new macros confirmed that all four are used.
+  - **Windows workflow (new step):** after the silent install, the installer runs as "Restart to update" runs it (`--updated --force-run`, with its window). It must close by itself within 5 minutes (a page that waits for a click fails the step), end with exit code 0, leave a single installation in the same folder, and open the app.
+  - The Updating window in light, dark and error states was looked at in Chromium.
+  - Unit suite 78 files / 537 tests; `tsc` 0 errors.
+- **Note:** the first update to this version is still run by the old app's code: silent, possibly with the old error dialog. The Updating window and the installer's window show from the update after that.

@@ -99,7 +99,7 @@ A start card then shows the three start-up steps (data, dashboard, worker).
 
 The app updates itself from this repository's Releases:
 - It looks for a new version 30 seconds after it starts and every 6 hours, and downloads it in the background. **Help → Check for updates** looks at once.
-- When the download is done, the tab bar and a notification offer **Restart to update**. It stops the work safely first; prompts go back to the queue and continue after the restart.
+- When the download is done, the tab bar and a notification offer **Restart to update**. An **Updating** window shows each step: the work stops safely first (prompts go back to the queue and continue after the restart), then the installer's window shows its progress, asks nothing, and opens the new version by itself.
 - **Settings → App updates** shows the installed version and the updater's progress.
 
 Your data folder is never touched by an update, and uninstalling never deletes it.

@@ -32,6 +32,7 @@ const { createHash, randomBytes } = require('node:crypto');
 const { createChatGPTTabs, isChatGPTContents } = require('./chatgpt-tab.cjs');
 const { createGoogleTab, isGoogleContents } = require('./google-tab.cjs');
 const { createUpdates } = require('./updates.cjs');
+const { createLogFile } = require('./log-file.cjs');
 const { SHORTCUTS, shortcutLines, contextMenuTemplate, debounce, restoreBounds, updatedFrom } = require('./ux.cjs');
 const { needsMore, workSummary } = require('./status.cjs');
 
@@ -98,7 +99,8 @@ let updates = null;
 let installAfterQuit = false;
 /** The data folder and the log (Help menu, About). */
 const paths = { dataDir: null, logFile: null };
-let logStream = null;
+/** The log file (log-file.cjs): a line that comes after it is closed is still added (owner report: write after end). */
+let logOut = null;
 const children = { web: null, worker: null };
 
 // ------------------------------------------------------------------ config
@@ -176,7 +178,7 @@ function openLog(dataDir) {
   } catch {
     /* no log yet */
   }
-  logStream = fs.createWriteStream(file, { flags: 'a' });
+  logOut = createLogFile(file);
   return file;
 }
 
@@ -187,7 +189,7 @@ function logLine(source, text) {
     if (!line.trim()) continue;
     if (source === 'worker' && /Worker \S+ running/.test(line)) workerRunning = true;
     const entry = `${new Date().toISOString()} [${source}] ${line}`;
-    logStream?.write(`${entry}\n`);
+    logOut?.write(`${entry}\n`);
     recent.push(`[${source}] ${line}`);
     if (recent.length > 40) recent.shift();
   }
@@ -864,6 +866,12 @@ function createWindow(hidden) {
 }
 
 function showWindow() {
+  // While an update installs, the app's window stays away (its dashboard is stopping); the Updating window shows.
+  if (updatingWin && !updatingWin.isDestroyed()) {
+    updatingWin.show();
+    updatingWin.focus();
+    return;
+  }
   if (!win) {
     createWindow(false)
       .then(() => attachTabs(!attachedToRunning))
@@ -957,12 +965,89 @@ function notifyOwner(title, body, onClick) {
   n.show();
 }
 
-/** “Restart to update”: the app stops its work safely (prompts back to the queue, the worker stopped), then installs. */
+/**
+ * “Restart to update”: the app stops its work safely (prompts back to the queue, the worker stopped), then installs.
+ * Owner request 2026-11-13 (“restart to update per click krne ke baad kuch asa show ho installer ya updating jasa koi
+ * popup”): a window says what happens at once, and the installer's own window shows the progress after it.
+ */
 function restartToUpdate() {
-  if (!updates || !updates.ready()) return;
-  logLine('update', `Installing version ${updates.state().version}: stopping the work safely first.`);
+  if (installAfterQuit || !updates || !updates.ready()) return;
+  const version = updates.state().version;
+  logLine('update', `Installing version ${version}: stopping the work safely first.`);
   installAfterQuit = true;
+  openUpdatingWindow(version);
+  if (win && !win.isDestroyed()) win.hide();
+  if (tray && !tray.isDestroyed()) tray.setToolTip(`${TITLE}: updating to version ${version}…`);
   quitApp();
+}
+
+/** The “Updating” window (updating.html): its step (0 the work stops, 1 the installer runs) and an error. */
+let updatingWin = null;
+let updating = { step: 0, error: null };
+
+function showUpdating(patch = {}) {
+  updating = { ...updating, ...patch };
+  const wc = updatingWin && !updatingWin.isDestroyed() ? updatingWin.webContents : null;
+  // A page still loading gets it once loaded (did-finish-load).
+  if (!wc || wc.isLoading()) return;
+  wc.executeJavaScript(`window.showUpdate && window.showUpdate(${JSON.stringify(updating)})`).catch(() => {});
+}
+
+function openUpdatingWindow(version) {
+  const theme = shellTheme || (nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+  updatingWin = new BrowserWindow({
+    width: 470,
+    height: 470,
+    useContentSize: true,
+    center: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: `Updating ${TITLE}`,
+    icon,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: theme === 'dark' ? '#171717' : '#f4f4f5',
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
+  });
+  updatingWin.setMenu(null);
+  updatingWin.on('page-title-updated', (e) => e.preventDefault());
+  // It stays until the app closes for the installer (the update is on its way; closing it would change nothing).
+  updatingWin.on('close', (e) => {
+    if (!stopped) e.preventDefault();
+  });
+  updatingWin.on('closed', () => (updatingWin = null));
+  updatingWin.webContents.on('did-finish-load', () => showUpdating());
+  updatingWin.once('ready-to-show', () => {
+    if (!updatingWin || updatingWin.isDestroyed()) return;
+    updatingWin.show();
+    updatingWin.focus();
+  });
+  void updatingWin.loadFile(path.join(__dirname, 'updating.html'), { query: { version: String(version || ''), from: app.getVersion(), theme } }).catch(() => {});
+}
+
+/**
+ * Once the work is stopped: the installer opens (its window shows the progress) and starts the new version. If it
+ * cannot start, the app says why and opens again as it was (before, it stayed running without its dashboard).
+ */
+function installUpdate() {
+  if (updates && updates.ready()) {
+    logLine('update', `The work is stopped; the installer of version ${updates.state().version} opens and starts the new version.`);
+    showUpdating({ step: 1 });
+    if (updates.install()) {
+      logOut?.end();
+      return;
+    }
+  }
+  const why = (updates && updates.state().message) || 'The downloaded update is not there any more.';
+  logLine('update', `The update could not start (${why}); the app starts again as it was.`);
+  showUpdating({ error: why });
+  setTimeout(() => {
+    logOut?.end();
+    app.relaunch();
+    app.exit(0);
+  }, 6000);
 }
 
 async function checkForUpdatesNow() {
@@ -1174,9 +1259,9 @@ async function start() {
       updater = false;
     }
     const gscTab = Boolean(googleTab && chatgpt && chatgpt.agent && chatgpt.agent.capabilities().includes('gsc-request-indexing'));
-    const pages = ['offline.html', 'dashboard-preload.cjs', 'status.cjs', path.join('tray', 'tray-busy.png'), path.join('tray', 'overlay-attention.png')].every((f) => fs.existsSync(path.join(__dirname, f)));
+    const pages = ['offline.html', 'updating.html', 'dashboard-preload.cjs', 'status.cjs', path.join('tray', 'tray-busy.png'), path.join('tray', 'overlay-attention.png')].every((f) => fs.existsSync(path.join(__dirname, f)));
     const ok = worker && connected && info && info.dataId === dataFolderId(dataDir) && updater && gscTab && pages;
-    return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}; updater ${updater ? 'loaded' : 'missing'}; Search Console tab ${gscTab ? 'ready for indexing requests' : 'missing'}; reconnect page ${pages ? 'present' : 'missing'}; version ${app.getVersion()}`);
+    return smokeDone(Boolean(ok), `dashboard ${ORIGIN} answers; worker ${worker ? 'running' : 'not running'}; ChatGPT tab ${connected ? `connected to the dashboard (scripts v${chatgpt.version})` : 'not connected'}; data folder ${info && info.dataId === dataFolderId(dataDir) ? 'matches' : 'does not match'}; updater ${updater ? 'loaded' : 'missing'}; Search Console tab ${gscTab ? 'ready for indexing requests' : 'missing'}; reconnect and updating pages ${pages ? 'present' : 'missing'}; version ${app.getVersion()}`);
   }
 }
 
@@ -1214,14 +1299,12 @@ if (!app.requestSingleInstanceLock()) {
         stopped = true;
         if (updates) updates.stop();
         if (smoke) {
-          logStream?.end();
+          logOut?.end();
           app.exit(process.exitCode ?? 0);
-        } else if (installAfterQuit && updates && updates.ready()) {
-          logLine('update', 'The work is stopped; the new version is installed and started.');
-          logStream?.end();
-          updates.install();
+        } else if (installAfterQuit) {
+          installUpdate();
         } else {
-          logStream?.end();
+          logOut?.end();
           app.quit();
         }
       });

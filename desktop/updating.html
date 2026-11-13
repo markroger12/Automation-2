@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>Updating Blog Automation Studio</title>
+    <style>
+      /* Owner request 2026-11-13: after “Restart to update”, a window that says what happens until the installer's own
+         window takes over (main.cjs, openUpdatingWindow). The tool's look, light or dark like the app. */
+      :root { color-scheme: light; --bg: #f4f4f5; --surface: #fff; --border: #e4e4e7; --text: #09090b; --muted: #5f5f67; --primary: #18181b; --ok: #059669; --bad: #b91c1c; --bad-bg: #fef2f2; }
+      html.dark { color-scheme: dark; --bg: #171717; --surface: #1f1f1f; --border: #323232; --text: #f5f5f5; --muted: #a6a6a6; --primary: #ececec; --ok: #34d399; --bad: #f87171; --bad-bg: #2a1717; }
+      html, body { height: 100%; margin: 0; }
+      body { display: grid; place-items: center; background: var(--bg); color: var(--text); font: 14px/1.5 'Segoe UI Variable', 'Segoe UI', Inter, system-ui, sans-serif; user-select: none; cursor: default; }
+      main { width: calc(100% - 40px); max-width: 420px; padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-sizing: border-box; }
+      header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+      header svg { flex: none; width: 36px; height: 36px; color: var(--primary); }
+      h1 { margin: 0; font-size: 17px; font-weight: 650; }
+      #versions { margin: 0; color: var(--muted); font-size: 13px; }
+      ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+      li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; }
+      .mark { width: 18px; height: 18px; margin-top: 1px; border: 2px solid var(--border); border-radius: 50%; box-sizing: border-box; display: grid; place-items: center; }
+      li.active .mark { border-color: var(--border); border-top-color: var(--primary); animation: spin 0.9s linear infinite; }
+      li.done .mark { border-color: var(--ok); background: var(--ok); }
+      li.done .mark::after { content: ''; width: 8px; height: 4px; margin-top: -2px; border: solid var(--surface); border-width: 0 0 2px 2px; transform: rotate(-45deg); }
+      .step { font-weight: 600; }
+      li.todo .step { color: var(--muted); font-weight: 500; }
+      .detail { color: var(--muted); font-size: 12.5px; }
+      footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; }
+      #failed { display: none; margin-top: 16px; padding: 10px 12px; border-radius: 10px; background: var(--bad-bg); color: var(--bad); font-size: 13px; }
+      body.failed #failed { display: block; }
+      body.failed li.active .mark { animation: none; border-color: var(--bad); }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { li.active .mark { animation: none; border-color: var(--primary); } }
+    </style>
+  </head>
+  <body>
+    <main role="status" aria-live="polite">
+      <header>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" />
+          <path d="M3 21v-5h5" />
+          <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
+          <path d="M21 3v5h-5" />
+        </svg>
+        <div>
+          <h1 id="title">Updating Blog Automation Studio</h1>
+          <p id="versions"></p>
+        </div>
+      </header>
+      <ol>
+        <li id="s0" class="active">
+          <span class="mark" aria-hidden="true"></span>
+          <div><div class="step">Finishing the running work safely</div><div class="detail">Prompts in progress go back to the queue and continue after the update.</div></div>
+        </li>
+        <li id="s1" class="todo">
+          <span class="mark" aria-hidden="true"></span>
+          <div><div class="step" id="install-step">Installing the new version</div><div class="detail">The installer's window shows the progress. It asks nothing.</div></div>
+        </li>
+        <li id="s2" class="todo">
+          <span class="mark" aria-hidden="true"></span>
+          <div><div class="step">Opening the new version</div><div class="detail">The app opens again by itself.</div></div>
+        </li>
+      </ol>
+      <div id="failed"></div>
+      <footer id="footer">Your data folder, articles and sign-ins stay as they are. This takes about a minute.</footer>
+    </main>
+    <script>
+      const q = new URLSearchParams(location.search);
+      if (q.get('theme') === 'dark') document.documentElement.classList.add('dark');
+      const clean = (v) => (/^[0-9][0-9A-Za-z.+-]{0,40}$/.test(v || '') ? v : '');
+      const version = clean(q.get('version'));
+      const from = clean(q.get('from'));
+      document.getElementById('versions').textContent = version ? (from ? `Version ${from} → ${version}` : `Version ${version}`) : '';
+      if (version) document.getElementById('install-step').textContent = `Installing version ${version}`;
+      /** main.cjs: { step: 0 | 1, error: string | null } */
+      window.showUpdate = (s) => {
+        const step = Number(s && s.step) || 0;
+        for (let i = 0; i < 3; i++) document.getElementById(`s${i}`).className = i < step ? 'done' : i === step ? 'active' : 'todo';
+        if (s && s.error) {
+          document.body.classList.add('failed');
+          document.getElementById('title').textContent = 'The update could not start';
+          document.getElementById('failed').textContent = `${String(s.error).slice(0, 300)} The app opens again as it was; it tries the update again later.`;
+          document.getElementById('footer').textContent = 'Nothing was changed.';
+        }
+      };
+    </script>
+  </body>
+</html>

@@ -5282,3 +5282,17 @@ TMPDIR=<scratch> npx vitest run <8 files at a time>       # 78 files, 530 tests
 npx tsc --noEmit                                           # 0 errors
 TMPDIR=/tmp/bq xvfb-run -a npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "pauses for login|signed-out ChatGPT|human check"   # 3 passed
 ```
+
+### Follow-up: the help assistant always answers in English
+
+Owner (2026-11-13, with a screenshot of an English question answered in Roman Urdu): "ans eng me hi hona chahiya ha".
+
+- **Instructions:**
+  - The assistant's instructions now say: always answer in clear, simple English, also when the question is in Roman Urdu, Urdu or another language.
+  - The request repeats it as its last line (`assistantInstructions()`, used by `/api/assistant`, with a test).
+- **Panel:**
+  - It says it "answers in English (you can also ask in Roman Urdu)".
+  - The Roman Urdu suggestion became "Why was no WordPress draft made for my article?".
+- **Text elsewhere:** the setup step, README and user guide say the same.
+- **Checked here:** `tsc` 0 errors; help assistant and setup checklist tests, 11 passed.
+- **Not checked here:** Gemini's actual reply. It follows the instruction, but no key is available here to see it.

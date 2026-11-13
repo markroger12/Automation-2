@@ -33,7 +33,7 @@ interface Overview {
 
 const STORE = 'bas-assistant-chat';
 const isTurn = (t: unknown): t is Turn => Boolean(t) && typeof t === 'object' && ((t as Turn).role === 'user' || (t as Turn).role === 'model') && typeof (t as Turn).text === 'string';
-const SUGGESTIONS = ['Why did my last article stop?', 'ChatGPT is not connected. What should I do?', 'How do I add a new WordPress website?', 'Mera article draft kyun nahi bana?'];
+const SUGGESTIONS = ['Why did my last article stop?', 'ChatGPT is not connected. What should I do?', 'How do I add a new WordPress website?', 'Why was no WordPress draft made for my article?'];
 
 /* ---------------- The answer, from simple Markdown (no HTML from the answer is ever used as HTML) ---------------- */
 
@@ -124,8 +124,8 @@ function SafeAnswer({ text }: { text: string }) {
 /**
  * The help assistant (owner request 2026-11-12, “Gemini Flash krde”): the top bar's “Ask” button opens a panel on the
  * right. A question goes to Google Gemini with the owner's own API key (Settings → Help assistant), together with a
- * short status of the app, which the panel shows under “What the assistant sees”. It answers in the language the
- * question is written in. Nothing here can change a setting or start work: it explains and points to the right page.
+ * short status of the app, which the panel shows under “What the assistant sees”. It always answers in English (owner
+ * rule, 2026-11-13), also to a question in Roman Urdu. Nothing here can change a setting or start work: it explains and points to the right page.
  */
 export function AssistantButton({ openOnMount = false }: { openOnMount?: boolean }) {
   const [open, setOpen] = useState(openOnMount);
@@ -272,7 +272,7 @@ export function AssistantButton({ openOnMount = false }: { openOnMount?: boolean
               </div>
             ) : turns.length === 0 ? (
               <div className="space-y-3">
-                <p className="text-muted">Ask how to do something, or why something stopped. The assistant looks at the app&apos;s current state and answers in your language (English or Roman Urdu).</p>
+                <p className="text-muted">Ask how to do something, or why something stopped. The assistant looks at the app&apos;s current state and answers in English (you can also ask in Roman Urdu).</p>
                 <div className="flex flex-col gap-1.5">
                   {SUGGESTIONS.map((s) => (
                     <button key={s} type="button" onClick={() => void ask(s)} disabled={!configured || busy} className="border-app rounded-lg border px-3 py-2 text-left hover:bg-[var(--surface-2)] disabled:opacity-60">

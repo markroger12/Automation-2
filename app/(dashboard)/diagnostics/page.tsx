@@ -46,7 +46,7 @@ export default async function DiagnosticsPage() {
               { label: 'Last seen', value: formatRelative(d.extension.lastSeenAt) },
               { label: 'Version', value: d.extension.version ?? '—' },
               { label: 'Open ChatGPT tabs', value: d.extension.tabs },
-              { label: 'Capabilities', value: Object.keys(d.extension.capabilities).length ? Object.entries(d.extension.capabilities).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(' · ') : '—' },
+              { label: 'Capabilities', value: Array.isArray(d.extension.capabilities) ? (d.extension.capabilities.length ? (d.extension.capabilities as unknown[]).map(String).join(', ') : '—') : Object.keys(d.extension.capabilities).length ? Object.entries(d.extension.capabilities).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(' · ') : '—' },
             ]}
           />
         </Card>

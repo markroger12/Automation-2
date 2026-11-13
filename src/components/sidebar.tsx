@@ -329,6 +329,36 @@ function SearchBox() {
   );
 }
 
+/**
+ * The help assistant in the top bar, in its own error boundary: if it ever fails, only the panel closes (its
+ * conversation is forgotten) and an amber Ask opens a fresh one with one click.
+ */
+function AssistantSlot() {
+  const [reopen, setReopen] = useState(false);
+  return (
+    <ErrorBoundary
+      name="help assistant"
+      onError={forgetAssistantChat}
+      fallback={(_error, reset) => (
+        <button
+          type="button"
+          onClick={() => {
+            setReopen(true);
+            reset();
+          }}
+          title="The help assistant had a problem and was closed. Click to open it again."
+          className="text-muted inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+        >
+          <Sparkles className="h-4 w-4 text-amber-500" aria-hidden />
+          <span className="hidden sm:inline">Ask</span>
+        </button>
+      )}
+    >
+      <AssistantButton openOnMount={reopen} />
+    </ErrorBoundary>
+  );
+}
+
 /** The bell: the dashboard's health warnings (worker, extension, WordPress sign-ins), with their links. */
 function Notifications({ notices }: { notices: Notice[] }) {
   const [open, setOpen] = useState(false);
@@ -399,7 +429,9 @@ const COLLAPSED_KEY = 'bas-sidebar';
 export function Shell({ notices, children }: { notices: Notice[]; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
-  useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
   // Errors outside React's rendering (a click handler, a timer, a promise) go to the app's log too.
   useEffect(() => {
     const onError = (e: ErrorEvent) => reportClientError(e.error ?? e.message, 'page script');
@@ -436,23 +468,7 @@ export function Shell({ notices, children }: { notices: Notice[]; children: Reac
             <ErrorBoundary name="pause button">
               <WorkPauseButton />
             </ErrorBoundary>
-            <ErrorBoundary
-              name="help assistant"
-              onError={forgetAssistantChat}
-              fallback={(_error, reset) => (
-                <button
-                  type="button"
-                  onClick={reset}
-                  title="The help assistant had a problem and was closed. Click to open it again."
-                  className="text-muted inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
-                >
-                  <Sparkles className="h-4 w-4 text-amber-500" aria-hidden />
-                  <span className="hidden sm:inline">Ask</span>
-                </button>
-              )}
-            >
-              <AssistantButton />
-            </ErrorBoundary>
+            <AssistantSlot />
             <Notifications notices={notices} />
           </div>
         </header>

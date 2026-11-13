@@ -127,8 +127,8 @@ function SafeAnswer({ text }: { text: string }) {
  * short status of the app, which the panel shows under “What the assistant sees”. It answers in the language the
  * question is written in. Nothing here can change a setting or start work: it explains and points to the right page.
  */
-export function AssistantButton() {
-  const [open, setOpen] = useState(false);
+export function AssistantButton({ openOnMount = false }: { openOnMount?: boolean }) {
+  const [open, setOpen] = useState(openOnMount);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -208,7 +208,10 @@ export function AssistantButton() {
       document.removeEventListener('keydown', onKey);
     };
   }, [open, loadOverview]);
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [turns, busy]);
+  // A block body: in the app's Chromium scrollIntoView() returns a Promise, which React would call as a cleanup.
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: 'end' });
+  }, [turns, busy]);
 
   const configured = overview?.settings.configured;
   return (

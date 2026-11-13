@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Chip, type ChipTone } from '@/components/ui';
+import { Chip, type ChipTone, plural } from '@/components/ui';
 
 export interface DuplicateExcerptView {
   kind: 'wording' | 'fact' | 'near' | 'paragraph';
@@ -56,7 +56,7 @@ export function DuplicateMatchCard({ m }: { m: DuplicateMatchView }) {
         </span>
       </div>
       <p className="text-muted mt-1 text-xs">
-        {Math.round(m.wordingShare * 100)} % of the words in identical runs of 8+ words · longest run {m.longestRun} words · {m.exactParagraphs} identical paragraph(s) · {m.nearSentences} similar sentence(s) · {m.factWords} words of shared facts (not counted as duplication)
+        {Math.round(m.wordingShare * 100)} % of the words in identical runs of 8+ words · longest run {m.longestRun} words · {plural(m.exactParagraphs, 'identical paragraph')} · {plural(m.nearSentences, 'similar sentence')} · {m.factWords} words of shared facts (not counted as duplication)
       </p>
       {m.excerpts.length ? (
         <details className="mt-2">

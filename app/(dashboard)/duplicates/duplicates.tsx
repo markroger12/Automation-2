@@ -6,7 +6,7 @@ import { RefreshCw, RotateCcw } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
 import { Textarea } from '@/components/form';
-import { Alert, Card, Chip, EmptyState, StatusChip, cx } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, StatusChip, cx, plural } from '@/components/ui';
 import { DuplicateMatchCard, type DuplicateMatchView } from '@/components/duplicate-match';
 
 interface Review {
@@ -134,7 +134,7 @@ export function DuplicateReview() {
         <Button size="sm" variant="ghost" onClick={() => void load()}>
           <RefreshCw className="h-4 w-4" /> Refresh
         </Button>
-        {reviews ? <Chip>{reviews.length} article(s)</Chip> : null}
+        {reviews ? <Chip>{plural(reviews.length, 'article')}</Chip> : null}
       </div>
       {error ? <Alert tone="danger" title="Could not load">{error}</Alert> : null}
       {reviews === null && !error ? <div className="surface-2 h-32 animate-pulse rounded-xl" aria-busy="true" /> : null}

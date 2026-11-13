@@ -215,7 +215,9 @@
     // workLayout: the conversation shown in a “Work”/canvas layout — the whole page sits in a canvas-classed container
     // (suspected for the owner's “Chat composer not found” after the long article).
     const hiddenDialog = C.galleryViewer === 'overlay' ? '<div role="dialog" aria-label="Search chats" style="display:none"><img src="/backend-api/estuary/content?id=gal_1" alt=""></div>' : '';
-    const page = `${hiddenDialog}<main><div class="thread">${turnHtml}</div>${cont}<form class="composer"${stuck === 'composer' ? ' style="display:none"' : ''}>${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
+    // Signed out, ChatGPT still shows its composer (anyone may chat) with sign-in buttons in the header (owner's QA report).
+    const header = C.mode === 'login-composer' ? `<header><button data-testid="login-button">Log in</button><button data-testid="signup-button">Sign up for free</button></header>` : '';
+    const page = `${header}${hiddenDialog}<main><div class="thread">${turnHtml}</div>${cont}<form class="composer"${stuck === 'composer' ? ' style="display:none"' : ''}>${chips}${files}${composer}${button}</form>${stale}</main>${dialog}`;
     root.innerHTML = C.workLayout ? `<div class="work-canvas-layout bg-token-canvas">${page}</div>` : page;
     const ed = document.querySelector('#prompt-textarea, textarea');
     if (ed && draft && !generating) {

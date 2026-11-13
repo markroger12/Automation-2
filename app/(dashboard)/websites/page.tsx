@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Globe } from 'lucide-react';
 import { db } from '@/lib/db';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
-import { Card, Chip, EmptyState, PageHeader, formatRelative } from '@/components/ui';
+import { Card, Chip, EmptyState, PageHeader, formatRelative, plural } from '@/components/ui';
 import { AddWebsite } from './add-website';
 
 export const metadata = { title: 'Websites' };
@@ -18,7 +18,7 @@ export default async function WebsitesPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Websites"
         description="WordPress sites, their persistent browser profiles and sessions. Each site has its own profile folder, cookies, categories and publishing permission."
-        actions={<AddWebsite startOpen={sp.add === '1' || sites.length === 0} />}
+        actions={<AddWebsite startOpen={sp.add === '1'} />}
       />
       {sites.length === 0 ? (
         <Card>
@@ -49,7 +49,7 @@ export default async function WebsitesPage({ searchParams }: { searchParams: Pro
                   {s.paused ? <Chip tone="warning">paused</Chip> : null}
                 </div>
                 <div className="text-muted mt-3 text-xs">
-                  {s._count.tasks} article(s) · session checked {formatRelative(s.wordpressProfile?.lastCheckedAt)}
+                  {plural(s._count.tasks, 'article')} · session checked {formatRelative(s.wordpressProfile?.lastCheckedAt)}
                 </div>
               </Link>
             );

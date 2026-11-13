@@ -56,7 +56,7 @@ const urlField = (label: string) =>
 
 export const websiteInputSchema = z.object({
   name: z.string().trim().min(2, 'Name must be at least 2 characters').max(80),
-  publicUrl: urlField('Public URL'),
+  publicUrl: urlField('Address'),
   adminUrl: z.string().trim().max(300).optional().nullable(),
   language: z.enum(LANGUAGES),
   targetCountry: countrySchema,

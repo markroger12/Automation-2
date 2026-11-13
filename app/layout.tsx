@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ThemeKeeper } from '@/components/theme-keeper';
 
 export const metadata: Metadata = {
   title: { default: 'Blog Automation Studio', template: '%s · Blog Automation Studio' },
@@ -16,7 +17,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="min-h-screen">{children}</body>
+      <body className="min-h-screen">
+        <ThemeKeeper />
+        {children}
+      </body>
     </html>
   );
 }

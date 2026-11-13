@@ -65,6 +65,12 @@ describe('the Windows toast', () => {
     expect(win.TOAST_SCRIPT).not.toContain('Easy Vibs');
   });
 
+  it("shows the desktop app's own name and icon, not Windows PowerShell's (owner QA report, 3.3.34)", () => {
+    expect(win.toastAppId({ BAS_APP_USER_MODEL_ID: 'local.blogautomationstudio.desktop' })).toBe('local.blogautomationstudio.desktop');
+    expect(win.toastAppId({})).toBe(win.POWERSHELL_APP_ID);
+    expect(win.toastAppId({ BAS_APP_USER_MODEL_ID: 'x"; Remove-Item' })).toBe(win.POWERSHELL_APP_ID);
+  });
+
   it('is shown on Windows only (nothing happens here)', async () => {
     expect(await win.showToast({ title: 't', body: 'b', url: O }, 'linux')).toEqual({ shown: false, error: 'Windows notifications appear on Windows only.' });
   });
@@ -83,7 +89,7 @@ describe('the worker loop', () => {
     expect(shown).toEqual([]);
     const t1 = await createTask(client, site.id, { keyword: 'workflow keyword one' });
     await client.articleTask.update({ where: { id: t1.id }, data: { status: 'NEEDS_REVIEW', source: 'WORKFLOW' } });
-    await client.workerStatus.create({ data: { id: 'extension:notify-test', kind: 'EXTENSION', version: '3.5.4', status: 'CONNECTED', lastSeenAt: new Date(), diagnostics: JSON.stringify({ loggedIn: false }) } });
+    await client.workerStatus.create({ data: { id: 'extension:notify-test', kind: 'EXTENSION', version: '3.5.5', status: 'CONNECTED', lastSeenAt: new Date(), diagnostics: JSON.stringify({ loggedIn: false }) } });
     expect(await notifyTick(show)).toBe(2);
     expect(shown.map((t) => t.title)).toEqual(['Workflow: article needs review', 'ChatGPT is signed out']);
     expect(shown[0].body).toBe('workflow keyword one · Notify Site');

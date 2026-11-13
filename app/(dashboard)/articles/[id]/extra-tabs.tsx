@@ -28,7 +28,9 @@ function TitlesTab({ task, onChanged }: { task: SerializedTaskDetail; onChanged:
   const toast = useToast();
   const [title, setTitle] = useState(task.selectedTitle ?? task.recommendedTitle ?? '');
   const [busy, setBusy] = useState(false);
-  useEffect(() => setTitle(task.selectedTitle ?? task.recommendedTitle ?? ''), [task.selectedTitle, task.recommendedTitle]);
+  useEffect(() => {
+    setTitle(task.selectedTitle ?? task.recommendedTitle ?? '');
+  }, [task.selectedTitle, task.recommendedTitle]);
   if (task.titleOptionList.length === 0 && !task.selectedTitle) return <Card><EmptyState title="No titles yet" description="Titles appear after the TITLES stage (Celebrity Article Writer). Tigram titles come from the SEO TITLE line." /></Card>;
   const awaiting = task.status === 'AWAITING_TITLE_APPROVAL';
   async function approve() {

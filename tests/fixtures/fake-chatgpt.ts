@@ -5,7 +5,7 @@ import sharp from 'sharp';
 
 export interface FakeChatGptConfig {
   variant?: 'standard' | 'alternate' | 'broken';
-  mode?: 'normal' | 'login' | 'challenge' | 'challenge-clears' | 'usage-limit' | 'late' | 'multipart' | 'tool-preamble';
+  mode?: 'normal' | 'login' | 'login-composer' | 'challenge' | 'challenge-clears' | 'usage-limit' | 'late' | 'multipart' | 'tool-preamble';
   answerDelayMs?: number;
   /** After loading a /c/<id> page, render its turns only after this delay (the composer is ready at once). */
   historyDelayMs?: number;

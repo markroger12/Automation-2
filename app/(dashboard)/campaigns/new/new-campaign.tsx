@@ -6,7 +6,7 @@ import { Check, Eye, Save, Upload } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
 import { Checkbox, Field, Input, Select, Textarea } from '@/components/form';
-import { Alert, Card, Chip, cx } from '@/components/ui';
+import { Alert, Card, Chip, cx, plural } from '@/components/ui';
 import { RowStatusChip } from '../shared';
 import { categoryRuleFor } from '@/lib/writers/rules';
 import { writerChoices } from '@/lib/writers/options';
@@ -137,7 +137,7 @@ export function NewCampaign() {
     setCreating(true);
     try {
       const res = await api<{ campaign: { id: string }; summary: Record<string, number> }>('/api/campaigns', { body: { name, text, websiteId, defaultWriter, options, overrides } });
-      toast('success', `Campaign created: ${res.summary.ready} task(s) are being queued.`);
+      toast('success', `Campaign created: ${res.summary.ready === 1 ? '1 task is' : `${res.summary.ready} tasks are`} being queued.`);
       router.push(`/campaigns/${res.campaign.id}`);
     } catch (e) {
       toast('error', (e as Error).message);
@@ -200,7 +200,7 @@ export function NewCampaign() {
             <Button size="sm" variant="primary" onClick={() => void runPreview()} loading={previewing} disabled={!text.trim() || !websiteId}>
               <Eye className="h-4 w-4" /> Preview
             </Button>
-            <span className="text-muted text-xs">{text ? `${text.split('\n').filter((l) => l.trim()).length} non-empty line(s)` : ''}</span>
+            <span className="text-muted text-xs">{text ? `${plural(text.split('\n').filter((l) => l.trim()).length, 'non-empty line')}` : ''}</span>
           </div>
         </Card>
 
@@ -279,7 +279,7 @@ export function NewCampaign() {
           description={`Format: ${preview.format}. Nothing is created until you press Create campaign. Your text is stored exactly as entered.`}
           actions={
             <Button variant="primary" onClick={() => void create()} loading={creating} disabled={!s?.ready}>
-              <Check className="h-4 w-4" /> Create campaign · {s?.ready ?? 0} task(s)
+              <Check className="h-4 w-4" /> Create campaign · {plural(s?.ready ?? 0, 'task')}
             </Button>
           }
         >

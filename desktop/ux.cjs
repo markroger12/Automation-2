@@ -11,11 +11,18 @@ const SHORTCUTS = [
   ['Ctrl+2', 'ChatGPT'],
   ['Ctrl+3', 'Search Console'],
   ['Ctrl+K', 'Search pages and actions (in the dashboard)'],
-  ['Ctrl+R', 'Reload the page shown'],
+  ['Ctrl+,', 'Settings'],
+  ['Ctrl+R or F5', 'Reload the page shown'],
   ['Ctrl+Plus / Ctrl+Minus / Ctrl+0', 'Zoom in / out / reset (the page shown)'],
   ['F11', 'Full screen'],
+  ['Alt', 'Show the menus'],
+  ['Ctrl+Shift+I', 'Developer tools (for a problem report)'],
+  ['Ctrl+W', 'Close the window (the app keeps running in the tray)'],
   ['Ctrl+Q', 'Quit (the work stops safely first)'],
 ];
+
+/** The shortcuts as lines for a Windows message box, which shows no tab stops (“Ctrl+1Dashboard”, owner QA report). */
+const shortcutLines = () => SHORTCUTS.map(([keys, what]) => `${keys}  —  ${what}`).join('\n');
 
 /**
  * The right-click menu of a page (Electron's `context-menu` params): Cut, Copy, Paste in a text box, Copy for a
@@ -96,4 +103,4 @@ function updatedFrom(lastVersion, version) {
   return null;
 }
 
-module.exports = { SHORTCUTS, contextMenuTemplate, restoreBounds, debounce, updatedFrom };
+module.exports = { SHORTCUTS, shortcutLines, contextMenuTemplate, restoreBounds, debounce, updatedFrom };

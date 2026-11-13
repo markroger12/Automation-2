@@ -322,7 +322,9 @@ export function CopyButton({ text, label = 'Copy', size = 'sm' }: { text: string
 
 export function ThemeToggle() {
   const [dark, setDark] = useState(false);
-  useEffect(() => setDark(document.documentElement.classList.contains('dark')), []);
+  useEffect(() => {
+    setDark(document.documentElement.classList.contains('dark'));
+  }, []);
   return (
     <button
       type="button"

@@ -65,7 +65,7 @@ function poolHarness(opts: { config?: Record<string, unknown>; jobs?: string[]; 
   const agent = createChatGPTAgent({
     origin: () => 'http://127.0.0.1:3999',
     key: 'k'.repeat(43),
-    version: '3.5.4',
+    version: '3.5.5',
     pool: {
       ids: () => [...open],
       open: (url: string) => {
@@ -385,7 +385,7 @@ describe("the desktop app's Search Console tab: indexing requests", () => {
     const agent = createChatGPTAgent({
       origin: () => 'http://127.0.0.1:3999',
       key: 'k'.repeat(43),
-      version: '3.5.4',
+      version: '3.5.5',
       tab: { load: () => {}, reload: () => {}, url: () => 'https://chatgpt.com/', send: async () => ({ ok: true, state: 'ready' }), post: () => {}, front: () => {} },
       gsc: {
         load: (u: string) => loads.push(u),

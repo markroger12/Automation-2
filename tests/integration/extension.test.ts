@@ -112,7 +112,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(stats.sends).toBe(1);
     expect(stats.lastPrompt?.replace(/\s+/g, ' ').trim()).toBe('Generate several credible titles for "Tom Kaulitz Heidi Klum". Recommended Title: <best>');
     const ext = await client.workerStatus.findFirst({ where: { kind: 'EXTENSION' } });
-    expect(ext?.version).toBe('3.5.4');
+    expect(ext?.version).toBe('3.5.5');
     const actions = new Set(server.requests.map((r) => r.action));
     for (const a of ['hello', 'claim', 'progress', 'complete']) expect(actions.has(a)).toBe(true);
   });
@@ -529,7 +529,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
   it("owner request: while the desktop app's own ChatGPT tab is connected, Automation Chrome opens no ChatGPT tab and takes no prompt; Search Console still runs", async () => {
     fake = { variant: 'standard', mode: 'normal' };
     // The desktop app's agent said hello (kept fresh for the test).
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.4', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.5', status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) }, update: { status: 'CONNECTED', lastSeenAt: new Date(Date.now() + 10 * 60_000) } });
     try {
       const req = await request('A prompt for the desktop app');
       const seen = server.requests.length;
@@ -724,7 +724,7 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(copies[0].kind).toBe('chatgpt-gallery');
     const text = readPageCopy(copies[0].name)!.toString('utf8');
     const copy = JSON.parse(text) as { kind: string; said: number; large: number; extension: string; stop: string; gallery: { tag: string }[]; opened: { dialogFound: boolean; dialog: { tag: string; name?: string }[] } };
-    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.4' });
+    expect(copy).toMatchObject({ kind: 'chatgpt-gallery', said: 5, large: 3, extension: '3.5.5' });
     expect(copy.stop).toMatch(/step \d+: /);
     expect(copy.gallery.some((e) => e.tag === 'img')).toBe(true);
     expect(copy.opened.dialogFound).toBe(true);
@@ -792,6 +792,17 @@ describe('Chrome extension against a fake ChatGPT page', () => {
     expect(job.status).toBe('WAITING');
     const task = await client.articleTask.findUniqueOrThrow({ where: { id: req.taskId } });
     expect(task.status).toBe('LOGIN_REQUIRED');
+    expect(task.pausedFor).toBe('chatgpt-login');
+    expect((await fakeStats()).sends).toBe(0);
+  });
+
+  it('treats a signed-out ChatGPT that still shows its composer as signed out (owner QA report, 3.3.34)', async () => {
+    fake = { variant: 'standard', mode: 'login-composer' };
+    browser = await launchWithExtension({ serverOrigin: server.origin, key, config: () => fake });
+    const req = await request('Signed-out composer prompt');
+    const job = await waitJob(req.responseId, (j) => j.errorCode === 'LOGIN', 60_000, 'LOGIN failure');
+    expect(job.status).toBe('WAITING');
+    const task = await client.articleTask.findUniqueOrThrow({ where: { id: req.taskId } });
     expect(task.pausedFor).toBe('chatgpt-login');
     expect((await fakeStats()).sends).toBe(0);
   });

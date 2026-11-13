@@ -7,7 +7,7 @@ import { api } from '@/lib/client/api';
 import type { KeywordIdea } from '@/lib/workflow/keyword-ideas';
 import { Button, Modal, Tabs, useToast } from '@/components/client';
 import { Input } from '@/components/form';
-import { Chip, cx } from '@/components/ui';
+import { Chip, cx, plural } from '@/components/ui';
 
 type Source = 'search-console' | 'google';
 
@@ -62,7 +62,7 @@ export function KeywordIdeas({ open, onClose, siteId, seeds, onAdded }: { open: 
     setAdding(true);
     try {
       const r = await api<{ added: number; skippedDuplicates: number; invalid: number }>(`/api/websites/${siteId}/workflow/keywords`, { body: { text: [...picked].join('\n') } });
-      toast('success', `${r.added} keyword(s) added to the queue${r.skippedDuplicates ? `, ${r.skippedDuplicates} already there` : ''}.`);
+      toast('success', `${plural(r.added, 'keyword')} added to the queue${r.skippedDuplicates ? `, ${r.skippedDuplicates} already there` : ''}.`);
       setPicked(new Set());
       onAdded();
       onClose();

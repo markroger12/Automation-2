@@ -7,7 +7,7 @@ import { api, upload } from '@/lib/client/api';
 import { MAX_PHOTOS_AT_ONCE, PHOTO_TYPES, pickPhotos } from '@/lib/client/image-input';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
-import { Alert, Card, Chip, EmptyState, StatusChip, buttonClasses, cx } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, StatusChip, buttonClasses, cx, plural } from '@/components/ui';
 import { imagesKindFor } from '@/lib/writers/rules';
 
 interface ImagesData {
@@ -61,7 +61,7 @@ export function ImagesTab({ task, onChanged }: { task: SerializedTaskDetail; onC
       try {
         const res = await upload<{ added: string[]; skipped: string[] }>(`/api/tasks/${task.id}/images`, form);
         const all = [...skipped, ...res.skipped];
-        toast(all.length ? 'info' : 'success', `${res.added.length} photo(s) ${how === 'pasted' ? 'pasted' : how === 'dropped' ? 'dropped in' : 'added'}.${all.length ? ` Skipped: ${all.join('; ')}` : ''} ${applyHint}`);
+        toast(all.length ? 'info' : 'success', `${plural(res.added.length, 'photo')} ${how === 'pasted' ? 'pasted' : how === 'dropped' ? 'dropped in' : 'added'}.${all.length ? ` Skipped: ${all.join('; ')}` : ''} ${applyHint}`);
         await onChanged();
       } catch (e) {
         toast('error', (e as Error).message);

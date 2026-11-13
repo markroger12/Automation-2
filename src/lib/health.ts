@@ -107,6 +107,15 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
           }),
     });
   }
+  // Connected but signed out (ChatGPT still shows its composer then): articles wait until the owner signs in.
+  if (extension.state === 'connected' && extension.diagnostics.loggedIn === false) {
+    warnings.push({
+      tone: 'warning',
+      title: 'ChatGPT is signed out',
+      detail: inDesktopApp() ? 'Sign in with your email and password in the ChatGPT tab at the top (Ctrl+2). Articles wait and go on after you sign in.' : 'Sign in to ChatGPT in Automation Chrome. Articles wait and go on after you sign in.',
+      ...(inDesktopApp() ? {} : { href: '/automation-chrome', action: 'Open' }),
+    });
+  }
   if (siteCount === 0) {
     warnings.push({ tone: 'info', title: 'No WordPress website yet', detail: 'Add a website and log in once to create drafts.', href: '/websites', action: 'Add website' });
   }

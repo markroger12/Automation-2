@@ -72,7 +72,9 @@ function RevisionPanel({ c, r, onChanged }: { c: CandidateDetail; r: Revision; o
   const [html, setHtml] = useState(r.proposedHtml);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
-  useEffect(() => setHtml(r.proposedHtml), [r.proposedHtml]);
+  useEffect(() => {
+    setHtml(r.proposedHtml);
+  }, [r.proposedHtml]);
   async function act(kind: string, fn: () => Promise<unknown>, ok: string) {
     setBusy(kind);
     try {

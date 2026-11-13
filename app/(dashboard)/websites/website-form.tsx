@@ -107,7 +107,7 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
         <Field label="Website name" htmlFor="ws-name" required error={err('name')}>
           <Input id="ws-name" value={values.name} onChange={(e) => set('name', e.target.value)} placeholder="Celebrity News DE" invalid={Boolean(err('name'))} />
         </Field>
-        <Field label="Public URL" htmlFor="ws-url" required error={err('publicUrl')} help="The home page, e.g. https://example.com">
+        <Field label="Address" htmlFor="ws-url" required error={err('publicUrl')} help="The home page, e.g. https://example.com">
           <Input id="ws-url" value={values.publicUrl} onChange={(e) => set('publicUrl', e.target.value)} placeholder="https://example.com" invalid={Boolean(err('publicUrl'))} />
         </Field>
         <Field label="Admin URL" htmlFor="ws-admin" error={err('adminUrl')} help="Leave empty for <public URL>/wp-admin/">

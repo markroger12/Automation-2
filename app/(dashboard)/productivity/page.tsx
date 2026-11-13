@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Download } from 'lucide-react';
 import { productivityReport, TARGET_PER_HOUR, type BenchmarkClaim } from '@/lib/analytics/productivity';
-import { Alert, Card, Chip, EmptyState, PageHeader, Stat, formatDateTime } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, PageHeader, Stat, formatDateTime, plural } from '@/components/ui';
 import { RefreshButton } from './refresh-button';
 import { moduleDisplayName } from '@/lib/domain';
 import { ensureCustomWriters } from '@/lib/writers/store';
@@ -44,7 +44,7 @@ export default async function ProductivityPage() {
         {r.rolling.map((w) => (
           <Stat key={w.minutes} label={`Last ${w.minutes} min`} value={`${w.count} verified`} hint={`${w.perHour} per hour`} />
         ))}
-        <Stat label="Last 7 days" value={`${r.week} verified`} hint={`${r.profile.highThroughput ? 'High-throughput' : 'Quality-first'} profile · ${r.profile.slots} article slot(s)${r.profile.adaptive ? ' (adaptive)' : ''}`} />
+        <Stat label="Last 7 days" value={`${r.week} verified`} hint={`${r.profile.highThroughput ? 'High-throughput' : 'Quality-first'} profile · ${plural(r.profile.slots, 'article slot')}${r.profile.adaptive ? ' (adaptive)' : ''}`} />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
@@ -64,7 +64,7 @@ export default async function ProductivityPage() {
             <p className="text-muted">
               Last hour: {hour.count} of {TARGET_PER_HOUR}. Estimated capacity now: {r.capacityEstimate.perHour == null ? '—' : `${r.capacityEstimate.perHour} per hour`}. <span className="text-xs">{r.capacityEstimate.basis}</span>
             </p>
-            <p className="text-muted text-xs">This is the dashboard view. The owner-authorized 2-hour live benchmark is run with real ChatGPT and WordPress sessions (RELEASE_CHECKLIST §4).</p>
+            <p className="text-muted text-xs">Counted from verified WordPress drafts only; an article counts once, when its draft was read back.</p>
           </div>
         </Card>
         <Card title="Verified drafts per day" description={`Last 14 days, ${r.timeZone} days.`}>

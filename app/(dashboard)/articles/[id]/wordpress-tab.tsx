@@ -5,7 +5,7 @@ import { ExternalLink, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import type { SerializedTaskDetail } from '@/lib/tasks/detail';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
-import { Alert, Card, Chip, EmptyState, KeyValue, formatDateTime } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, KeyValue, formatDateTime, plural } from '@/components/ui';
 
 type Mode = 'resave' | 'overwrite-remote' | 'keep-remote' | 'recreate' | 'adopt';
 
@@ -280,7 +280,7 @@ function RemoteChanges({ taskId }: { taskId: string }) {
       {data?.remote ? (
         <div className="space-y-3 text-sm">
           <p className="text-muted">
-            Draft #{data.remote.postId}, modified in WordPress {data.remote.modifiedGmt} UTC · read {formatDateTime(data.remote.capturedAt)} · {data.unchanged} block(s) unchanged
+            Draft #{data.remote.postId}, modified in WordPress {data.remote.modifiedGmt} UTC · read {formatDateTime(data.remote.capturedAt)} · {plural(data.unchanged ?? 0, 'block')} unchanged
           </p>
           <div>
             <h3 className="font-medium">Only in WordPress ({data.onlyInWordPress?.length ?? 0}) — an overwrite replaces these</h3>

@@ -107,7 +107,7 @@ export function AssistantSettingsCard({ initial }: { initial: AssistantSettingsV
             error={error}
             help={
               s.configured ? (
-                <>Saved {s.savedAt ? formatDateTime(s.savedAt) : ''} · ends in ••••{s.keyHint}. Paste a new key only to replace it.</>
+                <>Saved <span suppressHydrationWarning>{s.savedAt ? formatDateTime(s.savedAt) : ''}</span> · ends in ••••{s.keyHint}. Paste a new key only to replace it.</>
               ) : (
                 <>
                   Make a free key at{' '}

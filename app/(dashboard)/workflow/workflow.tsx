@@ -34,7 +34,7 @@ import { ScreenshotModal } from '@/components/screenshot-modal';
 import { KeywordIdeas } from './keyword-ideas';
 import { MoveKeywords } from './move-keywords';
 import { Field, Input, Select, Switch, Textarea } from '@/components/form';
-import { Card, Chip, PageHeader, StatusChip, cx, type ChipTone } from '@/components/ui';
+import { Card, Chip, PageHeader, StatusChip, cx, type ChipTone, plural } from '@/components/ui';
 import { formatInZone } from '@/lib/workflow/time';
 import { inspectionProperty, searchConsoleHome } from '@/lib/workflow/search-console';
 import { KEYWORD_LABEL as KW_LABEL, KEYWORD_STATUSES, filterKeywords, readableTimes, sortKeywords, statusCounts, type QueueOrder } from '@/lib/workflow/queue-view';
@@ -210,7 +210,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   async function addAll() {
     try {
       const r = await api<{ added: number; skippedDuplicates: number; invalid: number }>(`/api/websites/${siteId}/workflow/keywords`, { body: { text, keepDuplicates: [...keep], writers } });
-      toast('success', `${r.added} keyword(s) added${r.skippedDuplicates ? `, ${r.skippedDuplicates} duplicate(s) left out` : ''}${r.invalid ? `, ${r.invalid} invalid` : ''}.`);
+      toast('success', `${plural(r.added, 'keyword')} added${r.skippedDuplicates ? `, ${plural(r.skippedDuplicates, 'duplicate')} left out` : ''}${r.invalid ? `, ${r.invalid} invalid` : ''}.`);
       setText('');
       setPreview(null);
       setAddOpen(false);
@@ -220,7 +220,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
     }
   }
 
-  async function action(act: string, extra: Record<string, unknown> = {}, done = (n: number) => `${n} keyword(s) updated.`) {
+  async function action(act: string, extra: Record<string, unknown> = {}, done = (n: number) => `${plural(n, 'keyword')} updated.`) {
     try {
       const r = await api<{ changed: number; notes: string[] }>(`/api/websites/${siteId}/workflow/keywords/action`, { body: { keywordIds: [...selected], action: act, ...extra } });
       toast(r.notes.length ? 'info' : 'success', `${done(r.changed)}${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
@@ -236,7 +236,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
     setBusy(true);
     try {
       const r = await api<{ changed: number; notes: string[] }>(`/api/websites/${siteId}/workflow/keywords/action`, { body: { keywordIds: [...selected], action: 'delete', articles: deleteArticles } });
-      toast('success', `${r.changed} keyword(s) deleted${deleteArticles ? ' with their articles' : ''}. WordPress was not changed.${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
+      toast('success', `${plural(r.changed, 'keyword')} deleted${deleteArticles ? ' with their articles' : ''}. WordPress was not changed.${r.notes.length ? ` ${r.notes.slice(0, 3).join(' ')}` : ''}`);
       setSelected(new Set());
       await load();
     } catch (e) {
@@ -251,7 +251,9 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
   const rows = useMemo(() => sortKeywords(filterKeywords(view?.keywords ?? [], { q, statuses }), order), [view, q, statuses, order]);
   const shown = pageSlice(rows, page, pageSize);
   // A new search or filter starts on the first page.
-  useEffect(() => setPage(1), [q, statuses, siteId]);
+  useEffect(() => {
+    setPage(1);
+  }, [q, statuses, siteId]);
 
   const siteSelect = (
     <Select
@@ -404,7 +406,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
             <Button size="sm" onClick={() => setConfirmForce(true)} title="Continue a stopped article despite the problems found">
               <FastForward className="h-3.5 w-3.5" /> Force continue
             </Button>
-            <Button size="sm" onClick={() => void action('request-indexing', {}, (n) => `Automation Chrome requests indexing in Search Console for ${n} keyword(s) now; Google's answer shows on each keyword.`)} title="Automation Chrome inspects the post URL in Search Console and clicks REQUEST INDEXING now">
+            <Button size="sm" onClick={() => void action('request-indexing', {}, (n) => `Automation Chrome requests indexing in Search Console for ${plural(n, 'keyword')} now; Google's answer shows on each keyword.`)} title="Automation Chrome inspects the post URL in Search Console and clicks REQUEST INDEXING now">
               <Send className="h-3.5 w-3.5" /> Request indexing
             </Button>
             <Button size="sm" onClick={() => setMoveOpen(true)} title="Move the selected keywords to another day's slots (e.g. all to tomorrow)">
@@ -700,7 +702,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
             </Button>
             {preview ? (
               <Button variant="primary" onClick={() => void addAll()}>
-                <Plus className="h-4 w-4" /> Add {preview.filter((r) => !r.errors.length && (!r.duplicateOf || keep.has(r.line))).length} keyword(s)
+                <Plus className="h-4 w-4" /> Add {plural(preview.filter((r) => !r.errors.length && (!r.duplicateOf || keep.has(r.line))).length, 'keyword')}
               </Button>
             ) : null}
           </>
@@ -815,7 +817,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
       {siteId ? <KeywordIdeas open={ideasOpen} onClose={() => setIdeasOpen(false)} siteId={siteId} seeds={[...view.keywords].reverse().map((k) => k.keyword)} onAdded={() => void load()} /> : null}
       <ConfirmDialog
         open={confirmForce}
-        title={`Force continue ${selectedRows.filter((k) => k.status === 'FAILED').length} keyword(s)?`}
+        title={`Force continue ${plural(selectedRows.filter((k) => k.status === 'FAILED').length, 'keyword')}?`}
         confirmLabel="Force continue"
         busy={busy}
         onCancel={() => setConfirmForce(false)}
@@ -838,7 +840,7 @@ export function WorkflowPage({ sites, initialSiteId, description }: { sites: Sit
           {selectedRows.some((k) => k.status !== 'FAILED') ? <p className="text-muted text-xs">Keywords that are not stopped are left as they are.</p> : null}
         </div>
       </ConfirmDialog>
-      <ConfirmDialog open={confirmDelete} title={`Delete ${selected.size} keyword(s)?`} confirmLabel="Delete" tone="danger" busy={busy} onCancel={() => setConfirmDelete(false)} onConfirm={() => void removeKeywords()}>
+      <ConfirmDialog open={confirmDelete} title={`Delete ${plural(selected.size, 'keyword')}?`} confirmLabel="Delete" tone="danger" busy={busy} onCancel={() => setConfirmDelete(false)} onConfirm={() => void removeKeywords()}>
         <div className="space-y-2">
           <p>The keywords are removed from this workflow. Drafts and posts in WordPress stay as they are.</p>
           {selectedRows.some((k) => k.task) ? (

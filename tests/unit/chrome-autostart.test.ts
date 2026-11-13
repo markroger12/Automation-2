@@ -178,7 +178,7 @@ describe('owner report: indexing waited until the owner opened Automation Chrome
 describe("the desktop app makes the indexing requests too (owner, 2026-11-12: signed in to Google in the app)", () => {
   it('no Chrome at all, even with a Search Console request waiting', async () => {
     await client.queueJob.deleteMany({});
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.4', status: 'CONNECTED', capabilities: JSON.stringify(['claim', 'gsc-request-indexing']), lastSeenAt: new Date() }, update: { status: 'CONNECTED', capabilities: JSON.stringify(['claim', 'gsc-request-indexing']), lastSeenAt: new Date() } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.5', status: 'CONNECTED', capabilities: JSON.stringify(['claim', 'gsc-request-indexing']), lastSeenAt: new Date() }, update: { status: 'CONNECTED', capabilities: JSON.stringify(['claim', 'gsc-request-indexing']), lastSeenAt: new Date() } });
     try {
       await client.queueJob.create({ data: { queue: 'gsc', kind: 'gsc.request-indexing', idempotencyKey: 'autostart:app-gsc-own', payload: '{}', status: 'WAITING', runAt: new Date(Date.now() - 120_000) } });
       expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: false, waitingPrompts: 0, stalledPromptId: null, stalledRequestId: null, chatgptInApp: true });
@@ -192,7 +192,7 @@ describe("the desktop app makes the indexing requests too (owner, 2026-11-12: si
 describe("the desktop app's own ChatGPT tab is connected (owner request: the browser inside the app)", () => {
   it('ChatGPT work needs no Chrome; a due Search Console request opens it as a Search Console app window', async () => {
     await client.queueJob.deleteMany({});
-    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.4', status: 'CONNECTED', lastSeenAt: new Date() }, update: { status: 'CONNECTED', lastSeenAt: new Date() } });
+    await client.workerStatus.upsert({ where: { id: 'extension:desktop-app' }, create: { id: 'extension:desktop-app', kind: 'EXTENSION', version: '3.5.5', status: 'CONNECTED', lastSeenAt: new Date() }, update: { status: 'CONNECTED', lastSeenAt: new Date() } });
     try {
       await client.queueJob.create({ data: { queue: 'chatgpt', kind: 'chatgpt.prompt', idempotencyKey: 'autostart:app-1', payload: '{}', status: 'WAITING', runAt: new Date(Date.now() - 120_000) } });
       expect(await auto.currentWork()).toEqual({ needsChrome: false, busy: false, waitingPrompts: 0, stalledPromptId: null, stalledRequestId: null, chatgptInApp: true });

@@ -5,7 +5,7 @@ import { Plus, Save, X } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
 import { Input, Select } from '@/components/form';
-import { Chip } from '@/components/ui';
+import { Chip, plural } from '@/components/ui';
 import { resolveWriter, type SiteRoutingRule } from '@/lib/campaigns/router';
 import { moduleDisplayName } from '@/lib/domain';
 import { writerChoices } from '@/lib/writers/options';
@@ -24,7 +24,7 @@ export function RoutingRules({ websiteId, language, initial }: { websiteId: stri
     try {
       const res = await api<{ rules: SiteRoutingRule[] }>(`/api/websites/${websiteId}/routing-rules`, { method: 'PUT', body: { rules } });
       setRules(res.rules);
-      toast('success', `Saved ${res.rules.length} rule(s).`);
+      toast('success', `Saved ${plural(res.rules.length, 'rule')}.`);
     } catch (e) {
       toast('error', (e as Error).message);
     } finally {

@@ -5220,3 +5220,65 @@ Owner report (3.3.31): after saving the Gemini key and asking “how do i add we
 TMPDIR=<scratch> npx vitest run <8 files at a time>   # 77 files, 526 tests
 npx tsc --noEmit                                       # 0 errors
 ```
+
+## Desktop app (2026-11-13): fixes from the owner's Windows QA report (3.3.34)
+
+The owner's AI agent tested 3.3.34 on Windows 11 (42 tests: 34 passed, 6 failed). Its report found the help assistant crash's root cause.
+
+- **Help assistant crashed on every answer (blocker):**
+  - **Cause:**
+    - `useEffect(() => end.current?.scrollIntoView(...), [...])` returned the call's value. In the app's Chromium 152, `scrollIntoView()` returns a Promise.
+    - React kept that Promise as the effect's cleanup. When the answer changed the state, it called it: `TypeError: u is not a function`.
+    - Our Chromium here returns `undefined`, so it never happened here.
+  - **Fix:**
+    - All 14 one-line effects in the dashboard now have block bodies.
+    - `tests/unit/react-effects.test.ts` fails on any effect that returns an expression. It flags the old line and passes now.
+    - The amber **Ask** after an error now reopens the panel in one click, instead of two.
+- **ChatGPT counted as ready while signed out:**
+  - **Cause:** signed out, ChatGPT still shows its composer, with "Log in / Sign up for free" in its header. `pageState()` checked for sign-in buttons only when there was no composer.
+  - **Fix:**
+    - A visible sign-in or sign-up button now means `login`, composer or not.
+    - The ChatGPT scripts are bumped to **3.5.5**.
+    - The setup checklist counts ChatGPT as done only when the page reports signed in. It says "open but signed out", or "checking", otherwise.
+    - The dashboard warns "ChatGPT is signed out", and the Automation Chrome check says so.
+  - **Test:** the new integration test (fake ChatGPT page, mode `login-composer`) fails on the old adapter (the prompt was sent) and passes now (held for sign-in, nothing sent).
+- **Tray menu stuck at "Starting…":** it was set once, before `/api/work` answered. It is now set again whenever its status line, the pause state or the updater changes (`refreshTrayMenu`).
+- **Search Console status wrong both ways:**
+  - The Search Console tab now reports whether Google is signed in, from its own storage. Only whether a Google session cookie exists is checked; no value is read.
+  - The chip says "sign in to Google in this tab" instead of "ready".
+  - The setup step ticks itself as soon as Google is signed in, before any indexing request.
+- **Notifications titled "Windows PowerShell":**
+  - The app sets its Windows identity (`local.blogautomationstudio.desktop`, the installer's shortcut id) and passes it to the worker.
+  - Toasts now show "Blog Automation Studio" and its icon. The npm copy keeps PowerShell's.
+- **React #418 and a light page in dark mode:**
+  - Reproduced here: a time formatted with the browser's clock or zone differed from the server's. React then rebuilt the page and set `<html>`'s attributes from the server, which dropped `dark`.
+  - The times that change between server and browser are now hydration-safe: the queue's "last update", the ChatGPT wait time, list dates, site health times, the backoff time, the key dates.
+  - A `ThemeKeeper` in the root layout puts the saved theme back whenever the class list changes.
+  - Checked in Chromium: no hydration error on /settings any more, and dark mode survives removing the class.
+- **Smaller fixes:**
+  - **Wording:**
+    - "1 tab / 3 tabs" instead of "tab(s)" through a shared `plural()`, about 60 places;
+    - Add website says "Address" in its errors too; the ChatGPT-off chip names the **File** menu;
+    - no developer wording on Productivity, Writers, Overview or in the welcome dialog; Diagnostics lists capabilities by name;
+    - a log line shows a forced end as `exit -1`, not `4294967295`.
+  - **Behaviour:**
+    - the keyboard shortcuts dialog is readable and lists Ctrl+W, Ctrl+Comma, F5, Alt and Ctrl+Shift+I;
+    - the start card says what the app waits for: worker, then dashboard;
+    - Add website no longer opens by itself on every visit;
+    - the retired 2.0 writer card shows only when such articles exist;
+    - a proper 404 page;
+    - the Search Console tab loads again when the window comes back;
+    - the help assistant sees local times.
+- **Not changed:**
+  - **Code signing:** it needs a certificate.
+  - **The installer's "per-user installation.(C:…)" spacing:** electron-builder's own NSIS text.
+  - **A Settings field for the Serper key**, instead of `.env`: a follow-up.
+- **Checked here:** unit suite in batches, 78 files / 530 tests; `tsc` 0 errors; the integration tests for sign-in and human checks against the fake ChatGPT page (3 passed); the 404 page and the theme keeper in Chromium.
+- **Not verified here:** Windows itself (tray menu, toasts, the Search Console cookie check, Chromium 152). A QA rerun with `docs/windows-qa-prompt.md` covers them.
+
+**Commands run**
+```
+TMPDIR=<scratch> npx vitest run <8 files at a time>       # 78 files, 530 tests
+npx tsc --noEmit                                           # 0 errors
+TMPDIR=/tmp/bq xvfb-run -a npx vitest run --config vitest.integration.config.ts tests/integration/extension.test.ts -t "pauses for login|signed-out ChatGPT|human check"   # 3 passed
+```

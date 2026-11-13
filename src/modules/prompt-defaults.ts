@@ -195,7 +195,7 @@ Do not write an article; one short caption line is enough.`,
     moduleKey: 'celebrity2-writer',
     stageKey: 'ARTICLE',
     name: 'Celebrity 2 — Article',
-    description: 'The owner’s one-prompt celebrity article: SEO title, meta description, URL slug, introduction, direct answer, Family Profile table, sourced sections, conclusion and five FAQs.',
+    description: 'Your own one-prompt celebrity article: SEO title, meta description, URL slug, introduction, direct answer, Family Profile table, sourced sections, conclusion and five FAQs.',
     // v2 (owner report): “Family Profile” is asked for as an H2 heading (it was a bold line).
     version: 2,
     kind: 'text',

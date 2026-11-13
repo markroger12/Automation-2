@@ -3,7 +3,7 @@ import { ArrowRight, CheckCircle2, CircleAlert, CircleDashed, Download, User, Sp
 import { ACTIVE_MODULES } from '@/modules/registry';
 import { db } from '@/lib/db';
 import { listCustomWriters } from '@/lib/writers/store';
-import { Card, Chip, EmptyState, LinkButton, PageHeader, buttonClasses, cx, formatDateTime } from '@/components/ui';
+import { Card, Chip, EmptyState, LinkButton, PageHeader, buttonClasses, cx, formatDateTime, plural } from '@/components/ui';
 import { NewWriterButton, type StartOption } from './new-writer';
 import { ImportWritersButton } from './import-writers';
 
@@ -122,14 +122,16 @@ export default async function WritersPage() {
               <Link className="link" href="/prompts">
                 Edit prompts →
               </Link>
-              <span className="text-muted">· {counts.find((c) => c.moduleKey === m.key)?._count._all ?? 0} article(s)</span>
+              <span className="text-muted">· {plural(counts.find((c) => c.moduleKey === m.key)?._count._all ?? 0, 'article')}</span>
             </div>
           </Card>
         ))}
       </div>
-      <Card className="mt-6" title="Celebrity Writer 2.0 — retired" description="Not selectable, not queueable, not routed to. Historical records stay readable in Article History.">
-        <p className="text-sm">{legacy ? `${legacy} historical article(s) remain available read-only.` : 'No historical 2.0 records in this installation.'}</p>
-      </Card>
+      {legacy ? (
+        <Card className="mt-6" title="Celebrity Writer 2.0 — retired" description="It no longer writes articles. Its earlier articles stay readable in Article History.">
+          <p className="text-sm">{legacy === 1 ? '1 earlier article is' : `${legacy} earlier articles are`} kept, read-only.</p>
+        </Card>
+      ) : null}
     </>
   );
 }

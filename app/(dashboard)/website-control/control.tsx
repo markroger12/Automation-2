@@ -7,7 +7,7 @@ import { BookOpen, CalendarClock, Copy, ExternalLink, FileText, FolderTree, Hear
 import { api } from '@/lib/client/api';
 import { Button, Modal, useToast } from '@/components/client';
 import { Input, Select } from '@/components/form';
-import { Chip, EmptyState, PageHeader, Stat, cx } from '@/components/ui';
+import { Chip, EmptyState, PageHeader, Stat, cx, plural } from '@/components/ui';
 import type { websiteGrid } from '@/lib/website-control';
 
 type Row = Awaited<ReturnType<typeof websiteGrid>>[number];
@@ -146,7 +146,7 @@ function SiteCard({ w }: { w: Row }) {
         <Fact icon={<FileText className="h-4 w-4" />} label="Editor">
           {w.editor}
         </Fact>
-        <Fact icon={<Link2 className="h-4 w-4" />} label="Internal links" title={`“${w.internalLinkLine}” · ${w.linkIndex} indexed post(s)`}>
+        <Fact icon={<Link2 className="h-4 w-4" />} label="Internal links" title={`“${w.internalLinkLine}” · ${plural(w.linkIndex, 'indexed post')}`}>
           {w.linkIndex} posts · “{w.internalLinkLine}”
         </Fact>
         <Fact icon={<ImageIcon className="h-4 w-4" />} label="Image template" title={`${w.imageTemplate.name}${w.imageTemplate.bodyTemplate ? ' + body design' : ''}${w.imageTemplate.logo ? '' : ' · no logo'}`}>
@@ -157,7 +157,7 @@ function SiteCard({ w }: { w: Row }) {
         <Fact icon={<CalendarClock className="h-4 w-4" />} label="Workflow">
           {w.workflow ? (
             <>
-              <span className={cx(w.workflow.active && 'text-emerald-700 dark:text-emerald-400')}>{w.workflow.active ? 'on' : 'off'}</span> · {w.workflow.slots} slot(s) a day
+              <span className={cx(w.workflow.active && 'text-emerald-700 dark:text-emerald-400')}>{w.workflow.active ? 'on' : 'off'}</span> · {plural(w.workflow.slots, 'slot')} a day
             </>
           ) : (
             <span className="text-muted">none</span>
@@ -171,7 +171,7 @@ function SiteCard({ w }: { w: Row }) {
           {w.rankMath.target ? ` · target ${w.rankMath.target}` : ''}
         </Fact>
         <Fact icon={<BookOpen className="h-4 w-4" />} label="Prompts / writer rules">
-          {w.promptOverrides} override(s) · {w.routingRules} rule(s)
+          {plural(w.promptOverrides, 'override')} · {plural(w.routingRules, 'rule')}
         </Fact>
       </div>
       <div className="mt-auto px-5 pb-4">
@@ -222,7 +222,7 @@ function CloneDialog({ open, onClose, websites, cloneFields }: { open: boolean; 
             Close
           </Button>
           <Button variant="primary" loading={busy} disabled={!source || !targets.size || !fields.size} onClick={() => void run()}>
-            <Copy className="h-4 w-4" /> Copy to {targets.size} website(s)
+            <Copy className="h-4 w-4" /> Copy to {plural(targets.size, 'website')}
           </Button>
         </>
       }
@@ -297,7 +297,7 @@ export function WebsiteControl({ websites, cloneFields, description }: { website
                   setChecking(true);
                   try {
                     const r = await api<{ queued: number; sites: number }>('/api/website-control/health-check', { method: 'POST' });
-                    toast('success', `Session tests queued for ${r.queued} of ${r.sites} website(s). Results appear in each site's health within a minute or two.`);
+                    toast('success', `Session tests queued for ${r.queued} of ${plural(r.sites, 'website')}. Results appear in each site's health within a minute or two.`);
                   } catch (e) {
                     toast('error', (e as Error).message);
                   } finally {

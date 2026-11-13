@@ -90,6 +90,7 @@ function createChatGPTAgent(deps) {
     send: (_id, msg) => deps.tab.send(msg),
     post: (_id, portId, msg) => deps.tab.post(portId, msg),
     front: () => deps.tab.front(),
+    unfront: () => (typeof deps.tab.unfront === 'function' ? deps.tab.unfront() : undefined),
   };
   /** Each tab's state (as the extension's tabState). */
   const tabs = new Map();
@@ -577,7 +578,11 @@ function createChatGPTAgent(deps) {
         touch(id);
         return { ok: true };
       case 'come-to-front':
-        pool.front(id);
+        pool.front(id, msg.reason);
+        return { ok: true };
+      case 'front-done':
+        // The gallery's photos are taken: the app shows what it showed before (owner report, 3.3.40).
+        if (typeof pool.unfront === 'function') pool.unfront(id);
         return { ok: true };
       case 'checkpoint':
         touch(id);
@@ -678,6 +683,8 @@ function createChatGPTAgent(deps) {
         images: Array.isArray(msg.images) && msg.images.length ? msg.images : undefined,
         imageLinks: Array.isArray(msg.imageLinks) && msg.imageLinks.length ? msg.imageLinks.slice(0, 20) : undefined,
         galleryReport: typeof msg.galleryReport === 'string' ? msg.galleryReport.slice(0, 400) : undefined,
+        // The gallery's structure when fewer photos were taken than it has (owner report: the app's copies were missing).
+        pageCopy: pageCopyOf(msg),
         conversationUrl: msg.conversationUrl || null,
         recovered: Boolean(msg.recovered),
         elapsedMs: msg.elapsedMs,

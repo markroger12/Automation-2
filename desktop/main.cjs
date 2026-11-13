@@ -84,6 +84,8 @@ const TAB_BAR = 44;
 /** The key this app gives its dashboard for the ChatGPT tab (made at each start, never stored). */
 const agentKey = randomBytes(32).toString('base64url');
 let tray = null;
+/** What the window showed before a ChatGPT tab came to the front for a picture gallery (owner report, 3.3.40). */
+let galleryFront = null;
 /** Builds the tray's menu (set in buildTray); rebuilt when the work or the updater changes (refreshTrayMenu). */
 let trayMenu = null;
 let trayMenuKey = '';
@@ -736,10 +738,24 @@ function attachTabs(ownServer) {
     key: ownServer ? agentKey : null,
     store: agentStore(),
     notify: (title, body) => notifyOwner(title, body, () => selectTab(title.startsWith('Search Console') ? 'search-console' : 'chatgpt')),
-    front: (id) => {
+    front: (id, reason) => {
       if (!win || win.isDestroyed()) return;
+      // For a gallery, remember what was shown, so it comes back when the photos are taken (unfront).
+      if (reason === 'gallery') galleryFront = { tab: activeTab === 'chatgpt' ? `chatgpt:${activeChatgpt}` : activeTab, shown: win.isVisible() && !win.isMinimized(), minimized: win.isMinimized() };
       selectTab('chatgpt', id || null);
       if (!win.isVisible() || win.isMinimized()) win.showInactive();
+    },
+    // The gallery's photos are taken: show what was shown before, unless the owner has used the window meanwhile.
+    unfront: (id) => {
+      const before = galleryFront;
+      galleryFront = null;
+      if (!before || !win || win.isDestroyed()) return;
+      if (activeTab !== 'chatgpt' || (id && activeChatgpt !== id)) return;
+      selectTab(before.tab);
+      if (!before.shown && !win.isFocused()) {
+        if (before.minimized) win.minimize();
+        else win.hide();
+      }
     },
     onTabsChanged: (views) => chatgptTabsChanged(views),
     gsc: ownServer && googleTab ? googleTab.port : null,

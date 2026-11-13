@@ -61,11 +61,13 @@ function poolHarness(opts: { config?: Record<string, unknown>; jobs?: string[]; 
   const posts: { id: string; portId: string; msg: unknown }[] = [];
   const closed: string[] = [];
   const reloads: string[] = [];
+  const fronts: [string, string | undefined][] = [];
+  const unfronts: string[] = [];
   let next = 2;
   const agent = createChatGPTAgent({
     origin: () => 'http://127.0.0.1:3999',
     key: 'k'.repeat(43),
-    version: '3.5.5',
+    version: '3.5.6',
     pool: {
       ids: () => [...open],
       open: (url: string) => {
@@ -87,7 +89,8 @@ function poolHarness(opts: { config?: Record<string, unknown>; jobs?: string[]; 
         return { ok: true };
       },
       post: (id: string, portId: string, msg: unknown) => posts.push({ id, portId, msg }),
-      front: () => {},
+      front: (id: string, reason?: string) => void fronts.push([id, reason]),
+      unfront: (id: string) => void unfronts.push(id),
     },
     fetchImage: async () => ({ ok: false, status: 404, mime: '', bytes: Buffer.alloc(0) }),
     store: { read: () => stored, write: (st: Record<string, unknown>) => void (stored = JSON.parse(JSON.stringify(st))) },
@@ -106,7 +109,7 @@ function poolHarness(opts: { config?: Record<string, unknown>; jobs?: string[]; 
   }) as Agent & { onTabGone: (id: string) => Promise<void>; status: () => { busyTabs: number; tabs: number; busy: boolean } };
   /** A tab's page has loaded and its scripts announced themselves. */
   const ready = (id: string) => agent.onMessage({ type: 'content-ready', url: urls[id] ?? 'https://chatgpt.com/' }, id);
-  return { agent, calls, open, runs, posts, closed, reloads, ready, setConfig: (c: Record<string, unknown>) => void (config = { ...config, ...c }), setPage: (st: string) => void (pageState = st), store: () => stored, add: (...jobs: string[]) => queue.push(...jobs) };
+  return { agent, calls, open, runs, posts, closed, reloads, fronts, unfronts, ready, setConfig: (c: Record<string, unknown>) => void (config = { ...config, ...c }), setPage: (st: string) => void (pageState = st), store: () => stored, add: (...jobs: string[]) => queue.push(...jobs) };
 }
 
 describe("the desktop app's ChatGPT tabs: several prompts at once", () => {
@@ -152,6 +155,25 @@ describe("the desktop app's ChatGPT tabs: several prompts at once", () => {
       ['app-1', 'job-1'],
       ['app-3', 'job-3'],
     ]);
+  });
+
+  // Owner report (app 3.3.40: a ChatGPT gallery of 10 gave 3 photos; the log said "stepped by: each tile", and no copy
+  // of the gallery's structure reached the app). ChatGPT loads the viewer's next picture only in a tab that is shown.
+  it('a gallery brings its tab to the front and gives the window back after; its structure copy reaches the dashboard', async () => {
+    const h = poolHarness({ jobs: ['job-g'], config: { maxTabs: 1, wantedTabs: 1 } });
+    await h.agent.start();
+    await h.ready('app-1');
+    await h.agent.tick();
+    await h.ready('app-1'); // the page is at the new chat
+    await vi.waitFor(() => expect(h.runs.map((r) => r.jobId)).toContain('job-g'));
+    await h.agent.onMessage({ type: 'come-to-front', reason: 'gallery' }, 'app-1');
+    expect(h.fronts).toEqual([['app-1', 'gallery']]);
+    await h.agent.onMessage({ type: 'front-done', reason: 'gallery' }, 'app-1');
+    expect(h.unfronts).toEqual(['app-1']);
+    h.agent.onPortOpen('p1', 'bas-job:job-g', 'app-1');
+    h.agent.onPortMessage('p1', { type: 'complete', text: 'Photo gallery.', galleryReport: '3 picture(s) in the gallery, 3 opened large', pageCopy: '{"kind":"chatgpt-gallery"}' }, 'app-1');
+    await vi.waitFor(() => expect(h.calls.find((c) => c.action === 'complete')?.body).toMatchObject({ jobId: 'job-g', galleryReport: expect.stringContaining('3 opened large'), pageCopy: '{"kind":"chatgpt-gallery"}' }));
+    await h.agent.stop();
   });
 
   it('never more tabs than the dashboard allows; none while ChatGPT asks to sign in or shows a check', async () => {
@@ -385,7 +407,7 @@ describe("the desktop app's Search Console tab: indexing requests", () => {
     const agent = createChatGPTAgent({
       origin: () => 'http://127.0.0.1:3999',
       key: 'k'.repeat(43),
-      version: '3.5.5',
+      version: '3.5.6',
       tab: { load: () => {}, reload: () => {}, url: () => 'https://chatgpt.com/', send: async () => ({ ok: true, state: 'ready' }), post: () => {}, front: () => {} },
       gsc: {
         load: (u: string) => loads.push(u),

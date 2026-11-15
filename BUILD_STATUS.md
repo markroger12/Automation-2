@@ -5423,3 +5423,38 @@ Owner request: "internal links ka option add krna ha. kisi bhi related article k
   - the Links tab boxes, the word and line cases, and the word dialog (the choice is saved and the stage runs again);
   - the two switches in Settings: off, saved and still off after a reload, then on again.
 - **Not verified here:** live WordPress sites and the owner's real posts. The word choice depends on the words the real articles use.
+
+## Workflow (2026-11-15): keywords no longer stuck on "Could not check WordPress after the slot: … not logged in"
+
+Owner report (screenshot): three keywords stayed "scheduled" with "Could not check WordPress after the slot: Easy Vibs: not logged in to WordPress (session missing or expired). Checked again in a few minutes." The owner said the site was signed in. They asked for a permanent solution: "iska permanent solution nikal".
+
+- **Cause:**
+  - The draft path signs in again by itself when the WordPress session has ended. The scheduling path and the check after a slot did not: they only failed and tried again a few minutes later.
+  - They also never recorded that the session had ended. The website page kept showing "signed in", and the worker's automatic sign-in loop only acts on websites marked signed out, so nothing ever signed in again.
+  - The check also needed a sign-in even for a post WordPress had already published, which is the usual case.
+- **Fixes:**
+  - **Published posts are seen without a sign-in (`public-post.ts`).** The check after a slot first reads the post from the site's public REST API, with a cache-busting query. WordPress shows a post to visitors only once it is published, so a published post is marked published at once, with no browser and no sign-in.
+  - **WordPress's own scheduler is started as a visit does.** If the post is not public yet, the app requests `wp-cron.php` with no cookies and looks again. Only if it is still not published does the signed-in check run. That check can publish a missed schedule on the approved path, as before.
+  - **One WordPress session for all jobs (`withWordPressSession` in session.ts).** Drafts, scheduling, the check after a slot and content refreshes all use it:
+    - a website known to be signed out is signed in again first, with the saved password;
+    - a session that ends during a job is recorded as ended (website page, site health), the app signs in again once, and the job runs once more;
+    - otherwise the job waits with the reason.
+    - The automatic sign-in's limits stay: once per website every 10 minutes, and never again after a refused password or a CAPTCHA or code.
+  - **Reasons you can act on.**
+    - The keyword now says why it waits: no saved password, the last automatic sign-in's reason, or that it signs in again within 10 minutes.
+    - The session check now says what WordPress answered, for example `HTTP 200 “0”`.
+    - If WordPress redirects the admin address to another address, the message names the address to set on the website page.
+  - **Failed scheduling tries are retried.** Before, a failed try was made again only when its slot came too close and moved. Now it is made again within 10 minutes.
+- **The owner's three keywords:** after this update, the next check (within minutes) reads them from the public site. If WordPress published them, they are marked published without any sign-in.
+- **Tests:**
+  - **The fake WordPress** now hides unpublished posts from visitors (401 `rest_forbidden`), as WordPress does.
+  - **New integration tests:**
+    - a published post with the sign-in ended is marked published, and no admin, login or nonce request is made;
+    - a missed schedule is published by wp-cron.php without a sign-in;
+    - with no saved password, the keyword gives the exact reason and the website is marked signed out;
+    - with a saved password, the app signs in again by itself and publishes the missed schedule;
+    - a failed scheduling try is retried once per 10 minutes.
+  - **On the old code:** the first four fail against the old `schedule.ts`, and the retry test fails against the old scheduler.
+  - **The 9 WordPress, workflow and links integration test files:** 77 passed, 1 skipped (as before).
+  - **Unit suite:** 78 files / 544 tests; `tsc` 0 errors.
+- **Not verified here:** the owner's site (Easy Vibs). If its REST API is closed to visitors, the signed-in path is used, with the automatic sign-in and the clearer reason.

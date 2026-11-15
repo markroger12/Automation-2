@@ -340,5 +340,25 @@ async function fetchNonce(request: APIRequestContext, site: SiteRef, timeoutMs: 
   // WordPress nonces are short hex strings; "0" / "-1" mean "not logged in".
   if (res.ok() && /^[a-z0-9]{6,40}$/i.test(text)) return text;
   if (res.status() >= 500) throw new TransientError(`${site.name}: WordPress answered ${res.status()} while checking the session.`);
-  throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress (session missing or expired).`, site.id);
+  throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress (session missing or expired; ${nonceAnswer(site, res.status(), text, res.headers()['location'])}).`, site.id);
+}
+
+/**
+ * What WordPress answered instead of a session (owner report 2026-11-15: “not logged in” while the website page said
+ * signed in). A redirect to another address means the sign-in is kept for that address, not the saved admin address.
+ */
+export function nonceAnswer(site: Pick<SiteRef, 'adminUrl'>, status: number, text: string, location?: string): string {
+  if (status >= 300 && status < 400 && location) {
+    try {
+      const from = new URL(site.adminUrl);
+      const to = new URL(location, site.adminUrl);
+      if (/wp-login\.php/.test(to.pathname)) return `WordPress sent the app to its login page (HTTP ${status})`;
+      if (to.origin !== from.origin) return `WordPress redirects ${from.origin} to ${to.origin}; set the website's admin address to ${to.origin}${from.pathname} on the website page`;
+      return `WordPress redirected the session check to ${to.pathname} (HTTP ${status})`;
+    } catch {
+      return `WordPress redirected the session check (HTTP ${status})`;
+    }
+  }
+  const shown = text.replace(/\s+/g, ' ').slice(0, 60);
+  return `the session check answered HTTP ${status}${shown ? ` “${shown}”` : ''}`;
 }

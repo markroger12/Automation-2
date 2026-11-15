@@ -33,6 +33,8 @@ export const SCHEDULE_LEAD_MS = 5 * 60_000;
  * check starts WP-Cron and, if WordPress still has not published it, publishes it itself (src/wordpress/schedule.ts).
  */
 export const MISSED_SCHEDULE_GRACE_MS = 2 * 60_000;
+/** A scheduling try that failed is made again after this long. */
+const RETRY_SCHEDULE_MS = 10 * 60_000;
 /** After the slot the publication is checked every 5 minutes for 2 hours (a failed check is soon tried again), then every 30. */
 const verifyWindowMs = (slot: Date, now: Date) => (now.getTime() - slot.getTime() < 2 * 3_600_000 ? 5 * 60_000 : 30 * 60_000);
 const SLOT_HORIZON_DAYS = 60;
@@ -169,7 +171,12 @@ async function tickWorkflow(wf: WorkflowWithSite, now: Date, report: TickReport)
   if (publishing) {
     const ready = await db.workflowKeyword.findMany({ where: { workflowId: wf.id, status: 'READY', scheduledAt: { gt: new Date(now.getTime() + SCHEDULE_LEAD_MS / 2) } } });
     for (const kw of ready) {
-      const { created } = await enqueue({ queue: 'control', kind: 'wp.schedule', idempotencyKey: `wp-schedule:${kw.id}:${kw.scheduledAt!.toISOString()}:${kw.retries}`, websiteId: wf.websiteId, relatedId: kw.id, payload: { keywordId: kw.id, websiteId: wf.websiteId } });
+      const key = `wp-schedule:${kw.id}:${kw.scheduledAt!.toISOString()}:${kw.retries}`;
+      // A try that failed (WordPress not reached, a sign-in that ended) is tried again every 10 minutes, not only
+      // when the slot comes too close and moves (owner report 2026-11-15: keywords stuck on a WordPress sign-in).
+      const last = await db.queueJob.findFirst({ where: { kind: 'wp.schedule', relatedId: kw.id, idempotencyKey: { startsWith: key } }, orderBy: { createdAt: 'desc' }, select: { status: true } });
+      const idempotencyKey = last?.status === 'FAILED' ? `${key}:retry:${Math.floor(now.getTime() / RETRY_SCHEDULE_MS)}` : key;
+      const { created } = await enqueue({ queue: 'control', kind: 'wp.schedule', idempotencyKey, websiteId: wf.websiteId, relatedId: kw.id, payload: { keywordId: kw.id, websiteId: wf.websiteId } });
       if (created) report.scheduleJobs++;
     }
   }

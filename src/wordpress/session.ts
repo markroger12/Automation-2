@@ -8,7 +8,7 @@ import { profileDirForSlug } from '@/lib/paths';
 import { audit } from '@/lib/audit';
 import { resumeLoginPausedTasks } from '@/lib/tasks/lifecycle';
 import { anyOf, selectorsFor } from './selectors';
-import { boundedGoto, captureScreenshot, closeSiteContext, dismissOverlays, firstPage, withSiteContext, type SiteRef } from './browser';
+import { boundedGoto, captureScreenshot, closeSiteContext, dismissOverlays, firstPage, withSiteContext, withWordPressSlot, type SiteRef } from './browser';
 import { withOwnerWindowPermit } from './publish-guard';
 import { WpClient } from './client';
 import { LoginRequiredError } from '@/lib/pipeline-errors';
@@ -247,6 +247,45 @@ export async function autoLoginIfSaved(site: Website, now = Date.now()): Promise
   if (now - (lastAutoLogin.get(site.id) ?? 0) < 10 * 60_000) return false;
   lastAutoLogin.set(site.id, now);
   return (await autoLogin(site)).state === 'ACTIVE';
+}
+
+/**
+ * What happens about a WordPress sign-in that ended (for the message where the work waits): no saved password, the
+ * last automatic sign-in's reason, or that the app signs in again soon by itself.
+ */
+export function signInAgainHint(siteId: string): string {
+  const saved = savedLogin(siteId);
+  if (!saved) return 'No password is saved for the automatic sign-in: use “Log in” on the website page, or save the password there.';
+  if (saved.last && !saved.last.ok) return `The automatic sign-in could not do it: ${saved.last.detail} Use “Log in” on the website page.`;
+  return 'The app signs in again with the saved password within 10 minutes and goes on by itself.';
+}
+
+/**
+ * Every WordPress job of the worker (drafts, scheduling, the check after a slot, content refreshes) runs here, so
+ * an ended session never leaves work stuck (owner report 2026-11-15: three keywords “Could not check WordPress
+ * after the slot: … not logged in” for days, while the website page still said signed in):
+ * - a website known to be logged out is signed in again first with the saved password;
+ * - a session that ended during the job is recorded as ended (the website page and the worker's sign-in loop see
+ *   it), the app signs in again once and the job runs once more;
+ * - otherwise the job waits with the reason (LoginRequiredError), and goes on by itself once signed in.
+ * The limits of the automatic sign-in stay: once per website every 10 minutes, never again after a refused
+ * password or a step only the owner can do (CAPTCHA, a code).
+ */
+export async function withWordPressSession<T>(site: Website, purpose: string, fn: (context: BrowserContext) => Promise<T>, retried = false): Promise<T> {
+  const settings = await getSettings();
+  const profile = site.wordpressProfileId ? await db.browserProfile.findUnique({ where: { id: site.wordpressProfileId } }) : null;
+  if (!profile) throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress. Use “Log in” on the website page.`, site.id);
+  if (profile.sessionState === 'LOGIN_REQUIRED' && !(await autoLoginIfSaved(site))) throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress. ${signInAgainHint(site.id)}`, site.id);
+  try {
+    return await withWordPressSlot(settings.workflow.wordpressConcurrency, () => withSiteContext(siteRef(site), { headed: settings.browser.mode === 'headed', purpose }, fn));
+  } catch (error) {
+    if (!(error instanceof LoginRequiredError) || !site.wordpressProfileId) throw error;
+    await db.browserProfile.update({ where: { id: site.wordpressProfileId }, data: { sessionState: 'LOGIN_REQUIRED', lastCheckedAt: new Date() } }).catch(() => {});
+    await observe(site.id, 'SESSION', 'FAIL', `The WordPress session ended (${purpose}): ${error.message}`).catch(() => {});
+    if (!retried && (await autoLoginIfSaved(site))) return withWordPressSession(site, purpose, fn, true);
+    const again = retried ? 'It ended again right after the automatic sign-in, so WordPress may refuse the app’s requests (a security plugin?). ' : '';
+    throw new LoginRequiredError('wordpress', `${error.message.trim()} ${again}${signInAgainHint(site.id)}`, site.id);
+  }
 }
 
 /**

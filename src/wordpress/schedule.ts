@@ -1,13 +1,11 @@
 import { db } from '@/lib/db';
 import { audit } from '@/lib/audit';
 import { log } from '@/lib/log';
-import { getSettings } from '@/lib/settings';
-import { LoginRequiredError } from '@/lib/pipeline-errors';
 import { MISSED_SCHEDULE_GRACE_MS, moveToNextSlot, SCHEDULE_LEAD_MS } from '@/lib/workflow/scheduler';
-import { withSiteContext, withWordPressSlot } from './browser';
 import { WpClient, type WpPost } from './client';
 import { withPublishPermit } from './publish-guard';
-import { siteRef } from './session';
+import { publicPost, visitWpCron } from './public-post';
+import { siteRef, withWordPressSession } from './session';
 
 /**
  * The approved publishing path (spec §14), run by the worker's control queue
@@ -18,14 +16,10 @@ import { siteRef } from './session';
  * result is read back and verified. It never publishes immediately.
  */
 
+/** The signed-in REST client, in the shared WordPress session: an ended sign-in is renewed with the saved password. */
 async function siteClient<T>(websiteId: string, purpose: string, fn: (client: WpClient) => Promise<T>): Promise<T> {
   const site = await db.website.findUniqueOrThrow({ where: { id: websiteId } });
-  const profile = site.wordpressProfileId ? await db.browserProfile.findUnique({ where: { id: site.wordpressProfileId } }) : null;
-  if (!profile || profile.sessionState === 'LOGIN_REQUIRED') throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress.`, site.id);
-  const settings = await getSettings();
-  return withWordPressSlot(settings.workflow.wordpressConcurrency, () =>
-    withSiteContext(siteRef(site), { headed: settings.browser.mode === 'headed', purpose }, async (context) => fn(await WpClient.connect(context, siteRef(site)))),
-  );
+  return withWordPressSession(site, purpose, async (context) => fn(await WpClient.connect(context, siteRef(site))));
 }
 
 type Outcome = { kind: 'error'; error: string } | { kind: 'published'; post: WpPost } | { kind: 'scheduled'; post: WpPost };
@@ -35,7 +29,7 @@ type Outcome = { kind: 'error'; error: string } | { kind: 'published'; post: WpP
  * the draft in WordPress the day before its slot): the calendar shows it when it was really published, and its
  * reserved slot is free again for another article.
  */
-async function markPublished(kw: { id: string; keyword: string; taskId: string | null; scheduledAt: Date | null }, post: WpPost, fallback: Date) {
+async function markPublished(kw: { id: string; keyword: string; taskId: string | null; scheduledAt: Date | null }, post: Pick<WpPost, 'link' | 'date_gmt'>, fallback: Date) {
   const at = post.date_gmt ? new Date(`${post.date_gmt}Z`) : fallback;
   const offSlot = !kw.scheduledAt || Math.abs(at.getTime() - kw.scheduledAt.getTime()) >= 60_000;
   if (offSlot) await db.slotReservation.deleteMany({ where: { workflowKeywordId: kw.id } });
@@ -74,6 +68,10 @@ export async function scheduleKeywordPost(keywordId: string): Promise<Record<str
     if (after?.status === 'future' && sameMinute(after.date_gmt, at)) return { kind: 'scheduled', post: after };
     if (after?.status === 'publish') return { kind: 'published', post: after };
     return { kind: 'error', error: `WordPress did not confirm the schedule (status “${after?.status ?? 'missing'}”, date ${after?.date_gmt ?? '—'}).` };
+  }).catch(async (error: Error) => {
+    // Not reached (sign-in, network): the reason on the keyword; the scheduler tries again within minutes.
+    await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: `Could not schedule it in WordPress: ${error.message.split('\n')[0].slice(0, 400)} Tried again in a few minutes.` } });
+    throw error;
   });
   if (result.kind === 'error') {
     await db.workflowKeyword.update({ where: { id: kw.id }, data: { lastError: result.error } });
@@ -106,6 +104,28 @@ export async function verifyKeywordPublished(keywordId: string): Promise<Record<
   const task = await db.articleTask.findUniqueOrThrow({ where: { id: kw.taskId } });
   if (!task.wpPostId) return { skipped: 'no post' };
   const postId = task.wpPostId;
+
+  // 1. Without signing in (owner report 2026-11-15): the post as visitors see it. Published → done. Not public yet →
+  // WordPress's scheduler is started as a visit does, and the post looked at again.
+  const site = kw.workflow.website;
+  let seen = await publicPost(site, postId);
+  let publicVia: 'public' | 'wp-cron' = 'public';
+  if (seen.state === 'not-public') {
+    publicVia = 'wp-cron';
+    await visitWpCron(site);
+    for (let i = 0; i < 3 && seen.state === 'not-public'; i++) {
+      await sleep(i ? 3000 : 1000);
+      seen = await publicPost(site, postId);
+    }
+  }
+  if (seen.state === 'published') {
+    if (publicVia === 'wp-cron') await log({ category: 'workflow', taskId: kw.taskId, message: `“${kw.keyword}”: WordPress had not published post #${postId} at its time (its scheduler, WP-Cron, had not run). The app started WP-Cron as a visit does, and WordPress published it.` });
+    await markPublished(kw, { link: seen.link, date_gmt: seen.dateGmt ?? '' }, new Date());
+    return { published: true, url: seen.link, via: publicVia };
+  }
+
+  // 2. Still not public (or the site's REST API is closed to visitors): the signed-in check, which can also publish
+  // a missed schedule on the approved path.
   let via: 'wp-cron' | 'app' | null = null;
   let post: WpPost | null;
   try {

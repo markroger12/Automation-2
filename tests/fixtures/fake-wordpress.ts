@@ -441,6 +441,8 @@ export async function startFakeWordPress(opts: FakeWpOptions = {}): Promise<Fake
         if (!post) return json(404, { code: 'rest_post_invalid_id', message: 'Invalid post ID.' });
         // Like WordPress cron: a scheduled post whose time has come is published.
         if (options.cron === 'visits' && post.status === 'future' && Date.parse(`${post.date_gmt}Z`) <= Date.now()) post.status = 'publish';
+        // As WordPress: a visitor (not signed in) sees a post only once it is published.
+        if (method === 'GET' && !authed && post.status !== 'publish') return json(401, { code: 'rest_forbidden', message: 'Sorry, you are not allowed to do that.' });
         if (method === 'GET') return json(200, restPost(post));
         if (method === 'DELETE') {
           post.status = 'trash';

@@ -111,6 +111,84 @@ export function findAnchor(bodyText: string, target: TargetLike): string | null 
   return null;
 }
 
+/**
+ * Words that follow a person's name in celebrity titles and keywords (“… Net Worth 2026”, “… Husband”, “Größe von …”):
+ * what is left is the name, the most natural word to link (owner request 2026-11-15: the related article's link “on a
+ * word” of the article).
+ */
+const TOPIC_WORDS = new Set(
+  [
+    // English
+    'net', 'worth', 'age', 'height', 'weight', 'wiki', 'wikipedia', 'bio', 'biography', 'husband', 'wife', 'spouse', 'partner', 'boyfriend', 'girlfriend',
+    'dating', 'married', 'marriage', 'divorce', 'relationship', 'family', 'parents', 'father', 'mother', 'dad', 'mom', 'siblings', 'brother', 'brothers', 'sister',
+    'sisters', 'children', 'kids', 'son', 'sons', 'daughter', 'daughters', 'baby', 'career', 'salary', 'income', 'house', 'houses', 'cars', 'ethnicity',
+    'nationality', 'religion', 'instagram', 'tiktok', 'youtube', 'death', 'cause', 'died', 'dead', 'alive', 'now', 'today', 'facts', 'news', 'life',
+    'early', 'personal', 'movies', 'shows', 'songs', 'albums', 'awards', 'education', 'birthday', 'birthplace', 'background', 'photos', 'pictures', 'story',
+    // German
+    'vermögen', 'alter', 'größe', 'grösse', 'gewicht', 'biografie', 'ehemann', 'ehefrau', 'mann', 'frau', 'freund', 'freundin', 'partnerin', 'familie',
+    'eltern', 'vater', 'mutter', 'geschwister', 'bruder', 'schwester', 'kinder', 'kind', 'sohn', 'tochter', 'töchter', 'söhne', 'karriere', 'gehalt',
+    'herkunft', 'nationalität', 'tod', 'todesursache', 'heute', 'privat', 'privatleben', 'steckbrief', 'fakten',
+  ].map((w) => w.normalize('NFKC')),
+);
+const LINKING_WORDS = new Set(['of', 'the', 'and', 'in', 'his', 'her', 'their', 'a', 'an', 'is', 'von', 'der', 'die', 'das', 'und', 'im', 'ist', 'sein', 'seine', 'ihr', 'ihre']);
+const QUESTION_START = /^(who is|who was|what is|what was|what happened to|how old is|how tall is|how rich is|wer ist|wer war|was ist|wie alt ist|wie groß ist|wie reich ist)\s+/i;
+
+/** The person (or thing) a keyword or title is about: “Sarah Jones Net Worth 2026: How Rich Is She?” → “Sarah Jones”. */
+export function subjectOf(text: string): string | null {
+  let s = (text.split(/\s[:–—|-]\s|:\s|\?/)[0] ?? '').trim();
+  s = s.replace(QUESTION_START, '');
+  const words = s.split(/\s+/).filter(Boolean);
+  // From the end: topic words, years and linking words (“Größe von Heidi Klum” is handled from the start below).
+  while (words.length && (TOPIC_WORDS.has(words[words.length - 1].toLowerCase()) || LINKING_WORDS.has(words[words.length - 1].toLowerCase()) || /^\d{4}$/.test(words[words.length - 1]))) words.pop();
+  while (words.length && (TOPIC_WORDS.has(words[0].toLowerCase()) || LINKING_WORDS.has(words[0].toLowerCase()))) words.shift();
+  if (words.length) words[words.length - 1] = words[words.length - 1].replace(/['’]s?$/i, '');
+  if (words.length < 2 || words.length > 4 || words.some((w) => TOPIC_WORDS.has(w.toLowerCase()) || /^\d+$/.test(w))) return null;
+  return words.join(' ');
+}
+
+/**
+ * The word or words of the article to put the related article's link on (owner request 2026-11-15): the related
+ * post's keyword, the start of its title, or the person it is about, as the article already writes it (its own
+ * casing). Never a phrase of the article's own subject (`avoid`, its focus keyword): every word of it would then point
+ * away from the article. Two to six words, whole words only. Null when none fits: the link then goes on a line in the
+ * middle of the article.
+ */
+export function findRelatedAnchor(bodyText: string, target: Pick<TargetLike, 'keyword' | 'title'>, avoid: string): string | null {
+  const own = new Set(normalizeText(avoid).split(' ').filter(Boolean));
+  const titleStart = target.title.split(/\s[:–—|-]\s|:\s/)[0] ?? '';
+  const candidates = uniq(
+    [target.keyword ?? '', titleStart, subjectOf(target.keyword ?? '') ?? '', subjectOf(target.title) ?? '']
+      .map((c) => c.replace(/\s+/g, ' ').trim())
+      .filter((c) => {
+        const n = c.split(' ').length;
+        return n >= 2 && n <= 6;
+      }),
+  );
+  for (const c of candidates) {
+    const words = normalizeText(c).split(' ').filter(Boolean);
+    if (!words.length || words.every((w) => own.has(w))) continue;
+    const found = findPhrase(bodyText, c);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** A phrase as whole words in the text (any case), as the text writes it; null when it is not there. */
+export function findPhrase(bodyText: string, phrase: string): string | null {
+  const wanted = phrase.replace(/\s+/g, ' ').trim();
+  if (!wanted) return null;
+  const lower = bodyText.toLowerCase();
+  const needle = wanted.toLowerCase();
+  for (let from = 0; ; ) {
+    const i = lower.indexOf(needle, from);
+    if (i < 0) return null;
+    const before = bodyText[i - 1];
+    const after = bodyText[i + needle.length];
+    if (!(before && /[\p{L}\p{N}]/u.test(before)) && !(after && /[\p{L}\p{N}]/u.test(after))) return bodyText.slice(i, i + needle.length);
+    from = i + 1;
+  }
+}
+
 export function sameTopic(a: string, b: string): boolean {
   return normalizeText(a) === normalizeText(b);
 }

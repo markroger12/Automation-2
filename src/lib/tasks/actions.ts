@@ -378,21 +378,26 @@ export async function resaveToWordPress(taskId: string, raw: unknown) {
 
 export const internalLinkSchema = z
   .object({
+    /** `line`: the end line (previous article); `related`: the related article in the middle (owner request 2026-11-15). */
+    slot: z.enum(['line', 'related']).default('line'),
     mode: z.enum(['auto', 'none', 'url']),
     url: z.string().trim().url('Enter a full URL').max(2000).optional(),
     title: z.string().trim().max(300).optional(),
+    /** The related link only: the word or words of the article to put it on (empty: the app chooses). */
+    anchor: z.string().trim().max(120).optional(),
   })
   .refine((v) => v.mode !== 'url' || v.url, { message: 'Choose the post to link to.', path: ['url'] });
 
-/** Owner choice for the final internal-link line: automatic, none, or a specific post of this website. */
+/** Owner choice for an internal link (the end line or the related link): automatic, none, or a post of this website. */
 export async function setInternalLink(taskId: string, raw: unknown) {
   const task = await loadTask(taskId);
   await assertIdle(taskId);
   const input = internalLinkSchema.parse(raw);
   const options = parseJson<Record<string, unknown>>(task.options, {});
-  if (input.mode === 'auto') delete options.internalLinkOverride;
-  else options.internalLinkOverride = input.mode === 'none' ? { mode: 'none' } : { mode: 'url', url: input.url, title: input.title };
+  const key = input.slot === 'related' ? 'relatedLinkOverride' : 'internalLinkOverride';
+  if (input.mode === 'auto') delete options[key];
+  else options[key] = input.mode === 'none' ? { mode: 'none' } : { mode: 'url', url: input.url, title: input.title, ...(input.slot === 'related' && input.anchor ? { anchor: input.anchor } : {}) };
   await db.articleTask.update({ where: { id: taskId }, data: { options: JSON.stringify(options) } });
-  await audit('task.internal-link', 'ArticleTask', taskId, { mode: input.mode, url: input.url ?? null });
+  await audit('task.internal-link', 'ArticleTask', taskId, { slot: input.slot, mode: input.mode, url: input.url ?? null, anchor: input.anchor ?? null });
   return regenerateStage(taskId, 'INTERNAL_LINKS');
 }

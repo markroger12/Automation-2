@@ -366,7 +366,7 @@ export function WriterBuilder({ initial, categoryNames, own }: { initial: Custom
             <div className="grid gap-3 md:grid-cols-2">
               <Switch label="Photos" help={person ? 'Featured + two body images of the person, your uploads first, then ChatGPT’s photo search. The website’s image setting still applies.' : 'A featured image and body images as in the Tigram writer.'} checked={c.images === 'on'} onChange={(e) => setConfig({ images: e.target.checked ? 'on' : 'off' })} />
               <Switch label="Check the answer’s links" help="Every link is opened and checked; a failing one becomes plain text." checked={c.linkCheck} onChange={(e) => setConfig({ linkCheck: e.target.checked })} />
-              <Switch label="Internal links" help="Relevant posts of the same website and an “Also read” line." checked={c.internalLinks} onChange={(e) => setConfig({ internalLinks: e.target.checked })} />
+              <Switch label="Internal links" help="The previous article on an “Also read” line at the end, and a related post of the same website in the middle (each can be turned off in Settings → SEO)." checked={c.internalLinks} onChange={(e) => setConfig({ internalLinks: e.target.checked })} />
               <Switch label="Add the app’s SEO brief" help="Off: your prompt is sent as written (as Celebrity 2). On: the brief (search intent, entities) is added under it." checked={c.seoBrief} onChange={(e) => setConfig({ seoBrief: e.target.checked })} />
             </div>
             {c.images === 'on' ? (

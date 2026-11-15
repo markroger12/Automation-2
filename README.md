@@ -31,7 +31,7 @@ You give it keywords. It researches, writes, adds FAQs, a Quick Bio table, image
 | **Writes with your ChatGPT** | Prompts run in the app's own ChatGPT tabs, signed in with your account: several at once, like tabs in Chrome. No OpenAI API and no API costs. |
 | **WordPress drafts, never surprises** | The app signs in to your websites by itself and saves every article as a **draft**, read back to verify it. Publishing happens only where you allowed it, per website. |
 | **Writers** | Celebrity, Celebrity 2 and Tigram writers, plus your own writers built without code (prompts, title step, photo prompts), with import and export. |
-| **Research and quality** | A research evidence ledger, a quality report with hard stops, duplicate and plagiarism evidence, verified external links and smart internal links. |
+| **Research and quality** | A research evidence ledger, a quality report with hard stops, duplicate and plagiarism evidence, verified external links, and two internal links per article: the previous article at the end and a related post in the middle, on a word the article already uses. |
 | **Images** | Featured and body images from your uploads, ChatGPT or generated designs, on your own image template, with face-safe crops and upscaling. |
 | **Bulk and workflow** | Bulk campaigns, a weekly keyword workflow with publishing slots, a publishing calendar, and keyword ideas from Search Console. |
 | **Search Console** | Indexing requests in the app's Search Console tab, with proof; search performance from your own exports; content refresh suggestions. |

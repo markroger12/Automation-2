@@ -156,8 +156,10 @@ export function runSeoChecks(input: SeoInput): SeoReport {
   const quickBioRows = bioTable.length ? bioTable.find('tbody tr').length : null;
   const quickBioColumnsOk = bioTable.length ? bioTable.find('tr').toArray().every((tr) => $(tr).children('th,td').length === 2) : null;
   const links = $('a[href]').toArray();
-  const externalLinks = links.filter((a) => /^https?:\/\//i.test($(a).attr('href') ?? '') && !$(a).closest('p[data-bas-internal-link]').length && !$(a).attr('data-bas-link')?.startsWith('internal')).length;
-  const internalLinkLine = $('p[data-bas-internal-link]').length === 1;
+  // Internal word links are marked data-bas-link="int" (links/place.ts): they are not external links.
+  const externalLinks = links.filter((a) => /^https?:\/\//i.test($(a).attr('href') ?? '') && !$(a).closest('p[data-bas-internal-link]').length && !$(a).attr('data-bas-link')?.startsWith('int')).length;
+  // The end line only; the related article's line in the middle is marked "related".
+  const internalLinkLine = $('p[data-bas-internal-link]').not('[data-bas-internal-link="related"]').length === 1;
   const imgs = $('img').toArray();
   const imagesWithAlt = imgs.filter((i) => ($(i).attr('alt') ?? '').trim().length >= 5).length;
   const custom = customFaqRule(input.moduleKey);

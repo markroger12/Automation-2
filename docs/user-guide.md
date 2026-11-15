@@ -237,7 +237,13 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
   - the checks (SEO readiness, Structure, Research evidence, Duplicates, Links, Images, Rank Math, WordPress) are small tiles with a green, amber or red dot.
 - **Research:** each source page is listed once (ChatGPT cites many pages twice, with and without `?utm_source=chatgpt.com`), as the site and the page.
 - **Images:** three tiles show which image is there or missing. The steps are under **How the images were made**.
-- **Links:** each external link shows its phrase, then the site and the page on one line. The internal-link candidates have **Use this** on the right, and the chosen one says **in use**.
+- **Links:** each external link shows its phrase, then the site and the page on one line.
+- **Internal links (two per article):**
+  - **Previous article, at the end:** an “Also read:” line to the article the app wrote before for the same website (as in the earlier tool). If that article is still a draft, its planned address is used; without a previous article, the most related post.
+  - **Related article, in the middle:** the most related published post of the website (else one of the same category), never the same post as the end line. It goes on words the article already uses, for example the person's name or the related post's keyword. When no word fits, it becomes an “Also read:” line between two sections (never before the first H2, in the Quick Bio, the FAQs or the conclusion). The article text is never changed for it, and the article's own subject is never linked away.
+  - Each link has **Automatic** and **Remove**. The related link also has **Choose the word**: type the words it should go on. If the article does not use them, the line in the middle is used, and a note says so.
+  - The list of the website's posts has **At the end** and **In the middle** to pick a post for either link; the chosen ones are marked.
+  - Each link has its own switch: **Settings → SEO, links & images → Internal link: previous article (end)** and **Internal link: related article (middle)**, and the same two on a website's page, to differ per website.
 
 ## Review, notes and deleting
 

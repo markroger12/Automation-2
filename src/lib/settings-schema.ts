@@ -87,14 +87,17 @@ export const seoSettingsSchema = z.object({
   externalLinks: z.boolean().default(true),
   maxExternalLinks: z.number().int().min(0).max(10).default(5),
   internalLinks: z.boolean().default(true),
-  maxContextualInternalLinks: z.number().int().min(0).max(5).default(2),
+  /**
+   * Owner request 2026-11-15: two internal links per article, each with its own switch.
+   * - previousArticleLink: the last line (“Also read: …”, “Das könnte Ihnen gefallen: …”) links the article this app
+   *   wrote before for the same website (as in the owner's earlier tool); the most related post when there is none.
+   * - relatedArticleLink: the most related published post of the website, in the middle of the article: on a word
+   *   the article already uses (e.g. the person's name), else as a line between two sections.
+   */
+  previousArticleLink: z.boolean().default(true),
+  relatedArticleLink: z.boolean().default(true),
   /** Re-read published posts for internal linking at most this often (hours). */
   internalLinkIndexHours: z.number().min(0.25).max(168).default(6),
-  /**
-   * The article's last-line internal link ("Das könnte Ihnen gefallen: …"): the previous article this app wrote for
-   * the same website (as in the owner's earlier tool), or the site's most related published post.
-   */
-  internalLinkLineTarget: z.enum(['previous-article', 'most-related']).default('previous-article'),
   articleImages: z.boolean().default(true),
   imagesRequired: z.boolean().default(false),
   imageOutputSize: z.enum(['1200x675', '1920x1080']).default('1200x675'),
@@ -167,7 +170,7 @@ function overridable<S extends z.ZodRawShape, K extends keyof S & string>(shape:
 
 export const SITE_OVERRIDE_KEYS = {
   content: ['maxArticleWordCount', 'faqCount', 'quickBioRows', 'tigramWordRange', 'humanizerEnabled'],
-  seo: ['reviewThreshold', 'rankMathTargetScore', 'rankMathMode', 'externalLinks', 'maxExternalLinks', 'internalLinks', 'articleImages', 'imagesRequired', 'imageOutputSize'],
+  seo: ['reviewThreshold', 'rankMathTargetScore', 'rankMathMode', 'externalLinks', 'maxExternalLinks', 'internalLinks', 'previousArticleLink', 'relatedArticleLink', 'articleImages', 'imagesRequired', 'imageOutputSize'],
   workflow: ['manualTitleApproval', 'manualArticleApproval', 'holdForReview', 'autoSendToWordPress', 'createMissingCategory'],
 } as const;
 
@@ -212,7 +215,6 @@ export interface EffectiveTaskConfig {
   imageMaxBytes: number;
   celebrityPhotoReview: boolean;
   celebrityPhotoSource: 'chatgpt' | 'commons' | 'chatgpt-then-commons';
-  internalLinkLineTarget: 'previous-article' | 'most-related';
   manualTitleApproval: boolean;
   manualArticleApproval: boolean;
   holdForReview: boolean;
@@ -224,7 +226,9 @@ export interface EffectiveTaskConfig {
   externalLinks: boolean;
   maxExternalLinks: number;
   internalLinks: boolean;
-  maxContextualInternalLinks: number;
+  /** Missing in tasks started before 2026-11-15 (read as on). */
+  previousArticleLink?: boolean;
+  relatedArticleLink?: boolean;
   saveToWordPress: boolean;
   humanizerEnabled: boolean;
   humanizerBatchWords: number;
@@ -255,7 +259,6 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     imageMaxBytes: global.seo.imageMaxBytes,
     celebrityPhotoReview: global.seo.celebrityPhotoReview,
     celebrityPhotoSource: global.seo.celebrityPhotoSource,
-    internalLinkLineTarget: global.seo.internalLinkLineTarget,
     manualTitleApproval: pick(options.manualTitleApproval, site.workflow.manualTitleApproval, global.workflow.manualTitleApproval),
     manualArticleApproval: pick(options.manualArticleApproval, site.workflow.manualArticleApproval, global.workflow.manualArticleApproval),
     holdForReview: pick(options.holdForReview, site.workflow.holdForReview, global.workflow.holdForReview),
@@ -267,7 +270,8 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     externalLinks: pick(options.externalLinks, site.seo.externalLinks, global.seo.externalLinks),
     maxExternalLinks: pick(site.seo.maxExternalLinks, global.seo.maxExternalLinks),
     internalLinks: pick(options.internalLinks, site.seo.internalLinks, global.seo.internalLinks),
-    maxContextualInternalLinks: global.seo.maxContextualInternalLinks,
+    previousArticleLink: pick(site.seo.previousArticleLink, global.seo.previousArticleLink),
+    relatedArticleLink: pick(site.seo.relatedArticleLink, global.seo.relatedArticleLink),
     saveToWordPress: options.saveToWordPress && pick(site.workflow.autoSendToWordPress, global.workflow.autoSendToWordPress),
     humanizerEnabled: pick(site.content.humanizerEnabled, global.content.humanizerEnabled),
     humanizerBatchWords: global.content.humanizerBatchWords,

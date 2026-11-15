@@ -248,7 +248,7 @@ export function AddWebsite({ startOpen }: { startOpen: boolean }) {
                 <Field label="Admin address" htmlFor="aw-admin" error={err('adminUrl')} help={`Empty: ${host ? `https://${host}` : '<address>'}/wp-admin/`}>
                   <Input id="aw-admin" value={adminUrl} placeholder="https://example.com/wp-admin/" onChange={(e) => setAdminUrl(e.target.value)} />
                 </Field>
-                <Field label="Internal-link line" htmlFor="aw-line" help={`Last line of every article. Empty: “${lang.line}”`}>
+                <Field label="Internal-link line" htmlFor="aw-line" help={`Starts the line at the end of every article (and the related article's line in the middle, when its link fits no word). Empty: “${lang.line}”`}>
                   <Input id="aw-line" value={linkLine} placeholder={lang.line} onChange={(e) => setLinkLine(e.target.value)} />
                 </Field>
                 <Field label="Editor" htmlFor="aw-editor" help="Auto uses the editor the site has.">

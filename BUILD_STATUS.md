@@ -5376,3 +5376,50 @@ Owner report (app 3.3.46, screenshot): after **Restart to update**, a Windows di
   - The Updating window in light, dark and error states was looked at in Chromium.
   - Unit suite 78 files / 537 tests; `tsc` 0 errors.
 - **Note:** the first update to this version is still run by the old app's code: silent, possibly with the old error dialog. The Updating window and the installer's window show from the update after that.
+
+## Internal links (2026-11-15): the previous article at the end and a related article in the middle
+
+Owner request: "internal links ka option add krna ha. kisi bhi related article ka link lage … article ki beach me ya kisi word per". After the plan, the owner's decision: "2 internal links both han, ek previous or ek related, or settings me on off ka button".
+
+- **Before:**
+  - One "Also read:" line at the end. Its post was the previous article or the most related post (a setting chose which).
+  - Up to 2 word links, only where a related post's whole keyword or title start stood word for word in the text, so often none.
+- **Now, two links:**
+  - **Previous article, at the end.** The "Also read:" line works as before. If the previous article is still a draft, its planned address is used. Without a previous article, the most related post.
+  - **Related article, in the middle.** The most related published post of the website, else one of the same category. Never the end line's post.
+    - It goes on words the article already uses: the related post's keyword, the start of its title, or the person it is about (`subjectOf`: "Sarah Jones Net Worth 2026: How Rich Is She?" → "Sarah Jones"; English and German topic words).
+    - The article's own subject is never linked away, for example "Heidi Klum" in an article about Heidi Klum.
+    - Only text a link can go on counts: paragraphs, lists and table cells. Headings, existing links and the app's own lines don't. A paragraph is preferred to the Quick Bio table.
+    - When no word fits, it is an "Also read:" line after the middle section. It never goes before the first H2, nor in the Quick Bio, the FAQs or the conclusion.
+    - If a later edit (the humanizer) took the word away, the assembly falls back to the line and notes it.
+  - **The article text is never changed** for a link.
+- **Settings:**
+  - Two switches: Settings → SEO, links & images → "Internal link: previous article (end)" and "Internal link: related article (middle)".
+  - The same two are on a website's page, to differ per site. Both off: the stage is skipped.
+  - The old "Max contextual internal links" and "Internal link line target" settings are gone. Articles linked before keep their word links when assembled again.
+- **Links tab:**
+  - One box per link, showing what it links, where (on the word "…" / as a line between two sections / the "Also read:" line at the end) and why.
+  - Buttons: **Automatic** and **Remove** for each. The related link also has **Choose the word**: if the article does not use the typed words, the line in the middle is used and a note says so.
+  - The website's posts have **At the end** / **In the middle**. A post that is already the end line cannot be the related link; the reason is shown.
+- **Fixes on the way:**
+  - The SEO check "exactly one internal-link line at the end" no longer counts the middle line. It is not required when the end link is switched off.
+  - Internal word links were counted as external links in the SEO metrics. They no longer are.
+  - The old one-time migration that unpins site overrides keeps its original key set (`LATER_KEYS`).
+- **Tests:**
+  - **Unit tests:**
+    - finding the person a title is about, and the words the link goes on (keyword first, whole words, never the article's own subject);
+    - the owner's own word;
+    - placeable text, and paragraphs preferred to the table;
+    - where the middle line goes (4 sections, the celebrity writer with Quick Bio and image, one section), and that assembling again keeps one of each line;
+    - the SEO check.
+  - **Integration tests (fake WordPress, the real pipeline):**
+    - previous article at the end with the related post as a middle line;
+    - a related post linked on the words "family life" in the text;
+    - each switch off;
+    - the owner's choices: refused when it is the end line's post; another post on the word "interviews"; a word the article does not use (line plus a note); removed; the end line removed on its own; Automatic brings the related link back.
+  - **The six pipeline integration test files:** 59 passed, 1 skipped, as before.
+  - **Unit suite:** 78 files / 544 tests; `tsc` 0 errors.
+- **Checked in Chromium** on a seeded data folder:
+  - the Links tab boxes, the word and line cases, and the word dialog (the choice is saved and the stage runs again);
+  - the two switches in Settings: off, saved and still off after a reload, then on again.
+- **Not verified here:** live WordPress sites and the owner's real posts. The word choice depends on the words the real articles use.

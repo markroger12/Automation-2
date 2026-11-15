@@ -150,6 +150,40 @@ describe('assembly order and placement', () => {
     expect(one).not.toMatch(/<\/figure>\s*<h2>Frequently Asked Questions/);
   });
 
+  it('the related line goes after the middle section, never before the first H2 or into the Quick Bio, FAQs or conclusion (owner request 2026-11-15)', () => {
+    const related = { line: 'Also read:', url: 'https://site.example/related', title: 'Related Post' };
+    const internalLink = { line: 'Also read:', url: 'https://site.example/previous', title: 'Previous Post' };
+    const four = '<p>Intro.</p><h2>One</h2><p>A.</p><h2>Two</h2><p>B.</p><h2>Three</h2><p>C.</p><h2>Four</h2><p>D.</p><h2>FAQ</h2><h3>Q?</h3><p>x</p><h2>Conclusion</h2><p>End.</p>';
+    const h = assembleArticle({ bodyHtml: four, language: 'en', moduleKey: 'tigram-writer', internalLink, relatedLink: related }).html;
+    const order = ['<h2>One</h2>', '<h2>Two</h2>', 'B.', 'data-bas-internal-link="related"', '<h2>Three</h2>', '<h2>Frequently Asked Questions</h2>', '<h2>Conclusion</h2>', 'data-bas-internal-link="1"'];
+    const idx = order.map((x) => h.indexOf(x));
+    expect(idx.every((v) => v >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+    expect(h).toContain('<p data-bas-internal-link="related"><strong>Also read:</strong> <a href="https://site.example/related" rel="noopener">Related Post</a></p>');
+    // Celebrity writer: after the first content section (never in the Quick Bio); body image 1 stays where it was.
+    const celeb = assembleArticle({
+      bodyHtml: body,
+      language: 'en',
+      moduleKey: 'celebrity-writer',
+      quickBioHtml: '<table class="bas-quick-bio"><tbody><tr><td>A</td><td>B</td></tr></tbody></table>',
+      faqs: [{ question: 'Who?', answer: 'Someone.' }],
+      internalLink,
+      relatedLink: related,
+      images: [{ slot: 'BODY1', html: '<figure><img src="https://x/1.webp" alt="one"></figure>' }],
+    }).html;
+    const cOrder = ['<h2>Quick Bio</h2>', '</table>', 'alt="one"', '<h2>Early Life</h2>', 'A.', 'data-bas-internal-link="related"', '<h2>Career</h2>', '<h2>Frequently Asked Questions</h2>', '<h2>Conclusion</h2>', 'data-bas-internal-link="1"'];
+    const cIdx = cOrder.map((x) => celeb.indexOf(x));
+    expect(cIdx.every((v) => v >= 0)).toBe(true);
+    expect([...cIdx].sort((a, b) => a - b)).toEqual(cIdx);
+    // One section: after its middle paragraph. Re-assembly keeps exactly one of each line.
+    const one = assembleArticle({ bodyHtml: '<p>Intro.</p><h2>Only</h2><p>A.</p><p>B.</p><p>C.</p><h2>Conclusion</h2><p>End.</p>', language: 'en', moduleKey: 'tigram-writer', internalLink, relatedLink: related }).html;
+    expect(one.indexOf('data-bas-internal-link="related"')).toBeGreaterThan(one.indexOf('B.'));
+    expect(one.indexOf('data-bas-internal-link="related"')).toBeLessThan(one.indexOf('C.'));
+    const again = assembleArticle({ bodyHtml: one, language: 'en', moduleKey: 'tigram-writer', internalLink, relatedLink: related }).html;
+    expect((again.match(/data-bas-internal-link="related"/g) ?? []).length).toBe(1);
+    expect((again.match(/data-bas-internal-link="1"/g) ?? []).length).toBe(1);
+  });
+
   it('re-assembly never duplicates the internal-link line', () => {
     const first = assembleArticle({ bodyHtml: body, language: 'de', moduleKey: 'tigram-writer', internalLink: { line: 'Das könnte Ihnen gefallen:', url: 'https://s/x', title: 'X' } });
     const second = assembleArticle({ bodyHtml: first.html, language: 'de', moduleKey: 'tigram-writer', internalLink: { line: 'Das könnte Ihnen gefallen:', url: 'https://s/x', title: 'X' } });
@@ -192,6 +226,18 @@ describe('SEO checks and quality gate', () => {
     expect(r.metrics.faqCount).toBe(2);
     expect(r.metrics.quickBioRows).toBe(3);
     expect(r.score).toBeGreaterThanOrEqual(85);
+  });
+
+  it('the end line is checked without the related line in the middle; internal word links are not counted as external', () => {
+    const withLines = (extra: string) => article().replace('<h2>Career</h2>', `${extra}<h2>Career</h2>`);
+    const end = '<p data-bas-internal-link="1"><strong>Also read:</strong> <a href="https://site.example/prev">Prev</a></p>';
+    const related = '<p data-bas-internal-link="related"><strong>Also read:</strong> <a href="https://site.example/rel">Rel</a></p>';
+    const both = runSeoChecks({ ...base, internalLinksEnabled: true, html: withLines(related) + end });
+    expect(both.checks.find((c) => c.id === 'internal-link-line')!.passed).toBe(true);
+    const onlyRelated = runSeoChecks({ ...base, internalLinksEnabled: true, html: withLines(related) });
+    expect(onlyRelated.checks.find((c) => c.id === 'internal-link-line')!.passed).toBe(false);
+    const word = runSeoChecks({ ...base, externalLinksEnabled: true, html: article().replace('stage work', '<a href="https://site.example/stage" data-bas-link="int">stage work</a>') });
+    expect(word.metrics.externalLinks).toBe(0);
   });
 
   it('flags keyword stuffing as a hard stop and wrong FAQ count / short meta as failures', () => {

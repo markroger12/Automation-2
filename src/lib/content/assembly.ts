@@ -24,6 +24,11 @@ export interface AssemblyInput {
   quickBioName?: string | null;
   faqs?: FaqItem[];
   internalLink?: { line: string; url: string; title: string } | null;
+  /**
+   * The related article's line in the middle (owner request 2026-11-15), when its link could not go on a word of the
+   * article: between two body sections, never before the first H2, in the Quick Bio, the FAQs or the conclusion.
+   */
+  relatedLink?: { line: string; url: string; title: string } | null;
   images?: AssemblyImage[];
   /** Wrap every link's text in <strong> (Settings → Content → Bold links). */
   boldLinks?: boolean;
@@ -157,6 +162,7 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
   if (!conclusion) warnings.push('No conclusion section was found in the article body.');
   if (!intro.replace(/<[^>]+>/g, '').trim()) warnings.push('The article has no introduction before the first H2.');
 
+  let relatedAtEnd = '';
   const parts: string[] = [intro];
   if (isCelebrity && input.quickBioHtml) {
     const heading = input.quickBioName ? h.quickBioOf(input.quickBioName) : h.quickBio;
@@ -165,6 +171,14 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
     warnings.push('Quick Bio table is missing.');
   }
   const bodyParts = body.map((s) => s.html);
+  if (input.relatedLink) {
+    const line = `<p data-bas-internal-link="related"><strong>${esc(input.relatedLink.line)}</strong> <a href="${esc(input.relatedLink.url)}">${esc(input.relatedLink.title)}</a></p>`;
+    const n = bodyParts.length;
+    // After the middle section (before the next H2); one section: after its middle paragraph; none: before the end.
+    if (n >= 2) bodyParts[Math.ceil(n / 2) - 1] += line;
+    else if (n === 1) bodyParts[0] = injectAfterMiddleParagraph(bodyParts[0], line);
+    else relatedAtEnd = line;
+  }
   // Body image 1: before the second article H2. With a Quick Bio first, that is the first
   // content section; never before Quick Bio itself, the FAQs or the conclusion.
   const img1 = input.images?.find((i) => i.slot === 'BODY1');
@@ -192,6 +206,7 @@ export function assembleArticle(input: AssemblyInput): AssemblyResult {
     if (parts.length > 1) parts[parts.length - 1] = injectBeforeLastParagraph(parts[parts.length - 1], img2.html);
     else warnings.push('Body image 2 could not be placed.');
   }
+  if (relatedAtEnd) parts.push(relatedAtEnd);
   if (faqAfterConclusion) {
     if (conclusion) parts.push(conclusion.html);
     if (faqHtml) parts.push(faqHtml);
@@ -232,6 +247,15 @@ export function boldenLinks(html: string): string {
     changed = true;
   });
   return changed ? ($('body').html() ?? html) : html;
+}
+
+/** After the paragraph in the middle of a section (its first paragraph when it has one or two). */
+function injectAfterMiddleParagraph(html: string, insert: string): string {
+  const ends: number[] = [];
+  for (let i = html.indexOf('</p>'); i >= 0; i = html.indexOf('</p>', i + 4)) ends.push(i + 4);
+  if (!ends.length) return html + insert;
+  const at = ends[Math.max(0, Math.ceil(ends.length / 2) - 1)];
+  return html.slice(0, at) + insert + html.slice(at);
 }
 
 function injectAfterFirstParagraph(html: string, insert: string): string {

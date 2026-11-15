@@ -228,7 +228,7 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
     expect(target.url).toBe(`${wp.url}/groesse-und-gewicht-heidi-klum/`);
   });
 
-  it("links the previous article of the website in the last line (as in the owner's earlier tool), or the most related post when set", async () => {
+  it("links the previous article in the last line (as in the owner's earlier tool) and the most related post in the middle (owner request 2026-11-15)", async () => {
     const wp = await startFakeWordPress();
     servers.push(wp);
     const related = wp.addPost({ title: 'Heidi Klum: Her Modeling Career', status: 'publish', slug: 'heidi-klum-career', content: '<p>Heidi Klum began modeling.</p>', categories: [7] });
@@ -243,17 +243,102 @@ describe('EXTERNAL_LINKS + INTERNAL_LINKS stages', () => {
     let int = await stageData(second.id, 'INTERNAL_LINKS');
     expect(int.url).toBe(`${wp.url}/?p=${post.id}`); // not the closely related Heidi Klum post
     expect(int.reason).toMatch(/previous article of this website/);
-    expect(second.assembledHtml).toContain(`<strong>Also read:</strong> <a href="${wp.url}/?p=${post.id}"`);
+    expect(second.assembledHtml).toContain(`<p data-bas-internal-link="1"><strong>Also read:</strong> <a href="${wp.url}/?p=${post.id}"`);
+    // The closely related Heidi Klum post goes in the middle. “Heidi Klum” is this article's own subject, so the link
+    // does not go on that name: it is a line between two sections, before the FAQs and the end line.
+    expect(int.related).toMatchObject({ url: `${wp.url}/?p=${related.id}`, title: 'Heidi Klum: Her Modeling Career', placement: 'line', anchor: null });
+    expect(int.related.reason).toMatch(/most related/);
+    const html = second.assembledHtml!;
+    const middle = html.indexOf('<p data-bas-internal-link="related">');
+    expect(middle).toBeGreaterThan(html.indexOf('<h2>'));
+    expect(middle).toBeLessThan(html.indexOf('<h2>Frequently Asked Questions</h2>'));
+    expect(html.slice(middle)).toContain(`<a href="${wp.url}/?p=${related.id}"`);
+    expect((await client.suggestedInternalLink.findMany({ where: { taskId: second.id, kind: 'RELATED' } })).map((x) => x.status)).toEqual(['SELECTED']);
+
+    // On a word: a related post whose title starts with words the article already uses (“family life”).
+    const family = wp.addPost({ title: 'Family Life: Tom Kaulitz at Home', status: 'publish', slug: 'tom-kaulitz-family', content: '<p>At home.</p>', categories: [7] });
+    await client.website.update({ where: { id: s.id }, data: { linkIndexSyncedAt: null } });
+    const third = await driver.drive((await task(s, 'Tom Kaulitz Tokio Hotel', 'prev-3')).id);
+    int = await stageData(third.id, 'INTERNAL_LINKS');
+    expect(int.url).not.toBe(`${wp.url}/?p=${family.id}`);
+    expect(int.related).toMatchObject({ url: `${wp.url}/?p=${family.id}`, placement: 'word', anchor: 'family life' });
+    expect(third.assembledHtml).toContain(`<a href="${wp.url}/?p=${family.id}" data-bas-link="int" rel="noopener"><strong>family life</strong></a>`);
+    expect((third.assembledHtml!.match(new RegExp(`\\?p=${family.id}"`, 'g')) ?? []).length).toBe(1);
+    expect(third.assembledHtml).not.toContain('data-bas-internal-link="related"');
+
+    // Each link has its own switch (Settings → SEO).
     const { updateSettings } = await import('@/lib/settings');
-    await updateSettings({ seo: { internalLinkLineTarget: 'most-related' } });
+    await updateSettings({ seo: { relatedArticleLink: false } });
     try {
-      const third = await driver.drive((await task(s, 'Heidi Klum Career Facts', 'prev-3')).id);
-      int = await stageData(third.id, 'INTERNAL_LINKS');
-      expect(int.url).toBe(`${wp.url}/?p=${related.id}`);
-      expect(int.reason).toMatch(/most related/);
+      const fourth = await driver.drive((await task(s, 'Heidi Klum Career Facts', 'prev-4')).id);
+      int = await stageData(fourth.id, 'INTERNAL_LINKS');
+      expect(int.related).toBeNull();
+      expect(int.switches).toEqual({ previous: true, related: false });
+      expect(fourth.assembledHtml).not.toContain('data-bas-internal-link="related"');
+      expect(fourth.assembledHtml).toContain('data-bas-internal-link="1"');
+      await updateSettings({ seo: { relatedArticleLink: true, previousArticleLink: false } });
+      const fifth = await driver.drive((await task(s, 'Heidi Klum Runway Facts', 'prev-5')).id);
+      int = await stageData(fifth.id, 'INTERNAL_LINKS');
+      expect(int.url).toBeNull();
+      expect(int.related?.url).toBe(`${wp.url}/?p=${related.id}`);
+      expect(fifth.assembledHtml).not.toContain('data-bas-internal-link="1"');
     } finally {
-      await updateSettings({ seo: { internalLinkLineTarget: 'previous-article' } });
+      await updateSettings({ seo: { relatedArticleLink: true, previousArticleLink: true } });
     }
+  });
+
+  it("the owner's choices in the Links tab: the related post, the word it goes on, removing it, and Automatic again", async () => {
+    const wp = await startFakeWordPress();
+    servers.push(wp);
+    const a = wp.addPost({ title: 'Tom Kaulitz: The Guitarist', status: 'publish', slug: 'tom-guitar', content: '<p>Guitar.</p>', categories: [7] });
+    const b = wp.addPost({ title: 'Tom Kaulitz Tokio Hotel Tour Dates', status: 'publish', slug: 'tom-tour', content: '<p>Tour.</p>', categories: [7] });
+    const c = wp.addPost({ title: 'Best Pasta Recipes', status: 'publish', slug: 'pasta', content: '<p>Pasta.</p>', categories: [3] });
+    const s = await site(wp, 'Choice Blog');
+    const driver = makeDriver(client);
+    let t = await driver.drive((await task(s, 'Bill Kaulitz Tokio Hotel', 'choice')).id);
+    let int = await stageData(t.id, 'INTERNAL_LINKS');
+    expect(int.related).not.toBeNull();
+    const actions = await import('@/lib/tasks/actions');
+    // No previous article yet: the end line has the most related post, the middle the next one.
+    expect([int.url, int.related.url].sort()).toEqual([`${wp.url}/?p=${a.id}`, `${wp.url}/?p=${b.id}`].sort());
+    // The end line's post cannot also be the related link: refused with the reason, the automatic choice stays.
+    await actions.setInternalLink(t.id, { slot: 'related', mode: 'url', url: int.url, title: int.title });
+    t = await driver.drive(t.id);
+    int = await stageData(t.id, 'INTERNAL_LINKS');
+    expect(int.warnings.join(' ')).toMatch(/already the end line/);
+    expect(int.related.url).not.toBe(int.url);
+    // The owner picks any other post of the website, and the word “interviews”.
+    const other = c;
+    await actions.setInternalLink(t.id, { slot: 'related', mode: 'url', url: `${wp.url}/?p=${other.id}`, title: other.title, anchor: 'interviews' });
+    t = await driver.drive(t.id);
+    int = await stageData(t.id, 'INTERNAL_LINKS');
+    expect(int.related).toMatchObject({ url: `${wp.url}/?p=${other.id}`, reason: 'chosen by the owner', placement: 'word', anchor: 'interviews' });
+    expect(t.assembledHtml).toContain(`<a href="${wp.url}/?p=${other.id}" data-bas-link="int" rel="noopener"><strong>interviews</strong></a>`);
+    // A word the article does not use: the link goes on a line in the middle, and the owner is told why.
+    await actions.setInternalLink(t.id, { slot: 'related', mode: 'url', url: `${wp.url}/?p=${other.id}`, title: other.title, anchor: 'Grammy Awards' });
+    t = await driver.drive(t.id);
+    int = await stageData(t.id, 'INTERNAL_LINKS');
+    expect(int.related).toMatchObject({ placement: 'line', anchor: null });
+    expect(int.notes.join(' ')).toMatch(/“Grammy Awards” is not in the article text/);
+    expect(t.assembledHtml).toContain('data-bas-internal-link="related"');
+    // Removed: no related link; the end line stays.
+    await actions.setInternalLink(t.id, { slot: 'related', mode: 'none' });
+    t = await driver.drive(t.id);
+    int = await stageData(t.id, 'INTERNAL_LINKS');
+    expect(int.related).toBeNull();
+    expect(int.relatedRemovedByOwner).toBe(true);
+    expect(t.assembledHtml).not.toContain(`?p=${other.id}" data-bas-link="int"`);
+    expect(t.assembledHtml).not.toContain('data-bas-internal-link="related"');
+    expect(t.assembledHtml).toContain('data-bas-internal-link="1"');
+    // The end line can be removed on its own too, and Automatic brings the related link back.
+    await actions.setInternalLink(t.id, { slot: 'line', mode: 'none' });
+    await actions.setInternalLink(t.id, { slot: 'related', mode: 'auto' });
+    t = await driver.drive(t.id);
+    int = await stageData(t.id, 'INTERNAL_LINKS');
+    expect(int.removedByOwner).toBe(true);
+    expect(int.url).toBeNull();
+    expect(int.related).not.toBeNull();
+    expect(t.assembledHtml).not.toContain('data-bas-internal-link="1"');
   });
 
   it('never links an article to itself and drops posts that are no longer published', async () => {

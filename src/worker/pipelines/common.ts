@@ -131,9 +131,30 @@ export function bodyForAssembly(ctx: PipelineContext): string {
 
 /** Assemble the article for this task (shared by the ASSEMBLY stage and Rank Math content corrections). */
 export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
-  const internal = ctx.stageJson<{ line: string | null; url: string | null; title: string | null; contextual?: { anchor: string; url: string }[] } | null>('INTERNAL_LINKS');
-  // Contextual internal links chosen by INTERNAL_LINKS, placed on the final body (after any humanizer edits).
-  if (internal?.contextual?.length) {
+  const internal = ctx.stageJson<{
+    line: string | null;
+    url: string | null;
+    title: string | null;
+    related?: { line: string; url: string; title: string; anchor: string | null; placement: 'word' | 'line' } | null;
+    contextual?: { anchor: string; url: string }[];
+  } | null>('INTERNAL_LINKS');
+  // The related article (owner request 2026-11-15), placed on the final body (after any humanizer edits): on its word,
+  // else (or when an edit took the word away) as a line in the middle of the article.
+  let relatedLink: { line: string; url: string; title: string } | null = null;
+  const relatedNotes: string[] = [];
+  if (internal?.related) {
+    const r = internal.related;
+    if (r.placement === 'word' && r.anchor) {
+      const { placeLinks } = await import('@/lib/links/place');
+      const placed = placeLinks(bodyHtml, [{ anchor: r.anchor, url: r.url, kind: 'int' }], { keyword: ctx.task.focusKeyword ?? ctx.task.keyword, proseFirst: true });
+      if (placed.placed.length) bodyHtml = placed.html;
+      else {
+        relatedLink = { line: r.line, url: r.url, title: r.title };
+        relatedNotes.push(`The related link could not go on “${r.anchor}” (${placed.skipped[0]?.reason ?? 'not placeable'}), so it was added as a line in the middle of the article.`);
+      }
+    } else relatedLink = { line: r.line, url: r.url, title: r.title };
+  } else if (internal?.contextual?.length) {
+    // Word links of tasks linked before 2026-11-15.
     const { placeLinks } = await import('@/lib/links/place');
     bodyHtml = placeLinks(bodyHtml, internal.contextual.map((c) => ({ anchor: c.anchor, url: c.url, kind: 'int' as const })), { keyword: ctx.task.focusKeyword ?? ctx.task.keyword }).html;
   }
@@ -142,7 +163,7 @@ export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
   const { confirmedFullName } = await import('@/modules/celebrity-writer/parsers');
   const { getSettings } = await import('@/lib/settings');
   const settings = await getSettings();
-  return assembleArticle({
+  const result = assembleArticle({
     boldLinks: settings.content.boldLinks,
     title: ctx.task.selectedTitle ?? ctx.task.seoTitle,
     bodyHtml,
@@ -152,8 +173,11 @@ export async function assembleForTask(ctx: PipelineContext, bodyHtml: string) {
     quickBioName: confirmedFullName(quickBio),
     faqs: parseJson(ctx.task.faqs, []),
     internalLink: internal && internal.url && internal.line ? { line: internal.line, url: internal.url, title: internal.title ?? internal.url } : null,
+    relatedLink,
     images,
   });
+  result.warnings.push(...relatedNotes);
+  return result;
 }
 
 export function assembly(manifest: StageManifest): PipelineStage {
@@ -249,7 +273,8 @@ export function seoReportFor(ctx: PipelineContext, html: string) {
     maxKeywordOccurrences: ctx.config.maxKeywordOccurrences,
     densityCeilingPct: ctx.config.keywordDensityCeilingPct,
     externalLinksEnabled: ctx.config.externalLinks,
-    internalLinksEnabled: ctx.config.internalLinks,
+    // The end line is expected when its switch is on (owner request 2026-11-15: each link can be turned off).
+    internalLinksEnabled: ctx.config.internalLinks && ctx.config.previousArticleLink !== false,
     imagesExpected: ctx.config.images && ctx.config.imagesRequired,
     brief: parseSeoBrief(t.seoBrief),
   });

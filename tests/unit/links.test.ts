@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isBlockedAddress } from '@/lib/links/net';
 import { identifiesSubject, linkPolicy, pageFacts, parseLinkCandidates, siteKey } from '@/lib/links/verify';
 import { placeLinks } from '@/lib/links/place';
-import { chooseLineTarget, findAnchor, previousArticleTarget, rankTargets, type TargetLike } from '@/lib/links/internal';
+import { chooseLineTarget, findAnchor, findPhrase, findRelatedAnchor, previousArticleTarget, rankTargets, subjectOf, type TargetLike } from '@/lib/links/internal';
 
 describe('SSRF address checks', () => {
   it('blocks private, loopback, link-local, CGNAT, multicast and reserved addresses (IPv4 and IPv6)', () => {
@@ -139,6 +139,63 @@ describe('internal link selection', () => {
     expect(ranked.find((r) => r.target.wpPostId === 9)!.related).toBe(false);
     expect(findAnchor('Viele fragen nach der Größe und Gewicht der Moderatorin.', t(8, 'Größe und Gewicht: Heidi Klum im Check'))).toBe('Größe und Gewicht');
     expect(findAnchor('Heidi Klums Töchtern geht es gut.', t(7, 'Heidi Klums Töchter und Söhne'))).toBeNull();
+  });
+});
+
+/** Owner request 2026-11-15: the related article's link on a word of the article (“kisi word per”). */
+describe('the related link: the word it goes on', () => {
+  const target = (title: string, keyword: string | null = null) => ({ title, keyword });
+
+  it('finds the person a title or keyword is about', () => {
+    expect(subjectOf('Sarah Jones Net Worth 2026: How Rich Is She?')).toBe('Sarah Jones');
+    expect(subjectOf('who is sarah jones husband')).toBe('sarah jones');
+    expect(subjectOf("Glen Powell's Girlfriend")).toBe('Glen Powell');
+    expect(subjectOf('Größe von Heidi Klum')).toBe('Heidi Klum');
+    expect(subjectOf('Sebastian Ströbel Kinder')).toBe('Sebastian Ströbel');
+    // Not a name: too many words, one word, or only topic words.
+    expect(subjectOf('Tom Kaulitz Heidi Klum wedding photos')).toBeNull();
+    expect(subjectOf('Madonna Net Worth')).toBeNull();
+    expect(subjectOf('Net Worth 2026')).toBeNull();
+  });
+
+  it('puts the link on words the article already uses, as it writes them', () => {
+    const body = 'He married the actress sarah jones in 2019.\nTheir son was born later.';
+    expect(findRelatedAnchor(body, target('Sarah Jones Net Worth 2026: How Rich Is She?'), 'Mike Ross Net Worth')).toBe('sarah jones');
+    // Its keyword first, when the article uses it.
+    expect(findRelatedAnchor('Fans ask about Sarah Jones husband news every week.', target('Who Is Sarah Jones Married To?', 'Sarah Jones husband'), 'Mike Ross')).toBe('Sarah Jones husband');
+    // Whole words only, and a later whole-word mention is used.
+    expect(findRelatedAnchor('Sarah Joneses are many. Later Sarah Jones spoke.', target('Sarah Jones Biography'), 'x')).toBe('Sarah Jones');
+    expect(findRelatedAnchor('Nothing about her here.', target('Sarah Jones Biography'), 'x')).toBeNull();
+  });
+
+  it("never links the article's own subject away", () => {
+    // The article is about Heidi Klum: “Heidi Klum” must not point to another article.
+    expect(findRelatedAnchor('Heidi Klum began modeling in 1992.', target('Heidi Klum: Her Modeling Career'), 'Heidi Klum Modeling')).toBeNull();
+    // A longer phrase that says more than the subject is fine.
+    expect(findRelatedAnchor('Heidi Klum modeling career started in Germany.', target('Heidi Klum: Her Modeling Career', 'Heidi Klum modeling career'), 'Heidi Klum husband')).toBe('Heidi Klum modeling career');
+  });
+
+  it("the owner's own word: any whole words, one word too", () => {
+    expect(findPhrase('Her husband Tom Kaulitz plays guitar.', 'tom kaulitz')).toBe('Tom Kaulitz');
+    expect(findPhrase('Her husband Tom Kaulitz plays guitar.', 'guitar')).toBe('guitar');
+    expect(findPhrase('Her husband Tom Kaulitz plays guitars.', 'guitar')).toBeNull();
+    expect(findPhrase('x', '  ')).toBeNull();
+  });
+
+  it('looks only where a link can go, and prefers the text to the Quick Bio table', async () => {
+    const { placeableText, placeLinks } = await import('@/lib/links/place');
+    const html =
+      '<table class="bas-quick-bio"><tbody><tr><td>Spouse</td><td>Sarah Jones</td></tr></tbody></table><h2>Sarah Jones and Mike</h2><p>Mike met <a href="https://x.example/">Anna Bell</a> first.</p><p>Later he married Sarah Jones.</p><p data-bas-internal-link="1"><strong>Also read:</strong> <a href="https://s/y">Tom Ford</a></p>';
+    const text = placeableText(html);
+    expect(text).toContain('Later he married Sarah Jones.');
+    expect(text).not.toContain('Sarah Jones and Mike'); // heading
+    expect(text).not.toContain('Anna Bell'); // already a link
+    expect(text).not.toContain('Tom Ford'); // the app's own line
+    const prose = placeLinks(html, [{ anchor: 'Sarah Jones', url: 'https://s/sarah', kind: 'int' }], { proseFirst: true });
+    expect(prose.html).toContain('Later he married <a href="https://s/sarah" data-bas-link="int">Sarah Jones</a>.');
+    expect(prose.html).toContain('<td>Sarah Jones</td>');
+    // Without it, the first mention (the table) is used, as for external links.
+    expect(placeLinks(html, [{ anchor: 'Sarah Jones', url: 'https://s/sarah', kind: 'int' }]).html).toContain('<td><a href="https://s/sarah" data-bas-link="int">Sarah Jones</a></td>');
   });
 });
 

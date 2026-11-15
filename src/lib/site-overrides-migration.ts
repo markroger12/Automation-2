@@ -16,7 +16,7 @@ import { defaultSettings, SITE_OVERRIDE_KEYS } from './settings-schema';
 export const SITE_OVERRIDES_MIGRATION_ID = '2026-10-14-unpin-default-site-overrides';
 
 /** Keys added to the override groups after this migration was written: not part of the bug's signature. */
-const LATER_KEYS = new Set(['holdForReview']);
+const LATER_KEYS = new Set(['holdForReview', 'previousArticleLink', 'relatedArticleLink']);
 
 export async function unpinDefaultSiteOverrides(client: PrismaClient): Promise<Record<string, unknown>> {
   const defaults = defaultSettings() as unknown as Record<string, Record<string, unknown>>;

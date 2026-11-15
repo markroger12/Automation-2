@@ -7,8 +7,8 @@ import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
 import { stripTrackingHrefs } from '@/lib/content/markdown';
 import { makeSlug, normalizeText, stripTags } from '@/lib/content/text';
 import { parseLinkCandidates, verifyLink, linkPolicy, type LinkKind } from '@/lib/links/verify';
-import { placeLinks } from '@/lib/links/place';
-import { chooseLineTarget, findAnchor, previousArticleTarget, rankTargets, type TargetLike } from '@/lib/links/internal';
+import { placeLinks, placeableText } from '@/lib/links/place';
+import { chooseLineTarget, findPhrase, findRelatedAnchor, previousArticleTarget, rankTargets, type TargetLike } from '@/lib/links/internal';
 import { safeFetch } from '@/lib/links/net';
 import type { StageManifest } from '@/modules/types';
 import { refreshLinkIndex } from '@/wordpress/link-index';
@@ -182,21 +182,31 @@ export function articleLinkCheck(manifest: StageManifest): PipelineStage {
 // ------------------------------------------------------------- INTERNAL_LINKS
 
 export interface InternalLinkData {
+  /** The end line (“Also read: …”): the previous article of the website, else the most related post. */
   line: string | null;
   url: string | null;
   title: string | null;
   reason: string | null;
+  /**
+   * The related article in the middle (owner request 2026-11-15): on a word of the article (`anchor`), else a line
+   * between two sections. Absent in tasks linked before.
+   */
+  related?: { line: string; url: string; title: string; reason: string; anchor: string | null; placement: 'word' | 'line' } | null;
+  /** Word links of tasks linked before 2026-11-15 (up to 2); empty now. */
   contextual: { anchor: string; url: string; title: string }[];
   candidates: { title: string; url: string; score: number; related: boolean; reasons: string[] }[];
   index: { via: string; active: number; refreshed: boolean } | null;
   removedByOwner?: boolean;
+  relatedRemovedByOwner?: boolean;
+  /** The two switches as this article had them (Settings → SEO, or the website's own settings). */
+  switches?: { previous: boolean; related: boolean };
   /** Need the owner's attention (they become review reasons). */
   warnings: string[];
   /** Informational (shown, but do not block completion). */
   notes: string[];
 }
 
-type Override = { mode: 'none' } | { mode: 'url'; url: string; title?: string } | undefined;
+type Override = { mode: 'none' } | { mode: 'url'; url: string; title?: string; anchor?: string } | undefined;
 
 /** The article this app wrote before for the same website: the previous keyword of its workflow, else by creation time. */
 async function previousArticle(ctx: PipelineContext) {
@@ -214,16 +224,26 @@ async function previousArticle(ctx: PipelineContext) {
 
 export function internalLinks(manifest: StageManifest): PipelineStage {
   return bind(manifest, {
-    shouldRun: (ctx) => ctx.config.internalLinks,
+    shouldRun: (ctx) => ctx.config.internalLinks && (ctx.config.previousArticleLink !== false || ctx.config.relatedArticleLink !== false),
     run: async (ctx) => {
       const site = await db.website.findUniqueOrThrow({ where: { id: ctx.task.websiteId } });
       const settings = await getSettings();
-      const override = parseJson<Record<string, unknown>>(ctx.task.options, {}).internalLinkOverride as Override;
+      const options = parseJson<Record<string, unknown>>(ctx.task.options, {});
+      const override = options.internalLinkOverride as Override;
+      const relatedOverride = options.relatedLinkOverride as Override;
       const lineText = site.internalLinkLine || (site.language === 'de' ? 'Das könnte Ihnen gefallen:' : 'Also read:');
       const warnings: string[] = [];
       const notes: string[] = [];
-      const empty: InternalLinkData = { line: null, url: null, title: null, reason: null, contextual: [], candidates: [], index: null, warnings, notes };
-      if (override?.mode === 'none') return { outcome: 'completed', data: { ...empty, removedByOwner: true }, message: 'Internal link removed by the owner' };
+      // Owner request 2026-11-15: two links, each with its own switch (Settings → SEO, or the website's own settings).
+      const wantLine = ctx.config.previousArticleLink !== false && override?.mode !== 'none';
+      const wantRelated = ctx.config.relatedArticleLink !== false && relatedOverride?.mode !== 'none';
+      const removed = {
+        switches: { previous: ctx.config.previousArticleLink !== false, related: ctx.config.relatedArticleLink !== false },
+        ...(override?.mode === 'none' ? { removedByOwner: true } : {}),
+        ...(relatedOverride?.mode === 'none' ? { relatedRemovedByOwner: true } : {}),
+      };
+      const empty: InternalLinkData = { line: null, url: null, title: null, reason: null, related: null, contextual: [], candidates: [], index: null, warnings, notes, ...removed };
+      if (!wantLine && !wantRelated) return { outcome: 'completed', data: empty, message: override?.mode === 'none' || relatedOverride?.mode === 'none' ? 'Internal links removed by the owner' : 'No internal link (both are off for this website)' };
 
       let index: InternalLinkData['index'] = null;
       try {
@@ -241,6 +261,13 @@ export function internalLinks(manifest: StageManifest): PipelineStage {
         targets,
       );
       const host = new URL(site.publicUrl).hostname;
+      const sameHost = (url: string) => {
+        try {
+          return new URL(url).hostname.replace(/^www\./, '') === host.replace(/^www\./, '');
+        } catch {
+          return false;
+        }
+      };
       const check = async (url: string): Promise<{ ok: boolean; finalUrl: string; note: string }> => {
         try {
           const res = await safeFetch(url, { trustedHosts: [host], timeoutMs: settings.advanced.linkCheckTimeoutSec * 1000, maxBytes: 3_000_000 });
@@ -251,22 +278,17 @@ export function internalLinks(manifest: StageManifest): PipelineStage {
           return { ok: false, finalUrl: url, note: (error as Error).message };
         }
       };
+      const remember = (t: (typeof targets)[number], v: { ok: boolean; finalUrl: string; note: string }) =>
+        db.linkTarget.update({ where: { id: t.id }, data: { lastCheckedAt: new Date(), checkNote: v.note, ...(v.ok ? (v.finalUrl !== t.url ? { url: v.finalUrl } : {}) : /HTTP 4(04|10)/.test(v.note) ? { status: 'BROKEN' } : {}) } });
 
+      // ---- The end line: the previous article (as in the owner's earlier tool), else the most related post.
       let chosen: { url: string; title: string; reason: string; id?: string } | null = null;
-      if (override?.mode === 'url') {
-        const sameSite = (() => {
-          try {
-            return new URL(override.url).hostname.replace(/^www\./, '') === host.replace(/^www\./, '');
-          } catch {
-            return false;
-          }
-        })();
-        const v = sameSite ? await check(override.url) : { ok: false, finalUrl: override.url, note: 'not a URL of this website' };
+      if (wantLine && override?.mode === 'url') {
+        const v = sameHost(override.url) ? await check(override.url) : { ok: false, finalUrl: override.url, note: 'not a URL of this website' };
         if (v.ok) chosen = { url: v.finalUrl, title: override.title ?? ranked.find((r) => r.target.url === override.url)?.target.title ?? override.url, reason: 'chosen by the owner' };
         else warnings.push(`The chosen internal link ${override.url} was not used: ${v.note}.`);
       }
-      if (!chosen && (ctx.config.internalLinkLineTarget ?? 'previous-article') === 'previous-article') {
-        // As in the owner's earlier tool: the line links the article this app wrote before for the same website.
+      if (wantLine && !chosen) {
         const prev = await previousArticle(ctx);
         if (prev) {
           const title = prev.selectedTitle ?? prev.seoTitle ?? prev.keyword;
@@ -282,12 +304,12 @@ export function internalLinks(manifest: StageManifest): PipelineStage {
           } else notes.push(`The previous article “${title}” is not published and its address cannot be predicted (this site's posts do not use /<slug>/ addresses); the most related post was linked instead.`);
         }
       }
-      if (!chosen) {
+      if (wantLine && !chosen) {
         const plan = chooseLineTarget(ranked);
         for (const option of plan?.order.slice(0, 6) ?? []) {
           const t = option.choice.target as (typeof targets)[number];
           const v = await check(t.url);
-          await db.linkTarget.update({ where: { id: t.id }, data: { lastCheckedAt: new Date(), checkNote: v.note, ...(v.ok ? (v.finalUrl !== t.url ? { url: v.finalUrl } : {}) : /HTTP 4(04|10)/.test(v.note) ? { status: 'BROKEN' } : {}) } });
+          await remember(t, v);
           if (v.ok) {
             chosen = { url: v.finalUrl, title: t.title, reason: option.reason === 'related' ? `most related (${option.choice.reasons.join('; ') || 'topic match'})` : option.reason === 'previous' ? 'previous article (no closely related post)' : 'latest post (no related or previous article)', id: t.id };
             break;
@@ -295,38 +317,70 @@ export function internalLinks(manifest: StageManifest): PipelineStage {
           notes.push(`Skipped internal link candidate “${t.title}”: ${v.note}.`);
         }
       }
-      if (!chosen) {
+      if (wantLine && !chosen) {
         if (targets.length) warnings.push('No published post of this website could be verified for the internal-link line (all candidates failed).');
         else notes.push(`${site.name} has no published posts to link to yet (first article?). The internal-link line was left out.`);
       }
 
-      // Contextual links where a related post's own phrase already appears in the body.
-      const contextual: InternalLinkData['contextual'] = [];
-      const bodyText = stripTags(ctx.task.bodyHtml ?? '');
+      // ---- The related article, in the middle: on a word of the article, else a line between two sections.
       type Suggestion = { targetId: string | null; url: string; title: string; kind: string; anchor: string | null; score: number; reasons: string[]; status: string; note: string | null };
       const suggestions: Suggestion[] = [];
       if (chosen) {
         const r = ranked.find((x) => x.target.id === chosen!.id);
         suggestions.push({ targetId: chosen.id ?? null, url: chosen.url, title: chosen.title, kind: 'LINE', anchor: null, score: r?.score ?? 0, reasons: r?.reasons ?? [], status: 'SELECTED', note: chosen.reason });
       }
-      for (const r of ranked.filter((x) => x.related && x.target.id !== chosen?.id && x.target.url !== chosen?.url)) {
-        const base = { targetId: r.target.id, url: r.target.url, title: r.target.title, kind: 'CONTEXTUAL', score: r.score, reasons: r.reasons };
-        const anchor = findAnchor(bodyText, r.target);
-        if (!anchor || normalizeText(anchor) === normalizeText(ctx.task.focusKeyword ?? ctx.task.keyword)) {
-          suggestions.push({ ...base, anchor: null, status: 'NO_ANCHOR', note: anchor ? 'the only matching phrase is the focus keyword' : 'no natural phrase for it in the body' });
-          continue;
+      const bare = (u: string) => u.replace(/\/+$/, '');
+      const isLine = (url: string, id?: string | null) => Boolean(chosen && ((id && id === chosen.id) || bare(url) === bare(chosen.url)));
+      const text = placeableText(ctx.task.bodyHtml ?? '');
+      const avoid = ctx.task.focusKeyword ?? ctx.task.keyword;
+      const placeOn = (target: Pick<TargetLike, 'keyword' | 'title'>, wanted?: string): string | null => {
+        if (wanted) {
+          const own = findPhrase(text, wanted);
+          if (own) return own;
+          notes.push(`“${wanted}” is not in the article text (outside headings and links), so the related link was added as a line in the middle.`);
+          return null;
         }
-        if (contextual.length >= ctx.config.maxContextualInternalLinks) {
-          suggestions.push({ ...base, anchor, status: 'PROPOSED', note: `not placed: at most ${ctx.config.maxContextualInternalLinks} contextual internal link(s)` });
-          continue;
-        }
-        const v = await check(r.target.url);
+        return findRelatedAnchor(text, target, avoid);
+      };
+      let related: InternalLinkData['related'] = null;
+      if (wantRelated && relatedOverride?.mode === 'url') {
+        const v = !sameHost(relatedOverride.url) ? { ok: false, finalUrl: relatedOverride.url, note: 'not a URL of this website' } : isLine(relatedOverride.url) ? { ok: false, finalUrl: relatedOverride.url, note: 'it is already the end line' } : await check(relatedOverride.url);
         if (v.ok) {
-          contextual.push({ anchor, url: v.finalUrl, title: r.target.title });
-          suggestions.push({ ...base, url: v.finalUrl, anchor, status: 'SELECTED', note: null });
-        } else suggestions.push({ ...base, anchor, status: 'UNREACHABLE', note: v.note });
+          const known = ranked.find((r) => bare(r.target.url) === bare(relatedOverride.url))?.target;
+          const title = relatedOverride.title ?? known?.title ?? relatedOverride.url;
+          const anchor = placeOn({ keyword: known?.keyword ?? null, title }, relatedOverride.anchor?.trim() || undefined);
+          related = { line: lineText, url: v.finalUrl, title, reason: 'chosen by the owner', anchor, placement: anchor ? 'word' : 'line' };
+        } else warnings.push(`The chosen related link ${relatedOverride.url} was not used: ${v.note}.`);
       }
-      for (const r of ranked.filter((x) => !x.related && x.target.id !== chosen?.id).slice(0, 5)) suggestions.push({ targetId: r.target.id, url: r.target.url, title: r.target.title, kind: 'CANDIDATE', anchor: null, score: r.score, reasons: r.reasons, status: 'NOT_RELATED', note: null });
+      if (wantRelated && !related) {
+        // The closely related posts first, then posts of the same category; never the end line's post.
+        const sameCategory = (r: (typeof ranked)[number]) => Boolean(ctx.task.categoryExternalId && r.target.categoryIds.includes(ctx.task.categoryExternalId));
+        const pool = [...ranked.filter((r) => r.related), ...ranked.filter((r) => !r.related && sameCategory(r))].filter((r) => !isLine(r.target.url, r.target.id));
+        let tried = 0;
+        for (const r of pool) {
+          const t = r.target as (typeof targets)[number];
+          if (related) {
+            if (r.related) suggestions.push({ targetId: t.id, url: t.url, title: t.title, kind: 'RELATED', anchor: null, score: r.score, reasons: r.reasons, status: 'PROPOSED', note: 'not used: one related link per article' });
+            continue;
+          }
+          if (tried >= 6) break;
+          tried++;
+          const v = await check(t.url);
+          await remember(t, v);
+          if (!v.ok) {
+            suggestions.push({ targetId: t.id, url: t.url, title: t.title, kind: 'RELATED', anchor: null, score: r.score, reasons: r.reasons, status: 'UNREACHABLE', note: v.note });
+            continue;
+          }
+          const anchor = placeOn(t);
+          related = { line: lineText, url: v.finalUrl, title: t.title, reason: r.related ? `most related (${r.reasons.join('; ') || 'topic match'})` : 'same category (no closely related post)', anchor, placement: anchor ? 'word' : 'line' };
+        }
+        if (!related) notes.push(pool.length ? 'No related post of this website could be verified for the related link.' : 'No related post of this website for the related link yet (none shares the topic or the category).');
+      }
+      if (related) {
+        const r = ranked.find((x) => bare(x.target.url) === bare(related!.url));
+        suggestions.push({ targetId: r?.target.id ?? null, url: related.url, title: related.title, kind: 'RELATED', anchor: related.anchor, score: r?.score ?? 0, reasons: r?.reasons ?? [], status: 'SELECTED', note: related.placement === 'word' ? `on the word “${related.anchor}”` : 'as a line in the middle of the article (no fitting word in the text)' });
+      }
+      for (const r of ranked.filter((x) => !x.related && !isLine(x.target.url, x.target.id) && (!related || bare(x.target.url) !== bare(related.url))).slice(0, 5)) suggestions.push({ targetId: r.target.id, url: r.target.url, title: r.target.title, kind: 'CANDIDATE', anchor: null, score: r.score, reasons: r.reasons, status: 'NOT_RELATED', note: null });
       await db.$transaction([
         db.suggestedInternalLink.deleteMany({ where: { taskId: ctx.taskId } }),
         db.suggestedInternalLink.createMany({ data: suggestions.slice(0, 40).map((x) => ({ ...x, taskId: ctx.taskId, websiteId: site.id, reasons: JSON.stringify(x.reasons) })) }),
@@ -336,13 +390,16 @@ export function internalLinks(manifest: StageManifest): PipelineStage {
         url: chosen?.url ?? null,
         title: chosen?.title ?? null,
         reason: chosen?.reason ?? null,
-        contextual,
+        related,
+        contextual: [],
         candidates: ranked.slice(0, 8).map((r) => ({ title: r.target.title, url: r.target.url, score: r.score, related: r.related, reasons: r.reasons })),
         index,
         warnings,
         notes,
+        ...removed,
       };
-      return { outcome: 'completed', data, message: chosen ? `${lineText} ${chosen.title}${contextual.length ? ` + ${contextual.length} contextual` : ''}` : 'No internal link (see warnings)' };
+      const parts = [chosen ? `${lineText} ${chosen.title}` : '', related ? `related: ${related.title} (${related.placement === 'word' ? `on “${related.anchor}”` : 'line in the middle'})` : ''].filter(Boolean);
+      return { outcome: 'completed', data, message: parts.length ? parts.join(' · ') : 'No internal link (see warnings)' };
     },
   });
 }

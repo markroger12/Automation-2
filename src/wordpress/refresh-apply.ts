@@ -1,14 +1,12 @@
 import { db } from '@/lib/db';
 import { audit } from '@/lib/audit';
 import { log } from '@/lib/log';
-import { getSettings } from '@/lib/settings';
 import { LoginRequiredError } from '@/lib/pipeline-errors';
 import { sanitizeArticleHtml } from '@/lib/html/sanitize';
 import { refreshArticleHtml, refreshHash } from '@/lib/refresh/service';
-import { withSiteContext, withWordPressSlot } from './browser';
 import { WpClient, type WpPost } from './client';
 import { contentHash, editorContent, sameArticle, type EditorKind } from './drafts';
-import { siteRef } from './session';
+import { siteRef, withWordPressSession } from './session';
 
 /**
  * Writes an APPROVED ContentRevision to the SAME WordPress post (control
@@ -50,8 +48,7 @@ export async function applyContentRevision(revisionId: string): Promise<Record<s
   if (r.status === 'APPROVED' && refreshHash(refreshArticleHtml(task)) !== r.baseHash) {
     return finish('CONFLICT', { error: 'The article was edited in the app after this revision was approved. Propose a new revision from the current text.' });
   }
-  const profile = site.wordpressProfileId ? await db.browserProfile.findUnique({ where: { id: site.wordpressProfileId } }) : null;
-  if (!profile || profile.sessionState === 'LOGIN_REQUIRED') {
+  if (!site.wordpressProfileId) {
     await db.contentRevision.update({ where: { id: r.id }, data: { result: JSON.stringify({ waiting: 'Log in to WordPress (website page → Log in); the update runs again after that.' }) } });
     throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress.`, site.id);
   }
@@ -60,11 +57,10 @@ export async function applyContentRevision(revisionId: string): Promise<Record<s
   const sent = editorContent(r.proposedHtml, editor);
   const base = editorContent(r.baseHtml, editor);
   const postId = task.wpPostId;
-  const settings = await getSettings();
   let outcome: Outcome;
   try {
-    outcome = await withWordPressSlot(settings.workflow.wordpressConcurrency, () =>
-    withSiteContext(siteRef(site), { headed: settings.browser.mode === 'headed', purpose: `refresh post #${postId}` }, async (context): Promise<Outcome> => {
+    // The shared WordPress session: an ended sign-in is renewed with the saved password (session.ts).
+    outcome = await withWordPressSession(site, `refresh post #${postId}`, async (context): Promise<Outcome> => {
       const client = await WpClient.connect(context, siteRef(site), { taskId: task.id });
       const post = await client.getPost(postId);
       if (!post || post.status === 'trash') return { kind: 'gone' };
@@ -81,8 +77,7 @@ export async function applyContentRevision(revisionId: string): Promise<Record<s
       const after = await client.getPost(postId);
       if (!after) return { kind: 'gone' };
       return { kind: 'applied', post: after, before, already: false };
-    }),
-    );
+    });
   } catch (error) {
     // Not applied (or not provably): back to approved with the reason; the job retries, and the owner can try again or reject.
     const message = (error as Error).message;

@@ -200,6 +200,121 @@ describe('approved publishing path', () => {
     expect((await schedulerTick(new Date(window + 5 * 60_000))).verifyJobs).toBe(1);
   });
 
+  /**
+   * Owner report 2026-11-15: three keywords “scheduled” for days with “Could not check WordPress after the slot: Easy
+   * Vibs: not logged in to WordPress (session missing or expired)”, while the website page still said signed in.
+   */
+  describe('an ended WordPress sign-in never leaves a keyword stuck', () => {
+    const credentials = () => import('@/lib/wp-credentials');
+    async function overdue(keyword: string, key: string, minutesAgo = 15) {
+      await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date() } });
+      const t = await draftTask(keyword, key);
+      const kw = await readyKeyword(keyword, t.id, new Date(Math.floor((Date.now() + 20 * 3_600_000 + Math.random() * 3_600_000) / 60_000) * 60_000));
+      expect(await schedule.scheduleKeywordPost(kw.id)).toMatchObject({ scheduled: true });
+      const slot = new Date(Math.floor((Date.now() - minutesAgo * 60_000) / 1000) * 1000);
+      wp.posts.get(t.wpPostId!)!.date_gmt = slot.toISOString().slice(0, 19);
+      await client.workflowKeyword.update({ where: { id: kw.id }, data: { scheduledAt: slot } });
+      await client.slotReservation.updateMany({ where: { workflowKeywordId: kw.id }, data: { scheduledAt: slot } });
+      return { t, kw, slot };
+    }
+    async function signInAgain() {
+      wp.options.cron = 'visits';
+      expect((await session.interactiveLogin(await client.website.findUniqueOrThrow({ where: { id: site.id } }), async () => true, 60_000)).state).toBe('ACTIVE');
+    }
+
+    it('a post WordPress published is seen without signing in: the keyword is published, no session is opened', async () => {
+      const { t, kw, slot } = await overdue('How to Read a Published Post', 'pub:public-1');
+      // WordPress published it at its time; then the sign-in ended (the app still thinks it is signed in).
+      wp.posts.get(t.wpPostId!)!.status = 'publish';
+      wp.logoutAll();
+      expect((await client.browserProfile.findUniqueOrThrow({ where: { id: site.wordpressProfileId! } })).sessionState).toBe('ACTIVE');
+      const before = wp.requests.length;
+      try {
+        expect(await schedule.verifyKeywordPublished(kw.id)).toMatchObject({ published: true, via: 'public' });
+        const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+        expect(row).toMatchObject({ status: 'PUBLISHED', lastError: null });
+        expect(row.publishedUrl).toContain(`?p=${t.wpPostId}`);
+        expect(row.publishedAt?.toISOString()).toBe(slot.toISOString());
+        const asked = wp.requests.slice(before).map((r) => r.path);
+        expect(asked.some((p) => p.includes('rest-nonce') || p.startsWith('/wp-admin') || p.startsWith('/wp-login'))).toBe(false);
+      } finally {
+        await signInAgain();
+      }
+    });
+
+    it('a post WordPress missed is published by its own scheduler, started as a visit does, still without signing in', async () => {
+      wp.options.cron = 'missed';
+      const { t, kw } = await overdue('How to Start WP Cron', 'pub:public-2');
+      wp.logoutAll();
+      try {
+        expect(wp.posts.get(t.wpPostId!)!.status).toBe('future');
+        expect(await schedule.verifyKeywordPublished(kw.id)).toMatchObject({ published: true, via: 'wp-cron' });
+        expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('PUBLISHED');
+      } finally {
+        await signInAgain();
+      }
+    });
+
+    it('no saved password: the keyword says what to do, and the website shows that it must sign in again', async () => {
+      wp.options.cron = 'never';
+      const { kw } = await overdue('How to Sign In Again', 'pub:login-1');
+      (await credentials()).deleteLogin(site.id);
+      wp.logoutAll();
+      try {
+        await expect(schedule.verifyKeywordPublished(kw.id)).rejects.toThrow(/not logged in/);
+        const row = await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } });
+        expect(row.status).toBe('SCHEDULED');
+        expect(row.lastError).toMatch(/^Could not check WordPress after the slot: Publish Site: not logged in to WordPress \(session missing or expired; the session check answered HTTP 200 “0”\)\. No password is saved for the automatic sign-in: use “Log in” on the website page, or save the password there\. Checked again in a few minutes\.$/);
+        // Before: the website stayed “signed in”, so nothing ever signed in again.
+        expect((await client.browserProfile.findUniqueOrThrow({ where: { id: site.wordpressProfileId! } })).sessionState).toBe('LOGIN_REQUIRED');
+      } finally {
+        await signInAgain();
+      }
+    });
+
+    it('a saved password: the app signs in again by itself and finishes the check (here: publishes the missed schedule)', async () => {
+      wp.options.cron = 'never';
+      const { t, kw } = await overdue('How to Renew a WordPress Session', 'pub:login-2');
+      (await credentials()).saveLogin(site.id, 'owner', 'saved-password');
+      wp.logoutAll();
+      try {
+        expect(await schedule.verifyKeywordPublished(kw.id)).toMatchObject({ published: true, via: 'app' });
+        expect(wp.posts.get(t.wpPostId!)!.status).toBe('publish');
+        expect((await client.workflowKeyword.findUniqueOrThrow({ where: { id: kw.id } })).status).toBe('PUBLISHED');
+        expect((await client.browserProfile.findUniqueOrThrow({ where: { id: site.wordpressProfileId! } })).sessionState).toBe('ACTIVE');
+        expect(await client.log.count({ where: { message: { contains: 'automatic login — Signed in automatically' } } })).toBeGreaterThan(0);
+      } finally {
+        (await credentials()).deleteLogin(site.id);
+        wp.options.cron = 'visits';
+      }
+    });
+
+    it('a failed scheduling try is made again within 10 minutes, not only when its slot moves', async () => {
+      const { schedulerTick } = await import('@/lib/workflow/scheduler');
+      await client.website.update({ where: { id: site.id }, data: { canPublish: true, canPublishAcknowledgedAt: new Date() } });
+      const t = await draftTask('How to Retry WordPress Scheduling', 'pub:retry-1');
+      const kw = await readyKeyword('How to Retry WordPress Scheduling', t.id, new Date(Math.floor((Date.now() + 30 * 3_600_000) / 60_000) * 60_000));
+      const jobs = (where: Record<string, unknown> = {}) => client.queueJob.count({ where: { kind: 'wp.schedule', relatedId: kw.id, ...where } });
+      const failAll = () => client.queueJob.updateMany({ where: { kind: 'wp.schedule', relatedId: kw.id }, data: { status: 'FAILED' } });
+      const window = Math.floor(Date.now() / 600_000) * 600_000;
+      await schedulerTick(new Date(window + 1_000));
+      expect(await jobs()).toBe(1);
+      // It failed: one more try at the next tick of these 10 minutes …
+      await failAll();
+      await schedulerTick(new Date(window + 2_000));
+      expect(await jobs({ status: 'WAITING' })).toBe(1);
+      // … and when that fails too, the next one in the next 10 minutes (not one per tick).
+      await failAll();
+      await schedulerTick(new Date(window + 3_000));
+      expect(await jobs({ status: 'WAITING' })).toBe(0);
+      await schedulerTick(new Date(window + 600_000 + 1_000));
+      expect(await jobs({ status: 'WAITING' })).toBe(1);
+      expect(await jobs()).toBe(3);
+      await client.queueJob.deleteMany({ where: { kind: 'wp.schedule', relatedId: kw.id } });
+      await client.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'SKIPPED' } });
+    });
+  });
+
   it('a scheduled post trashed in WordPress is left alone: the keyword fails with the reason and checks stop', async () => {
     const t = await draftTask('How to Change a WordPress Theme', 'pub:draft-3');
     const kw = await readyKeyword('How to Change a WordPress Theme', t.id, new Date(Date.now() + 3 * 3_600_000));

@@ -147,6 +147,16 @@ describe('Update to latest', () => {
     sarahId = rows.find((r) => r.wpPostId === sarah.id)!.id;
     const list = await service.listSitePosts({ websiteId: site.id, olderThanMonths: 12 });
     expect(list.total).toBe(2);
+    // Filters and order (owner request: “filters … or sorting”): counts per state, years and named categories.
+    const all = await service.listSitePosts({ websiteId: site.id, sort: 'title-asc' });
+    expect(all).toMatchObject({ total: 3, all: 3, page: 1 });
+    expect(all.posts.map((p) => p.title)).toEqual([...all.posts.map((p) => p.title)].sort((a, b) => a.localeCompare(b)));
+    expect(all.facets.states).toMatchObject({ all: 3, none: 3 });
+    expect(all.posts.every((p) => Array.isArray(p.categoryIds))).toBe(true);
+    expect((await service.listSitePosts({ websiteId: site.id, q: 'MIKE ross' })).posts.map((p) => p.title)).toEqual(['Mike Ross Biography']);
+    expect((await service.listSitePosts({ websiteId: site.id, state: 'ready' })).total).toBe(0);
+    // A page past the end shows the last page.
+    expect((await service.listSitePosts({ websiteId: site.id, page: 9, pageSize: 10 })).page).toBe(1);
   });
 
   it('updates a post with ChatGPT: the prompt carries the article with marks; the answer is checked and waits for approval', async () => {

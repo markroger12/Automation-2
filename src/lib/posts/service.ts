@@ -11,6 +11,7 @@ import { failUpdate, LIVE_STATUSES, type ImportFilter } from '@/wordpress/post-u
 import { parseUpdateAnswer } from './answer';
 import { blockingFailures, checkUpdate, type UpdateCheck } from './checks';
 import { editablePost, markUse, rebuildPost } from './editable';
+import { viewPosts, type PostView } from './list-view';
 
 /**
  * “Update to latest” (owner request 2026-11-27: “old articles ko latest per update … jin articles ka data tool per
@@ -30,39 +31,46 @@ export async function requestImport(websiteId: string, filter: ImportFilter) {
   return { jobId: job.id, queued: true };
 }
 
-export interface PostListFilter {
+const idsOf = (raw: string): number[] => {
+  const v = parseJson<unknown>(raw, []);
+  return Array.isArray(v) ? v.filter((n): n is number => Number.isInteger(n)) : [];
+};
+
+export interface PostListFilter extends PostView {
   websiteId: string;
-  q?: string | null;
-  /** Only posts not changed for this many months. */
-  olderThanMonths?: number | null;
   page?: number;
   pageSize?: number;
 }
 
+/**
+ * The website's posts for the list, filtered and sorted (lib/posts/list-view.ts), one page of them, with the number of
+ * posts for each filter choice and the categories' names.
+ */
 export async function listSitePosts(f: PostListFilter) {
-  const pageSize = Math.min(100, Math.max(10, f.pageSize ?? 25));
-  const page = Math.max(1, f.page ?? 1);
-  const where = {
-    websiteId: f.websiteId,
-    ...(f.q?.trim() ? { title: { contains: f.q.trim() } } : {}),
-    ...(f.olderThanMonths ? { modifiedAt: { lt: new Date(Date.now() - f.olderThanMonths * 30.44 * 86_400_000) } } : {}),
-  };
-  const [total, rows, importJob] = await Promise.all([
-    db.sitePost.count({ where }),
-    db.sitePost.findMany({
-      where,
-      orderBy: [{ modifiedAt: 'asc' }, { id: 'asc' }],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      select: { id: true, wpPostId: true, taskId: true, title: true, url: true, status: true, words: true, publishedAt: true, modifiedAt: true, importedAt: true, updates: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, status: true, createdAt: true, appliedAt: true } } },
-    }),
+  const pageSize = Math.min(100, Math.max(10, f.pageSize ?? 20));
+  const [posts, updates, categories, importJob] = await Promise.all([
+    db.sitePost.findMany({ where: { websiteId: f.websiteId }, select: { id: true, wpPostId: true, taskId: true, title: true, url: true, status: true, words: true, categoryIds: true, publishedAt: true, modifiedAt: true, importedAt: true } }),
+    db.postUpdate.findMany({ where: { websiteId: f.websiteId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { id: true, sitePostId: true, status: true, createdAt: true, appliedAt: true } }),
+    db.category.findMany({ where: { websiteId: f.websiteId }, select: { externalId: true, name: true } }),
     db.queueJob.findFirst({ where: { kind: 'wp.import-posts', websiteId: f.websiteId }, orderBy: { createdAt: 'desc' }, select: { status: true, error: true, result: true, finishedAt: true, createdAt: true } }),
   ]);
+  const latest = new Map<string, (typeof updates)[number]>();
+  for (const u of updates) if (!latest.has(u.sitePostId)) latest.set(u.sitePostId, u);
+  const rows = posts.map((p) => {
+    const u = latest.get(p.id);
+    return { ...p, categoryIds: idsOf(p.categoryIds), lastUpdate: u ? { id: u.id, status: u.status, createdAt: u.createdAt, appliedAt: u.appliedAt } : null };
+  });
+  const { rows: shown, facets } = viewPosts(rows, f);
+  const pages = Math.max(1, Math.ceil(shown.length / pageSize));
+  const page = Math.min(Math.max(1, f.page ?? 1), pages);
+  const names = new Map(categories.map((c) => [c.externalId, c.name]));
   return {
-    total,
+    total: shown.length,
+    all: posts.length,
     page,
     pageSize,
-    posts: rows.map(({ updates, ...r }) => ({ ...r, lastUpdate: updates[0] ?? null })),
+    posts: shown.slice((page - 1) * pageSize, page * pageSize),
+    facets: { ...facets, categories: facets.categories.map((c) => ({ ...c, name: names.get(c.id) ?? `Category ${c.id}` })).sort((a, b) => a.name.localeCompare(b.name)) },
     lastImport: importJob ? { status: importJob.status, error: importJob.error, result: parseJson<Record<string, unknown>>(importJob.result, {}), at: (importJob.finishedAt ?? importJob.createdAt).toISOString() } : null,
   };
 }

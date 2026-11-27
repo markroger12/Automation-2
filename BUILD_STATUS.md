@@ -5527,6 +5527,50 @@ TMPDIR=/tmp/bq xvfb-run -a npx vitest run --config vitest.integration.config.ts 
 npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url file:…   # No difference detected
 ```
 
+### Follow-up: filters and sorting on the Update to Latest list
+
+The owner's screenshot showed 717 posts in one list with only a title search and one checkbox: "aby bhai yaha per filters toh add kr or sorting bhi add kr mana tujhe bola bhi ha har chiz user friendly banya kr".
+
+- **State buttons with counts:** All posts, Not updated yet, In progress, Ready for your approval, Updated, Nothing outdated, Needs attention, Rejected or undone. A state with no posts is hidden, unless it is the one chosen.
+- **Filters:**
+  - search over title and address, ignoring case and accents (`dorthe` finds "Dörthe");
+  - not changed for 3, 6, 12 months or 2 years;
+  - category, by name (from the website's synced categories);
+  - published year;
+  - length (under 600, 600–1,500, over 1,500 words);
+  - written by the app or not.
+- **Counts that follow the other filters:** each category and year shows how many posts it has with the other filters on, as do the state buttons.
+- **Chips for active filters:** each filter that is on shows as a chip with ×, and **Clear all filters** removes them all. "No post matches" offers the same.
+- **Sorting:** a **Sort by** menu with 10 orders, plus clickable column headers (Post, Published, Last changed, Words, Update). A header's arrow shows the direction (`aria-sort`), and a second click turns it round. Posts without a date always go last.
+- **The page's address keeps the filters, order and page,** so they are still there after a reload or after "← back" from an update.
+- **Pages:** the app's usual Results per page (10–50, remembered) with first/last page.
+- **New columns and details:**
+  - a **Published** date column;
+  - category names under each title;
+  - when the last update started, under its chip.
+- **Readable ages:** "Last changed" reads "2 years 8 months ago" (the exact date on hover) instead of "1002d ago".
+- **More than 50 selected:** posts start in batches of 50. With more selected, the button is off and a note says so, instead of quietly starting only 50. **Clear selection** is next to it.
+- **How it works:** a website has at most 5,000 posts read, so the list is filtered and sorted in memory (`src/lib/posts/list-view.ts`, pure). The latest update of each post comes from one query, and the schema is unchanged.
+- **Tests:**
+  - **unit:** 3 new tests: the default and every order, with missing dates last; each filter and combinations; accent-free search; counts with the other filters on; readable ages;
+  - **integration:** `post-updates` now also lists through the database query: order, counts, search, a state with no posts, and a page past the end.
+- **UI:** checked in Chromium with 25 seeded posts. The checks:
+  - a state button, the category and a column header change the list, and the address follows;
+  - the order is right;
+  - a reload keeps the filters;
+  - Clear all filters works;
+  - no page errors;
+  - looked right in light, dark and a narrow window.
+
+  axe in light and dark: 0 violations.
+
+**Commands run**
+```
+npx tsc --noEmit                                   # 0 errors
+TMPDIR=/tmp/bq npx vitest run                      # 79 files, 555 tests passed
+TMPDIR=/tmp/bq xvfb-run -a npx vitest run --config vitest.integration.config.ts tests/integration/post-updates.test.ts   # 6 passed
+```
+
 ## Owner report: test runs filled the temp folder (about 25 GB) in a cloud session
 
 - **Cause:** every test file made folders in the system temp folder and nothing removed them:

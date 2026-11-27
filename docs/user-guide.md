@@ -349,16 +349,23 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
 1. **Read the posts from WordPress.** Choose the website, which posts (not changed for 12, 6 or 24 months, or all published posts) and optionally a category, then **Read posts**.
    - Only reads: nothing in WordPress changes. Up to 5,000 posts, oldest change first.
    - Posts the app wrote are linked to their article.
-2. **Update to latest.** Tick posts (up to 50 at a time) and press **Update selected**, or **Update to latest** on one post.
+2. **Find the posts to update.** The list has:
+   - **state buttons** with counts: All posts, Not updated yet, In progress, Ready for your approval, Updated, Nothing outdated, Needs attention, Rejected or undone;
+   - **filters**: search (title or address; accents don't matter, so `dorthe` finds “Dörthe”), Not changed for (3, 6, 12 months or 2 years), Category, Published year, Length (under 600, 600–1,500, over 1,500 words) and Written by (the app or not). Each choice shows how many posts it has. Every filter that is on shows as a chip with **×**; **Clear all filters** removes them all;
+   - **sorting**: **Sort by**, or click a column (Post, Published, Last changed, Words, Update); click it again to turn the order round;
+   - pages with **Results per page**.
+
+   The filters and the order stay in the page's address, so they are still there after opening an update and going back, or after a reload.
+3. **Update to latest.** Tick posts (up to 50 at a time) and press **Update selected**, or **Update to latest** on one post.
    - ChatGPT gets the whole article in a new chat, with the prompt **Shared — Update a post to the latest information** (Prompt Manager; you can change it). It checks the facts on the web, updates what has changed (ages, numbers, dates, FAQ answers, tables) and lists its changes and sources.
    - Only the text goes to ChatGPT. Images, embeds, shortcodes, styled and nested blocks stay exactly as they are; links and bold or italic text keep their place.
-3. **The app checks the answer.** An update is stopped when it drops a kept part (image, embed, shortcode), is much shorter or longer, loses headings, is in another language, stuffs the keyword, has chatbot remarks, or puts a future year in the title or meta description. Removed links, missing sources and a new year in the title with almost no changed text are shown as warnings.
-4. **Compare and approve.** The update page shows what changed (replaced or removed, new or changed, or the whole text side by side), the title and meta description, ChatGPT's changes and sources, and the checks. **Approve and update**, or **Reject**.
+4. **The app checks the answer.** An update is stopped when it drops a kept part (image, embed, shortcode), is much shorter or longer, loses headings, is in another language, stuffs the keyword, has chatbot remarks, or puts a future year in the title or meta description. Removed links, missing sources and a new year in the title with almost no changed text are shown as warnings.
+5. **Compare and approve.** The update page shows what changed (replaced or removed, new or changed, or the whole text side by side), the title and meta description, ChatGPT's changes and sources, and the checks. **Approve and update**, or **Reject**.
    - A live post needs **Allow approved updates to live posts** on the website's Publishing permission card, and you must type `UPDATE LIVE POST`.
    - The **same WordPress post** is updated: its content, and the title when it changed. Status, date, slug and URL stay. The meta description goes to Rank Math when Rank Math is active on the website.
    - If the post was edited in WordPress after it was read, nothing is changed (**conflict**): **Try again** reads it again.
    - When the website has a Search Console property, indexing of the updated page is requested.
-5. **Undo** puts back the text, title and meta description from before the update (only when the post was not edited since).
+6. **Undo** puts back the text, title and meta description from before the update (only when the post was not edited since).
 
 Nothing is updated without your approval, and nothing runs on a schedule.
 

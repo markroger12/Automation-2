@@ -116,7 +116,9 @@ describe('only the WordPress client sends requests to WordPress', () => {
     const publishers = files.filter((f) => ![...readers, clientFile].some((r) => f.endsWith(r)) && /status:\s*['"](publish|future|private|pending)['"]/.test(fs.readFileSync(f, 'utf8')));
     expect(publishers).toEqual([]);
     const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
-    expect(read(clientFile).match(/status:\s*['"](publish|future|private|pending)['"]/g)).toEqual(["status: 'future'", "status: 'publish'"]);
+    // (listPublishedPosts only READS: “status: 'publish'” is a GET filter there, for “Update to latest”.)
+    expect(read(clientFile).match(/status:\s*['"](publish|future|private|pending)['"]/g)).toEqual(["status: 'publish'", "status: 'future'", "status: 'publish'"]);
+    expect(read(clientFile)).toMatch(/async listPublishedPosts\([^\n]*\{\s*try \{\s*const \{ data, headers \} = await this\.call<WpPost\[\]>\('GET', '\/wp\/v2\/posts', \{\s*query: \{\s*context: 'edit',\s*status: 'publish',/);
     expect(read(clientFile)).toMatch(/async publishMissedSchedule\([^)]*\)[^{]*\{\s*const \{ data \} = await this\.call<WpPost>\('POST', `\/wp\/v2\/posts\/\$\{id\}`, \{ json: \{ status: 'publish', date_gmt/);
     // …each called only by the approved scheduler, once, and only inside withPublishPermit (canPublish + acknowledgement, per post).
     const schedule = read(path.join('wordpress', 'schedule.ts'));

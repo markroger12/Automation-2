@@ -337,6 +337,66 @@ Article:
   },
   {
     moduleKey: 'shared',
+    stageKey: 'POST_UPDATE',
+    name: 'Shared — Update a post to the latest information',
+    description:
+      'Owner request (2026-11-27): the whole post goes to ChatGPT, which checks it against current sources and updates what is outdated, so the page can rank again without anything Google treats as spam. The answer has a fixed format the app reads (===TITLE=== … ===END===); the app keeps images, embeds and shortcodes ({K1}…) and links ({L1}…{/L1}) itself.',
+    version: 1,
+    kind: 'text',
+    previousHashes: [],
+    variables: [
+      v('today', "Today's date", true, 'stage'),
+      LANGUAGE,
+      v('title', "The post's current title", true, 'stage'),
+      v('focus_keyword', 'Main keyword of the post', true, 'stage'),
+      v('published_date', 'First published', true, 'stage'),
+      v('modified_date', 'Last updated in WordPress', true, 'stage'),
+      v('meta_description', 'Current meta description (when the page has one)', false, 'stage'),
+      v('article', 'The whole post as Markdown, with the marks', true, 'stage'),
+    ],
+    content: `You are a senior editor and fact-checker. Update the article below, which is already published on our website, so that it is correct and complete as of today, {{today}}. The aim is that the page deserves to rank again because it is the most accurate and useful page for its topic — not through tricks. Follow Google's helpful-content and spam policies: no invented facts, no keyword stuffing, no date-only "freshness", no padding.
+
+About the page
+- Title: {{title}}
+- Main keyword (keep it as the page's topic): {{focus_keyword}}
+- First published: {{published_date}} — last updated: {{modified_date}}
+{{#if meta_description}}- Meta description: {{meta_description}}
+{{/if}}- Language: {{language}} — write your whole answer in {{language}}.
+
+What to do
+1. Search the web now for the latest reliable information on this topic. Prefer official sources, major news outlets and recognised references, especially anything published after {{modified_date}}.
+2. Check every statement that can go out of date: ages, dates and years, numbers and amounts, relationships, children, jobs and titles, current projects, records, rankings, prices, statuses, and events described as upcoming. Correct what is outdated. A person's age must follow from a verified birth date as of {{today}}.
+3. Add important new developments since the last update where they belong in the existing sections. If they fit nowhere, add one new section with a clear heading near the end, before the FAQ or the conclusion.
+4. Update FAQ answers and table rows (for example a Quick Bio table) that are no longer correct, and answer the questions readers ask about this topic now if a section misses them.
+5. Keep everything that is still correct: the structure, the order of sections, the headings (change a heading's wording only when its content changed, for example a year), the search intent and the main keyword. Rewrite a passage only if it is outdated, wrong, or thin and unclear.
+6. Never invent facts, numbers, names, quotes or dates. If you cannot verify a newer value, keep the original wording. If a statement is clearly wrong and you cannot find the correct value, remove that statement. Give estimates (such as net worth) only as reported estimates, never as certain figures.
+7. Put a newer year in the title only when the article really is updated for that year.
+8. Use the main keyword naturally, as before. No filler, no generic introductions, no AI-style phrases ("in today's fast-paced world", "delve", "it is important to note", "in conclusion" as filler).
+9. Keep every mark exactly as it is: links are {L1}…{/L1}, bold {b}…{/b}, italic {i}…{/i}; {K1}, {K2}… stand for images, embeds, galleries, ads and other parts of the page. Keep each {K} mark once, unchanged, where it belongs; a {K} mark that stands alone on a line stays alone on its line. Do not add new links.
+10. Write the article in Markdown: ## and ### headings as in the original, normal paragraphs, "- " lists, and tables where the original has tables. Do not repeat the title as a heading.
+
+Answer in exactly this format, with nothing before or after it:
+
+===TITLE===
+The post title, updated only if needed
+===META_DESCRIPTION===
+A meta description of 140–160 characters for the updated page, with the main keyword
+===CHANGES===
+- One short line for each change: what changed and why
+===SOURCES===
+- A URL you used — what it confirms
+===ARTICLE===
+The complete updated article in Markdown, from its first paragraph to its end
+===END===
+
+If nothing needs to change, return the article as it is and write "- No changes needed" under ===CHANGES===.
+
+The article:
+
+{{article}}`,
+  },
+  {
+    moduleKey: 'shared',
     stageKey: 'HUMANIZE',
     name: 'Shared — Editorial humanizer',
     description: 'Paragraph-level editorial polish with fact locks (not a detector bypass).',

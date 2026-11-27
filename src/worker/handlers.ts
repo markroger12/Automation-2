@@ -9,6 +9,7 @@ import { savedLogin } from '@/lib/wp-credentials';
 import { refreshLinkIndex } from '@/wordpress/link-index';
 import { scheduleKeywordPost, verifyKeywordPublished } from '@/wordpress/schedule';
 import { applyContentRevision } from '@/wordpress/refresh-apply';
+import { applyPostUpdate, failUpdate, importSitePosts, startPostUpdate, undoPostUpdate, type ImportFilter } from '@/wordpress/post-updates';
 
 async function site(websiteId: unknown) {
   if (typeof websiteId !== 'string') throw new Error('Missing websiteId');
@@ -58,6 +59,21 @@ export function registerBuiltInControlHandlers(): void {
   registerControlHandler('wp.verify-published', async (job, payload) => verifyKeywordPublished(String(payload.keywordId ?? job.relatedId)));
   // Content refresh: an owner-approved revision written to the same post (content only; see src/wordpress/refresh-apply.ts).
   registerControlHandler('wp.refresh-apply', async (job, payload) => applyContentRevision(String(payload.revisionId ?? job.relatedId)));
+  // Update to latest (owner request 2026-11-27): read the website's posts; read one for an update and ask ChatGPT;
+  // write an approved update to the same post; undo it (see src/wordpress/post-updates.ts).
+  registerControlHandler('wp.import-posts', async (job, payload) => importSitePosts(String(payload.websiteId ?? job.websiteId), (payload.filter ?? { olderThanMonths: null, categoryIds: [] }) as ImportFilter));
+  registerControlHandler('wp.post-update-start', async (job, payload) => {
+    const id = String(payload.updateId ?? job.relatedId);
+    try {
+      return await startPostUpdate(id);
+    } catch (error) {
+      // Control jobs are not retried: the update says why, and “Try again” starts a new one.
+      await failUpdate(id, `Could not read the post from WordPress: ${errorMessage(error).split('\n')[0]}`);
+      throw error;
+    }
+  });
+  registerControlHandler('wp.post-update-apply', async (job, payload) => applyPostUpdate(String(payload.updateId ?? job.relatedId)));
+  registerControlHandler('wp.post-update-undo', async (job, payload) => undoPostUpdate(String(payload.updateId ?? job.relatedId)));
   registerControlHandler('chrome.launch', async () => {
     const result = launchAutomationChrome();
     await log({ category: 'extension', message: `Automation Chrome launched (PID ${result.pid ?? '?'}).` });

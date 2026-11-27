@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { BookCheck, Copy, RefreshCcw, ScanSearch, Sparkles } from 'lucide-react';
+import { BookCheck, Copy, FileClock, RefreshCcw, ScanSearch, Sparkles } from 'lucide-react';
 import { db } from '@/lib/db';
 import { Card, Chip, PageHeader, formatRelative } from '@/components/ui';
 import { RunStatusChip } from '@/components/humanizer-results';
@@ -13,6 +13,7 @@ const TOOLS = [
   { href: '/duplicates', title: 'Duplicate Review', icon: Copy, text: 'Cross-website similarity review before drafts go out.', milestone: 'M12' },
   { href: '/research-evidence', title: 'Research Evidence', icon: BookCheck, text: 'Claim/evidence ledger with contradictions and source freshness.', milestone: 'M13' },
   { href: '/content-refresh', title: 'Content Refresh', icon: RefreshCcw, text: 'Reviewable refresh candidates and revisions for published posts.', milestone: 'M15' },
+  { href: '/update-posts', title: 'Update to Latest', icon: FileClock, text: 'Published posts, also ones the app did not write, brought up to date by ChatGPT with sources; checked, compared and approved by you.', milestone: 'M15' },
 ];
 
 /** Editorial tools hub plus the latest editorial history (humanizer runs and owner edits). */

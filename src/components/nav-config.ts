@@ -40,6 +40,8 @@ export const NAV_ITEMS: NavItem[] = [
       { href: '/research-evidence', label: 'Research Evidence', icon: 'BookCheck' },
       { href: '/duplicates', label: 'Duplicate Review', icon: 'Copy' },
       { href: '/content-refresh', label: 'Content Refresh', icon: 'RefreshCcw' },
+      // Owner request 2026-11-27: bring old posts up to date, also the ones the app did not write.
+      { href: '/update-posts', label: 'Update to Latest', icon: 'FileClock' },
     ],
   },
   {

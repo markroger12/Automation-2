@@ -16,9 +16,11 @@ import type { ExtensionFailCode } from '../domain';
 
 export interface ChatGPTJobPayload {
   operationId: string;
-  /** The article task; null for a standalone Humanizer run (see runId). */
+  /** The article task; null for a standalone Humanizer run (see runId) or a post update (see postUpdateId). */
   taskId: string | null;
   runId?: string | null;
+  /** “Update to latest” of a website's post (lib/posts). */
+  postUpdateId?: string | null;
   stageKey: string;
   prompt: string;
   promptHash: string;
@@ -161,10 +163,41 @@ export async function createRunChatGPTRequest(
   return { responseId: response.id, jobId: job.id, created };
 }
 
-/** Wake whoever waits for this ChatGPT job: the article run, or a Humanizer run. */
+/**
+ * The prompt of a post update (“Update to latest”, owner request 2026-11-27): always a new chat, so an earlier
+ * article's chat never mixes in. Idempotent by operationId.
+ */
+export async function createPostUpdateChatGPTRequest(
+  input: { postUpdateId: string; websiteId: string; language: string; operationId: string; prompt: string; timeoutSec: number },
+  client: Tx = db,
+): Promise<{ responseId: string; jobId: string; created: boolean }> {
+  const existing = await client.chatGPTResponse.findUnique({ where: { operationId: input.operationId } });
+  const promptHash = promptFingerprint(input.prompt);
+  const response = existing ?? (await client.chatGPTResponse.create({ data: { postUpdateId: input.postUpdateId, stageKey: 'POST_UPDATE', attempt: 1, operationId: input.operationId, promptHash, renderedPrompt: input.prompt } }));
+  const payload: ChatGPTJobPayload = {
+    operationId: input.operationId,
+    taskId: null,
+    postUpdateId: input.postUpdateId,
+    stageKey: 'POST_UPDATE',
+    prompt: input.prompt,
+    promptHash,
+    conversationUrl: null,
+    newChat: true,
+    attachments: [],
+    expectImages: false,
+    timeoutSec: input.timeoutSec,
+    language: input.language,
+  };
+  const { job, created } = await enqueue({ queue: 'chatgpt', kind: 'chatgpt.prompt', idempotencyKey: `chatgpt:${input.operationId}`, relatedId: response.id, websiteId: input.websiteId, maxAttempts: 4, payload }, client);
+  if (!existing || existing.jobId !== job.id) await client.chatGPTResponse.update({ where: { id: response.id }, data: { jobId: job.id } });
+  return { responseId: response.id, jobId: job.id, created };
+}
+
+/** Wake whoever waits for this ChatGPT job: the article run, a Humanizer run, or a post update. */
 async function wakeOwner(job: QueueJob, payload: ChatGPTJobPayload, client: Tx): Promise<void> {
   if (job.taskId) await wakeArticleJob(job.taskId, client);
   else if (payload.runId) await client.queueJob.updateMany({ where: { queue: 'humanizer', relatedId: payload.runId, status: 'WAITING', runAt: { gt: new Date() } }, data: { runAt: new Date() } });
+  else if (payload.postUpdateId) await client.queueJob.updateMany({ where: { queue: 'post-update', relatedId: payload.postUpdateId, status: 'WAITING', runAt: { gt: new Date() } }, data: { runAt: new Date() } });
 }
 
 export interface ClaimResult {

@@ -193,6 +193,34 @@ export class WpClient {
     return Array.isArray(data) ? data : [];
   }
 
+  /**
+   * Published posts with their stored content (context=edit), oldest change first (“Update to latest”: read only).
+   * `modifiedBefore`: only posts not changed since (WordPress 5.7+; older versions ignore it, the caller checks too).
+   */
+  async listPublishedPosts(query: { page: number; perPage: number; modifiedBefore?: Date | null; categories?: number[] }): Promise<{ posts: WpPost[]; totalPages: number }> {
+    try {
+      const { data, headers } = await this.call<WpPost[]>('GET', '/wp/v2/posts', {
+        query: {
+          context: 'edit',
+          status: 'publish',
+          per_page: query.perPage,
+          page: query.page,
+          orderby: 'modified',
+          order: 'asc',
+          modified_before: query.modifiedBefore ? query.modifiedBefore.toISOString().replace(/\.\d+Z$/, '') : undefined,
+          categories: query.categories?.length ? query.categories.join(',') : undefined,
+          _fields: 'id,status,type,slug,link,date_gmt,modified_gmt,title,content,categories,tags,featured_media',
+        },
+      });
+      const totalPages = Number(headers['x-wp-totalpages'] ?? '1') || 1;
+      return { posts: Array.isArray(data) ? data : [], totalPages };
+    } catch (error) {
+      // Past the last page WordPress answers 400 (rest_post_invalid_page_number).
+      if (error instanceof WpApiError && error.status === 400 && error.code === 'rest_post_invalid_page_number') return { posts: [], totalPages: query.page - 1 };
+      throw error;
+    }
+  }
+
   /** Create a post as a DRAFT. `status` is fixed here; callers cannot change it. */
   async createDraft(fields: { title: string; content: string; slug?: string; categories?: number[]; tags?: number[]; featured_media?: number; excerpt?: string }, timeoutMs?: number): Promise<WpPost> {
     const { data } = await this.call<WpPost>('POST', '/wp/v2/posts', { json: { ...fields, status: 'draft' }, timeoutMs });

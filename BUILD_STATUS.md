@@ -5458,3 +5458,71 @@ Owner report (screenshot): three keywords stayed "scheduled" with "Could not che
   - **The 9 WordPress, workflow and links integration test files:** 77 passed, 1 skipped (as before).
   - **Unit suite:** 78 files / 544 tests; `tsc` 0 errors.
 - **Not verified here:** the owner's site (Easy Vibs). If its REST API is closed to visitors, the signed-in path is used, with the automatic sign-in and the clearer reason.
+
+## Update to Latest (2026-11-27): old published posts brought up to date, also those the app did not write
+
+Owner request: "ek old articles ko latest per update krne vala add kren? or jin articles ka data tool per nahi ha vo bhi update kre data collect krke website sa". Their decisions on the plan: phase 1 (read the posts from WordPress) yes; phase 2: give ChatGPT the whole article with a good prompt ("Update this article to latest information jis sa mare website ka article again rank kr jai or google website ko plannalized nahi kre … or is prompt ko bhi bhater krde"); phases 3 (checks, compare) and 4 (write to the same post, undo, reindex) yes; phase 5 (a daily queue) removed.
+
+- **Where:** Editorial Tools → **Update to Latest** (`/update-posts`), and a card on the Editorial Tools page.
+- **1 · Read the posts (`importSitePosts`, `WpClient.listPublishedPosts`):**
+  - read only: published posts with their stored content (`context=edit`), 50 per request, oldest change first, up to 5,000;
+  - filters: not changed for 6, 12 or 24 months (also checked by the app, for WordPress before 5.7), and a category;
+  - saved as `SitePost` rows (new table); a post the app wrote is linked to its article by its WordPress id;
+  - runs in the shared WordPress session (`withWordPressSession`), so an ended sign-in is handled as for drafts.
+- **2 · ChatGPT updates it (`startPostUpdate`, prompt `shared/POST_UPDATE`):**
+  - the post is read again first, so ChatGPT gets the current text;
+  - **only text goes to ChatGPT** (`src/lib/posts/editable.ts`). Gutenberg paragraphs, headings, lists and tables without styles are editable. Images, embeds, iframes, shortcodes, styled, nested and other blocks become marks (`{K1}`) and come back byte for byte. Links, bold and italic keep their place with the existing `{L1}`/`{b}`/`{i}` marks. Classic posts are split into paragraphs as WordPress shows them;
+  - the new default prompt ("Shared — Update a post to the latest information", editable in Prompt Manager) asks ChatGPT, as a senior editor and fact-checker, to:
+    - search the web and check every time-sensitive statement (ages from a verified birth date, numbers, dates, FAQ answers, table rows);
+    - add new developments where they belong, keeping structure, headings, intent and keyword;
+    - never invent anything, and keep the original wording when a fact cannot be verified;
+    - put a newer year in the title only when the content really changed;
+    - follow Google's helpful-content and spam policies;
+    - answer in a fixed format: title, meta description, changes, sources, article;
+  - the keyword is the article's focus keyword, or for other posts the title's topic without its year (`keywordFromTitle`).
+- **3 · The app checks it (`src/lib/posts/checks.ts`, `processPostUpdate`):**
+  - stops the update when it:
+    - drops a kept part;
+    - is much shorter or longer (0.85–1.6 of the words, for posts of 150+ words);
+    - loses more than 30% of the headings;
+    - is in another language;
+    - stuffs the keyword over the website's density ceiling;
+    - has chatbot remarks;
+    - puts a future year in the title or meta description;
+  - warns about removed links, missing sources, a new title year with almost no changed text, and a meta description outside 110–170 characters;
+  - "No changes needed" from ChatGPT ends as **No change**; an answer without the format fails with the reason.
+- **4 · You approve; the same post is updated (`applyPostUpdate`):**
+  - the page shows what changed (replaced or removed, new or changed, or the whole text side by side), the title and meta description, ChatGPT's changes and sources, the checks and the history;
+  - **Approve and update** writes the content, and the title when it changed. A live post needs **Allow approved updates to live posts** and the typed `UPDATE LIVE POST`, as for content refreshes. Status, date, slug and URL are never sent (`updatePost` strips a status);
+  - the meta description goes to Rank Math's description when Rank Math is active on the website;
+  - if the post was edited in WordPress after it was read, nothing is written (**Conflict**);
+  - the write is read back. The app's own article (when linked) gets the new text with a revision;
+  - indexing is requested through the app's Search Console tab when the website has a property (outside the daily limit for new articles; cancelled if the update is undone first);
+  - **Undo** restores the text, title and meta description from before, unless the post was edited since.
+- **Nothing runs on a schedule.** Every update starts from the owner's click and is written only after their approval.
+- **Safety:**
+  - the publish-guard test now allows exactly one more `status: 'publish'` in the WordPress client: the GET filter of `listPublishedPosts`. It checks that it is a GET;
+  - no new dependency;
+  - the database change is one additive migration (`20261127120000_site_post_updates`: two new tables, one new nullable column on `ChatGPTResponse`).
+- **Tests:**
+  - **unit** (`tests/unit/post-updates.test.ts`, 8): block splitting; kept parts byte for byte; a block mark inside a sentence; invented marks dropped; answer parsing (bolded or spaced markers, sources with notes, "No changes needed", no format); checks (a real update passes; date-only freshness is a warning; a future year, lost structure, stuffing, chatbot remarks and another language stop it); keywordFromTitle;
+  - **integration** (`tests/integration/post-updates.test.ts`, 6, fake WordPress + scripted ChatGPT): import with age and category filters and the link to the app's article; the whole path read → ChatGPT → checks → approve with the typed phrase → written to the same post → read back → indexing queued → undo; checks stopping an update; No change and a non-format answer; a conflict; a classic post;
+  - updated: `nav-search` (the new page), `prompt-seed` (17 default prompts), `wordpress` (the read-only filter);
+  - the WordPress, workflow, links, images, content refresh and migration integration files: post-updates 6, workflow-publish 16, wordpress-drafts 11, images 15, image-tools 10 + 1 skipped, wordpress-session 6, links 7, wordpress-auto-login 6, content-refresh 5, migration-upgrade 1.
+- **UI:** checked in Chromium on seeded data: the list, a ready update, a stopped update, the whole-text view, Update to latest, Read posts, Reject, and Approve turned off while live updates are off; no page errors.
+- **Accessibility:** axe (WCAG 2.1 A/AA) on the list, a ready and a stopped update and the Editorial Tools page, light and dark: 0 violations. `/update-posts` is added to `npm run audit:a11y`.
+- **Extension and toolchain tests** (with this container's Chromium 1243, `BROWSER_EXECUTABLE_PATH`): worker-toolchain 1/1; extension 54/56 and extension-update 0/1. The same 3 tests fail the same way on `main` here:
+  - the no-window test;
+  - the filmstrip gallery test;
+  - the folder reload test.
+
+  They are a Chromium-version difference from the pinned 1194, not this change. The indexing tests that go through the changed claim/report code pass.
+- **Not verified here:** live ChatGPT answers to the new prompt, and the owner's real websites (real WordPress posts with other plugins' blocks).
+
+**Commands run**
+```
+npx tsc --noEmit                                   # 0 errors
+TMPDIR=/tmp/bq npx vitest run                      # 552 tests passed
+TMPDIR=/tmp/bq xvfb-run -a npx vitest run --config vitest.integration.config.ts <10 files>   # 83 passed, 1 skipped (as before)
+npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url file:…   # No difference detected
+```

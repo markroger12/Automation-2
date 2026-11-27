@@ -35,6 +35,7 @@ You give it keywords. It researches, writes, adds FAQs, a Quick Bio table, image
 | **Images** | Featured and body images from your uploads, ChatGPT or generated designs, on your own image template, with face-safe crops and upscaling. |
 | **Bulk and workflow** | Bulk campaigns, a weekly keyword workflow with publishing slots, a publishing calendar, and keyword ideas from Search Console. |
 | **Search Console** | Indexing requests in the app's Search Console tab, with proof; search performance from your own exports; content refresh suggestions. |
+| **Update old posts** | Read your published posts from WordPress, also those the app did not write, and let ChatGPT bring them up to date with sources. The app checks each update, shows what changed, and writes it to the same post only after you approve, with undo. |
 | **Live progress** | Each article shows its steps live, with how long each took and about how long is left, from your own earlier articles. |
 | **Work at a glance** | The tray icon and the taskbar show what the app is doing; **Pause** stops new work with one click; **quiet hours** pause it every night. |
 | **Help assistant** | Ask questions about the app from the **Ask** button and get answers in English, also when you ask in Roman Urdu (optional, with your free Google Gemini key). |

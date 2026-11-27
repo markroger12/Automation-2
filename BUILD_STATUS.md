@@ -5510,6 +5510,13 @@ Owner request: "ek old articles ko latest per update krne vala add kren? or jin 
   - updated: `nav-search` (the new page), `prompt-seed` (17 default prompts), `wordpress` (the read-only filter);
   - the WordPress, workflow, links, images, content refresh and migration integration files: post-updates 6, workflow-publish 16, wordpress-drafts 11, images 15, image-tools 10 + 1 skipped, wordpress-session 6, links 7, wordpress-auto-login 6, content-refresh 5, migration-upgrade 1.
 - **UI:** checked in Chromium on seeded data: the list, a ready update, a stopped update, the whole-text view, Update to latest, Read posts, Reject, and Approve turned off while live updates are off; no page errors.
+- **Accessibility:** axe (WCAG 2.1 A/AA) on the list, a ready and a stopped update and the Editorial Tools page, light and dark: 0 violations. `/update-posts` is added to `npm run audit:a11y`.
+- **Extension and toolchain tests** (with this container's Chromium 1243, `BROWSER_EXECUTABLE_PATH`): worker-toolchain 1/1; extension 54/56 and extension-update 0/1. The same 3 tests fail the same way on `main` here:
+  - the no-window test;
+  - the filmstrip gallery test;
+  - the folder reload test.
+
+  They are a Chromium-version difference from the pinned 1194, not this change. The indexing tests that go through the changed claim/report code pass.
 - **Not verified here:** live ChatGPT answers to the new prompt, and the owner's real websites (real WordPress posts with other plugins' blocks).
 
 **Commands run**

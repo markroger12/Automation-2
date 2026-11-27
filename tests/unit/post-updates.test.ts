@@ -3,6 +3,7 @@ import { editablePost, markUse, rebuildPost, topLevelBlocks } from '@/lib/posts/
 import { parseUpdateAnswer } from '@/lib/posts/answer';
 import { blockingFailures, checkUpdate } from '@/lib/posts/checks';
 import { keywordFromTitle } from '@/wordpress/post-updates';
+import { ageAgo, updateState, viewPosts, type ListedPost } from '@/lib/posts/list-view';
 
 /** “Update to latest” (owner request 2026-11-27): what ChatGPT gets, what comes back, and the app's checks. */
 describe('a WordPress post as an article ChatGPT can update', () => {
@@ -124,5 +125,60 @@ describe('the keyword of a post the app did not write', () => {
     expect(keywordFromTitle('Who Is Anna Bell?')).toBe('Who Is Anna Bell');
     expect(keywordFromTitle('Best Films of 2023')).toBe('Best Films of');
     expect(keywordFromTitle('2024')).toBe('2024');
+  });
+});
+
+/** Owner request 2026-11-27: “yaha per filters toh add kr or sorting bhi add kr”. */
+describe('the list of posts: filters, order and counts', () => {
+  const now = new Date('2026-11-27T12:00:00Z');
+  const ago = (months: number) => new Date(now.getTime() - months * 30.44 * 86_400_000);
+  const post = (id: string, o: Partial<ListedPost> = {}): ListedPost => ({ id, title: id, url: `https://e.example/${id.toLowerCase()}/`, taskId: null, categoryIds: [], words: 1000, publishedAt: ago(30), modifiedAt: ago(13), lastUpdate: null, ...o });
+  const rows: ListedPost[] = [
+    post('Verena Langen', { categoryIds: [3], words: 1037, publishedAt: new Date('2025-04-10T00:00:00Z'), modifiedAt: ago(7) }),
+    post('Corinna Baum', { categoryIds: [3, 5], words: 1151, publishedAt: new Date('2024-02-01T00:00:00Z'), modifiedAt: ago(20), taskId: 't1', lastUpdate: { status: 'READY', createdAt: ago(0.1) } }),
+    post('Lilith Maria Dörthe Becker', { categoryIds: [5], words: 1445, publishedAt: new Date('2024-06-01T00:00:00Z'), modifiedAt: ago(26), lastUpdate: { status: 'APPLIED', createdAt: ago(1) } }),
+    post('Yvonne Beck', { words: 450, publishedAt: null, modifiedAt: null, lastUpdate: { status: 'FAILED', createdAt: ago(2) } }),
+    post('Anna Bell', { words: 2400, publishedAt: new Date('2023-01-01T00:00:00Z'), modifiedAt: ago(40), lastUpdate: { status: 'WRITING', createdAt: ago(0.01) } }),
+  ];
+  const ids = (v: Parameters<typeof viewPosts>[1]) => viewPosts(rows, v, now).rows.map((r) => r.id);
+
+  it('oldest change first by default; a post without a date goes last in either direction', () => {
+    expect(ids({})).toEqual(['Anna Bell', 'Lilith Maria Dörthe Becker', 'Corinna Baum', 'Verena Langen', 'Yvonne Beck']);
+    expect(ids({ sort: 'changed-desc' })).toEqual(['Verena Langen', 'Corinna Baum', 'Lilith Maria Dörthe Becker', 'Anna Bell', 'Yvonne Beck']);
+    expect(ids({ sort: 'published-asc' }).at(-1)).toBe('Yvonne Beck');
+    expect(ids({ sort: 'title-asc' })).toEqual(['Anna Bell', 'Corinna Baum', 'Lilith Maria Dörthe Becker', 'Verena Langen', 'Yvonne Beck']);
+    expect(ids({ sort: 'words-desc' })[0]).toBe('Anna Bell');
+    expect(ids({ sort: 'update-desc' })).toEqual(['Anna Bell', 'Corinna Baum', 'Lilith Maria Dörthe Becker', 'Yvonne Beck', 'Verena Langen']);
+    // An unknown order falls back to the default.
+    expect(ids({ sort: 'nope' as never })).toEqual(ids({}));
+  });
+
+  it('filters combine; the search ignores case and accents and also looks at the address', () => {
+    expect(ids({ q: 'dorthe' })).toEqual(['Lilith Maria Dörthe Becker']);
+    expect(ids({ q: 'BECK' })).toEqual(['Lilith Maria Dörthe Becker', 'Yvonne Beck']);
+    expect(ids({ q: 'e.example/anna' })).toEqual(['Anna Bell']);
+    expect(ids({ olderThanMonths: 12 })).toEqual(['Anna Bell', 'Lilith Maria Dörthe Becker', 'Corinna Baum']);
+    expect(ids({ olderThanMonths: 24, categoryId: 5 })).toEqual(['Lilith Maria Dörthe Becker']);
+    expect(ids({ year: 2024 })).toEqual(['Lilith Maria Dörthe Becker', 'Corinna Baum']);
+    expect(ids({ length: 'short' })).toEqual(['Yvonne Beck']);
+    expect(ids({ length: 'long' })).toEqual(['Anna Bell']);
+    expect(ids({ source: 'app' })).toEqual(['Corinna Baum']);
+    expect(ids({ source: 'other' })).toHaveLength(4);
+    expect(ids({ state: 'none' })).toEqual(['Verena Langen']);
+    expect(ids({ state: 'working' })).toEqual(['Anna Bell']);
+    expect(ids({ state: 'attention' })).toEqual(['Yvonne Beck']);
+  });
+
+  it('each choice shows how many posts it has, counted with the other filters on', () => {
+    const { facets } = viewPosts(rows, { categoryId: 3, state: 'ready' }, now);
+    expect(facets.states).toMatchObject({ all: 2, none: 1, ready: 1, updated: 0, working: 0 });
+    expect(facets.years).toEqual([{ year: 2024, count: 1 }]);
+    expect(facets.categories).toEqual(expect.arrayContaining([{ id: 3, count: 1 }, { id: 5, count: 1 }]));
+    expect(updateState('UNDONE')).toBe('closed');
+    // Ages read as people say them, not “1002d ago”.
+    const at = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
+    expect([0, 1, 9, 30, 221, 400, 1002, 731].map((d) => ageAgo(at(d), now.getTime()))).toEqual(['today', '1 day ago', '9 days ago', '4 weeks ago', '7 months ago', '13 months ago', '2 years 8 months ago', '2 years ago']);
+    expect(ageAgo(null)).toBe('—');
+    expect(updateState(null)).toBe('none');
   });
 });

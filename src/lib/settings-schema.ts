@@ -25,6 +25,11 @@ export const browserSettingsSchema = z.object({
 export const workflowSettingsSchema = z.object({
   manualTitleApproval: z.boolean().default(false),
   manualArticleApproval: z.boolean().default(false),
+  /**
+   * Off (owner decision): review reasons never hold an article. They are kept as notes, the draft is saved and the
+   * article completes. A draft with a hard stop is still saved but never published automatically by a workflow.
+   */
+  holdForReview: z.boolean().default(false),
   autoSendToWordPress: z.boolean().default(true),
   createMissingCategory: z.boolean().default(false),
   createMissingTags: z.boolean().default(true),
@@ -33,6 +38,13 @@ export const workflowSettingsSchema = z.object({
   maxTaskConcurrency: z.number().int().min(1).max(5).default(5),
   targetArticlesPerHour: z.number().min(1).max(60).default(6),
   highThroughputMode: z.boolean().default(true),
+  /**
+   * Quiet hours (owner request 2026-11-12): between these times (this computer's clock) no new ChatGPT prompt starts
+   * and no indexing request is made; running prompts finish, the rest waits (src/lib/work-pause.ts).
+   */
+  quietHours: z.boolean().default(false),
+  quietFrom: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default('23:00'),
+  quietTo: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default('07:00'),
   throughputProfile: z.enum(['throughput-first', 'quality-first']).default('throughput-first'),
   retryAttempts: z.number().int().min(0).max(10).default(2),
   retryBaseDelaySec: z.number().int().min(1).max(3600).default(30),
@@ -54,7 +66,8 @@ export const contentSettingsSchema = z.object({
   targetCountry: z.string().min(2).max(56).default('United States'),
   tigramWordRange: z.string().regex(/^\d{3,4}\s*[-–]\s*\d{3,4}$/).default('1500-2200'),
   tigramFaqCount: z.number().int().min(3).max(12).default(7),
-  humanizerEnabled: z.boolean().default(true),
+  /** Off by default (owner decision, 2026-10-21); a website can switch it on (website settings → Humanizer). */
+  humanizerEnabled: z.boolean().default(false),
   humanizerBatchWords: z.number().int().min(300).max(3000).default(1200),
   humanizerLengthTolerancePct: z.number().int().min(5).max(50).default(20),
   /** all = every eligible paragraph (spec default); flagged = only paragraphs the local editor flagged (fewer ChatGPT prompts). */
@@ -74,20 +87,23 @@ export const seoSettingsSchema = z.object({
   externalLinks: z.boolean().default(true),
   maxExternalLinks: z.number().int().min(0).max(10).default(5),
   internalLinks: z.boolean().default(true),
-  maxContextualInternalLinks: z.number().int().min(0).max(5).default(2),
+  /**
+   * Owner request 2026-11-15: two internal links per article, each with its own switch.
+   * - previousArticleLink: the last line (“Also read: …”, “Das könnte Ihnen gefallen: …”) links the article this app
+   *   wrote before for the same website (as in the owner's earlier tool); the most related post when there is none.
+   * - relatedArticleLink: the most related published post of the website, in the middle of the article: on a word
+   *   the article already uses (e.g. the person's name), else as a line between two sections.
+   */
+  previousArticleLink: z.boolean().default(true),
+  relatedArticleLink: z.boolean().default(true),
   /** Re-read published posts for internal linking at most this often (hours). */
   internalLinkIndexHours: z.number().min(0.25).max(168).default(6),
-  /**
-   * The article's last-line internal link ("Das könnte Ihnen gefallen: …"): the previous article this app wrote for
-   * the same website (as in the owner's earlier tool), or the site's most related published post.
-   */
-  internalLinkLineTarget: z.enum(['previous-article', 'most-related']).default('previous-article'),
   articleImages: z.boolean().default(true),
   imagesRequired: z.boolean().default(false),
   imageOutputSize: z.enum(['1200x675', '1920x1080']).default('1200x675'),
   imageMaxBytes: z.number().int().min(50_000).max(5_000_000).default(350_000),
   enhanceCelebrityImages: z.boolean().default(true),
-  celebrityPhotoReview: z.boolean().default(false),
+  celebrityPhotoReview: z.boolean().default(true),
   /**
    * Where celebrity photos come from (after the owner's own uploads): ChatGPT's image-search gallery through the
    * extension (as in the owner's earlier tool), Wikimedia Commons, or the gallery first with Commons as a fallback.
@@ -111,12 +127,23 @@ export const advancedSettingsSchema = z.object({
   linkCheckTimeoutSec: z.number().int().min(3).max(60).default(10),
 });
 
+/** Windows notifications (owner request): shown by the worker through Windows itself (src/lib/notify). */
+export const notificationSettingsSchema = z.object({
+  windows: z.boolean().default(true),
+  review: z.boolean().default(true),
+  chatgptSignedOut: z.boolean().default(true),
+  campaignFinished: z.boolean().default(true),
+  /** A new app version on GitHub (the worker looks every hour; src/lib/update/auto-check.ts). */
+  appUpdate: z.boolean().default(true),
+});
+
 export const settingsSchema = z.object({
   browser: browserSettingsSchema.prefault({}),
   workflow: workflowSettingsSchema.prefault({}),
   content: contentSettingsSchema.prefault({}),
   seo: seoSettingsSchema.prefault({}),
   advanced: advancedSettingsSchema.prefault({}),
+  notifications: notificationSettingsSchema.prefault({}),
 });
 
 export type Settings = z.output<typeof settingsSchema>;
@@ -143,8 +170,8 @@ function overridable<S extends z.ZodRawShape, K extends keyof S & string>(shape:
 
 export const SITE_OVERRIDE_KEYS = {
   content: ['maxArticleWordCount', 'faqCount', 'quickBioRows', 'tigramWordRange', 'humanizerEnabled'],
-  seo: ['reviewThreshold', 'rankMathTargetScore', 'rankMathMode', 'externalLinks', 'maxExternalLinks', 'internalLinks', 'articleImages', 'imagesRequired', 'imageOutputSize'],
-  workflow: ['manualTitleApproval', 'manualArticleApproval', 'autoSendToWordPress', 'createMissingCategory'],
+  seo: ['reviewThreshold', 'rankMathTargetScore', 'rankMathMode', 'externalLinks', 'maxExternalLinks', 'internalLinks', 'previousArticleLink', 'relatedArticleLink', 'articleImages', 'imagesRequired', 'imageOutputSize'],
+  workflow: ['manualTitleApproval', 'manualArticleApproval', 'holdForReview', 'autoSendToWordPress', 'createMissingCategory'],
 } as const;
 
 /** Per-site overrides: only content/seo/workflow keys that make sense per site. Unset = use the global setting. */
@@ -163,6 +190,7 @@ export const taskOptionsSchema = z.object({
   images: z.enum(['site', 'on', 'off']).default('site'),
   manualTitleApproval: z.boolean().optional(),
   manualArticleApproval: z.boolean().optional(),
+  holdForReview: z.boolean().optional(),
   reviewThreshold: z.number().int().min(0).max(100).optional(),
   rankMathTargetScore: z.number().int().min(0).max(100).optional(),
   externalLinks: z.boolean().optional(),
@@ -187,9 +215,9 @@ export interface EffectiveTaskConfig {
   imageMaxBytes: number;
   celebrityPhotoReview: boolean;
   celebrityPhotoSource: 'chatgpt' | 'commons' | 'chatgpt-then-commons';
-  internalLinkLineTarget: 'previous-article' | 'most-related';
   manualTitleApproval: boolean;
   manualArticleApproval: boolean;
+  holdForReview: boolean;
   reviewThreshold: number;
   rankMathTargetScore: number;
   maxRankMathAttempts: number;
@@ -198,7 +226,9 @@ export interface EffectiveTaskConfig {
   externalLinks: boolean;
   maxExternalLinks: number;
   internalLinks: boolean;
-  maxContextualInternalLinks: number;
+  /** Missing in tasks started before 2026-11-15 (read as on). */
+  previousArticleLink?: boolean;
+  relatedArticleLink?: boolean;
   saveToWordPress: boolean;
   humanizerEnabled: boolean;
   humanizerBatchWords: number;
@@ -229,9 +259,9 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     imageMaxBytes: global.seo.imageMaxBytes,
     celebrityPhotoReview: global.seo.celebrityPhotoReview,
     celebrityPhotoSource: global.seo.celebrityPhotoSource,
-    internalLinkLineTarget: global.seo.internalLinkLineTarget,
     manualTitleApproval: pick(options.manualTitleApproval, site.workflow.manualTitleApproval, global.workflow.manualTitleApproval),
     manualArticleApproval: pick(options.manualArticleApproval, site.workflow.manualArticleApproval, global.workflow.manualArticleApproval),
+    holdForReview: pick(options.holdForReview, site.workflow.holdForReview, global.workflow.holdForReview),
     reviewThreshold: pick(options.reviewThreshold, site.seo.reviewThreshold, global.seo.reviewThreshold),
     rankMathTargetScore: pick(options.rankMathTargetScore, site.seo.rankMathTargetScore, global.seo.rankMathTargetScore),
     maxRankMathAttempts: global.seo.maxRankMathAttempts,
@@ -240,7 +270,8 @@ export function effectiveTaskConfig(global: Settings, site: SiteOverrides, optio
     externalLinks: pick(options.externalLinks, site.seo.externalLinks, global.seo.externalLinks),
     maxExternalLinks: pick(site.seo.maxExternalLinks, global.seo.maxExternalLinks),
     internalLinks: pick(options.internalLinks, site.seo.internalLinks, global.seo.internalLinks),
-    maxContextualInternalLinks: global.seo.maxContextualInternalLinks,
+    previousArticleLink: pick(site.seo.previousArticleLink, global.seo.previousArticleLink),
+    relatedArticleLink: pick(site.seo.relatedArticleLink, global.seo.relatedArticleLink),
     saveToWordPress: options.saveToWordPress && pick(site.workflow.autoSendToWordPress, global.workflow.autoSendToWordPress),
     humanizerEnabled: pick(site.content.humanizerEnabled, global.content.humanizerEnabled),
     humanizerBatchWords: global.content.humanizerBatchWords,

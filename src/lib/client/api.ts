@@ -41,7 +41,7 @@ export async function api<T = unknown>(url: string, init: { method?: string; bod
     });
   } catch (error) {
     if ((error as Error).name === 'AbortError') throw error;
-    throw new ApiClientError(0, 'NETWORK', 'Cannot reach the local server. Is `npm run dev:all` still running?');
+    throw new ApiClientError(0, 'NETWORK', 'Cannot reach the dashboard right now. It may be restarting; try again in a few seconds.');
   }
   const text = await res.text();
   let data: unknown = null;
@@ -63,7 +63,7 @@ export async function upload<T = unknown>(url: string, form: FormData): Promise<
   try {
     res = await fetch(url, { method: 'POST', headers: { Accept: 'application/json', [CSRF_HEADER]: csrfToken() }, body: form, credentials: 'same-origin', cache: 'no-store' });
   } catch {
-    throw new ApiClientError(0, 'NETWORK', 'Cannot reach the local server. Is `npm run dev:all` still running?');
+    throw new ApiClientError(0, 'NETWORK', 'Cannot reach the dashboard right now. It may be restarting; try again in a few seconds.');
   }
   const data = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
   if (!res.ok) throw new ApiClientError(res.status, data?.error?.code ?? 'HTTP_' + res.status, data?.error?.message ?? `Upload failed (${res.status}).`);

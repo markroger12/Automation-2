@@ -1,6 +1,7 @@
 'use client';
 
 import { Chip, type ChipTone } from '@/components/ui';
+import { moduleShortName } from '@/lib/domain';
 
 const CAMPAIGN: Record<string, [string, ChipTone]> = {
   QUEUEING: ['queueing rows', 'info'],
@@ -29,4 +30,6 @@ export function RowStatusChip({ status }: { status: string }) {
   return <Chip tone={tone}>{label}</Chip>;
 }
 
-export const WRITER_LABEL: Record<string, string> = { 'celebrity-writer': 'Celebrity', 'tigram-writer': 'Tigram' };
+export const WRITER_LABEL: Record<string, string> = { 'celebrity-writer': 'Celebrity', 'celebrity2-writer': 'Celebrity 2', 'tigram-writer': 'Tigram' };
+/** A writer's short label: the built-in ones, or the owner's writer's short name. */
+export const writerLabel = (key: string) => WRITER_LABEL[key] ?? moduleShortName(key);

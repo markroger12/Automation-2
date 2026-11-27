@@ -1,0 +1,77 @@
+# Blog Automation Studio — Windows installer (npm run dist:win in desktop/, after node prepare.mjs).
+appId: local.blogautomationstudio.desktop
+productName: Blog Automation Studio
+copyright: Copyright © 2026 Blog Automation Studio
+directories:
+  output: dist
+# The window, its tabs (dashboard, ChatGPT, Search Console) and the tray only; the tool itself comes in as a resource (prepare.mjs) and
+# runs on this app's own built-in Node.js, so nothing else is installed (owner request: “like Discord”). The ChatGPT
+# tab runs the tool's own extension scripts (app/extension).
+files:
+  - main.cjs
+  - shell.html
+  - shell-preload.cjs
+  - chatgpt-tab.cjs
+  - chatgpt-agent.cjs
+  - chatgpt-preload.cjs
+  - google-tab.cjs
+  - google-hosts.cjs
+  - google-preload.cjs
+  - updates.cjs
+  - updating.html
+  - log-file.cjs
+  - ux.cjs
+  - dashboard-preload.cjs
+  - status.cjs
+  - tray/*.png
+  - offline.html
+  - content-shim.js
+  - icon.png
+  - package.json
+extraResources:
+  - from: bundle/app
+    to: app
+  # electron-builder leaves node_modules out of a folder copy; the tool needs its own, so they are named here.
+  - from: bundle/app/node_modules
+    to: app/node_modules
+    filter: ['**/*']
+asar: true
+# Owner request: updates. A GitHub release of this public repository with the installer and latest.yml is what the
+# installed app looks for (updates.cjs, electron-updater).
+publish:
+  provider: github
+  owner: markroger12
+  repo: Automation-2
+  releaseType: release
+# Owner request: light. The smallest download, and the window's texts in English only (the dashboard is English).
+compression: maximum
+electronLanguages: [en-US]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: icon.png
+  artifactName: Blog-Automation-Studio-Setup-${version}.${ext}
+nsis:
+  # Owner request (2026-11-12): an installer that asks where to install, like other programs: a welcome page, the
+  # folder (a first install suggests …\Programs\Blog Automation Studio, build/installer.nsh), the progress, and a
+  # last page that starts the app. For this Windows user only (no administrator). The app's own updates install into
+  # the same folder with the installer's progress window and no question, then open the app (build/installer.nsh).
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp
+  installerHeader: build/installerHeader.bmp
+  runAfterFinish: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Blog Automation Studio
+  # Apps & features shows the name and the version, as for other programs.
+  uninstallDisplayName: Blog Automation Studio ${version}
+  # The data folder is never inside the installation, and uninstalling never deletes it.
+  deleteAppDataOnUninstall: false
+linux:
+  target: [dir]
+  icon: icon.png

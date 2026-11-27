@@ -125,7 +125,11 @@ export interface VerifyResult {
   priority: number;
 }
 
-export async function verifyLink(candidate: { phrase: string; url: string }, language: string, fetchOpts: SafeFetchOptions = {}): Promise<VerifyResult> {
+/**
+ * `alsoIdentifies`: other phrases that may stand for the page's subject instead of the anchor (Celebrity 2: ChatGPT's
+ * own source links have anchors such as “announcing her return”; the page then has to be about the article's person).
+ */
+export async function verifyLink(candidate: { phrase: string; url: string }, language: string, fetchOpts: SafeFetchOptions = {}, opts: { alsoIdentifies?: string[] } = {}): Promise<VerifyResult> {
   const policy = linkPolicy(candidate.url, language);
   if (!policy.ok) return { ok: false, reason: policy.reason!, kind: policy.kind, priority: 0 };
   const original = new URL(candidate.url);
@@ -151,7 +155,12 @@ export async function verifyLink(candidate: { phrase: string; url: string }, lan
       const facts = pageFacts(page.body);
       if (facts.soft404) return { ok: false, reason: `page says “not found” (${facts.title.slice(0, 60)})`, kind: policy.kind, priority: 0 };
       if (facts.disambiguation) return { ok: false, reason: 'disambiguation page', kind: policy.kind, priority: 0 };
-      const subject = identifiesSubject(candidate.phrase, facts, policy.kind);
+      let subject = identifiesSubject(candidate.phrase, facts, policy.kind);
+      for (const other of opts.alsoIdentifies ?? []) {
+        if (subject.ok) break;
+        const alt = identifiesSubject(other, facts, policy.kind);
+        if (alt.ok) subject = { ok: true, detail: `about “${other}”: ${alt.detail}` };
+      }
       if (!subject.ok) return { ok: false, reason: subject.detail, kind: policy.kind, priority: 0 };
       const https = page.finalUrl.startsWith('https:');
       return { ok: true, reason: `${subject.detail}${https ? '' : ' (no HTTPS available)'}`, finalUrl: page.finalUrl, title: facts.title, kind: policy.kind, priority: policy.priority + (https ? 0.5 : 0) };

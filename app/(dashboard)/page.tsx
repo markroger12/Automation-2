@@ -1,32 +1,38 @@
 import Link from 'next/link';
 import { Layers, PenLine } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getExtensionHealth, getHealthWarnings, getWorkerHealth } from '@/lib/health';
+import { getExtensionHealth, getWorkerHealth } from '@/lib/health';
 import { siteSummaries, taskGroupCounts } from '@/lib/stats';
 import { LANGUAGE_LABELS, moduleDisplayName, type Language } from '@/lib/domain';
-import { Alert, Card, Chip, EmptyState, LinkButton, PageHeader, ProgressBar, Stat, StatusChip, formatRelative } from '@/components/ui';
+import { Card, Chip, EmptyState, LinkButton, PageHeader, ProgressBar, Stat, StatusChip, formatRelative, plural } from '@/components/ui';
+import { ensureCustomWriters } from '@/lib/writers/store';
+import { setupState } from '@/lib/setup';
+import { SetupBanner } from '@/components/setup-checklist';
+import { ErrorBoundary } from '@/components/error-boundary';
 
 export const metadata = { title: 'Overview' };
 
 export default async function OverviewPage() {
-  const [counts, worker, extension, warnings, sites, recent] = await Promise.all([
+  await ensureCustomWriters();
+  // The health warnings are in the banner above every page (app/(dashboard)/layout.tsx), not repeated here.
+  const [counts, worker, extension, sites, recent, setup] = await Promise.all([
     taskGroupCounts(),
     getWorkerHealth(),
     getExtensionHealth(),
-    getHealthWarnings(),
     siteSummaries(),
     db.articleTask.findMany({
       orderBy: { updatedAt: 'desc' },
       take: 10,
       select: { id: true, keyword: true, status: true, percent: true, moduleKey: true, updatedAt: true, message: true, website: { select: { name: true } } },
     }),
+    setupState(),
   ]);
 
   return (
     <>
       <PageHeader
         title="Overview"
-        description="Everything below is read from the local database and live heartbeats — no simulated numbers."
+        description="Your articles, websites and the app's health at a glance, live from this PC."
         actions={
           <>
             <LinkButton href="/single-article" variant="primary">
@@ -39,30 +45,19 @@ export default async function OverviewPage() {
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
-        <Stat label="Total tasks" value={counts.total} href="/history" />
-        <Stat label="Queued" value={counts.queued} href="/queue?group=queued" />
-        <Stat label="Running" value={counts.running} href="/queue?group=running" />
-        <Stat label="Needs review / approval" value={counts.review} tone={counts.review ? 'warning' : undefined} href="/queue?group=review" />
-        <Stat label="Paused (login/limits)" value={counts.paused} tone={counts.paused ? 'warning' : undefined} href="/queue?group=paused" />
-        <Stat label="Drafts" value={counts.draft} tone={counts.draft ? 'success' : undefined} href="/history?group=draft" />
-        <Stat label="Failed" value={counts.failed} tone={counts.failed ? 'danger' : undefined} href="/queue?group=failed" />
-      </div>
+      <ErrorBoundary name="setup checklist banner">
+        <SetupBanner initial={setup} />
+      </ErrorBoundary>
 
-      {warnings.length > 0 ? (
-        <div className="mt-6 space-y-2">
-          {warnings.map((w, i) => (
-            <Alert
-              key={i}
-              tone={w.tone}
-              title={w.title}
-              action={w.href ? <LinkButton href={w.href} size="sm">{w.action ?? 'Open'}</LinkButton> : undefined}
-            >
-              {w.detail}
-            </Alert>
-          ))}
-        </div>
-      ) : null}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
+        <Stat label="All articles" value={counts.total} hint="Article History" href="/history" />
+        <Stat label="Queued" value={counts.queued} hint="waiting to start" href="/queue?group=queued" />
+        <Stat label="Running" value={counts.running} hint="being written" href="/queue?group=running" />
+        <Stat label="Review" value={counts.review} tone={counts.review ? 'warning' : undefined} hint="needs you" href="/queue?group=review" />
+        <Stat label="Paused" value={counts.paused} tone={counts.paused ? 'warning' : undefined} hint="sign-in or limits" href="/queue?group=paused" />
+        <Stat label="Drafts" value={counts.draft} tone={counts.draft ? 'success' : undefined} hint="in WordPress" href="/history?group=draft" />
+        <Stat label="Failed" value={counts.failed} tone={counts.failed ? 'danger' : undefined} hint="open to retry" href="/queue?group=failed" />
+      </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-3">
         <Card title="Recent work" className="xl:col-span-2" padded={false} actions={<LinkButton href="/queue" size="sm">Open queue</LinkButton>}>
@@ -77,32 +72,30 @@ export default async function OverviewPage() {
               <table className="table-app">
                 <thead>
                   <tr>
-                    <th>Keyword</th>
-                    <th>Writer</th>
-                    <th>Website</th>
+                    <th>Article</th>
                     <th>Status</th>
-                    <th className="w-40">Progress</th>
-                    <th>Updated</th>
+                    <th className="w-36">Progress</th>
+                    <th className="text-right">Updated</th>
                   </tr>
                 </thead>
                 <tbody>
                   {recent.map((task) => (
                     <tr key={task.id}>
-                      <td>
-                        <Link className="font-medium hover:underline" href={`/articles/${task.id}`}>
+                      <td className="max-w-0 w-full">
+                        <Link className="block truncate font-medium hover:underline" href={`/articles/${task.id}`} title={task.keyword}>
                           {task.keyword}
                         </Link>
-                        {task.message ? <div className="text-muted line-clamp-1 text-xs">{task.message}</div> : null}
+                        <div className="text-muted truncate text-xs" title={task.message ?? undefined}>
+                          {task.website.name} · {moduleDisplayName(task.moduleKey)}
+                        </div>
                       </td>
-                      <td className="whitespace-nowrap">{moduleDisplayName(task.moduleKey)}</td>
-                      <td>{task.website.name}</td>
-                      <td>
+                      <td className="whitespace-nowrap">
                         <StatusChip status={task.status} />
                       </td>
                       <td>
                         <ProgressBar label={`Progress of ${task.keyword}`} value={task.percent} tone={task.status === 'FAILED' ? 'danger' : task.status === 'COMPLETED' ? 'success' : 'brand'} />
                       </td>
-                      <td className="text-muted whitespace-nowrap">{formatRelative(task.updatedAt)}</td>
+                      <td className="text-muted whitespace-nowrap text-right">{formatRelative(task.updatedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -111,7 +104,7 @@ export default async function OverviewPage() {
           )}
         </Card>
 
-        <Card title="System health" description="Heartbeats must be fresh to count as online.">
+        <Card title="System health" description="Live heartbeats; stale ones count as offline.">
           <ul className="space-y-3 text-sm">
             <li className="flex items-center justify-between gap-3">
               <span>Worker</span>
@@ -119,11 +112,11 @@ export default async function OverviewPage() {
                 {worker.state === 'online' ? 'Online' : worker.state === 'stale' ? 'Stale heartbeat' : 'Offline'}
               </Chip>
             </li>
-            <li className="text-muted -mt-2 text-xs">Last heartbeat: {formatRelative(worker.lastSeenAt)}{worker.pid ? ` · PID ${worker.pid}` : ''}</li>
+            <li className="text-muted -mt-2 text-xs">Last heartbeat: <span suppressHydrationWarning>{formatRelative(worker.lastSeenAt)}</span></li>
             <li className="flex items-center justify-between gap-3">
               <span>ChatGPT extension</span>
               <Chip tone={extension.state === 'connected' ? 'success' : 'warning'}>
-                {extension.state === 'connected' ? `Connected · ${extension.tabs} tab(s)` : extension.state === 'stale' ? 'Not responding' : 'Not paired'}
+                {extension.state === 'connected' ? `Connected · ${plural(extension.tabs, 'tab')}` : extension.state === 'stale' ? 'Not responding' : 'Not paired'}
               </Chip>
             </li>
             <li className="text-muted -mt-2 text-xs">
@@ -133,7 +126,7 @@ export default async function OverviewPage() {
             <li className="flex items-center justify-between gap-3">
               <span>WordPress sessions</span>
               <span className="text-muted text-xs">
-                {sites.filter((s) => s.sessionState === 'ACTIVE').length} active / {sites.length} site(s)
+                {sites.filter((s) => s.sessionState === 'ACTIVE').length} active / {plural(sites.length, 'site')}
               </span>
             </li>
           </ul>
@@ -146,7 +139,7 @@ export default async function OverviewPage() {
 
       <Card title="Websites" className="mt-6" padded={false} actions={<LinkButton href="/websites" size="sm">Manage</LinkButton>}>
         {sites.length === 0 ? (
-          <EmptyState title="No websites configured" description="Add a WordPress site, log in once in the visible browser, then sync categories." action={<LinkButton href="/websites" variant="primary">Add website</LinkButton>} />
+          <EmptyState title="No websites configured" description="Add a WordPress site with its user name and password: the app logs in and syncs its categories." action={<LinkButton href="/websites" variant="primary">Add website</LinkButton>} />
         ) : (
           <div className="overflow-x-auto">
             <table className="table-app">

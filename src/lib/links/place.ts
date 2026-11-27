@@ -51,7 +51,23 @@ function textNodes($: CheerioAPI, block: Element): Text[] {
   return out;
 }
 
-export function placeLinks(html: string, requests: LinkRequest[], opts: { keyword?: string | null; maxPerBlock?: number } = {}): PlaceResult {
+/**
+ * The text a link can be placed on (paragraphs, list items, table cells; not headings, links or the app's own
+ * internal-link lines), one text piece per line: a phrase found here can be linked by placeLinks.
+ */
+export function placeableText(html: string): string {
+  const $ = load(`<body>${html}</body>`);
+  return ($(BLOCKS).toArray() as Element[])
+    .filter((b) => !insideForbidden(b) && !b.attribs?.['data-bas-internal-link'])
+    .flatMap((b) => textNodes($, b).map((n) => n.data))
+    .join('\n');
+}
+
+/**
+ * `proseFirst`: a phrase is linked in a paragraph or list item before a table cell (a related article's link reads
+ * better in the text than in the Quick Bio table).
+ */
+export function placeLinks(html: string, requests: LinkRequest[], opts: { keyword?: string | null; maxPerBlock?: number; proseFirst?: boolean } = {}): PlaceResult {
   const $ = load(`<body>${html}</body>`);
   const max = opts.maxPerBlock ?? 2;
   const kw = opts.keyword ? normalizeText(opts.keyword) : null;
@@ -59,9 +75,10 @@ export function placeLinks(html: string, requests: LinkRequest[], opts: { keywor
   const skipped: PlaceResult['skipped'] = [];
   const existingHrefs = new Set($('a[href]').toArray().map((a) => ($(a).attr('href') ?? '').trim()));
   const linkedAnchors = new Set($('a').toArray().map((a) => normalizeText($(a).text())));
-  const blocks = $(BLOCKS)
+  const inOrder = $(BLOCKS)
     .toArray()
     .filter((b) => !insideForbidden(b) && !(b as Element).attribs?.['data-bas-internal-link']) as Element[];
+  const blocks = opts.proseFirst ? [...inOrder.filter((b) => b.tagName !== 'td'), ...inOrder.filter((b) => b.tagName === 'td')] : inOrder;
 
   for (const req of requests) {
     const anchor = req.anchor.trim();

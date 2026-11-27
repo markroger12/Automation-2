@@ -14,7 +14,7 @@ import { DOWNSTREAM_PLACEHOLDERS, baseVariables } from './variables';
 export const previewInputSchema = z.object({
   moduleKey: activeModuleKeySchema,
   keyword: z.string().max(200).default(''),
-  secondaryKeywords: z.union([z.string().max(4000), z.array(z.string().max(160))]).optional().nullable(),
+  secondaryKeywords: z.union([z.string().max(6000), z.array(z.string().max(160))]).optional().nullable(),
   exampleTitle: z.string().max(400).optional().nullable(),
   websiteId: z.string().max(40).optional().nullable(),
   categoryId: z.string().max(40).optional().nullable(),

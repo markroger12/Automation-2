@@ -5,7 +5,8 @@ import { CircleCheck, CircleDashed, Pause, Play, Rocket, Send } from 'lucide-rea
 import { api } from '@/lib/client/api';
 import { Button, CopyButton, RelativeTime, useToast } from '@/components/client';
 import { ExtensionPairing } from '@/components/extension-pairing';
-import { Alert, Card, Chip, cx } from '@/components/ui';
+import { IndexingPanel } from '@/components/indexing-panel';
+import { Alert, Card, Chip, cx, plural } from '@/components/ui';
 import { Textarea } from '@/components/form';
 
 interface Step {
@@ -115,7 +116,7 @@ export function AutomationChromeWizard() {
   const allOk = Object.values(s.steps).every((x) => x.ok);
 
   return (
-    <div className="grid gap-6 xl:grid-cols-3">
+    <div className="grid items-start gap-6 xl:grid-cols-3">
       <Card title="Setup — five checked steps" className="xl:col-span-2" description="Status refreshes every 3 seconds from real signals (installed browser, profile lock, extension heartbeats).">
         <ol>
           <StepRow n={1} title="Google Chrome installed" step={s.steps.chromeInstalled}>
@@ -163,7 +164,7 @@ export function AutomationChromeWizard() {
               <span>Extension</span>
               <Chip tone={s.extension.state === 'connected' ? 'success' : 'warning'}>{s.extension.state}</Chip>
             </li>
-            <li className="text-muted text-xs">Last heartbeat <RelativeTime value={s.extension.lastSeenAt} /> · {s.extension.tabs} ChatGPT tab(s)</li>
+            <li className="text-muted text-xs">Last heartbeat <RelativeTime value={s.extension.lastSeenAt} /> · {plural(s.extension.tabs, 'ChatGPT tab')}</li>
             <li className="flex justify-between">
               <span>ChatGPT jobs</span>
               <span className="tabular-nums">
@@ -177,7 +178,7 @@ export function AutomationChromeWizard() {
               </span>
             </li>
             {s.backoffUntil && new Date(s.backoffUntil) > new Date() ? (
-              <li className="text-xs text-amber-700">Rate-limit backoff until {new Date(s.backoffUntil).toLocaleTimeString()}</li>
+              <li className="text-xs text-amber-700">Rate-limit backoff until <span suppressHydrationWarning>{new Date(s.backoffUntil).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span></li>
             ) : null}
           </ul>
           {s.tabsSetting > 3 ? (
@@ -211,6 +212,9 @@ export function AutomationChromeWizard() {
             </p>
           ) : null}
         </Card>
+
+        {/* Google (Search Console) sign-in, for “Request indexing” after a publish (owner request). */}
+        <IndexingPanel />
       </div>
     </div>
   );

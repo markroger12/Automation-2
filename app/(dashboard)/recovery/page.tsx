@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { RUNNING_STATUSES } from '@/lib/domain';
 import { listBackups } from '@/lib/backup';
+import { inDesktopApp } from '@/lib/runtime';
 import { Card, Chip, EmptyState, PageHeader, StatusChip, formatDateTime, formatRelative } from '@/components/ui';
 import { IncidentActions, StalledTaskActions } from './actions';
 
@@ -53,7 +54,7 @@ export default async function RecoveryPage() {
                       {i.description}
                       {i.taskId ? (
                         <div>
-                          <Link className="text-xs text-indigo-600 hover:underline" href={i.kind === 'UNCERTAIN_WP_CREATE' ? `/articles/${i.taskId}?tab=wordpress` : `/articles/${i.taskId}`}>
+                          <Link className="text-xs link" href={i.kind === 'UNCERTAIN_WP_CREATE' ? `/articles/${i.taskId}?tab=wordpress` : `/articles/${i.taskId}`}>
                             {i.kind === 'UNCERTAIN_WP_CREATE' ? 'Choose the right WordPress post' : `Open article${i.stageKey ? ` (${i.stageKey})` : ''}`}
                           </Link>
                         </div>
@@ -63,7 +64,7 @@ export default async function RecoveryPage() {
                       <code className="break-all">{i.evidence}</code>
                       {shot?.screenshotPath ? (
                         <div>
-                          <a className="text-indigo-600 underline" href={`/api/files/screenshot?path=${encodeURIComponent(shot.screenshotPath)}`} target="_blank" rel="noreferrer">
+                          <a className="link" href={`/api/files/screenshot?path=${encodeURIComponent(shot.screenshotPath)}`} target="_blank" rel="noreferrer">
                             last screenshot ({formatRelative(shot.createdAt)})
                           </a>
                         </div>
@@ -147,7 +148,7 @@ export default async function RecoveryPage() {
           </table>
         )}
       </Card>
-      <Card title="Local backups" className="mt-6" description="Create backups from Diagnostics or `npm run db:backup -- --media`. Profile folders are never deleted automatically.">
+      <Card title="Local backups" className="mt-6" description={`Create backups from Logs / Diagnostics${inDesktopApp() ? '' : ' or `npm run db:backup -- --media`'}. Profile folders are never deleted automatically.`}>
         {backups.length === 0 ? <p className="text-muted text-sm">No backups yet.</p> : <ul className="text-sm">{backups.map((b) => <li key={b.name}>{b.name} · {(b.sizeBytes / 1024).toFixed(0)} KB</li>)}</ul>}
       </Card>
     </>

@@ -2,7 +2,7 @@ import { db } from '@/lib/db';
 import { AppError, notFound } from '@/lib/errors';
 import { audit } from '@/lib/audit';
 import { parseJson } from '@/lib/json';
-import { isActiveModuleKey } from '@/lib/domain';
+import { isRunnableModuleKey } from '@/lib/domain';
 import { briefCoverage, defaultSeoBrief, parseSeoBrief, seoBriefSchema, type SeoBrief } from '@/lib/seo/intent';
 
 /**
@@ -32,7 +32,7 @@ export async function getSeoBrief(taskId: string) {
 
 export async function saveSeoBrief(taskId: string, raw: unknown) {
   const task = await load(taskId);
-  if (task.legacy || !isActiveModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
+  if (task.legacy || !isRunnableModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
   // Blank lines in the section list are dropped, not refused.
   const input = raw && typeof raw === 'object' && Array.isArray((raw as { sections?: unknown }).sections) ? { ...raw, sections: ((raw as { sections: unknown[] }).sections).filter((x) => typeof x !== 'string' || x.trim() !== '') } : raw;
   const brief: SeoBrief = { ...seoBriefSchema.parse(input), editedByOwner: true };

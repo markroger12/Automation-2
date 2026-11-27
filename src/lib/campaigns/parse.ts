@@ -9,6 +9,8 @@
  * only produces derived fields.
  */
 
+import { MAX_SECONDARY_KEYWORDS } from '../content/text';
+
 export const MAX_IMPORT_ROWS = 1000;
 
 export interface ImportRow {
@@ -124,7 +126,7 @@ function finalize(row: Omit<ImportRow, 'errors'>): ImportRow {
   else if (row.keyword.length < 2) errors.push('Keyword is too short.');
   else if (row.keyword.length > 160) errors.push('Keyword is longer than 160 characters.');
   if (row.exampleTitle && row.exampleTitle.length > 200) errors.push('Title is longer than 200 characters.');
-  if (row.secondaryKeywords.length > 20) errors.push('More than 20 secondary keywords.');
+  if (row.secondaryKeywords.length > MAX_SECONDARY_KEYWORDS) errors.push(`More than ${MAX_SECONDARY_KEYWORDS} secondary keywords.`);
   if (row.priority !== null && (!Number.isInteger(row.priority) || row.priority < -10 || row.priority > 10)) errors.push('Priority must be a whole number from -10 to 10.');
   if (row.language && !['en', 'de'].includes(row.language)) errors.push(`Unknown language “${row.language}” (use en or de).`);
   return { ...row, errors };

@@ -78,18 +78,21 @@ export async function saveSiteImageSettings(websiteId: string, input: unknown): 
     throw badRequest(`Template is not valid: ${first ? `${first.path.join('.')}: ${first.message}` : 'unknown error'}`);
   }
   const errors: string[] = [];
+  const tigram = parsed.data.tigram;
   const value: SiteImageSettings = {
     featured: sanitizeTemplate(parsed.data.featured, 'Featured', errors),
     body: parsed.data.body ? sanitizeTemplate(parsed.data.body, 'Body', errors) : null,
     logoAssetId: parsed.data.logoAssetId,
+    tigram: tigram ? { featured: sanitizeTemplate(tigram.featured, 'Tigram featured', errors), body: tigram.body ? sanitizeTemplate(tigram.body, 'Tigram body', errors) : null, useFeatured: tigram.useFeatured } : null,
   };
-  const layerIds = [value.featured, value.body].flatMap((t) => t?.layers.map((l) => l.id) ?? []);
-  for (const t of [value.featured, value.body]) {
+  const all = [value.featured, value.body, value.tigram?.featured ?? null, value.tigram?.body ?? null];
+  const layerIds = all.flatMap((t) => t?.layers.map((l) => l.id) ?? []);
+  for (const t of all) {
     if (!t) continue;
     const ids = t.layers.map((l) => l.id);
     if (new Set(ids).size !== ids.length) errors.push(`${t.name}: layer ids must be unique.`);
   }
-  const refs = [...new Set([value.logoAssetId, ...[value.featured, value.body].flatMap((t) => t?.layers ?? []).flatMap((l) => (l.type === 'fixed-photo' ? [l.assetId] : []))].filter((x): x is string => Boolean(x)))];
+  const refs = [...new Set([value.logoAssetId, ...all.flatMap((t) => t?.layers ?? []).flatMap((l) => (l.type === 'fixed-photo' ? [l.assetId] : []))].filter((x): x is string => Boolean(x)))];
   if (refs.length) {
     const found = await db.mediaAsset.findMany({ where: { id: { in: refs }, websiteId }, select: { id: true } });
     const missing = refs.filter((r) => !found.some((f) => f.id === r));
@@ -98,7 +101,7 @@ export async function saveSiteImageSettings(websiteId: string, input: unknown): 
   if (errors.length) throw badRequest(errors.join(' '));
   const site = await db.website.update({ where: { id: websiteId }, data: { imageSettings: JSON.stringify(value) } }).catch(() => null);
   if (!site) throw notFound('Website');
-  await audit('website.image_templates', 'Website', websiteId, { featured: value.featured.name, body: value.body?.name ?? 'clean photo', layers: layerIds.length, logoAssetId: value.logoAssetId });
+  await audit('website.image_templates', 'Website', websiteId, { featured: value.featured.name, body: value.body?.name ?? 'clean photo', tigram: value.tigram ? { featured: value.tigram.featured.name, body: value.tigram.body?.name ?? 'clean picture', useFeatured: value.tigram.useFeatured } : 'same as celebrity', layers: layerIds.length, logoAssetId: value.logoAssetId });
   return value;
 }
 

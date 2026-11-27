@@ -2,6 +2,7 @@ import type { ArticleTask, QueueJob } from '@prisma/client';
 import { db, type Tx } from '../db';
 import { claimNext, enqueue, parsePayload, wakeArticleJob } from '../queue';
 import { log } from '../log';
+import { savePageCopy } from '../page-copies';
 import { getSettings } from '../settings';
 import { normalizeResponseText, promptFingerprint, responseFingerprint } from './normalize';
 import { allowedSlots, inBackoff, recordRateLimit, recordSuccess } from './rate';
@@ -307,6 +308,9 @@ export async function completeChatGPTJob(
     elapsedMs?: number;
     images?: { mediaAssetId: string }[];
     imageLinks?: { url: string; width?: number; height?: number }[];
+    galleryReport?: string;
+    /** The gallery's structure (no chat text) when fewer pictures were taken than it has (src/lib/page-copies.ts). */
+    pageCopy?: string;
   },
   client: Tx = db,
 ): Promise<{ ok: boolean; error?: string }> {
@@ -351,7 +355,8 @@ export async function completeChatGPTJob(
   }
   if (job.taskId) {
     if (conversationUrl && !payload.sideChat) await client.articleTask.update({ where: { id: job.taskId }, data: { conversationUrl } });
-    await log({ category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `ChatGPT answer saved (${text.length} chars${input.recovered ? ', recovered after interruption' : ''}).` }, client);
+    const copy = input.pageCopy ? savePageCopy('chatgpt-gallery', input.pageCopy) : null;
+    await log({ category: 'chatgpt', taskId: job.taskId, stage: payload.stageKey, message: `ChatGPT answer saved (${text.length} chars${input.recovered ? ', recovered after interruption' : ''}).${input.galleryReport ? ` Gallery: ${input.galleryReport.slice(0, 400)}` : ''}${copy ? ` A copy of the gallery's structure (no chat text) was saved for the developer: Logs / Diagnostics → Page structure copies → ${copy}.` : ''}` }, client);
   }
   await wakeOwner(job, payload, client);
   const backlog = await client.queueJob.count({ where: { queue: 'chatgpt', status: 'WAITING' } });

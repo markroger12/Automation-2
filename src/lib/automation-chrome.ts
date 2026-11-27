@@ -21,6 +21,9 @@ export const AUTOMATION_CHROME_FLAGS = [
   '--disable-renderer-backgrounding',
 ];
 
+/** Search Console, opened as an app window for the requests when the desktop app runs ChatGPT itself. */
+export const SEARCH_CONSOLE_URL = 'https://search.google.com/search-console';
+
 export function extensionFolder(): string {
   return path.join(projectRoot(), 'extension');
 }
@@ -63,15 +66,17 @@ export function isAutomationChromeRunning(): { running: boolean | null; detail: 
 /**
  * Start Automation Chrome. With `allowRunning`, a running Automation Chrome gets a new ChatGPT window instead (Chrome
  * hands the address to the running profile); the worker does this when prompts wait and no ChatGPT window is open.
+ * With `app`, the address opens in an app window.
  */
-export function launchAutomationChrome(url = 'https://chatgpt.com/', opts: { allowRunning?: boolean } = {}): { pid: number | null; command: string } {
+export function launchAutomationChrome(url = 'https://chatgpt.com/', opts: { allowRunning?: boolean; app?: boolean } = {}): { pid: number | null; command: string } {
   const exe = chromeExecutable();
   if (!exe) throw new Error('Google Chrome was not found. Install Chrome or set BROWSER_EXECUTABLE_PATH in .env.');
   const state = isAutomationChromeRunning();
   if (state.running && !opts.allowRunning) throw new Error('Automation Chrome is already running — switch to its window.');
   const dir = dataPaths.chatgptChrome();
   fs.mkdirSync(dir, { recursive: true });
-  const args = [`--user-data-dir=${dir}`, ...AUTOMATION_CHROME_FLAGS, url];
+  // `app`: Chrome's own app window (no tabs or address bar; still the real Chrome Google signs in to).
+  const args = [`--user-data-dir=${dir}`, ...AUTOMATION_CHROME_FLAGS, opts.app ? `--app=${url}` : url];
   const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: false });
   child.unref();
   return { pid: child.pid ?? null, command: `"${exe}" ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}` };

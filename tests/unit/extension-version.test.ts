@@ -17,12 +17,14 @@ describe('extension version constants', () => {
 
   it('requests only narrow permissions (no blanket https://*/*)', () => {
     const manifest = JSON.parse(ext('manifest.json')) as { permissions: string[]; host_permissions: string[] };
-    expect(manifest.permissions.sort()).toEqual(['alarms', 'notifications', 'storage', 'tabs']);
+    // pageCapture: the proof copy of the Search Console page after “Request indexing” (owner request).
+    expect(manifest.permissions.sort()).toEqual(['alarms', 'notifications', 'pageCapture', 'storage', 'tabs']);
     expect(manifest.host_permissions).not.toContain('https://*/*');
     expect(manifest.host_permissions).not.toContain('<all_urls>');
     // ChatGPT, its two generated-image CDNs (image capture, M8), the two hosts of its image-search gallery
-    // (celebrity photos, as in the owner's earlier tool) and the local app — nothing else.
-    const allowed = ['https://chatgpt.com/*', 'https://*.oaiusercontent.com/*', 'https://oaidalleapiprodscus.blob.core.windows.net/*', 'https://images.openai.com/*', 'https://*.mm.bing.net/*', 'http://localhost/*', 'http://127.0.0.1/*'];
+    // (celebrity photos, as in the owner's earlier tool), Search Console (URL Inspection → Request indexing, owner
+    // request) and the local app — nothing else.
+    const allowed = ['https://chatgpt.com/*', 'https://*.oaiusercontent.com/*', 'https://oaidalleapiprodscus.blob.core.windows.net/*', 'https://images.openai.com/*', 'https://*.mm.bing.net/*', 'https://search.google.com/*', 'http://localhost/*', 'http://127.0.0.1/*'];
     expect(manifest.host_permissions.filter((h) => !allowed.includes(h))).toEqual([]);
   });
 });

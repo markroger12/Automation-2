@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 
 @custom-variant dark (&:where(.dark, .dark *));
+/* The menu folded to an icon rail (top bar button; remembered in localStorage “bas-sidebar”). */
+@custom-variant collapsed (&:where(.sb-collapsed, .sb-collapsed *));
 
 @theme {
   --font-sans: 'Segoe UI Variable', 'Segoe UI', Inter, system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
@@ -14,23 +16,33 @@
   --color-brand-700: oklch(0.45 0.18 265);
 }
 
+/*
+ * Neutral greys (owner request: the look of a reference dashboard). --bg is the window behind the menu and the page
+ * panel, --surface the page panel, cards, fields and dialogs; --primary is the main button (dark on light, light on dark).
+ */
 :root {
-  --bg: #f6f7f9;
+  --bg: #f4f4f5;
   --surface: #ffffff;
-  --surface-2: #f1f3f6;
-  --border: #e3e6eb;
-  --text: #111827;
-  --text-muted: #5b6474;
+  --surface-2: #f1f1f2;
+  --border: #e4e4e7;
+  --text: #09090b;
+  --text-muted: #5f5f67;
+  --primary: #18181b;
+  --primary-fg: #fafafa;
+  --nav-active: #e4e4e7;
   color-scheme: light;
 }
 
 .dark {
-  --bg: #0d1117;
-  --surface: #151b23;
-  --surface-2: #1c2430;
-  --border: #2a3441;
-  --text: #e6e9ee;
-  --text-muted: #98a2b3;
+  --bg: #171717;
+  --surface: #1f1f1f;
+  --surface-2: #2a2a2a;
+  --border: #323232;
+  --text: #f5f5f5;
+  --text-muted: #a6a6a6;
+  --primary: #ececec;
+  --primary-fg: #18181b;
+  --nav-active: #2b2b2b;
   color-scheme: dark;
 }
 
@@ -51,6 +63,11 @@ body {
   color: var(--text);
 }
 
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--primary);
+}
+
 /*
  * Dropdowns (owner report: the open list was hard to read in dark mode, white text on a light highlight).
  * Options take the theme colours; Chrome 135+ draws the whole list in the theme (customizable select).
@@ -60,8 +77,8 @@ select option {
   color: var(--text);
 }
 select option:checked {
-  background-color: #4f46e5;
-  color: #ffffff;
+  background-color: var(--primary);
+  color: var(--primary-fg);
 }
 @supports (appearance: base-select) {
   select,
@@ -111,8 +128,8 @@ select option:checked {
     outline: none;
   }
   select option:checked {
-    background: #4f46e5;
-    color: #ffffff;
+    background: var(--primary);
+    color: var(--primary-fg);
     font-weight: 600;
   }
   select option::checkmark {
@@ -153,21 +170,94 @@ body {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
-  padding: 0.5rem 0.75rem;
+  padding: 0.6rem 0.75rem;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 .table-app td {
-  padding: 0.5rem 0.75rem;
+  padding: 0.6rem 0.75rem;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
+.table-app tbody tr:last-child td {
+  border-bottom: 0;
+}
 .table-app tbody tr:hover td {
-  background: color-mix(in oklab, var(--surface-2) 70%, transparent);
+  background: color-mix(in oklab, var(--surface-2) 60%, transparent);
+}
+/* A table in a bordered box with column lines, as in the reference dashboard (keyword queue, article lists). */
+.table-box {
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  overflow-x: auto;
+}
+.table-box .table-app th + th,
+.table-box .table-app td + td {
+  border-left: 1px solid var(--border);
+}
+.table-box .table-app td {
+  vertical-align: middle;
+}
+
+/*
+ * Small tooltip for icon buttons (data-tip="…"): shown on hover and keyboard focus. The button keeps its own
+ * aria-label, so screen readers do not depend on it.
+ */
+[data-tip] {
+  position: relative;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  translate: -50% 0;
+  z-index: 60;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+/* Links in text: the text colour with a soft underline (the reference look; indigo links were replaced). */
+.link {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--text) 35%, transparent);
+  text-underline-offset: 3px;
+}
+.link:hover {
+  text-decoration-color: currentColor;
+}
+.link-plain {
+  color: var(--text);
+  font-weight: 500;
+}
+.link-plain:hover {
+  text-decoration: underline;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--surface-2);
+  color: var(--text-muted);
 }
 
 /* Rendered article preview (sanitized HTML only) */
@@ -213,7 +303,7 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-brand-500);
+  outline: 2px solid color-mix(in oklab, var(--text) 55%, transparent);
   outline-offset: 2px;
 }
 

@@ -7,6 +7,7 @@ export default defineConfig({
     include: ['tests/integration/**/*.test.ts'],
     environment: 'node',
     setupFiles: ['tests/helpers/isolate-data.ts'],
+    globalSetup: ['tests/helpers/run-tmp.ts'],
     testTimeout: 120000,
     hookTimeout: 120000,
     pool: 'forks',

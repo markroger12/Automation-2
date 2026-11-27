@@ -16,7 +16,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         title="Article History"
         description="Every article ever created, including read-only records of the retired Celebrity Writer 2.0. Rank Math scores are shown only when read from the live WordPress panel."
       />
-      <TaskTable storageKey="history" mode="history" websites={websites} initialGroup={group} pollMs={15000} />
+      <TaskTable storageKey="history" mode="history" websites={websites} initialGroup={group} initialQuery={sp.q} pollMs={15000} />
     </>
   );
 }

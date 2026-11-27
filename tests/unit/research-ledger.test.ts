@@ -60,7 +60,7 @@ beforeAll(async () => {
   service = await import('@/lib/research/service');
   const websites = await import('@/lib/websites');
   siteId = (await websites.createWebsite({ name: 'Celeb', publicUrl: 'https://celeb.example', language: 'en', targetCountry: 'United States', timezone: 'UTC' })).id;
-  await client.category.create({ data: { websiteId: siteId, externalId: 1, name: 'Stars' } });
+  await client.category.create({ data: { websiteId: siteId, externalId: 1, name: 'Celebrity' } });
 });
 
 afterAll(async () => {

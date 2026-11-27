@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, CopyButton, useToast } from './client';
-import { Alert } from './ui';
+import { Alert, formatDateTime } from './ui';
 
 /** Create/rotate the extension connection key. The key is shown exactly once. */
 export function ExtensionPairing({ configured, prefix, createdAt, onChanged }: { configured: boolean; prefix: string | null; createdAt: string | null; onChanged?: () => void }) {
@@ -39,7 +39,7 @@ export function ExtensionPairing({ configured, prefix, createdAt, onChanged }: {
       <div className="flex flex-wrap items-center gap-3 text-sm">
         {configured ? (
           <span>
-            Key <code>{prefix}…</code> created {createdAt ? new Date(createdAt).toLocaleString() : ''}. Only its hash is stored.
+            Key <code>{prefix}…</code> created <span suppressHydrationWarning>{createdAt ? formatDateTime(createdAt) : ''}</span>. Only its hash is stored.
           </span>
         ) : (
           <span className="text-muted">No connection key yet.</span>

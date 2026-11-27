@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client/api';
 import { Button, ConfirmDialog, useToast } from '@/components/client';
+import { plural } from '@/components/ui';
 
 export function DangerZone({ websiteId, slug, taskCount }: { websiteId: string; slug: string; taskCount: number }) {
   const toast = useToast();
@@ -52,7 +53,7 @@ export function DangerZone({ websiteId, slug, taskCount }: { websiteId: string; 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="font-medium">Remove website</div>
-          <div className="text-muted text-xs">{taskCount > 0 ? `Not possible: ${taskCount} article(s) reference it. Deactivate instead.` : 'Allowed because no articles reference it.'}</div>
+          <div className="text-muted text-xs">{taskCount > 0 ? `Not possible: ${plural(taskCount, 'article')} reference it. Deactivate instead.` : 'Allowed because no articles reference it.'}</div>
         </div>
         <Button variant="danger" disabled={taskCount > 0} onClick={() => setDialog('delete')}>Remove…</Button>
       </div>

@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
-import { Chip, formatRelative } from '@/components/ui';
+import { Chip, formatRelative, plural } from '@/components/ui';
 import { HEALTH_KINDS, HEALTH_KIND_LABEL, type SiteHealthSummary } from '@/lib/site-health-types';
 import type { FailedWordPressTask } from '@/lib/wordpress-resave';
 
@@ -34,7 +34,7 @@ export function SiteHealth({ websiteId, health, failed }: { websiteId: string; h
     setBusy(true);
     try {
       const res = await api<{ requeued: string[]; failed: { id: string; error: string }[] }>(`/api/websites/${websiteId}/resave`, { method: 'POST', body: { taskIds: [...selected] } });
-      toast(res.failed.length ? 'info' : 'success', `${res.requeued.length} article(s) queued for a WordPress re-save${res.failed.length ? `; ${res.failed.length} could not be queued: ${res.failed[0].error}` : ''}.`);
+      toast(res.failed.length ? 'info' : 'success', `${plural(res.requeued.length, 'article')} queued for a WordPress re-save${res.failed.length ? `; ${res.failed.length} could not be queued: ${res.failed[0].error}` : ''}.`);
       router.refresh();
     } catch (e) {
       toast('error', (e as Error).message);
@@ -67,7 +67,7 @@ export function SiteHealth({ websiteId, health, failed }: { websiteId: string; h
               <dd className="min-w-0 flex-1">
                 {l ? (
                   <>
-                    <Chip tone={TONE[l.status]}>{l.status.toLowerCase()}</Chip> <span>{l.message}</span> <span className="text-muted text-xs">{formatRelative(l.at)}</span>
+                    <Chip tone={TONE[l.status]}>{l.status.toLowerCase()}</Chip> <span>{l.message}</span> <span className="text-muted text-xs" suppressHydrationWarning>{formatRelative(l.at)}</span>
                   </>
                 ) : (
                   <span className="text-muted">not measured yet</span>
@@ -79,7 +79,7 @@ export function SiteHealth({ websiteId, health, failed }: { websiteId: string; h
       </dl>
 
       <p className="text-muted">
-        Last 24 hours: {health.last24h.draftSaves} draft save(s), {health.last24h.draftFailures} failed · {health.last24h.uploads} upload run(s), {health.last24h.uploadFailures} failed · median save time {seconds(health.last24h.medianDraftSaveMs)}
+        Last 24 hours: {plural(health.last24h.draftSaves, 'draft save')}, {health.last24h.draftFailures} failed · {plural(health.last24h.uploads, 'upload run')}, {health.last24h.uploadFailures} failed · median save time {seconds(health.last24h.medianDraftSaveMs)}
       </p>
 
       {health.recent.length ? (
@@ -88,7 +88,7 @@ export function SiteHealth({ websiteId, health, failed }: { websiteId: string; h
           <ul className="mt-2 space-y-1 text-xs">
             {health.recent.map((r, i) => (
               <li key={i} className="flex flex-wrap gap-2">
-                <span className="text-muted">{formatRelative(r.at)}</span>
+                <span className="text-muted" suppressHydrationWarning>{formatRelative(r.at)}</span>
                 <span>{HEALTH_KIND_LABEL[r.kind]}</span>
                 <Chip tone={TONE[r.status]}>{r.status.toLowerCase()}</Chip>
                 <span>{r.message}</span>

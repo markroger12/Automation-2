@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Globe } from 'lucide-react';
 import { db } from '@/lib/db';
 import { LANGUAGE_LABELS, type Language } from '@/lib/domain';
-import { Card, Chip, EmptyState, PageHeader, formatRelative } from '@/components/ui';
+import { Card, Chip, EmptyState, PageHeader, formatRelative, plural } from '@/components/ui';
 import { AddWebsite } from './add-website';
 
 export const metadata = { title: 'Websites' };
@@ -18,18 +18,18 @@ export default async function WebsitesPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Websites"
         description="WordPress sites, their persistent browser profiles and sessions. Each site has its own profile folder, cookies, categories and publishing permission."
-        actions={<AddWebsite startOpen={sp.add === '1' || sites.length === 0} />}
+        actions={<AddWebsite startOpen={sp.add === '1'} />}
       />
       {sites.length === 0 ? (
         <Card>
-          <EmptyState icon={<Globe className="h-8 w-8" />} title="No websites yet" description="Add your first WordPress site, log in once, then sync its categories." />
+          <EmptyState icon={<Globe className="h-8 w-8" />} title="No websites yet" description="Add your first WordPress site with its user name and password: the app logs in and syncs its categories." />
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {sites.map((s) => {
             const state = s.wordpressProfile?.sessionState ?? 'UNKNOWN';
             return (
-              <Link key={s.id} href={`/websites/${s.id}`} className="surface block rounded-xl border p-4 transition hover:border-indigo-300">
+              <Link key={s.id} href={`/websites/${s.id}`} className="surface block rounded-xl border p-4 transition hover:border-[color-mix(in_oklab,var(--text)_35%,transparent)]">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate font-semibold">{s.name}</div>
@@ -49,7 +49,7 @@ export default async function WebsitesPage({ searchParams }: { searchParams: Pro
                   {s.paused ? <Chip tone="warning">paused</Chip> : null}
                 </div>
                 <div className="text-muted mt-3 text-xs">
-                  {s._count.tasks} article(s) · session checked {formatRelative(s.wordpressProfile?.lastCheckedAt)}
+                  {plural(s._count.tasks, 'article')} · session checked {formatRelative(s.wordpressProfile?.lastCheckedAt)}
                 </div>
               </Link>
             );

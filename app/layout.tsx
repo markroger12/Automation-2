@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ThemeKeeper } from '@/components/theme-keeper';
 
 export const metadata: Metadata = {
   title: { default: 'Blog Automation Studio', template: '%s · Blog Automation Studio' },
@@ -7,8 +8,8 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// Applies the saved/OS theme before paint to avoid a flash.
-const themeScript = `(function(){try{var t=localStorage.getItem('bas-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;if(d)document.documentElement.classList.add('dark');}catch(e){}})();`;
+// Applies the saved/OS theme and the folded menu before paint to avoid a flash.
+const themeScript = `(function(){try{var t=localStorage.getItem('bas-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;if(d)document.documentElement.classList.add('dark');if(localStorage.getItem('bas-sidebar')==='collapsed')document.documentElement.classList.add('sb-collapsed');}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -16,7 +17,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="min-h-screen">{children}</body>
+      <body className="min-h-screen">
+        <ThemeKeeper />
+        {children}
+      </body>
     </html>
   );
 }

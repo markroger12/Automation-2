@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { AppError, notFound } from '@/lib/errors';
 import { updateWebsite } from '@/lib/websites';
 import { audit } from '@/lib/audit';
+import { plural } from '@/components/ui';
 
 export const GET = route({}, async ({ params }) => {
   const site = await db.website.findUnique({
@@ -29,7 +30,7 @@ export const DELETE = route({}, async ({ params }) => {
   const site = await db.website.findUnique({ where: { id: params.id }, include: { _count: { select: { tasks: true } } } });
   if (!site) throw notFound('Website');
   if (site._count.tasks > 0) {
-    throw new AppError(409, 'HAS_TASKS', `This website has ${site._count.tasks} article(s). Deactivate it instead — article history is never deleted.`);
+    throw new AppError(409, 'HAS_TASKS', `This website has ${plural(site._count.tasks, 'article')}. Deactivate it instead — article history is never deleted.`);
   }
   await db.website.delete({ where: { id: site.id } });
   if (site.wordpressProfileId) await db.browserProfile.delete({ where: { id: site.wordpressProfileId } }).catch(() => {});

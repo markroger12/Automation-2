@@ -1,8 +1,9 @@
 import { db } from '../db';
 import { parseJson, stringArray } from '../json';
-import { isActiveModuleKey, moduleDisplayName, statusGroup } from '../domain';
+import { isRunnableModuleKey, moduleDisplayName, statusGroup } from '../domain';
 import { sanitizeArticleHtml } from '../html/sanitize';
 import { stripTags } from '../content/text';
+import { stageEstimates } from './timeline';
 
 /** Rank Math report as stored by the RANKMATH stage (values read from WordPress, never computed). */
 export interface RankMathReportView {
@@ -36,17 +37,19 @@ export async function getTaskDetail(id: string) {
     },
   });
   if (!task) return null;
-  const [logs, jobs, incidents, revisions] = await Promise.all([
+  const [logs, jobs, incidents, revisions, estimates] = await Promise.all([
     db.log.findMany({ where: { taskId: id }, orderBy: { createdAt: 'desc' }, take: 300 }),
     db.queueJob.findMany({ where: { taskId: id }, orderBy: { createdAt: 'desc' }, take: 50 }),
     db.recoveryIncident.findMany({ where: { taskId: id }, orderBy: { createdAt: 'desc' } }),
     db.articleStageRevision.findMany({ where: { taskId: id }, orderBy: { createdAt: 'desc' }, take: 100 }),
+    // The usual time of each step on this computer (the live timeline on Overview).
+    stageEstimates(task.stages.map((st) => st.key), id),
   ]);
   return {
     ...task,
     writerName: moduleDisplayName(task.moduleKey),
     // Retired-writer records are read-only even if created after the retirement migration ran.
-    legacy: task.legacy || !isActiveModuleKey(task.moduleKey),
+    legacy: task.legacy || !isRunnableModuleKey(task.moduleKey),
     group: statusGroup(task.status),
     secondaryKeywordList: stringArray(task.secondaryKeywords),
     titleOptionList: stringArray(task.titleOptions),
@@ -64,6 +67,7 @@ export async function getTaskDetail(id: string) {
     jobs,
     incidents,
     revisions,
+    stageEstimates: estimates,
   };
 }
 

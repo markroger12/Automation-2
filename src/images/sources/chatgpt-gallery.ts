@@ -61,7 +61,9 @@ export async function collectChatGPTGallery(input: {
 
   const assets: MediaAsset[] = [];
   const seenIds = new Set<string>();
+  const received = candidates.length;
   let small = 0;
+  let twins = 0;
   // Largest first: the gallery's thumbnails and full-size pictures of the same photo collapse to the bigger one.
   const ordered = [...candidates].sort((a, b) => (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0));
   for (const a of ordered) {
@@ -72,14 +74,18 @@ export async function collectChatGPTGallery(input: {
       continue;
     }
     if (a.phash && assets.some((x) => x.phash && hammingDistance(x.phash, a.phash!) <= (input.nearDuplicateDistance ?? 6))) {
-      notes.push('A near-duplicate gallery picture was skipped.');
+      twins++;
       continue;
     }
     assets.push(a);
     if (assets.length >= input.max) break;
   }
-  if (small) notes.push(`${small} gallery picture(s) smaller than ${GALLERY_MIN_SIDE} px were skipped.`);
-  return { assets, notes };
+  // Owner report (ChatGPT showed about 6 photos, 2 were used): what came in and why the others were left out, before
+  // the notes on links.
+  const why = [`${received} gallery picture(s) received (${input.uploadedIds.length} saved by Automation Chrome, ${input.links.length} link(s)).`];
+  if (small) why.push(`${small} gallery picture(s) smaller than ${GALLERY_MIN_SIDE} px were skipped (mostly the small thumbnails of the large ones).`);
+  if (twins) why.push(`${twins} near-duplicate gallery picture(s) skipped (the same photo again; the larger copy is used).`);
+  return { assets, notes: [...why, ...notes] };
 }
 
 function hostOf(url: string): string {

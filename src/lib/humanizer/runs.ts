@@ -6,7 +6,7 @@ import { AppError, badRequest, notFound } from '../errors';
 import { parseJson } from '../json';
 import { getSettings } from '../settings';
 import { enqueue } from '../queue';
-import { isActiveModuleKey } from '../domain';
+import { isRunnableModuleKey, isCelebrityModule } from '../domain';
 import { sanitizeArticleHtml } from '../html/sanitize';
 import { languageInstruction } from '../chatgpt/language';
 import { createRunChatGPTRequest } from '../chatgpt/jobs';
@@ -60,7 +60,7 @@ export async function createHumanizerRun(raw: unknown) {
     if (!input.taskId) throw badRequest('Choose an article.');
     const task = await db.articleTask.findUnique({ where: { id: input.taskId } });
     if (!task) throw notFound('Article');
-    if (task.legacy || !isActiveModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Articles of the retired Celebrity Writer 2.0 are read-only.');
+    if (task.legacy || !isRunnableModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Articles of the retired Celebrity Writer 2.0 are read-only.');
     const baseline = articleBaseline(task);
     if (!baseline) throw badRequest('This article has no assembled text yet.');
     data = { taskId: task.id, source: 'ARTICLE', title: task.selectedTitle ?? task.seoTitle ?? task.keyword, language: task.language, keyword: task.keyword, inputHtml: baseline, baselineHash: hash(baseline) };
@@ -126,7 +126,7 @@ export async function processHumanizerRun(runId: string): Promise<{ state: 'wait
     await db.humanizerRun.update({ where: { id: run.id }, data: { status: 'WAITING', message } });
     return { state: 'waiting', message };
   }
-  const lock = { keyword: run.keyword, language: run.language, names: run.keyword && /\p{Lu}/u.test(run.keyword) && run.task?.moduleKey === 'celebrity-writer' ? [run.keyword] : [], tolerancePct: settings.content.humanizerLengthTolerancePct };
+  const lock = { keyword: run.keyword, language: run.language, names: run.keyword && /\p{Lu}/u.test(run.keyword) && isCelebrityModule(run.task?.moduleKey) ? [run.keyword] : [], tolerancePct: settings.content.humanizerLengthTolerancePct };
   const results: ParagraphResult[] = [];
   answers.forEach((a, i) => results.push(...evaluateBatch(plan, i, a!, lock)));
   results.push(...skippedResults(plan));
@@ -169,7 +169,7 @@ export async function applyHumanizerRun(id: string) {
   if (run.appliedAt) throw new AppError(409, 'ALREADY_APPLIED', 'This run was already applied.');
   const task = await db.articleTask.findUnique({ where: { id: run.taskId } });
   if (!task) throw notFound('Article');
-  if (task.legacy || !isActiveModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
+  if (task.legacy || !isRunnableModuleKey(task.moduleKey)) throw new AppError(409, 'RETIRED_WRITER', 'Retired writer tasks are read-only.');
   if (hash(articleBaseline(task)) !== run.baselineHash) throw new AppError(409, 'CONFLICT', 'The article changed after this run started. Run the humanizer again on the current version.');
   const asm = await db.articleStage.findUnique({ where: { taskId_key: { taskId: task.id, key: 'ASSEMBLY' } } });
   if (asm && task.editedHtml) await db.articleStageRevision.create({ data: { stageId: asm.id, taskId: task.id, key: 'EDITOR', reason: 'owner edit before humanizer run', outputHtml: task.editedHtml } });

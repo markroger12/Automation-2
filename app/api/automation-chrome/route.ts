@@ -31,7 +31,7 @@ export const GET = route({}, async () => {
       chromeRunning: { ok: running.running === true, detail: running.detail },
       extensionLoaded: { ok: ext.installs > 0, detail: ext.installs > 0 ? `Seen ${ext.lastSeenAt?.toISOString() ?? ''}` : 'No extension has contacted the dashboard yet.' },
       paired: { ok: key.configured && ext.state === 'connected', detail: key.configured ? (ext.state === 'connected' ? `Connected (v${ext.version})` : 'Key created; paste it into the extension popup.') : 'No connection key yet.' },
-      chatgptSignedIn: { ok: diag.loggedIn === true, detail: diag.loggedIn === true ? 'ChatGPT composer is ready.' : diag.humanCheck ? 'A human check is showing — complete it in Automation Chrome.' : diag.loggedIn === false ? 'ChatGPT shows the login page.' : 'Unknown until a ChatGPT tab is open.' },
+      chatgptSignedIn: { ok: diag.loggedIn === true, detail: diag.loggedIn === true ? 'Signed in to ChatGPT.' : diag.humanCheck ? 'A human check is showing — complete it in Automation Chrome.' : diag.loggedIn === false ? 'ChatGPT is signed out: sign in in that window.' : 'Unknown until a ChatGPT tab is open.' },
     },
     extension: { ...ext, expectedVersion: EXPECTED_EXTENSION_VERSION, versionOk: !ext.version || ext.version === EXPECTED_EXTENSION_VERSION },
     key,

@@ -207,13 +207,33 @@ export class WpClient {
   }
 
   /**
-   * Schedule a draft for a future time (the ONLY status change this client
-   * sends). The publish guard refuses it unless the caller holds a permit
-   * from withPublishPermit for this site and post (canPublish + acknowledgement).
+   * Schedule a draft for a future time (with publishMissedSchedule below, the
+   * only status changes this client sends). The publish guard refuses it unless
+   * the caller holds a permit from withPublishPermit for this site and post
+   * (canPublish + acknowledgement).
    */
   async scheduleFuture(id: number, at: Date): Promise<WpPost> {
     const dateGmt = at.toISOString().replace(/\.\d+Z$/, '');
     const { data } = await this.call<WpPost>('POST', `/wp/v2/posts/${id}`, { json: { status: 'future', date_gmt: dateGmt } });
+    return data;
+  }
+
+  /**
+   * Let WordPress run its due scheduled jobs (WP-Cron), as any visit to the site does: a scheduled post whose time has
+   * come is then published by WordPress itself. A plain request to wp-cron.php changes nothing else.
+   */
+  async runCron(): Promise<void> {
+    const url = `${this.siteBase}wp-cron.php`;
+    await assertRequestAllowed(this.site.id, { method: 'GET', url, body: null, contentType: null }, this.taskId);
+    await this.request.get(url, { timeout: 30_000, failOnStatusCode: false, maxRedirects: 3 }).catch(() => null);
+  }
+
+  /**
+   * A scheduled post whose time has passed and that WordPress did not publish (“Missed schedule”): published with its
+   * scheduled date kept. Like scheduleFuture, the publish guard refuses it outside withPublishPermit for this post.
+   */
+  async publishMissedSchedule(id: number, dateGmt: string): Promise<WpPost> {
+    const { data } = await this.call<WpPost>('POST', `/wp/v2/posts/${id}`, { json: { status: 'publish', date_gmt: dateGmt.replace(/Z$/, '') } });
     return data;
   }
 
@@ -251,9 +271,11 @@ export class WpClient {
 
   // ---------------- media ----------------
 
-  async uploadMedia(file: { bytes: Buffer; filename: string; mime: string; altText?: string | null; title?: string | null }): Promise<{ id: number; url: string }> {
+  async uploadMedia(file: { bytes: Buffer; filename: string; slug?: string | null; mime: string; altText?: string | null; title?: string | null }): Promise<{ id: number; url: string }> {
     const safeName = file.filename.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 120) || 'image';
     const { data } = await this.call<{ id: number; source_url: string }>('POST', '/wp/v2/media', {
+      // The attachment slug (else WordPress takes it from the file name): known before the upload, so a lost answer can be found again.
+      ...(file.slug ? { query: { slug: file.slug } } : {}),
       body: file.bytes,
       headers: { 'Content-Type': file.mime, 'Content-Disposition': `attachment; filename="${safeName}"` },
       timeoutMs: Math.max(this.timeoutMs, 120_000),
@@ -318,5 +340,25 @@ async function fetchNonce(request: APIRequestContext, site: SiteRef, timeoutMs: 
   // WordPress nonces are short hex strings; "0" / "-1" mean "not logged in".
   if (res.ok() && /^[a-z0-9]{6,40}$/i.test(text)) return text;
   if (res.status() >= 500) throw new TransientError(`${site.name}: WordPress answered ${res.status()} while checking the session.`);
-  throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress (session missing or expired).`, site.id);
+  throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress (session missing or expired; ${nonceAnswer(site, res.status(), text, res.headers()['location'])}).`, site.id);
+}
+
+/**
+ * What WordPress answered instead of a session (owner report 2026-11-15: “not logged in” while the website page said
+ * signed in). A redirect to another address means the sign-in is kept for that address, not the saved admin address.
+ */
+export function nonceAnswer(site: Pick<SiteRef, 'adminUrl'>, status: number, text: string, location?: string): string {
+  if (status >= 300 && status < 400 && location) {
+    try {
+      const from = new URL(site.adminUrl);
+      const to = new URL(location, site.adminUrl);
+      if (/wp-login\.php/.test(to.pathname)) return `WordPress sent the app to its login page (HTTP ${status})`;
+      if (to.origin !== from.origin) return `WordPress redirects ${from.origin} to ${to.origin}; set the website's admin address to ${to.origin}${from.pathname} on the website page`;
+      return `WordPress redirected the session check to ${to.pathname} (HTTP ${status})`;
+    } catch {
+      return `WordPress redirected the session check (HTTP ${status})`;
+    }
+  }
+  const shown = text.replace(/\s+/g, ' ').slice(0, 60);
+  return `the session check answered HTTP ${status}${shown ? ` “${shown}”` : ''}`;
 }

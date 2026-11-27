@@ -1,262 +1,150 @@
-# Blog Automation Studio 3.0
+# Blog Automation Studio
 
-A private, **Windows-first, local** dashboard for a publisher running several English and German WordPress websites. You submit keywords; the app prepares research-led SEO articles through **your own signed-in ChatGPT website session** (a Chrome extension, not the OpenAI API), checks and improves them, and saves **WordPress drafts** with Rank Math fields filled.
+**A Windows app that writes research-led SEO articles with your own ChatGPT account and saves them as WordPress drafts: one article or hundreds a week, across all your websites.**
 
-- Runs only on your computer: Next.js dashboard + one Node worker + SQLite (`data/app.db`). No Docker, no cloud database, no telemetry.
-- **No login screen** — it is a single-owner tool. The dashboard listens on `127.0.0.1` only, and every state-changing request needs a same-origin CSRF token, so neither other computers nor other websites can drive it.
-- **Draft-only by default.** Publishing/scheduling requires a per-site `canPublish` switch *and* the scheduler path.
-- WordPress passwords are never asked for, typed or stored: you log in once per site in a visible browser window.
+You give it keywords. It researches, writes, adds FAQs, a Quick Bio table, images and verified links, checks the result, and saves a WordPress draft with the Rank Math fields filled in. Everything runs on your own PC: no cloud service, no subscription, no account to create.
 
-> Build progress, verified commands and known limitations are tracked in [BUILD_STATUS.md](BUILD_STATUS.md); the release steps are in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+**[⬇ Download the newest version](https://github.com/markroger12/Automation-2/releases/latest)** (`Blog-Automation-Studio-Setup-<version>.exe`, Windows 10/11, 64-bit)
 
-## Requirements
+---
 
-- **Node.js 26 or newer** (latest release). Check with `node --version`.
-- **Google Chrome** (Microsoft Edge works as a fallback for WordPress automation).
-- Windows 10/11 (macOS/Linux also work for development).
+## Jaldi shuru (Roman Urdu)
 
-## Install (PowerShell)
+1. Upar wale link se **Setup .exe** download karein aur chalayein. Installer poochega kahan install karna hai; aam tor par default theek hai.
+2. Pehli baar app **data folder** poochegi. Purana folder hai (jaise `F:\claude\Automation-2\data`) to **Choose my data folder…**, warna **Start with a new data folder**.
+3. Overview par **Finish setting up** card aayega. Us ke teen step karein:
+   - **ChatGPT** tab (Ctrl+2) me sign in;
+   - **Websites → Add website** (WordPress user name aur password);
+   - **Single Article** se pehla article.
+4. Koi sawal ho to upar **Ask** button dabayein (help assistant, Settings me free Gemini key daal kar).
 
-```powershell
-cd "C:\path\to\Automation-2"
-npm install
-npm run setup
-```
+---
 
-`npm run setup` is idempotent — run it again after every update:
+## Contents
 
-1. checks the Node version and creates `data\` folders,
-2. creates `.env` from `.env.example` **only if `.env` does not exist**,
-3. backs up the database when migrations are pending, then applies them (never resets data),
-4. seeds missing settings and default prompts (your edited prompts are never overwritten),
-5. checks that Chrome/Edge is installed and prints next steps.
+[Features](#features) · [Install](#install) · [Getting started](#getting-started) · [Everyday use](#everyday-use) · [Updates](#updates) · [Your data](#your-data) · [Privacy and security](#privacy-and-security) · [Troubleshooting](#troubleshooting) · [Documentation](#documentation)
 
-## Run
+## Features
 
-```powershell
-npm run dev:all        # development: dashboard + worker (auto-reload)
-# or, for daily use:
-npm run build
-npm run start:all      # production build: dashboard + worker
-```
-
-Open **http://localhost:3000**. Only one worker can own the `data\` folder; a second one refuses to start.
-
-`npm run start:all` and `npm run dev:all` first run the safe steps of `npm run setup` by themselves (data folders, `.env` when missing, migrations with a backup, missing settings). `start:all` also builds the dashboard when there is no build yet or the code changed since the last one. So on a new computer `npm install` then `npm run start:all` is enough; a database is never reset.
-
-## First run
-
-1. **Automation Chrome** (sidebar): follow the five checked steps — start the dedicated Chrome window, load the unpacked extension from the `extension\` folder, paste the one-time connection key, sign in to ChatGPT yourself. “Send test prompt” proves the round trip.
-   After setup you do not need to keep it open: when you queue an article, the worker opens Automation Chrome by itself, and closes it again (normally, never forced) 2 minutes after the queue is done. A Chrome window you opened yourself is never closed. Both switches are in **Settings → Browser**.
-2. **Websites → Add website**: public URL, language, country and time zone. Then **Log in** opens a visible window where *you* sign in to WordPress (leave “Remember Me” ticked, or the sign-in ends when the window closes). **Sync categories** and pick a default category.
-3. **Single Article**: enter a keyword and generate. The finished article is saved as a **WordPress draft** and read back to verify it.
-4. Optional: **Bulk Campaigns**, **Workflow / Calendar**, **Image Template**, **Settings**.
-
-## Updating
-
-```powershell
-# stop npm run dev:all / start:all first
-git pull
-npm install
-npm run start:all      # migrates (with backup), seeds and rebuilds by itself when needed
-```
-
-`npm run setup` and `npm run build` still work on their own, for example to see each step.
-
-Then reload the extension in Automation Chrome (`chrome://extensions` → reload) if the release notes mention a new extension version; the Automation Chrome page shows when the version does not match.
-
-## Troubleshooting (Windows)
-
-| Symptom | What to do |
+| | |
 | --- | --- |
-| `npm` scripts refuse to run (“running scripts is disabled”) | Run once in PowerShell: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
-| `Port 3000 is already in use` | Another dashboard is running: close it, or find it with `netstat -ano \| findstr :3000` |
-| “Another worker owns the data folder” | Only one worker may run. Close the other window; a crashed worker's lock is taken over automatically once its PID is gone |
-| Chrome not found | Install Google Chrome, or set `BROWSER_CHANNEL="msedge"` (Edge) or `BROWSER_EXECUTABLE_PATH` in `.env` |
-| WordPress keeps asking to log in | Log in again with “Remember Me” ticked; security plugins that end sessions on browser close need that option |
-| Files in `data\` are locked / “EBUSY” | Exclude the project folder from real-time antivirus scanning, and stop the app before restoring a backup |
-| The extension shows “disconnected” | Open Automation Chrome; check the key on the Automation Chrome page; **Logs / Diagnostics → Checks** runs the setup check and a test prompt |
-| Something else | **Logs / Diagnostics → Download diagnostic bundle** (cookies, keys, tokens and passwords are stripped) |
+| **Writes with your ChatGPT** | Prompts run in the app's own ChatGPT tabs, signed in with your account: several at once, like tabs in Chrome. No OpenAI API and no API costs. |
+| **WordPress drafts, never surprises** | The app signs in to your websites by itself and saves every article as a **draft**, read back to verify it. Publishing happens only where you allowed it, per website. |
+| **Writers** | Celebrity, Celebrity 2 and Tigram writers, plus your own writers built without code (prompts, title step, photo prompts), with import and export. |
+| **Research and quality** | A research evidence ledger, a quality report with hard stops, duplicate and plagiarism evidence, verified external links, and two internal links per article: the previous article at the end and a related post in the middle, on a word the article already uses. |
+| **Images** | Featured and body images from your uploads, ChatGPT or generated designs, on your own image template, with face-safe crops and upscaling. |
+| **Bulk and workflow** | Bulk campaigns, a weekly keyword workflow with publishing slots, a publishing calendar, and keyword ideas from Search Console. |
+| **Search Console** | Indexing requests in the app's Search Console tab, with proof; search performance from your own exports; content refresh suggestions. |
+| **Live progress** | Each article shows its steps live, with how long each took and about how long is left, from your own earlier articles. |
+| **Work at a glance** | The tray icon and the taskbar show what the app is doing; **Pause** stops new work with one click; **quiet hours** pause it every night. |
+| **Help assistant** | Ask questions about the app from the **Ask** button and get answers in English, also when you ask in Roman Urdu (optional, with your free Google Gemini key). |
 
-## Scripts
+## Install
 
-| Script | Purpose |
+1. Download **Blog-Automation-Studio-Setup-&lt;version&gt;.exe** from the [Releases page](https://github.com/markroger12/Automation-2/releases/latest).
+2. Run it. It asks where to install: the default, your user's `AppData\Local\Programs`, needs no administrator rights; another folder such as `C:\Program Files` works too. It adds a desktop and a Start-menu shortcut and starts the app.
+3. The installer is not code-signed, so Windows SmartScreen may say *unknown publisher*: choose **More info → Run anyway**.
+
+You need: Windows 10 or 11 (64-bit), a ChatGPT account, and a WordPress website with a user that can write posts. Nothing else to install: no Node.js, no Chrome extension, no command window.
+
+## Getting started
+
+**On the first start** the app asks for its **data folder**, where your articles, settings and sign-ins live:
+- **Choose my data folder…** to keep using an existing one;
+- **Start with a new data folder** for a fresh start.
+
+A start card then shows the three start-up steps (data, dashboard, worker).
+
+**The Setup checklist** then guides you. It shows on the Overview until the needed steps are done, and stays under *Logs / Diagnostics → Setup checklist*. Each step ticks itself off as soon as it really works:
+
+| Step | Where |
 | --- | --- |
-| `npm run setup` | Idempotent setup/upgrade (see above) |
-| `npm run dev` / `npm run worker:dev` / `npm run dev:all` | Dashboard, worker, or both in development |
-| `npm run build` / `npm run start:all` | Production build and start |
-| `npm run db:migrate` | Back up, then apply pending migrations (`prisma migrate deploy`) |
-| `npm run db:seed` | Insert missing defaults only |
-| `npm run db:studio` | Browse the SQLite database |
-| `npm run db:backup -- --media` | Consistent backup to `data\backups\` |
-| `npm run db:restore -- <folder>` | Restore a backup (stop the app first; current DB is moved aside) |
-| `npm run typecheck` / `npm test` / `npm run test:integration` | Quality gates |
-| `npm run test:e2e:wordpress` | Optional: draft/publish-guard tests against a **disposable** WordPress (see below) |
-| `npm run audit:a11y` | Accessibility audit (axe-core, WCAG 2.1 AA, light and dark) of the running dashboard |
+| 1. Connect ChatGPT | The **ChatGPT** tab at the top (Ctrl+2): sign in with your email and password. |
+| 2. Add your WordPress website | **Websites → Add website**: the address, user name and password. The app signs in by itself. |
+| 3. Write your first article | **Single Article**: a keyword, the website and the writer, then **Generate**. |
+| Optional: check the settings | **Settings**: ChatGPT tabs, article slots, review before WordPress, quiet hours, notifications. |
+| Optional: Search Console | The **Search Console** tab (Ctrl+3): sign in to Google once, for indexing requests. |
+| Optional: help assistant | **Settings → Help assistant**: paste a free Gemini API key from [aistudio.google.com](https://aistudio.google.com/app/apikey). |
 
-Tests keep their databases and browser profiles in `bas-*` folders in the system temp folder and remove them when each test file ends, also after a failure. To keep them for debugging, set `BAS_KEEP_TEST_DATA=1`; the test output lists the kept folders.
+## Everyday use
 
-### Testing against a disposable WordPress
+**The window**
+- **Tabs:** **Dashboard** (Ctrl+1), **ChatGPT** (Ctrl+2; one tab per running prompt, like Chrome) and **Search Console** (Ctrl+3).
+- **Status chips** on the right of the tab bar say what ChatGPT, Search Console and the work are doing.
+- **Ctrl+K** searches every page and offers quick actions: New article, Add a website, New bulk campaign, Setup checklist, Ask the help assistant, and more.
+- The top bar has **Pause**, **Ask** (help assistant) and the **bell** (what needs you).
+- Press **Alt** for the menus. **Help → Keyboard shortcuts** lists all shortcuts.
 
-Only ever point this at a throw-away site — it creates drafts and deliberately tries (and must fail) to publish them.
+**The tray and the taskbar**
+- Closing the window keeps the app running in the tray, so scheduled work goes on. **Quit** in the tray menu stops it safely.
+- The tray icon and the taskbar button show the state: idle, writing (with a progress bar), something needs you (amber), or paused.
+- The tray menu also has Pause / Resume, the data folder, the log, and *Start with Windows*.
 
-```powershell
-$env:WP_E2E_ADMIN_URL = "http://localhost:8080/wp-admin/"
-$env:WP_E2E_USER = "admin"            # credentials of the DISPOSABLE site only
-$env:WP_E2E_PASSWORD = "..."
-npm run test:e2e:wordpress
-```
+**Articles**
+- **Single Article** writes one article. **Bulk Campaigns** imports many keywords. **Workflow / Calendar** plans keywords per day with publishing slots.
+- **Article Queue** shows what runs and what waits for you. **Article History** keeps everything.
+- An article's page shows its live progress with the time left, and the tabs for titles, research, editor, SEO, images, links, WordPress and more. **Retry** and **Regenerate** are there.
+- A sign-in page, a CAPTCHA or a human check is never done by the app. The article waits, the app shows you where, and it goes on after you finish it.
 
-The test types these credentials itself (simulating you in the login window); the app never stores them.
+**Pause and quiet hours**
+- **Pause** stops new work at once: running prompts finish, and everything else waits in the queue.
+- **Settings → Workflow → Quiet hours** does the same every night (for example 23:00–07:00).
 
-## Images
+**Help**
+- **Help / Setup** in the app explains every part.
+- The **Ask** button answers questions using the app's current state. It shows exactly what it sends, and never sends passwords, keys or article texts.
+- The full reference is the **[user guide](docs/user-guide.md)**.
 
-- **Image Template** (sidebar) — a per-website designer on a true 1920×1080 canvas for the featured image and, optionally, body images. Drag/resize/rotate, layers, undo/redo (Ctrl+Z / Ctrl+Shift+Z), snapping (hold Alt to bypass), arrow-key nudge, zoom/fit, presets (single photo with corner logo, split photo with centre logo), logo upload (PNG/JPEG/WebP or SVG, which is sanitized and rasterized), fixed photos, accent colour, and Polotno-style JSON import (image URLs are never fetched; nothing in the file is executed). The live preview is drawn by the same renderer the article pipeline uses; **Check final size** shows the real output size against your byte budget (Settings → SEO).
-- **Article → Images tab** — rendered images with alt text, the photos that were collected, your own uploads (used before anything searched or generated) and “Don’t use” for any source photo. **Regenerate images** re-renders and updates the same WordPress draft.
-- Celebrity articles collect a bounded photo gallery, as in the earlier tool. Your own uploads (Images tab) come first; after that the source is **Settings → SEO, links & images → Celebrity photo source**:
-  - **ChatGPT image search gallery (default):** ChatGPT is asked to search the web and show photos of the person. The extension opens the gallery, steps through it and saves the pictures; pictures on other sites are downloaded by the app (12 MB cap, private hosts blocked).
-  - **Wikimedia Commons**, or **the gallery first with Commons as a fallback**.
+## Updates
 
-  Pictures under 250 px and exact or near-duplicates are skipped. When ChatGPT answers with text only, it is asked once more in a new chat. Your featured template gets its photos first (a two-photo design gets two photos); the body images get the rest, and no photo is used twice.
-- **Image tools from the earlier tool (optional):** The **face detector** (MediaPipe BlazeFace) is downloaded into `data\tools\mediapipe` by `npm run start:all` / `dev:all` the first time (or by `npm run tools:install`). Photos with a face then come first and crops centre on the faces (locations only, never who it is). **Upscayl** enlarges small photos before cropping (**Settings → SEO → Enlarge small celebrity photos**, on by default): download `upscayl-ncnn` from https://github.com/upscayl/upscayl-ncnn/releases, put `upscayl-bin.exe` in `data\tools\upscayl` and the `remacri-4x.param` / `remacri-4x.bin` model files (from the Upscayl app's `resources\models`) in `data\tools\upscayl\models`. A missing tool never stops an article; the Images tab says it was not used.
-- General articles ask ChatGPT for an image plan and three images through the extension. Missing images never block the text: the draft continues without them, or waits for review if the site requires images. No image-rights or licensing checks are performed (owner decision); the source URL is stored for reference only.
-- After updating, reload the extension in Automation Chrome (version 3.1.0 adds image capture; 3.1.1–3.1.5 make prompts and answers readable on the new ChatGPT “Chat / Work” layout and recover an already-sent prompt after a page reload; 3.2.0 saves the image-search gallery for celebrity photos and asks for two more image hosts; 3.2.1 says exactly where the composer's text differed when a prompt cannot be placed; 3.2.2 accepts the space ChatGPT's composer puts after “](” in a link).
-- **Alt text** is checked for every rendered image:
-  - “Image of …” is dropped and long text is shortened to 125 characters;
-  - file names, web addresses, one-word labels, keyword stuffing and the same text on two images are replaced with a neutral text (the article title for the featured image, “*Subject*: article image 2/3” for body images);
-  - every change is listed in the image notes. Alt text you edit in the article wins.
-- **Uploads happen once.** Each image is uploaded under a unique name, so if an upload's answer is lost (timeout), the next attempt finds it in the Media Library instead of uploading it again. An image that cannot be uploaded is left out of the draft with a note; the text is still saved.
+The app updates itself from this repository's Releases:
+- It looks for a new version 30 seconds after it starts and every 6 hours, and downloads it in the background. **Help → Check for updates** looks at once.
+- When the download is done, the tab bar and a notification offer **Restart to update**. An **Updating** window shows each step: the work stops safely first (prompts go back to the queue and continue after the restart), then the installer's window shows its progress, asks nothing, and opens the new version by itself.
+- **Settings → App updates** shows the installed version and the updater's progress.
 
-## WordPress health
+Your data folder is never touched by an update, and uninstalling never deletes it.
 
-On each website page, **Site health** shows only measured results, kept for 30 days:
-- session tests;
-- whether the REST API answers the logged-in account;
-- the account's permissions (create posts, upload images, create tags);
-- the detected editor and Rank Math;
-- every draft save (with duration) and media upload.
+## Your data
 
-The overall status is *healthy*, *needs attention*, *failing* or *no data yet*, with the reasons. **Test session** runs the checks again.
+Everything stays in your **data folder** (*File → Open the data folder*):
+- the database with your articles and settings;
+- the encrypted sign-ins;
+- the ChatGPT and website browser profiles;
+- images, logs and backups.
 
-- **Articles stopped at a WordPress step** (draft save, Rank Math, verification) are listed there. **Re-save selected** gives each one “Save to WordPress again”:
-  - the stored draft is reopened, never duplicated;
-  - a draft edited in WordPress still stops for your decision;
-  - it is refused while the site is paused or logged out.
-- **Edited in WordPress?** The article's WordPress tab shows **Changes made in WordPress**: the text only in the WordPress version (what an overwrite would replace) next to the text only in the app version. Read it before choosing “Overwrite WordPress draft”.
-- WordPress's own “session expired” pop-up counts as logged out. An account that may not write posts stops with that reason instead of a generic error.
+**Logs / Diagnostics → Back up database + media** makes a consistent backup in its `backups` folder, also while the app works. To move to another PC, quit the app, copy the whole data folder, and choose it with **Choose my data folder…** on the new PC.
 
-## Editorial tools
+Treat the data folder like a password: it holds your signed-in sessions.
 
-- **Humanizer** (Editorial Tools → Humanizer): edits a saved article or pasted text paragraph by paragraph, in batches of about 1,200 words, through your ChatGPT session. Each rewrite is checked against **fact locks**: numbers, dates, quotations, names, links, bold/italic text, the keyword count, the language, a single paragraph, hedging such as “reportedly”, and length (±20 % by default). Any violation keeps the original paragraph and records the reason. Results show side by side with editorial diagnostics (empty phrases, repeated openers, sentence rhythm). It does **not** compute an “AI detection” score. A result reaches an article only when you click **Apply**, and the WordPress draft changes only when you re-save it.
-- The same humanizer runs inside every article as the HUMANIZE stage, always starting from the unedited text. Settings → Content controls whether it is on, which paragraphs it edits (all or only flagged ones), the batch size and the length tolerance.
-- **Plagiarism Evidence** (Editorial Tools → Plagiarism Evidence, or an article's **Originality** tab): compares a saved article or pasted text with your other saved articles (all websites), the pages it links to (up to 10), up to 10 URLs you add, Wikipedia extracts for the topic and — only if you put a `SERPER_API_KEY` for the licensed Serper search API in `.env` — web pages found for a few distinctive passages. It shows **identical runs of 8+ words** (verified word for word in the source) and **closely matching sentences** side by side with their source, plus a coverage list of everything that was or could not be compared. Quotations and text that recurs across your own site are not counted. There is no plagiarism score: read the evidence and decide. Search engine pages are never scraped; without a key, everything else still works.
-- **Celebrity Writer 2.0 is retired.** Old 2.0 articles stay readable (outputs, post IDs, logs, prompts) but can't be run, queued or edited. If a backup is ever needed, the retirement migration's changes can be undone with `npm run db:rollback-retirement -- <backup-file>` from `data\backups\migrations\`.
+## Privacy and security
 
-## Campaigns and workflow
+- **Local only:** the dashboard listens on this PC only (127.0.0.1) and accepts no requests from other websites. There is no login screen, because no one else can reach it.
+- **Passwords:**
+  - WordPress passwords are encrypted (AES-256-GCM) in the data folder. They are never written to the database, a log, a backup or a report, and never shown again.
+  - They are typed only into your website's own login page. A refused password is not tried again until you change it.
+- **CAPTCHAs and checks** are never solved by the app; they are left to you.
+- **Drafts by default:** nothing is published without the website's own publish permission.
+- **ChatGPT** is used only through your signed-in ChatGPT tab, never through the OpenAI API. Google is used through your own Search Console sign-in. Web search uses the licensed Serper API, only with your key.
+- **Help assistant:** your Gemini key is stored encrypted like the passwords. Each question sends only a short, secret-free status of the app, which the panel shows.
+- **Logs and diagnostic bundles** remove cookies, tokens, keys and passwords.
 
-- **Bulk Campaigns** (sidebar → Bulk Campaigns → New): paste keywords (one per line, `keyword | secondary1, secondary2 | example title`, CSV or tab-separated columns from a spreadsheet; up to 1,000 rows) or load a file. The preview checks every row before anything is created: the writer (the Smart Router picks Celebrity or Tigram and asks you when unsure), website and category, exact and near duplicates, existing tasks and already-published posts. Fix rows in the preview, then create; one article is queued per ready row and nothing is ever duplicated, even after a restart. Pause, resume, cancel, per-row retry/corrections and CSV export are on the campaign page. **Campaigns never publish.**
-- **Workflow** (sidebar → Workflow): a keyword queue per website. Set publishing slots as `h:mm AM/PM` in **Pakistan time** (Asia/Karachi; daylight-saving-safe for the website's own clock), optional weekdays, how many hours ahead to start writing and how many articles may wait at once. Each keyword gets its own slot (two articles never share one); an article that is not ready by its slot moves to the next free slot, and stops after the retry limit with the reason.
-- **Publishing stays off** until you switch it on for a website and type the acknowledgement (Websites → the website → Publishing permission). Without it, workflow articles stay **verified drafts**; once their slot passes they are marked “draft kept (publish yourself)”. With it, the verified draft is **scheduled** in WordPress for its slot (never published early), read back to confirm, and checked again after the slot. A post you trash or change in WordPress is left alone.
-- **Indexing**: the tool never claims a post is indexed. With “Remind me to request indexing” on, a Search Console link appears after publishing; you mark “indexing requested” and “indexed” yourself after checking.
-- **Publishing Calendar** (sidebar, under Workflow): reserved and free slots of every workflow, two weeks at a time, in Pakistan time.
+## Troubleshooting
 
-## Search Performance and Content Refresh
-
-- **Search Performance** (sidebar → Productivity → Search Performance) shows only data you export from Google Search Console:
-  1. In Search Console open **Performance → Search results**, choose the date range (optionally **Compare**), then **Export → Download CSV**.
-  2. Upload the zip, or its CSV files.
-
-  What you see:
-  - The website needs its Search Console property first (website page → Settings, e.g. `sc-domain:example.com`). Until then the page says **NOT CONNECTED**; with a property but no import it says **NO VERIFIED DATA**.
-  - Imports are checked: pages of another property, a search type other than Web, a missing period (no Dates.csv and no dates entered) and the same export twice are refused.
-  - The page shows 7/28/90-day totals with how many days have data, and the change only when both periods are complete. Days are Search Console days (Pacific Time), as exported.
-  - It also shows top pages and queries (linked to your articles), declining pages (from a Compare export or an earlier report of the same length), and published articles without impressions. Pages missing from a 1,000-row export are not counted.
-  - **Indexing**: requests are counted separately from indexing you confirmed yourself and from pages actually seen in search (impressions).
-  - Every table exports to CSV; an import can be removed.
-- **Content Refresh** (Editorial Tools → Content Refresh) lists verified articles that need a refresh, with the evidence:
-  - when an article is listed:
-    - a past year in the title or a heading, or “as of 2024” / “Stand: 2024” in the text (ordinary dates such as birth years never count);
-    - a dead link (HTTP 404/410; a missing domain only when other links answered, so a dropped internet connection is not mistaken for dead links);
-    - a high-impact fact a source now contradicts (Research Evidence);
-    - falling clicks or no impressions in imported Search Console data.
-
-    Age alone never lists an article; it only raises the priority.
-  - when it runs: each website is evaluated once a day (read-only); **Evaluate now** runs it for one website.
-  - **Propose a revision** starts from the article's current text: dead links are removed (their words stay) and the passages to update are named. Edit the HTML, save, then **Approve**.
-  - The worker updates the **same WordPress post**:
-    - only its content is sent; status, date, slug and URL stay, and the read-back confirms it;
-    - drafts are updated directly;
-    - a live post needs **Allow approved updates to live posts** on the website's Publishing permission card, and you must type `UPDATE LIVE POST`;
-    - if the post was edited in WordPress since the app saved it, nothing is changed (**conflict**). **Start from the WordPress version** makes that text the article's text and proposes again.
-  - The article in the app changes only after WordPress confirmed the update. **Roll back** proposes the previous text through the same approval.
-
-## Productivity, websites and recovery
-
-- **Productivity** (sidebar) counts only verified drafts: an article counts once, when its WordPress draft was read back and verified. The post ID is kept as proof, and retries never count twice. The page shows:
-  - the last 15/60/120 minutes;
-  - the 14-day trend (Pakistan days);
-  - totals by website, writer and campaign;
-  - the slowest stages (p50/p90, retries, failures);
-  - ChatGPT limits and time in backoff;
-  - review and paused articles, quality-gate results, and the top reasons articles stopped;
-  - alerts (worker stopped, queue stall, high error rate, ChatGPT backoff);
-  - CSV exports.
-
-  **Target vs actual** checks the last two consecutive hours against 6 verified drafts each:
-  - **PASS** or **FAIL**;
-  - **claim suspended** when ChatGPT limits, logins/checks or a stopped worker interfered;
-  - **no work to measure** when nothing was queued.
-
-  The capacity figure is an estimate from measured medians and is labelled as one.
-- **2-hour benchmark**: run your live test with real ChatGPT and WordPress sessions, then `npm run benchmark:report -- <start time, e.g. 2026-10-15T09:00:00Z>`. It prints and saves (in `data\reports\`):
-  - the verified articles of each hour with their WordPress posts;
-  - stage timings and retries;
-  - stopped articles and versions;
-  - the PASS / FAIL / suspended verdict.
-
-  It starts no work.
-- **Website Control** (sidebar, under Websites) shows every website with:
-  - its language, time zone, session, measured health and categories;
-  - its editor, internal-link line, image template, prompt overrides, writer rules and Rank Math setting;
-  - its workflow, Search Console property, publishing permission and article counts.
-
-  Actions:
-  - **Pause/Resume**, **Priority** and **Max in progress** (0 = no limit) per site; audited.
-  - **Check all sessions** queues one session test per site.
-  - **Copy safe settings** copies overrides, writer rules, the Rank Math target, the image design (without the source's logo and fixed photos), and — only between sites of the same language — the internal-link line and prompt overrides. URLs, profiles, categories, publishing permission and the Search Console property are never copied.
-- **Recovery Center**: open incidents can be resumed from their saved checkpoint or retried. Articles running with no update for 30+ minutes have **Resume from <stage>** (finished stages are not repeated).
-- **SEO brief** (article → SEO tab): each article gets a suggested search intent and a brief, which you can edit. It contains the sections to cover, title/meta guidance, the FAQ focus and the keyword guideline.
-  - Intents: biography, family/relationship, net worth estimate, explainer, comparison, how-to.
-  - The brief is added to the writing prompt (LONG_ARTICLE / ARTICLE). To place it yourself, put `{{seo_brief}}` in the prompt; to turn it off, Settings → SEO → “Add the SEO brief to writing prompts”.
-  - An informational check shows which sections the article covers as headings. It never changes the SEO score and never makes the app add text.
-
-## Data folder (`data\`, git-ignored)
-
-| Path | Contents |
+| What you see | What to do |
 | --- | --- |
-| `app.db` | SQLite database (WAL mode) |
-| `profiles\<site>` | Per-site WordPress browser profiles — **treat like passwords** |
-| `chatgpt-chrome\` | The dedicated Automation Chrome profile for ChatGPT |
-| `media\`, `screenshots\`, `logs\` | Generated images, failure screenshots, logs |
-| `backups\` | Database (+ optional media) backups |
-| `worker.lock` | Single-worker ownership lock (PID + heartbeat) |
+| Windows says *unknown publisher* | **More info → Run anyway** (the installer is not code-signed). |
+| The **ChatGPT** chip is amber | Open the ChatGPT tab (Ctrl+2): sign in, or finish the check ChatGPT shows. Waiting articles go on by themselves. |
+| ChatGPT does not work in the app | Untick **File → Run ChatGPT prompts in this app**. Automation Chrome then takes the prompts (see the [user guide](docs/user-guide.md#the-desktop-app-in-detail)). |
+| “WordPress login required” | Open the website's page. With a saved password the app signs in again by itself; a CAPTCHA or 2-step code opens a window for you. |
+| Nothing starts | Check **Pause** in the top bar and the quiet hours in **Settings → Workflow**. |
+| “Reconnecting to the dashboard…” | The dashboard restarts by itself after a crash, usually within 30 seconds. |
+| “This page ran into a problem” | **Try again** or **Reload the page**; your work keeps running in the background. If it comes back, **Copy details** and send them: the error is also in the app's log. |
+| An article stopped | Its page says why and what to do. **Retry** continues it, and the **Ask** button explains the message. |
+| Anything else | **Help → Troubleshooting → Copy details for a report**, plus **Logs / Diagnostics → Download diagnostic bundle** (secrets removed). |
 
-## Backup & restore
+## Documentation
 
-```powershell
-npm run db:backup -- --media
-# stop npm run dev:all first
-npm run db:restore -- 2026-10-14T12-00-00-000Z-manual
-npm run db:migrate
-```
-
-Backups use SQLite `VACUUM INTO`, so they are consistent even while the worker runs. Browser profile folders are never included.
-
-## Security notes
-
-- The dashboard has no accounts by design (owner request). Do not expose port 3000 to a network; it binds to `127.0.0.1`.
-- The ChatGPT extension authenticates with a one-time-displayed connection key (`bas_…`); only its hash is stored.
-- Logs and the diagnostic bundle redact cookies, tokens, keys and passwords.
-- Every outside page the app reads (link checks, images, plagiarism sources) goes through one SSRF-safe fetcher: public addresses only (checked again on every redirect), size and time limits, no cookies.
-- Article HTML is allow-listed before it is saved and again before it is shown, including unsaved edits in the editor.
-- Optional `SERPER_API_KEY` (plagiarism web search) stays in `.env`; it is sent only to that API and never logged or shown.
+- **[User guide](docs/user-guide.md):** every page and setting in detail.
+- **[Running from source and development](docs/development.md):** the npm copy, scripts, tests, building the installer.
+- **[Windows test prompt](docs/windows-qa-prompt.md):** a ready prompt for an AI agent to test the app on your PC.
+- **[BUILD_STATUS.md](BUILD_STATUS.md):** what changed, how it was verified, known limits. **[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md):** release steps.

@@ -22,6 +22,7 @@ describe('settings schema', () => {
     expect(s.seo.maxRankMathAttempts).toBe(3);
     expect(s.seo.maxExternalLinks).toBe(5);
     expect(s.seo.enhanceCelebrityImages).toBe(true); // Upscayl when installed (owner's earlier tool)
+    expect(s.content.humanizerEnabled).toBe(false); // off by default; switched on per website (owner decision)
     expect(s.advanced.backoffScheduleSec).toEqual([4, 30, 60, 120, 240, 300]);
   });
 

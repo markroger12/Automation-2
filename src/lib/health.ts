@@ -1,5 +1,8 @@
+import { inDesktopApp, startWorkerHint } from './runtime';
 import { db } from './db';
 import { parseJson } from './json';
+import { readAutoCheck, updateNotice } from './update/auto-check';
+import { readStatus } from './update/service';
 
 export const WORKER_HEARTBEAT_MS = 10_000;
 /** A worker is considered alive only if its heartbeat is fresh. */
@@ -63,7 +66,7 @@ export interface HealthWarning {
 
 /** Actionable warnings shown on every page. Never invents state. */
 export async function getHealthWarnings(): Promise<HealthWarning[]> {
-  const [worker, extension, loginSites, loginTasks, siteCount] = await Promise.all([
+  const [worker, extension, loginSites, loginTasks, siteCount, autoCheck] = await Promise.all([
     getWorkerHealth(),
     getExtensionHealth(),
     db.website.findMany({
@@ -73,6 +76,7 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
     }),
     db.articleTask.count({ where: { status: 'LOGIN_REQUIRED' } }),
     db.website.count({ where: { active: true } }),
+    readAutoCheck().catch(() => null),
   ]);
   const warnings: HealthWarning[] = [];
   if (worker.state !== 'online') {
@@ -82,7 +86,7 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
       detail:
         worker.state === 'stale'
           ? `Last heartbeat ${worker.lastSeenAt?.toLocaleTimeString() ?? 'unknown'}. Queued work will not progress until the worker is back.`
-          : 'Start it with `npm run dev:all` (or `npm run worker`). Tasks stay safely queued meanwhile.',
+          : `${startWorkerHint()} Tasks stay safely queued meanwhile.`,
       href: '/diagnostics',
       action: 'Diagnostics',
     });
@@ -90,20 +94,40 @@ export async function getHealthWarnings(): Promise<HealthWarning[]> {
   if (extension.state !== 'connected') {
     warnings.push({
       tone: 'warning',
-      title: extension.state === 'never' ? 'ChatGPT extension not connected yet' : 'ChatGPT extension is not responding',
-      detail: 'Open Automation Chrome with the extension loaded and paired. ChatGPT stages wait until it connects.',
-      href: '/automation-chrome',
-      action: 'Set up',
+      ...(inDesktopApp()
+        ? {
+            title: extension.state === 'never' ? 'ChatGPT is not connected yet' : 'ChatGPT is not responding',
+            detail: 'Open the ChatGPT tab at the top of the app (Ctrl+2) and sign in. ChatGPT steps wait until it connects.',
+          }
+        : {
+            title: extension.state === 'never' ? 'ChatGPT extension not connected yet' : 'ChatGPT extension is not responding',
+            detail: 'Open Automation Chrome with the extension loaded and paired. ChatGPT stages wait until it connects.',
+            href: '/automation-chrome',
+            action: 'Set up',
+          }),
+    });
+  }
+  // Connected but signed out (ChatGPT still shows its composer then): articles wait until the owner signs in.
+  if (extension.state === 'connected' && extension.diagnostics.loggedIn === false) {
+    warnings.push({
+      tone: 'warning',
+      title: 'ChatGPT is signed out',
+      detail: inDesktopApp() ? 'Sign in with your email and password in the ChatGPT tab at the top (Ctrl+2). Articles wait and go on after you sign in.' : 'Sign in to ChatGPT in Automation Chrome. Articles wait and go on after you sign in.',
+      ...(inDesktopApp() ? {} : { href: '/automation-chrome', action: 'Open' }),
     });
   }
   if (siteCount === 0) {
     warnings.push({ tone: 'info', title: 'No WordPress website yet', detail: 'Add a website and log in once to create drafts.', href: '/websites', action: 'Add website' });
   }
   for (const site of loginSites) {
-    warnings.push({ tone: 'warning', title: `WordPress login required: ${site.name}`, detail: 'Log in once in the visible browser window; paused tasks resume automatically.', href: `/websites/${site.id}`, action: 'Log in' });
+    warnings.push({ tone: 'warning', title: `WordPress login required: ${site.name}`, detail: 'Log in on the website page (with a saved sign-in the app does it by itself); paused tasks resume automatically.', href: `/websites/${site.id}`, action: 'Log in' });
   }
   if (loginTasks > 0 && loginSites.length === 0) {
     warnings.push({ tone: 'warning', title: `${loginTasks} task(s) waiting for a login`, detail: 'ChatGPT or WordPress asked for sign-in or a human check.', href: '/queue?group=paused', action: 'Open queue' });
   }
+  // A new app version on GitHub (owner request: tell me when the tool has an update). Last, after what blocks work.
+  // The git copy's “App update available” (its hourly look): not in the desktop app, which updates itself.
+  const update = inDesktopApp() ? null : updateNotice(autoCheck, readStatus());
+  if (update) warnings.push(update);
   return warnings;
 }

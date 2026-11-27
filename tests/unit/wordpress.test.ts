@@ -110,18 +110,25 @@ describe('only the WordPress client sends requests to WordPress', () => {
     expect(offenders).toEqual([]);
     // publish-guard.ts names the statuses it blocks; link-index.ts only READS already-published posts (GET filter).
     const readers = [path.join('wordpress', 'publish-guard.ts'), path.join('wordpress', 'link-index.ts')];
-    // The single scheduling call is WpClient.scheduleFuture (status "future" only)…
+    // The only status changes are WpClient.scheduleFuture (“future”) and WpClient.publishMissedSchedule (“publish”, for a
+    // scheduled post whose time has passed and that WordPress did not publish: owner report, morgan carey)…
     const clientFile = path.join('wordpress', 'client.ts');
     const publishers = files.filter((f) => ![...readers, clientFile].some((r) => f.endsWith(r)) && /status:\s*['"](publish|future|private|pending)['"]/.test(fs.readFileSync(f, 'utf8')));
     expect(publishers).toEqual([]);
     const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
-    expect(read(clientFile).match(/status:\s*['"](publish|future|private|pending)['"]/g)).toEqual(["status: 'future'"]);
-    // …called only by the approved scheduler, and only inside withPublishPermit (canPublish + acknowledgement, per post).
-    const callers = files.filter((f) => /\.scheduleFuture\(/.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(root, f));
-    expect(callers).toEqual([path.join('wordpress', 'schedule.ts')]);
+    expect(read(clientFile).match(/status:\s*['"](publish|future|private|pending)['"]/g)).toEqual(["status: 'future'", "status: 'publish'"]);
+    expect(read(clientFile)).toMatch(/async publishMissedSchedule\([^)]*\)[^{]*\{\s*const \{ data \} = await this\.call<WpPost>\('POST', `\/wp\/v2\/posts\/\$\{id\}`, \{ json: \{ status: 'publish', date_gmt/);
+    // …each called only by the approved scheduler, once, and only inside withPublishPermit (canPublish + acknowledgement, per post).
     const schedule = read(path.join('wordpress', 'schedule.ts'));
-    expect(schedule.match(/\.scheduleFuture\(/g)).toHaveLength(1);
-    expect(schedule).toMatch(/withPublishPermit\([^;]*?\.scheduleFuture\(/s);
+    for (const call of ['scheduleFuture', 'publishMissedSchedule']) {
+      const callers = files.filter((f) => new RegExp(`\\.${call}\\(`).test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(root, f));
+      expect(callers).toEqual([path.join('wordpress', 'schedule.ts')]);
+      expect(schedule.match(new RegExp(`\\.${call}\\(`, 'g'))).toHaveLength(1);
+      expect(schedule).toMatch(new RegExp(`withPublishPermit\\([^;]*?\\.${call}\\(`, 's'));
+    }
+    // A missed schedule is published only when its own time has passed (never early).
+    expect(schedule).toMatch(/const overdue = \(x: WpPost \| null\) => x\?\.status === 'future' && Date\.now\(\) - gmt\(x\.date_gmt\) >= MISSED_SCHEDULE_GRACE_MS;/);
+    expect(schedule).toMatch(/if \(!overdue\(p\) \|\| !kw\.workflow\.website\.canPublish[^\n]*\n[^\n]*\n[^\n]*\n\s*await withPublishPermit/);
   });
 });
 

@@ -4,7 +4,8 @@ import type { ModuleManifest } from '../types';
  * Celebrity Article Writer — the original Celebrity Writer 1.0 pipeline
  * (internal key "celebrity-writer" preserved) with the 3.0 checkpoints.
  * Six original writing prompts in order: TITLES, RESEARCH, LONG_ARTICLE,
- * FINAL_ARTICLE, FAQS, QUICK_BIO — never replaced by one composite prompt.
+ * FINAL_ARTICLE, FAQS, QUICK_BIO — never replaced by one composite prompt. The category is always the website's
+ * “Celebrity” (German websites: “Prominente”; owner decision 2026-11-04), set without a prompt.
  */
 export const celebrityManifest: ModuleManifest = {
   key: 'celebrity-writer',
@@ -33,11 +34,12 @@ export const celebrityManifest: ModuleManifest = {
     { key: 'FINAL_ARTICLE', label: 'Final article', kind: 'chatgpt', runningStatus: 'OPTIMIZING', progress: 40, dependsOn: ['LONG_ARTICLE'], prompt: { moduleKey: 'celebrity-writer', stageKey: 'FINAL_ARTICLE' }, checkpoint: 'EXISTING_WRITER_STAGES', regenerable: true, description: 'Polished article within the configured maximum (default 1,300 words).' },
     { key: 'FAQS', label: 'FAQs', kind: 'chatgpt', runningStatus: 'GENERATING_FAQS', progress: 50, dependsOn: ['FINAL_ARTICLE'], prompt: { moduleKey: 'celebrity-writer', stageKey: 'FAQS' }, checkpoint: 'EXISTING_WRITER_STAGES', regenerable: true, description: 'Exactly the configured number of QUESTION/ANSWER pairs.' },
     { key: 'QUICK_BIO', label: 'Quick Bio', kind: 'chatgpt', runningStatus: 'GENERATING_BIO_TABLE', progress: 56, dependsOn: ['RESEARCH'], prompt: { moduleKey: 'celebrity-writer', stageKey: 'QUICK_BIO' }, checkpoint: 'EXISTING_WRITER_STAGES', regenerable: true, description: 'Two-column Attribute | Details HTML table (~11–13 rows).' },
+    { key: 'CATEGORY', label: 'Category', kind: 'local', runningStatus: 'OPTIMIZING', progress: 59, dependsOn: ['TITLE_APPROVAL'], regenerable: true, description: 'Always the website’s “Celebrity” category (German websites: “Prominente”).' },
     { key: 'EXTERNAL_LINKS', label: 'External links', kind: 'chatgpt', runningStatus: 'LINKING', progress: 62, dependsOn: ['FINAL_ARTICLE'], prompt: { moduleKey: 'shared', stageKey: 'EXTERNAL_LINKS' }, regenerable: true, description: 'Candidate links, each verified (reachable, on-topic, SSRF-safe) before insertion.' },
-    { key: 'INTERNAL_LINKS', label: 'Internal links', kind: 'local', runningStatus: 'LINKING', progress: 66, dependsOn: ['FINAL_ARTICLE'], checkpoint: 'INTERNAL_LINKS', regenerable: true, description: 'Relevant existing posts of the same site and the final “Also read” line.' },
+    { key: 'INTERNAL_LINKS', label: 'Internal links', kind: 'local', runningStatus: 'LINKING', progress: 66, dependsOn: ['FINAL_ARTICLE'], checkpoint: 'INTERNAL_LINKS', regenerable: true, description: 'Two links to posts of the same site: the previous article on the final “Also read” line, and a related post in the middle (on a word, else a line).' },
     { key: 'IMAGES', label: 'Images', kind: 'local', runningStatus: 'PROCESSING_IMAGES', progress: 70, dependsOn: ['TITLE_APPROVAL'], checkpoint: 'IMAGE_STUDIO', regenerable: true, description: 'Optional featured + two body images; degrades safely when unavailable.' },
     { key: 'HUMANIZE', label: 'Editorial humanizer', kind: 'chatgpt', runningStatus: 'HUMANIZING', progress: 76, dependsOn: ['EXTERNAL_LINKS'], prompt: { moduleKey: 'shared', stageKey: 'HUMANIZE' }, regenerable: true, description: 'Paragraph-level polish with fact locks; rejected rewrites keep the original.' },
-    { key: 'ASSEMBLY', label: 'Assembly', kind: 'local', runningStatus: 'ASSEMBLING', progress: 82, dependsOn: ['HUMANIZE', 'FAQS', 'QUICK_BIO', 'INTERNAL_LINKS', 'IMAGES'], regenerable: true, description: 'Intro → Quick Bio → body → FAQs → conclusion → one internal-link line; sanitized HTML.' },
+    { key: 'ASSEMBLY', label: 'Assembly', kind: 'local', runningStatus: 'ASSEMBLING', progress: 82, dependsOn: ['HUMANIZE', 'FAQS', 'QUICK_BIO', 'INTERNAL_LINKS', 'IMAGES'], regenerable: true, description: 'Intro → Quick Bio → body → FAQs → conclusion → internal-link line; sanitized HTML.' },
     { key: 'SEO_CHECK', label: 'SEO check', kind: 'local', runningStatus: 'SEO_CHECKING', progress: 86, dependsOn: ['ASSEMBLY'], description: 'Transparent weighted on-page checks with fix suggestions.' },
     { key: 'QUALITY_GATE', label: 'Quality gate', kind: 'gate', runningStatus: 'QUALITY_CHECKING', progress: 88, dependsOn: ['SEO_CHECK'], checkpoint: 'QUALITY_GATE', description: 'Hard stops pause before WordPress; soft issues become review reasons.' },
     { key: 'ARTICLE_APPROVAL', label: 'Article approval', kind: 'gate', runningStatus: 'AWAITING_ARTICLE_APPROVAL', progress: 90, dependsOn: ['QUALITY_GATE'], description: 'Optional manual approval before the WordPress draft.' },

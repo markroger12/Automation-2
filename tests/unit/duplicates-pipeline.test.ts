@@ -35,6 +35,9 @@ beforeAll(async () => {
   siteB = (await websites.createWebsite({ name: 'Tech B', publicUrl: 'https://tech-b.example', language: 'en', targetCountry: 'United States', timezone: 'UTC' })).id;
   for (const [i, s] of [siteA, siteB].entries()) await client.category.create({ data: { websiteId: s, externalId: 10 + i, name: 'Guides' } });
   await client.browserProfile.updateMany({ data: { sessionState: 'LOGIN_REQUIRED' } });
+  // These tests cover the gate's hold for review (Settings → Workflow → Hold articles for review, off by default).
+  const { updateSettings } = await import('@/lib/settings');
+  await updateSettings({ workflow: { holdForReview: true } });
 });
 
 describe('Duplicate Content Detector in the pipeline', () => {

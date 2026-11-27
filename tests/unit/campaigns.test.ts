@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_IMPORT_ROWS, parseImport, splitRecords } from '@/lib/campaigns/parse';
+import { articleTaskInputSchema } from '@/lib/tasks/create';
 import { classifyKeyword, normalizeWriter, resolveWriter } from '@/lib/campaigns/router';
 
 describe('bulk import parser', () => {
@@ -53,6 +54,21 @@ describe('bulk import parser', () => {
     expect(big.problems[0]).toMatch(/1005 rows found; at most 1000/);
     expect(parseImport('   \n').problems).toEqual(['No keywords found.']);
   });
+
+  it('allows up to 30 secondary keywords (owner: it was 20), in imports and for one article', () => {
+    const list = (n: number) => Array.from({ length: n }, (_, i) => `secondary keyword ${i + 1}`).join(', ');
+    const r = parseImport(`Main keyword one | ${list(30)}\nMain keyword two | ${list(31)}\nMain keyword three | ${list(21)}`);
+    expect(r.rows[0].secondaryKeywords).toHaveLength(30);
+    expect(r.rows[0].errors).toEqual([]);
+    expect(r.rows[1].errors).toEqual(['More than 30 secondary keywords.']);
+    expect(r.rows[2].errors).toEqual([]);
+    const base = { moduleKey: 'celebrity-writer', keyword: 'Main keyword', websiteId: 'site1', idempotencyKey: 'test-key-123' };
+    expect(articleTaskInputSchema.parse({ ...base, secondaryKeywords: list(30) }).secondaryKeywords).toHaveLength(30);
+    expect(articleTaskInputSchema.parse({ ...base, secondaryKeywords: list(30).split(', ') }).secondaryKeywords).toHaveLength(30);
+    const tooMany = articleTaskInputSchema.safeParse({ ...base, secondaryKeywords: list(31) });
+    expect(tooMany.success).toBe(false);
+    expect(tooMany.error?.issues[0].message).toBe('At most 30 secondary keywords');
+  });
 });
 
 /** Curated mixed EN/DE intent dataset. null = UNKNOWN is the expected, safe answer. */
@@ -103,10 +119,13 @@ describe('Smart Article Router', () => {
     const confidentMisroutes: string[] = [];
     for (const [kw, lang, expected] of DATASET) {
       const r = resolveWriter({ keyword: kw, language: lang });
-      const got = r.writer ?? 'UNKNOWN';
+      // Owner decision (2026-11-04, two celebrity writers): a person keyword is detected but never given a celebrity
+      // writer by itself — the owner chooses Celebrity or Celebrity 2. The detection is what is measured here.
+      expect(r.writer).not.toBe('celebrity-writer');
+      const got = r.writer ?? (r.detected === 'celebrity' ? 'celebrity-writer' : 'UNKNOWN');
       matrix[expected ?? 'UNKNOWN'][got]++;
-      if (r.writer && expected && r.writer !== expected) confidentMisroutes.push(`${kw} → ${r.writer} (${r.rationale})`);
-      if (r.writer && !expected) confidentMisroutes.push(`${kw} → ${r.writer} but should ask (${r.rationale})`);
+      if (got !== 'UNKNOWN' && expected && got !== expected) confidentMisroutes.push(`${kw} → ${got} (${r.rationale})`);
+      if (got !== 'UNKNOWN' && !expected) confidentMisroutes.push(`${kw} → ${got} but should ask (${r.rationale})`);
     }
     expect(confidentMisroutes).toEqual([]);
     // Most clear cases are routed automatically; the rest safely ask.

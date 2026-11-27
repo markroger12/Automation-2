@@ -57,7 +57,7 @@ describe('productivity report (database)', () => {
     const create = await import('@/lib/tasks/create');
     for (const [name, lang] of [['Celeb News', 'en'], ['Promi Welt', 'de']] as const) {
       sites[name] = (await websites.createWebsite({ name, publicUrl: `https://${name.replace(' ', '').toLowerCase()}.example`, language: lang, targetCountry: lang === 'de' ? 'Germany' : 'United States', timezone: 'UTC' })).id;
-      await client.category.create({ data: { websiteId: sites[name], externalId: 7, name: 'Stars' } });
+      await client.category.create({ data: { websiteId: sites[name], externalId: 7, name: 'Celebrity' } });
     }
     // 5 verified articles at known times: 3 on Celeb News (celebrity), 2 on Promi Welt (tigram).
     const plan: [string, string, number][] = [

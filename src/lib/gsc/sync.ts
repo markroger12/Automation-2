@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { db } from '../db';
-import { log } from '../log';
+import { errorMessage, log } from '../log';
 import { getValue, setValue } from '../settings';
-import { siteProperty } from '../search-performance/service';
-import { listSitemaps, readKey, searchAnalytics, submitSitemap, inspectUrl, type AnalyticsRow } from './client';
+import { readKey, searchAnalytics, inspectUrl, type AnalyticsRow } from './client';
+import { resolveWebsiteProperty } from './property';
+import { pendingRequestNote, queueIndexingRequest, requestIndexingAgain } from './request-indexing';
+import { googleIndexCheck, indexCheckConfigured, IndexCheckError } from './google-index';
+import { inspectionProperty } from '../workflow/search-console';
 
 /**
  * Live Search Console data (owner request). Every sync stores one snapshot (source GSC_API) that replaces the
@@ -33,14 +36,21 @@ export interface SyncState {
 }
 export const syncKey = (websiteId: string) => `gsc.sync.${websiteId}`;
 
+/** The website's property; detected from the service account's own list when the configured one is not usable. */
 export async function websiteProperty(websiteId: string): Promise<{ site: { id: string; name: string; publicUrl: string }; property: string | null }> {
-  const site = await db.website.findUniqueOrThrow({ where: { id: websiteId }, select: { id: true, name: true, publicUrl: true, searchConsoleProperty: true, workflows: { select: { searchConsoleProperty: true }, take: 1 } } });
-  return { site, property: siteProperty(site, site.workflows[0]?.searchConsoleProperty) };
+  const { site, property } = await resolveWebsiteProperty(websiteId);
+  return { site, property };
 }
 
 export async function syncWebsite(websiteId: string, now = new Date()): Promise<SyncState & { days: number; pages: number; queries: number; hours: number }> {
-  const { site, property } = await websiteProperty(websiteId);
-  if (!property) throw new Error(`${site.name} has no Search Console property (website page → Search Console property).`);
+  const { site, property, accessible } = await resolveWebsiteProperty(websiteId, { fresh: true });
+  if (!property) throw new Error(`${site.name} has no Search Console property (website page → Search Console property)${accessible?.length ? `; the service account can use: ${accessible.map((p) => p.siteUrl).join(', ')}` : ''}.`);
+  if (accessible && !accessible.some((p) => p.siteUrl === property && p.permissionLevel !== 'siteUnverifiedUser')) {
+    const key = readKey();
+    const msg = `${key?.client_email ?? 'The service account'} has no access to ${property}${accessible.length ? ` (it can use: ${accessible.map((p) => p.siteUrl).join(', ')})` : ' (it has no property yet)'}. In Search Console, open the property of ${site.publicUrl} → Settings → Users and permissions, and add ${key?.client_email ?? 'the service account'} with “Full” permission.`;
+    await setValue(syncKey(websiteId), { at: now.toISOString(), ok: false, error: msg } satisfies SyncState);
+    throw new Error(msg);
+  }
   try {
     const today = ptDate(now);
     const curStart = shift(today, -27);
@@ -115,97 +125,121 @@ export async function syncWebsite(websiteId: string, now = new Date()): Promise<
   }
 }
 
-// ------------------------------------------------------------------ indexing: sitemap resubmit + proof
+// ------------------------------------------------------------------ indexing: Search Console request + Google search
 
-/** Wait after a verified publish before resubmitting the sitemap (owner: “30 or 40 seconds after publishing”). */
+/** Wait after a verified publish before indexing is requested (owner: “30 or 40 seconds after publishing”). */
 export const SUBMIT_AFTER_MS = 35_000;
-/** URL-inspection checks after publishing: 1 h, 6 h, 24 h, then daily until 14 days. */
-export const CHECK_OFFSETS_H = [1, 6, 24, 48, 72, 96, 120, 144, 168, 192, 216, 240, 264, 288, 312, 336];
+const DAY_MS = 24 * 3600_000;
+/** Requests and checks stop when an article is still not found this many days after publishing. */
+export const INDEX_DAYS = 14;
 
-function nextCheck(publishedAt: Date, checksDone: number): Date | null {
-  const h = CHECK_OFFSETS_H[checksDone];
-  return h === undefined ? null : new Date(publishedAt.getTime() + h * 3600_000);
-}
-
-/** The sitemaps Search Console already knows for the property, else the site's Rank Math/Yoast sitemap index. */
-async function resubmitSitemaps(property: string, publicUrl: string): Promise<string[]> {
-  const known = (await listSitemaps(property)).map((s) => s.path).filter((p) => /^https?:\/\//.test(p));
-  const targets = known.length ? known : [`${publicUrl.replace(/\/+$/, '')}/sitemap_index.xml`];
-  for (const t of targets) await submitSitemap(property, t);
-  return targets;
+async function requestPayload(kw: { id: string; publishedUrl: string | null }, websiteId: string) {
+  const { site, property } = await websiteProperty(websiteId);
+  // No property set or detected: the website's URL as a URL-prefix property (as the workflow page's link does).
+  const requestProperty = property ?? inspectionProperty(null, site.publicUrl);
+  // Google's own URL Inspection link for the post (the fallback when the “Inspect any URL” box does not work).
+  const inspectLink = readKey() ? await inspectUrl(requestProperty, kw.publishedUrl!).then((r) => r.link).catch(() => null) : null;
+  return { site, payload: { keywordId: kw.id, url: kw.publishedUrl!, property: requestProperty, websiteId: site.id, inspectLink } };
 }
 
 /**
- * Published workflow posts: resubmit the sitemap ~35 s after a verified publish (workflow switch “request
- * indexing”), then ask Google's URL Inspection for proof. INDEXED only when Google says the URL is on Google.
+ * Published workflow posts (owner request, 2026-11-04: “one request a day; 24 hours later check whether it is
+ * indexed; if not, request again”):
+ *  1. ~35 s after a verified publish, “Request indexing” is queued for Automation Chrome (workflow switch).
+ *  2. 24 hours after the request (or after publishing, without the switch), Google search is asked through the search
+ *     API (Serper: `site:` + the address) whether the post is on Google — not Search Console.
+ *  3. Found → INDEXED. Not found → indexing is requested again 48 hours after the last request (owner, 2026-11-07)
+ *     and searched a day after it; after 14 days without it, requests and searches stop.
  */
-export async function indexingTick(now = new Date(), maxInspections = 20): Promise<{ submitted: number; inspected: number; indexed: number }> {
-  if (!readKey()) return { submitted: 0, inspected: 0, indexed: 0 };
+export async function indexingTick(now = new Date(), maxChecks = 20): Promise<{ submitted: number; checked: number; indexed: number }> {
   let submitted = 0;
-  let inspected = 0;
+  let checked = 0;
   let indexed = 0;
 
-  // 1. Newly published: request (sitemap) and schedule the first check.
+  // 1. Newly published: request indexing as the owner does it — URL Inspection → REQUEST INDEXING in Search Console,
+  //    by Automation Chrome (owner request: not by resubmitting the sitemap) — and schedule the first search.
   const fresh = await db.workflowKeyword.findMany({
     where: { status: 'PUBLISHED', indexCheckAt: null, indexChecks: 0, publishedUrl: { not: null }, publishedAt: { lte: new Date(now.getTime() - SUBMIT_AFTER_MS) } },
-    include: { workflow: { select: { requestIndexing: true, websiteId: true, searchConsoleProperty: true } } },
+    include: { workflow: { select: { requestIndexing: true, websiteId: true } } },
     take: 50,
   });
-  const submittedFor = new Map<string, string>();
   for (const kw of fresh) {
-    const { site, property } = await websiteProperty(kw.workflow.websiteId);
-    if (!property) continue;
     const publishedAt = kw.publishedAt ?? now;
-    let status = kw.status;
-    let note = 'Indexing not requested (workflow switch off); Google’s index status is checked.';
-    let requestedAt: Date | null = null;
+    let note = 'Indexing not requested (workflow switch off); Google search is checked a day after publishing.';
+    let siteName = '';
     if (kw.workflow.requestIndexing) {
-      try {
-        if (!submittedFor.has(site.id)) submittedFor.set(site.id, (await resubmitSitemaps(property, site.publicUrl)).join(', '));
-        requestedAt = now;
-        status = 'INDEXING_REQUESTED';
-        note = `Sitemap resubmitted to Google (${submittedFor.get(site.id)}) at ${now.toISOString()}. A request is not proof of indexing; Google is asked for the index status next.`;
-        submitted++;
-      } catch (error) {
-        note = `Sitemap could not be resubmitted: ${(error as Error).message}`;
-      }
+      const { site, payload } = await requestPayload(kw, kw.workflow.websiteId);
+      siteName = site.name;
+      await queueIndexingRequest(payload, now);
+      note = 'Waiting for Automation Chrome to request indexing in Search Console (URL Inspection → Request indexing). Google search is checked 24 hours after the request.';
+      submitted++;
     }
-    await db.workflowKeyword.update({ where: { id: kw.id }, data: { status, indexingRequestedAt: requestedAt ?? kw.indexingRequestedAt, indexingStatus: note, indexCheckAt: nextCheck(publishedAt, 0) ?? now } });
-    await log({ category: 'search', message: `${site.name}: “${kw.keyword}” published — ${note}` });
+    if (!indexCheckConfigured()) note += ' The Google search check needs a Serper key (SERPER_API_KEY in .env).';
+    await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexingStatus: note, indexCheckAt: new Date(publishedAt.getTime() + DAY_MS) } });
+    await log({ category: 'search', message: `${siteName ? `${siteName}: ` : ''}“${kw.keyword}” published — ${note}` });
   }
 
-  // 2. Proof: URL Inspection when a check is due.
+  // 2. Due searches: is the post on Google?
   const due = await db.workflowKeyword.findMany({
     where: { status: { in: ['PUBLISHED', 'INDEXING_REQUESTED'] }, indexCheckAt: { lte: now }, publishedUrl: { not: null } },
-    include: { workflow: { select: { websiteId: true } } },
+    include: { workflow: { select: { websiteId: true, requestIndexing: true, website: { select: { name: true, language: true } } } } },
     orderBy: { indexCheckAt: 'asc' },
-    take: maxInspections,
+    take: maxChecks,
   });
   for (const kw of due) {
-    const { site, property } = await websiteProperty(kw.workflow.websiteId);
-    if (!property) continue;
+    const pending = await pendingRequestNote(kw.id);
+    const requested = kw.status === 'INDEXING_REQUESTED' && kw.indexingRequestedAt ? `Indexing requested in Search Console at ${kw.indexingRequestedAt.toISOString()}.` : null;
+    const also = pending ?? requested;
+    if (!indexCheckConfigured()) {
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexCheckAt: new Date(now.getTime() + DAY_MS), indexingStatus: `Google search not checked: add a Serper key (SERPER_API_KEY=… in .env, serper.dev) and restart the app; looked at again in a day.${also ? ` · ${also}` : ''}` } });
+      continue;
+    }
     const checks = kw.indexChecks + 1;
     try {
-      const { result } = await inspectUrl(property, kw.publishedUrl!);
-      inspected++;
-      const what = `${result.coverageState ?? result.verdict ?? 'no answer'}${result.lastCrawlTime ? ` · last crawl ${result.lastCrawlTime}` : ''} · checked ${now.toISOString()}`;
-      if (result.verdict === 'PASS') {
+      const r = await googleIndexCheck(kw.publishedUrl!, kw.workflow.website.language);
+      checked++;
+      const when = now.toISOString();
+      if (r.found) {
         indexed++;
-        await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'INDEXED', indexingStatus: `Google: URL is on Google (${what})`, indexChecks: checks, indexCheckAt: null } });
-        await log({ category: 'search', message: `${site.name}: “${kw.keyword}” is indexed — Google: ${what}` });
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { status: 'INDEXED', indexingStatus: `Google: found in Google search (${r.query}) · checked ${when}`, indexChecks: checks, indexCheckAt: null } });
+        // A request still waiting is not needed any more.
+        await db.queueJob.updateMany({ where: { queue: 'gsc', idempotencyKey: `gsc-index:${kw.id}`, status: 'WAITING' }, data: { status: 'CANCELLED', finishedAt: now, error: 'Google search already shows the URL.' } });
+        await log({ category: 'search', message: `${kw.workflow.website.name}: “${kw.keyword}” is on Google — found in Google search (${r.query}).` });
         continue;
       }
-      const next = nextCheck(kw.publishedAt ?? now, checks);
-      await db.workflowKeyword.update({
-        where: { id: kw.id },
-        data: { indexChecks: checks, indexCheckAt: next, indexingStatus: next ? `Google: not on Google yet (${what}); next check ${next.toISOString()}` : `Not indexed 14 days after publishing (Google: ${what}). No more automatic checks.` },
-      });
+      const notFound = `Google: not in Google search yet (${r.query}, ${r.results} result(s), checked ${when})`;
+      const publishedAt = kw.publishedAt ?? kw.updatedAt;
+      if (now.getTime() - publishedAt.getTime() >= INDEX_DAYS * DAY_MS) {
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: null, indexingStatus: `Not found in Google search ${INDEX_DAYS} days after publishing (last search ${when}). No more automatic requests or searches.` } });
+        await db.queueJob.updateMany({ where: { queue: 'gsc', idempotencyKey: `gsc-index:${kw.id}`, status: 'WAITING' }, data: { status: 'CANCELLED', finishedAt: now, error: `Not on Google ${INDEX_DAYS} days after publishing; requests stopped.` } });
+        continue;
+      }
+      if (kw.workflow.requestIndexing) {
+        // Owner: not indexed → request again 48 hours after the last request, and search again a day after it.
+        const { payload } = await requestPayload(kw, kw.workflow.websiteId);
+        const at = await requestIndexingAgain(payload, now);
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: new Date(at.getTime() + DAY_MS), indexingStatus: `${notFound}. Indexing is requested again ${at.getTime() <= now.getTime() ? 'now' : `at ${at.toISOString()}`} (48 hours after the last request); Google search is checked 24 hours after it.` } });
+      } else {
+        const next = new Date(now.getTime() + DAY_MS);
+        await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexChecks: checks, indexCheckAt: next, indexingStatus: `${notFound}; next search ${next.toISOString()}.${also ? ` · ${also}` : ''}` } });
+      }
     } catch (error) {
-      // Quota or permission: try again in an hour, the schedule does not advance.
-      await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexCheckAt: new Date(now.getTime() + 3600_000), indexingStatus: `Index status not checked: ${(error as Error).message}` } });
+      // The search API: network or HTTP → an hour; the key or its credits → a day. The schedule does not advance.
+      const code = error instanceof IndexCheckError ? error.code : 'NETWORK';
+      const next = new Date(now.getTime() + (code === 'KEY' || code === 'LIMIT' ? DAY_MS : 3600_000));
+      const why = error instanceof IndexCheckError ? error.message : checkError(error);
+      await db.workflowKeyword.update({ where: { id: kw.id }, data: { indexCheckAt: next, indexingStatus: `Google search not checked: ${why}; asked again ${code === 'KEY' || code === 'LIMIT' ? 'in a day' : 'in an hour'}.${also ? ` · ${also}` : ''}` } });
     }
   }
-  return { submitted, inspected, indexed };
+  return { submitted, checked, indexed };
+}
+
+/** Node's fetch says only “fetch failed”: name the network problem behind it. */
+function checkError(error: unknown): string {
+  const cause = (error as { cause?: { code?: string; message?: string } } | null)?.cause;
+  if (error instanceof Error && error.message === 'fetch failed') return `Google could not be reached from this computer (${cause?.code ?? cause?.message ?? 'network error'})`;
+  if (error instanceof Error && error.name === 'TimeoutError') return 'Google did not answer within a minute';
+  return errorMessage(error);
 }
 
 /** Websites whose live data is due (connected key, a property, last sync older than SYNC_EVERY_MS). */

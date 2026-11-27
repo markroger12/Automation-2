@@ -7,6 +7,8 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.ts'],
     environment: 'node',
     setupFiles: ['tests/helpers/isolate-data.ts'],
+    // One temporary folder per run, removed at the end (tests/helpers/run-tmp.ts).
+    globalSetup: ['tests/helpers/run-tmp.ts'],
     testTimeout: 20000,
     pool: 'forks',
   },

@@ -3,6 +3,7 @@ import type { Website } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getSettings } from '@/lib/settings';
 import { parseJson, stringArray } from '@/lib/json';
+import { expectedFaqCount } from '@/lib/writer-config';
 import { LoginRequiredError, NeedsReviewError } from '@/lib/pipeline-errors';
 import { cleanModelMarkdown, markdownToHtml } from '@/lib/content/markdown';
 import { htmlToMarkdown } from '@/lib/content/html-to-markdown';
@@ -10,8 +11,8 @@ import { makeSlug, normalizeText, wordCount, stripTags } from '@/lib/content/tex
 import { evaluateCorrection, markRichText, MARKS_NOTE, restoreRichText, type MarkedLink } from '@/lib/seo/correction';
 import { evaluateQuality } from '@/lib/quality/gate';
 import type { StageManifest } from '@/modules/types';
-import { firstPage, withSiteContext, withWordPressSlot } from '@/wordpress/browser';
-import { siteRef } from '@/wordpress/session';
+import { firstPage } from '@/wordpress/browser';
+import { siteRef, withWordPressSession } from '@/wordpress/session';
 import { WpApiError, WpClient } from '@/wordpress/client';
 import { contentHash, editorContent, mapApiError, NO_PERMISSION_REASON, RemoteEditedError, saveDraft, sameArticle, type DraftInput, type EditorKind } from '@/wordpress/drafts';
 import { inspectInEditor, type EditorInspection } from '@/wordpress/editor';
@@ -26,23 +27,9 @@ import { articleHtml, assembleForTask, bind, bodyForAssembly, metaFromIntro, seo
  * draft (stored post ID); none of them can publish (see publish-guard.ts).
  */
 
-async function withWordPress<T>(site: Website, purpose: string, fn: (context: BrowserContext) => Promise<T>): Promise<T> {
-  const settings = await getSettings();
-  // Known logged-out profile: pause without opening a browser. The task resumes when the owner logs in.
-  const profile = site.wordpressProfileId ? await db.browserProfile.findUnique({ where: { id: site.wordpressProfileId } }) : null;
-  if (!profile || profile.sessionState === 'LOGIN_REQUIRED') {
-    throw new LoginRequiredError('wordpress', `${site.name}: not logged in to WordPress. Use “Log in” on the website page.`, site.id);
-  }
-  try {
-    return await withWordPressSlot(settings.workflow.wordpressConcurrency, () =>
-      withSiteContext(siteRef(site), { headed: settings.browser.mode === 'headed', purpose }, fn),
-    );
-  } catch (error) {
-    if (error instanceof LoginRequiredError && site.wordpressProfileId) {
-      await db.browserProfile.update({ where: { id: site.wordpressProfileId }, data: { sessionState: 'LOGIN_REQUIRED', lastCheckedAt: new Date() } }).catch(() => {});
-    }
-    throw error;
-  }
+/** The shared WordPress session (session.ts): an ended sign-in is renewed with the saved password, once per job. */
+function withWordPress<T>(site: Website, purpose: string, fn: (context: BrowserContext) => Promise<T>): Promise<T> {
+  return withWordPressSession(site, purpose, fn);
 }
 
 async function freshSite(ctx: PipelineContext): Promise<Website> {
@@ -61,7 +48,16 @@ function postTitle(ctx: PipelineContext): string {
 
 type WpOptions = { wpOverwriteRemoteEdits?: boolean; wpAdoptPostId?: number; wpRecreate?: boolean };
 
-function draftInput(ctx: PipelineContext, site: Website, html: string, editor: EditorKind, featuredMediaId: number | null): DraftInput {
+/**
+ * The workflow scheduled this article's post and publishing is still allowed for the website: a regenerated article
+ * (e.g. new images) may update the scheduled post before its slot (owner report: “already future”, stopped).
+ */
+async function scheduledByWorkflow(ctx: PipelineContext, site: Website): Promise<boolean> {
+  if (!ctx.task.wpPostId || !site.canPublish || !site.canPublishAcknowledgedAt) return false;
+  return (await db.workflowKeyword.count({ where: { taskId: ctx.taskId, status: 'SCHEDULED' } })) > 0;
+}
+
+function draftInput(ctx: PipelineContext, site: Website, html: string, editor: EditorKind, featuredMediaId: number | null, updateScheduled = false): DraftInput {
   const t = ctx.task;
   const options = parseJson<WpOptions>(t.options, {});
   return {
@@ -78,6 +74,7 @@ function draftInput(ctx: PipelineContext, site: Website, html: string, editor: E
       overwriteRemoteEdits: options.wpOverwriteRemoteEdits === true,
       adoptPostId: options.wpAdoptPostId ?? null,
       recreate: options.wpRecreate === true,
+      updateScheduled,
     },
   };
 }
@@ -86,7 +83,7 @@ function draftInput(ctx: PipelineContext, site: Website, html: string, editor: E
 async function featuredMedia(client: WpClient, ctx: PipelineContext): Promise<{ id: number; how: UploadHow } | null> {
   const asset = await db.mediaAsset.findFirst({ where: { taskId: ctx.taskId, role: 'FEATURED', status: { in: ['READY', 'UPLOADED'] } }, orderBy: { createdAt: 'desc' } });
   if (!asset) return null;
-  const r = await uploadAssetWithRetry(client, asset, { altText: asset.altText, title: ctx.task.selectedTitle });
+  const r = await uploadAssetWithRetry(client, asset, { altText: asset.altText, title: ctx.task.selectedTitle, naming: { keyword: ctx.task.keyword, language: ctx.task.language, index: 1 } });
   return { id: r.id, how: r.how };
 }
 
@@ -136,7 +133,7 @@ export function wordpressDraft(manifest: StageManifest): PipelineStage {
             mediaCounts.failed++;
             mediaWarnings.push(`The featured image could not be uploaded (${(error as Error).message}); the draft was saved without it.`);
           }
-          const input = draftInput(ctx, site, media.html, knownEditor(site), featured?.id ?? null);
+          const input = draftInput(ctx, site, media.html, knownEditor(site), featured?.id ?? null, await scheduledByWorkflow(ctx, site));
           input.options.timeoutMs = Math.max(timeoutMs, 90_000);
           return saveDraft(client, input, async (data) => {
             await ctx.updateTask(data);
@@ -261,7 +258,7 @@ async function setRankMathFields(client: WpClient, ctx: PipelineContext) {
 async function pushContent(client: WpClient, ctx: PipelineContext, site: Website, editor: EditorKind) {
   const media = await prepareArticleMedia(client, articleHtml(ctx), ctx.taskId);
   try {
-    const outcome = await saveDraft(client, draftInput(ctx, site, media.html, editor, null), async (data) => {
+    const outcome = await saveDraft(client, draftInput(ctx, site, media.html, editor, null, await scheduledByWorkflow(ctx, site)), async (data) => {
       await ctx.updateTask(data);
     });
     if (ctx.privateState<{ remoteEdit?: unknown }>().remoteEdit) await ctx.setPrivateState({ remoteEdit: null });
@@ -308,7 +305,7 @@ async function runRankMath(ctx: PipelineContext): Promise<StageResult> {
         seo,
         reviewThreshold: ctx.config.reviewThreshold,
         densityCeilingPct: ctx.config.keywordDensityCeilingPct,
-        expectedFaqCount: ctx.task.moduleKey === 'tigram-writer' ? ctx.config.tigramFaqCount : ctx.config.faqCount,
+        expectedFaqCount: expectedFaqCount(ctx.task.moduleKey, ctx.config),
         categoryValid: true,
         assemblyWarnings: assembled.warnings,
         imagesRequired: false,
@@ -484,7 +481,9 @@ export function verifiedComplete(manifest: StageManifest): PipelineStage {
       }
       const problems: string[] = [];
       const notes: string[] = [];
-      if (!['draft', 'pending'].includes(post.status)) problems.push(`post status is “${post.status}”, not a draft`);
+      // A post the workflow scheduled stays scheduled for its slot after a regenerated article was saved to it.
+      const scheduled = post.status === 'future' && (await scheduledByWorkflow(ctx, site));
+      if (!['draft', 'pending'].includes(post.status) && !scheduled) problems.push(`post status is “${post.status}”, not a draft`);
       const cats = [...post.categories].sort((a, b) => a - b);
       if (cats.length !== 1 || cats[0] !== t.categoryExternalId) problems.push(`categories are [${cats.join(', ')}], expected [${t.categoryExternalId}]`);
       if ((post.title.raw ?? '').trim() !== postTitle(ctx)) problems.push('title differs from the approved title');

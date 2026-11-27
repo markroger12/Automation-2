@@ -150,6 +150,40 @@ describe('assembly order and placement', () => {
     expect(one).not.toMatch(/<\/figure>\s*<h2>Frequently Asked Questions/);
   });
 
+  it('the related line goes after the middle section, never before the first H2 or into the Quick Bio, FAQs or conclusion (owner request 2026-11-15)', () => {
+    const related = { line: 'Also read:', url: 'https://site.example/related', title: 'Related Post' };
+    const internalLink = { line: 'Also read:', url: 'https://site.example/previous', title: 'Previous Post' };
+    const four = '<p>Intro.</p><h2>One</h2><p>A.</p><h2>Two</h2><p>B.</p><h2>Three</h2><p>C.</p><h2>Four</h2><p>D.</p><h2>FAQ</h2><h3>Q?</h3><p>x</p><h2>Conclusion</h2><p>End.</p>';
+    const h = assembleArticle({ bodyHtml: four, language: 'en', moduleKey: 'tigram-writer', internalLink, relatedLink: related }).html;
+    const order = ['<h2>One</h2>', '<h2>Two</h2>', 'B.', 'data-bas-internal-link="related"', '<h2>Three</h2>', '<h2>Frequently Asked Questions</h2>', '<h2>Conclusion</h2>', 'data-bas-internal-link="1"'];
+    const idx = order.map((x) => h.indexOf(x));
+    expect(idx.every((v) => v >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+    expect(h).toContain('<p data-bas-internal-link="related"><strong>Also read:</strong> <a href="https://site.example/related" rel="noopener">Related Post</a></p>');
+    // Celebrity writer: after the first content section (never in the Quick Bio); body image 1 stays where it was.
+    const celeb = assembleArticle({
+      bodyHtml: body,
+      language: 'en',
+      moduleKey: 'celebrity-writer',
+      quickBioHtml: '<table class="bas-quick-bio"><tbody><tr><td>A</td><td>B</td></tr></tbody></table>',
+      faqs: [{ question: 'Who?', answer: 'Someone.' }],
+      internalLink,
+      relatedLink: related,
+      images: [{ slot: 'BODY1', html: '<figure><img src="https://x/1.webp" alt="one"></figure>' }],
+    }).html;
+    const cOrder = ['<h2>Quick Bio</h2>', '</table>', 'alt="one"', '<h2>Early Life</h2>', 'A.', 'data-bas-internal-link="related"', '<h2>Career</h2>', '<h2>Frequently Asked Questions</h2>', '<h2>Conclusion</h2>', 'data-bas-internal-link="1"'];
+    const cIdx = cOrder.map((x) => celeb.indexOf(x));
+    expect(cIdx.every((v) => v >= 0)).toBe(true);
+    expect([...cIdx].sort((a, b) => a - b)).toEqual(cIdx);
+    // One section: after its middle paragraph. Re-assembly keeps exactly one of each line.
+    const one = assembleArticle({ bodyHtml: '<p>Intro.</p><h2>Only</h2><p>A.</p><p>B.</p><p>C.</p><h2>Conclusion</h2><p>End.</p>', language: 'en', moduleKey: 'tigram-writer', internalLink, relatedLink: related }).html;
+    expect(one.indexOf('data-bas-internal-link="related"')).toBeGreaterThan(one.indexOf('B.'));
+    expect(one.indexOf('data-bas-internal-link="related"')).toBeLessThan(one.indexOf('C.'));
+    const again = assembleArticle({ bodyHtml: one, language: 'en', moduleKey: 'tigram-writer', internalLink, relatedLink: related }).html;
+    expect((again.match(/data-bas-internal-link="related"/g) ?? []).length).toBe(1);
+    expect((again.match(/data-bas-internal-link="1"/g) ?? []).length).toBe(1);
+  });
+
   it('re-assembly never duplicates the internal-link line', () => {
     const first = assembleArticle({ bodyHtml: body, language: 'de', moduleKey: 'tigram-writer', internalLink: { line: 'Das könnte Ihnen gefallen:', url: 'https://s/x', title: 'X' } });
     const second = assembleArticle({ bodyHtml: first.html, language: 'de', moduleKey: 'tigram-writer', internalLink: { line: 'Das könnte Ihnen gefallen:', url: 'https://s/x', title: 'X' } });
@@ -194,6 +228,18 @@ describe('SEO checks and quality gate', () => {
     expect(r.score).toBeGreaterThanOrEqual(85);
   });
 
+  it('the end line is checked without the related line in the middle; internal word links are not counted as external', () => {
+    const withLines = (extra: string) => article().replace('<h2>Career</h2>', `${extra}<h2>Career</h2>`);
+    const end = '<p data-bas-internal-link="1"><strong>Also read:</strong> <a href="https://site.example/prev">Prev</a></p>';
+    const related = '<p data-bas-internal-link="related"><strong>Also read:</strong> <a href="https://site.example/rel">Rel</a></p>';
+    const both = runSeoChecks({ ...base, internalLinksEnabled: true, html: withLines(related) + end });
+    expect(both.checks.find((c) => c.id === 'internal-link-line')!.passed).toBe(true);
+    const onlyRelated = runSeoChecks({ ...base, internalLinksEnabled: true, html: withLines(related) });
+    expect(onlyRelated.checks.find((c) => c.id === 'internal-link-line')!.passed).toBe(false);
+    const word = runSeoChecks({ ...base, externalLinksEnabled: true, html: article().replace('stage work', '<a href="https://site.example/stage" data-bas-link="int">stage work</a>') });
+    expect(word.metrics.externalLinks).toBe(0);
+  });
+
   it('flags keyword stuffing as a hard stop and wrong FAQ count / short meta as failures', () => {
     const stuffed = `<p>${'Sydney Sweeney Sydney Sweeney is here. '.repeat(40)}</p><h2>Frequently Asked Questions</h2><h3>Q?</h3><p>A</p>`;
     const seo = runSeoChecks({ ...base, html: stuffed, metaDescription: 'short' });
@@ -225,5 +271,34 @@ describe('text utilities', () => {
   });
   it('parses secondary keywords in order without duplicates', () => {
     expect(parseSecondaryKeywords('b, a\n B \n c;a')).toEqual(['b', 'a', 'c']);
+  });
+});
+
+describe('owner report: “Writing” under the title, the title repeated, the Quick Bio before the introduction', () => {
+  const title = 'Wer ist Anika Bissel? Alles über Manuel Neuers Ehefrau';
+  // The FINAL_ARTICLE answer as the page gave it: the writing block's label, then the title, then the article.
+  const answer = `Writing\n\n# ${title}\n\nAnika Bissel ist als Ehefrau des deutschen Fußballtorwarts Manuel Neuer bekannt.\n\n## Wer ist Anika Bissel?\n\nAnika Bissel wurde am 11. Juni 2000 in Erlangen geboren.\n\n## Fazit\n\nSie hat eine eigene Laufbahn.`;
+  const quickBioHtml = '<table><tr><th>Merkmal</th><th>Angaben</th></tr><tr><td>Geburtsort</td><td>Erlangen</td></tr></table>';
+  const order = (html: string) => [...html.matchAll(/<(h2|p)[^>]*>(.*?)<\/\1>/g)].map((m) => `${m[1]}:${m[2].replace(/<[^>]+>/g, '').slice(0, 20)}`);
+
+  it('the article text loses the label and the title; the Quick Bio follows the introduction', () => {
+    const md = cleanModelMarkdown(answer, { title });
+    expect(md).not.toMatch(/^Writing$/m);
+    expect(md).not.toContain(title);
+    const html = assembleArticle({ bodyHtml: markdownToHtml(md), language: 'de', moduleKey: 'celebrity-writer', quickBioHtml, quickBioName: 'Anika Neuer', title }).html;
+    expect(order(html).slice(0, 3)).toEqual(['p:Anika Bissel ist als', 'h2:Kurzbiografie von An', 'h2:Wer ist Anika Bissel']);
+  });
+
+  it('a body saved before the fix is cleaned when it is assembled (label removed, repeated title dropped)', () => {
+    const saved = `<p>Writing</p><h2>${title}</h2><p>Anika Bissel ist als Ehefrau des deutschen Fußballtorwarts Manuel Neuer bekannt.</p><h2>Wer ist Anika Bissel?</h2><p>Geboren in Erlangen.</p><h2>Fazit</h2><p>Ende.</p>`;
+    const html = assembleArticle({ bodyHtml: saved, language: 'de', moduleKey: 'celebrity-writer', quickBioHtml, quickBioName: 'Anika Neuer', title }).html;
+    expect(html).not.toMatch(/>Writing</);
+    expect(order(html).slice(0, 3)).toEqual(['p:Anika Bissel ist als', 'h2:Kurzbiografie von An', 'h2:Wer ist Anika Bissel']);
+  });
+
+  it('real text with the word stays: only a line that is just the label goes', () => {
+    const md = cleanModelMarkdown('Writing is his second career.\n\n## Writing\n\nHe writes books.', { title: 'Someone' });
+    expect(md).toContain('Writing is his second career.');
+    expect(md).toContain('## Writing');
   });
 });

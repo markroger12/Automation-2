@@ -712,6 +712,8 @@ model MediaAsset {
   uploadStartedAt DateTime?
   status          String       @default("READY") // READY | UPLOADED | REJECTED | FAILED
   notes           String?
+  /// The owner's choice on the Images tab for a source photo: FEATURED | BODY (null: the app chooses).
+  usePlace        String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -913,4 +915,25 @@ model LinkTarget {
 
   @@unique([websiteId, wpPostId])
   @@index([websiteId, status])
+}
+
+/**
+ * A writer the owner built in the app (Writers → New writer). Its prompts are PromptTemplate rows under its key
+ * (versions kept); its rules are `config` (JSON, src/lib/writers/types.ts). Built-in writers are code, not rows.
+ */
+model CustomWriter {
+  id          String   @id @default(cuid())
+  key         String   @unique // custom-<slug>, never changes
+  name        String
+  shortName   String
+  description String   @default("")
+  base        String // person | general
+  startedFrom String? // the writer it was copied from (module key), if any
+  status      String   @default("DRAFT") // DRAFT | ACTIVE | ARCHIVED
+  config      String   @default("{}")
+  lastTest    String? // JSON: the last “Test with a ChatGPT answer” result summary
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
 }

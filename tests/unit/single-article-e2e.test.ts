@@ -59,6 +59,8 @@ beforeAll(async () => {
   ({ client } = await setupTestDb());
   const { seedAll } = await import('@/lib/seed');
   await seedAll(client);
+  // The humanizer is off by default (owner decision); the end-to-end prompt lists include it.
+  await (await import('@/lib/settings')).updateSettings({ content: { humanizerEnabled: true } });
   create = await import('@/lib/tasks/create');
   queue = await import('@/lib/queue');
   engine = await import('@/worker/pipeline/engine');
@@ -211,8 +213,14 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     expect(task.categoryId).toBeNull();
     const final = await drive(task.id, 'en');
     const responses = await client.chatGPTResponse.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } });
-    // IMAGES = the image plan prompt (the scripted answer has no plan lines, so no image is generated).
-    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS', 'IMAGES', 'HUMANIZE']);
+    // IMAGES = the image plan prompt, then three images: the scripted answer has no plan lines, so the earlier tool's
+    // default descriptions are used. With the Tigram featured design (on by default) the featured picture is asked for
+    // without text — the design writes the title. The scripted answers carry no picture, so each image is asked once
+    // more in a new chat.
+    expect(responses.map((r) => r.stageKey)).toEqual(['ARTICLE', 'CATEGORY', 'EXTERNAL_LINKS', ...Array(7).fill('IMAGES'), 'HUMANIZE']);
+    const imagePrompts = responses.filter((r) => r.stageKey === 'IMAGES' && r.renderedPrompt.startsWith('Create this image now'));
+    expect(imagePrompts.some((r) => r.renderedPrompt.includes('No text, letters, words or numbers anywhere in the picture (the title is added later'))).toBe(true);
+    expect(imagePrompts.some((r) => r.renderedPrompt.includes('spelled exactly'))).toBe(false);
     expect(responses[0].renderedPrompt).toContain('Secondary keywords (use only where natural): hosting, plugins');
     expect(responses[0].renderedPrompt).not.toContain('Not used by default template');
     expect(responses[1].renderedPrompt).toContain('Tech & Apps');
@@ -230,15 +238,19 @@ describe('Single Article end-to-end (scripted ChatGPT)', () => {
     const { task } = await create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'Best Free VPN Apps', websiteId: siteEn, categoryId: catEn, idempotencyKey: 'single:e2e-tigram-cat' }, { source: 'SINGLE' });
     await drive(task.id, 'en');
     const keys = (await client.chatGPTResponse.findMany({ where: { taskId: task.id } })).map((r) => r.stageKey);
-    expect([...keys].sort()).toEqual(['ARTICLE', 'EXTERNAL_LINKS', 'HUMANIZE', 'IMAGES']);
+    expect([...keys].sort()).toEqual(['ARTICLE', 'EXTERNAL_LINKS', 'HUMANIZE', ...Array(7).fill('IMAGES')]);
     const stage = await client.articleStage.findFirstOrThrow({ where: { taskId: task.id, key: 'CATEGORY' } });
     expect(stage.status).toBe('SKIPPED');
   });
 
   it('rejects the retired writer and invalid input at the API boundary', async () => {
-    await expect(create.createArticleTask({ moduleKey: 'celebrity-writer-2', keyword: 'X Y', websiteId: siteEn, idempotencyKey: 'single:retired-1' }, { source: 'SINGLE' })).rejects.toThrow(/Celebrity Article Writer or Tigram Article Writer/);
+    await expect(create.createArticleTask({ moduleKey: 'celebrity-writer-2', keyword: 'X Y', websiteId: siteEn, idempotencyKey: 'single:retired-1' }, { source: 'SINGLE' })).rejects.toThrow(/Choose one of the active writers \(Celebrity, Celebrity 2, Tigram or one of your own\)/);
     await expect(create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'a', websiteId: siteEn, categoryId: catEn, idempotencyKey: 'single:short-1' }, { source: 'SINGLE' })).rejects.toThrow(/at least 2/);
-    await expect(create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Valid Keyword', websiteId: siteEn, categoryId: catDe, idempotencyKey: 'single:wrongcat-1' }, { source: 'SINGLE' })).rejects.toThrow(/does not belong/);
+    await expect(create.createArticleTask({ moduleKey: 'tigram-writer', keyword: 'Valid Keyword', websiteId: siteEn, categoryId: catDe, idempotencyKey: 'single:wrongcat-1' }, { source: 'SINGLE' })).rejects.toThrow(/does not belong/);
+    // A celebrity article always goes into the website's celebrity category; another category is not used (owner decision 2026-11-04).
+    const celeb = await create.createArticleTask({ moduleKey: 'celebrity-writer', keyword: 'Valid Keyword', websiteId: siteEn, categoryId: catDe, idempotencyKey: 'single:wrongcat-2' }, { source: 'SINGLE', enqueue: false });
+    expect(celeb.task.categoryName).toBe('Celebrities');
+    await client.articleTask.delete({ where: { id: celeb.task.id } });
   });
 
   it('pauses a same-site duplicate keyword for review until the owner allows it', async () => {

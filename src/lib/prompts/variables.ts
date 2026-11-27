@@ -1,6 +1,8 @@
 import type { EffectiveTaskConfig } from '../settings-schema';
 import type { TemplateVars } from './template';
 import { languageName, wikipediaSite } from '../chatgpt/language';
+import { expectedFaqCount } from '../writer-config';
+import { customWordRange, profileTableFor } from '../writers/rules';
 
 export interface VariableInput {
   moduleKey: string;
@@ -20,19 +22,22 @@ export interface VariableInput {
 /** Variables known from the task inputs and its configuration snapshot. */
 export function baseVariables(input: VariableInput): TemplateVars {
   const rows = input.config.quickBioRows;
+  const customRange = customWordRange(input.moduleKey);
   return {
     keyword: input.keyword,
     secondary_keywords: input.secondaryKeywords,
     example_title: input.exampleTitle ?? '',
     language: languageName(input.language),
+    language_variant: input.language === 'de' ? 'German' : 'US English',
     country: input.country,
     selected_title: input.selectedTitle ?? '',
     max_words: input.config.maxWords,
-    faq_count: input.moduleKey === 'tigram-writer' ? input.config.tigramFaqCount : input.config.faqCount,
+    faq_count: expectedFaqCount(input.moduleKey, input.config),
     bio_rows_range: `${rows - 1}–${rows + 1}`,
     min_keyword_occurrences: input.config.minKeywordOccurrences,
     max_keyword_occurrences: input.config.maxKeywordOccurrences,
-    word_range: input.config.tigramWordRange.replace(/\s*[-–]\s*/, '–') + ' words',
+    word_range: customRange ? `${customRange[0]}–${customRange[1]} words` : input.config.tigramWordRange.replace(/\s*[-–]\s*/, '–') + ' words',
+    table_heading: profileTableFor(input.moduleKey, input.language)?.heading ?? '',
     link_count: Math.min(7, Math.max(5, input.config.maxExternalLinks + 2)),
     wikipedia_site: wikipediaSite(input.language),
     categories: input.categories.join('\n'),

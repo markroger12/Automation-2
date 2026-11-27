@@ -1,10 +1,12 @@
 import { notFound } from 'next/navigation';
 import { getTaskDetail, serializeDetail } from '@/lib/tasks/detail';
 import { ArticleDetailView } from './view';
+import { ensureCustomWriters } from '@/lib/writers/store';
 
 export const metadata = { title: 'Article' };
 
 export default async function ArticlePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | undefined>> }) {
+  await ensureCustomWriters();
   const { id } = await params;
   const sp = await searchParams;
   const detail = await getTaskDetail(id);

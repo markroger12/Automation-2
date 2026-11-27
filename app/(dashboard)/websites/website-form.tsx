@@ -26,8 +26,18 @@ export interface WebsiteFormValues {
   active: boolean;
   notes: string;
   settingsOverrides: {
-    content: { maxArticleWordCount?: number; faqCount?: number; quickBioRows?: number };
-    seo: { articleImages?: boolean; imagesRequired?: boolean; externalLinks?: boolean; internalLinks?: boolean; rankMathTargetScore?: number; reviewThreshold?: number; rankMathMode?: 'required' | 'if-installed' | 'off' };
+    content: { maxArticleWordCount?: number; faqCount?: number; quickBioRows?: number; humanizerEnabled?: boolean };
+    seo: {
+      articleImages?: boolean;
+      imagesRequired?: boolean;
+      externalLinks?: boolean;
+      internalLinks?: boolean;
+      previousArticleLink?: boolean;
+      relatedArticleLink?: boolean;
+      rankMathTargetScore?: number;
+      reviewThreshold?: number;
+      rankMathMode?: 'required' | 'if-installed' | 'off';
+    };
     workflow: { manualTitleApproval?: boolean; manualArticleApproval?: boolean };
   };
 }
@@ -90,7 +100,7 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
       const res = values.id
         ? await api<{ website: { id: string } }>(`/api/websites/${values.id}`, { method: 'PUT', body })
         : await api<{ website: { id: string } }>('/api/websites', { method: 'POST', body });
-      toast('success', values.id ? 'Website saved.' : 'Website added. Next: Log in once in the visible window.');
+      toast('success', values.id ? 'Website saved.' : 'Website added. Next: save its WordPress sign-in on the Session tab.');
       onSaved?.(res.website.id);
       router.refresh();
     } catch (error) {
@@ -107,7 +117,7 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
         <Field label="Website name" htmlFor="ws-name" required error={err('name')}>
           <Input id="ws-name" value={values.name} onChange={(e) => set('name', e.target.value)} placeholder="Celebrity News DE" invalid={Boolean(err('name'))} />
         </Field>
-        <Field label="Public URL" htmlFor="ws-url" required error={err('publicUrl')} help="The home page, e.g. https://example.com">
+        <Field label="Address" htmlFor="ws-url" required error={err('publicUrl')} help="The home page, e.g. https://example.com">
           <Input id="ws-url" value={values.publicUrl} onChange={(e) => set('publicUrl', e.target.value)} placeholder="https://example.com" invalid={Boolean(err('publicUrl'))} />
         </Field>
         <Field label="Admin URL" htmlFor="ws-admin" error={err('adminUrl')} help="Leave empty for <public URL>/wp-admin/">
@@ -147,7 +157,7 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
             ))}
           </datalist>
         </Field>
-        <Field label="Internal-link line" htmlFor="ws-ill" help={`Last line of every article. Default: ${values.language === 'de' ? '“Das könnte Ihnen gefallen:”' : '“Also read:”'}`}>
+        <Field label="Internal-link line" htmlFor="ws-ill" help={`Starts the line at the end of every article (and the related article's line in the middle, when its link fits no word). Default: ${values.language === 'de' ? '“Das könnte Ihnen gefallen:”' : '“Also read:”'}`}>
           <Input id="ws-ill" value={values.internalLinkLine} onChange={(e) => set('internalLinkLine', e.target.value)} placeholder={values.language === 'de' ? 'Das könnte Ihnen gefallen:' : 'Also read:'} />
         </Field>
         <Field label="Editor" htmlFor="ws-editor" help="AUTO uses the detected editor.">
@@ -212,10 +222,13 @@ export function WebsiteForm({ initial, categories = [], onSaved }: { initial: We
           </Field>
           {(
             [
+              ['content', 'humanizerEnabled', 'Humanizer'],
               ['seo', 'articleImages', 'Article images'],
               ['seo', 'imagesRequired', 'Missing images → review'],
               ['seo', 'externalLinks', 'External links'],
               ['seo', 'internalLinks', 'Internal links'],
+              ['seo', 'previousArticleLink', 'Internal link: previous article (end)'],
+              ['seo', 'relatedArticleLink', 'Internal link: related article (middle)'],
               ['workflow', 'manualTitleApproval', 'Manual title approval'],
               ['workflow', 'manualArticleApproval', 'Manual article approval'],
             ] as const

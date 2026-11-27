@@ -144,15 +144,6 @@ export async function searchAnalytics(property: string, body: { startDate: strin
   return { rows, ...meta };
 }
 
-export async function listSitemaps(property: string): Promise<{ path: string; lastSubmitted?: string; isPending?: boolean }[]> {
-  const res = await gsc<{ sitemap?: { path: string; lastSubmitted?: string; isPending?: boolean }[] }>('GET', `/webmasters/v3/sites/${siteSegment(property)}/sitemaps`, undefined, property);
-  return res.sitemap ?? [];
-}
-
-export async function submitSitemap(property: string, sitemapUrl: string): Promise<void> {
-  await gsc('PUT', `/webmasters/v3/sites/${siteSegment(property)}/sitemaps/${encodeURIComponent(sitemapUrl)}`, undefined, property);
-}
-
 export interface InspectionResult {
   verdict?: string; // PASS | PARTIAL | FAIL | NEUTRAL | VERDICT_UNSPECIFIED
   coverageState?: string;

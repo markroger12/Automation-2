@@ -6,7 +6,7 @@ import { RefreshCw, RotateCcw } from 'lucide-react';
 import { api } from '@/lib/client/api';
 import { Button, useToast } from '@/components/client';
 import { Textarea } from '@/components/form';
-import { Alert, Card, Chip, EmptyState, StatusChip, cx } from '@/components/ui';
+import { Alert, Card, Chip, EmptyState, StatusChip, cx, plural } from '@/components/ui';
 import { DuplicateMatchCard, type DuplicateMatchView } from '@/components/duplicate-match';
 
 interface Review {
@@ -24,7 +24,7 @@ function ReviewCard({ r, onChanged }: { r: Review; onChanged: () => Promise<void
   const toast = useToast();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const writingStage = r.task.moduleKey === 'tigram-writer' ? 'ARTICLE' : 'LONG_ARTICLE';
+  const writingStage = r.task.moduleKey === 'celebrity-writer' ? 'LONG_ARTICLE' : 'ARTICLE';
   async function act(kind: string, fn: () => Promise<void>) {
     setBusy(kind);
     try {
@@ -41,7 +41,7 @@ function ReviewCard({ r, onChanged }: { r: Review; onChanged: () => Promise<void
     <Card
       title={
         <span className="flex flex-wrap items-center gap-2">
-          <Link className="text-indigo-600 underline" href={`/articles/${r.task.id}`}>
+          <Link className="link" href={`/articles/${r.task.id}`}>
             {r.task.title}
           </Link>
           <span className="text-muted text-sm font-normal">{r.task.website}</span>
@@ -95,7 +95,7 @@ function ReviewCard({ r, onChanged }: { r: Review; onChanged: () => Promise<void
               >
                 <RotateCcw className="h-4 w-4" /> Write the text again
               </Button>
-              <Link className={cx('inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-indigo-600 underline')} href={`/articles/${r.task.id}?tab=editor`}>
+              <Link className={cx('inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium link')} href={`/articles/${r.task.id}?tab=editor`}>
                 Edit it yourself
               </Link>
             </div>
@@ -134,7 +134,7 @@ export function DuplicateReview() {
         <Button size="sm" variant="ghost" onClick={() => void load()}>
           <RefreshCw className="h-4 w-4" /> Refresh
         </Button>
-        {reviews ? <Chip>{reviews.length} article(s)</Chip> : null}
+        {reviews ? <Chip>{plural(reviews.length, 'article')}</Chip> : null}
       </div>
       {error ? <Alert tone="danger" title="Could not load">{error}</Alert> : null}
       {reviews === null && !error ? <div className="surface-2 h-32 animate-pulse rounded-xl" aria-busy="true" /> : null}

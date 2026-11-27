@@ -2,7 +2,7 @@
 
 The full reference for every page of the app. Start with the [README](../README.md) for installing and the first steps; inside the app, **Help / Setup**, the **Setup checklist** and the **Ask** button (help assistant) cover the same ground.
 
-Contents: [The desktop app in detail](#the-desktop-app-in-detail) · [Windows notifications](#windows-notifications) · [Pausing work and quiet hours](#pausing-work-and-quiet-hours) · [Help assistant](#help-assistant-google-gemini-optional) · [Writers](#writers) · [Images](#images) · [WordPress health](#wordpress-health) · [Humanizer per website](#humanizer-per-website) · [The article page](#the-article-page) · [Review, notes and deleting](#review-notes-and-deleting) · [Editorial tools](#editorial-tools) · [Campaigns and workflow](#campaigns-and-workflow) · [Search Performance and Content Refresh](#search-performance-and-content-refresh) · [Productivity, websites and recovery](#productivity-websites-and-recovery) · [Data folder](#data-folder)
+Contents: [The desktop app in detail](#the-desktop-app-in-detail) · [Windows notifications](#windows-notifications) · [Pausing work and quiet hours](#pausing-work-and-quiet-hours) · [Help assistant](#help-assistant-google-gemini-optional) · [Writers](#writers) · [Images](#images) · [WordPress health](#wordpress-health) · [Humanizer per website](#humanizer-per-website) · [The article page](#the-article-page) · [Review, notes and deleting](#review-notes-and-deleting) · [Editorial tools](#editorial-tools) · [Campaigns and workflow](#campaigns-and-workflow) · [Search Performance and Content Refresh](#search-performance-and-content-refresh) · [Update old posts to the latest](#update-old-posts-to-the-latest) · [Productivity, websites and recovery](#productivity-websites-and-recovery) · [Data folder](#data-folder)
 
 ## The desktop app in detail
 
@@ -341,6 +341,26 @@ The editorial humanizer is **off by default**. To turn it on for a website, go t
     - a live post needs **Allow approved updates to live posts** on the website's Publishing permission card, and you must type `UPDATE LIVE POST`;
     - if the post was edited in WordPress since the app saved it, nothing is changed (**conflict**). **Start from the WordPress version** makes that text the article's text and proposes again.
   - The article in the app changes only after WordPress confirmed the update. **Roll back** proposes the previous text through the same approval.
+
+## Update old posts to the latest
+
+**Update to Latest** (Editorial Tools → Update to Latest) brings published posts up to date with ChatGPT, also posts the app did not write.
+
+1. **Read the posts from WordPress.** Choose the website, which posts (not changed for 12, 6 or 24 months, or all published posts) and optionally a category, then **Read posts**.
+   - Only reads: nothing in WordPress changes. Up to 5,000 posts, oldest change first.
+   - Posts the app wrote are linked to their article.
+2. **Update to latest.** Tick posts (up to 50 at a time) and press **Update selected**, or **Update to latest** on one post.
+   - ChatGPT gets the whole article in a new chat, with the prompt **Shared — Update a post to the latest information** (Prompt Manager; you can change it). It checks the facts on the web, updates what has changed (ages, numbers, dates, FAQ answers, tables) and lists its changes and sources.
+   - Only the text goes to ChatGPT. Images, embeds, shortcodes, styled and nested blocks stay exactly as they are; links and bold or italic text keep their place.
+3. **The app checks the answer.** An update is stopped when it drops a kept part (image, embed, shortcode), is much shorter or longer, loses headings, is in another language, stuffs the keyword, has chatbot remarks, or puts a future year in the title or meta description. Removed links, missing sources and a new year in the title with almost no changed text are shown as warnings.
+4. **Compare and approve.** The update page shows what changed (replaced or removed, new or changed, or the whole text side by side), the title and meta description, ChatGPT's changes and sources, and the checks. **Approve and update**, or **Reject**.
+   - A live post needs **Allow approved updates to live posts** on the website's Publishing permission card, and you must type `UPDATE LIVE POST`.
+   - The **same WordPress post** is updated: its content, and the title when it changed. Status, date, slug and URL stay. The meta description goes to Rank Math when Rank Math is active on the website.
+   - If the post was edited in WordPress after it was read, nothing is changed (**conflict**): **Try again** reads it again.
+   - When the website has a Search Console property, indexing of the updated page is requested.
+5. **Undo** puts back the text, title and meta description from before the update (only when the post was not edited since).
+
+Nothing is updated without your approval, and nothing runs on a schedule.
 
 ## Productivity, websites and recovery
 

@@ -33,7 +33,10 @@ const KIND = 'gsc.request-indexing';
 const LEASE_MS = 8 * 60_000;
 
 export interface IndexingJobPayload {
+  /** The workflow keyword of the post ('' for a post update). */
   keywordId: string;
+  /** “Update to latest” (owner request 2026-11-27): the update that changed the post; its result shows the request. */
+  postUpdateId?: string | null;
   url: string;
   property: string;
   websiteId: string;
@@ -42,6 +45,12 @@ export interface IndexingJobPayload {
 }
 
 export type IndexingOutcome = 'REQUESTED' | 'QUOTA' | 'NOT_SIGNED_IN' | 'NO_ACCESS' | 'HUMAN_CHECK' | 'ERROR';
+
+/** Queue one request after an approved update of a published post (once per update). */
+export async function queuePostIndexingRequest(p: { postUpdateId: string; url: string; property: string; websiteId: string }, now = new Date()) {
+  const payload: IndexingJobPayload = { keywordId: '', postUpdateId: p.postUpdateId, url: p.url, property: p.property, websiteId: p.websiteId };
+  return enqueue({ queue: GSC_QUEUE, kind: KIND, idempotencyKey: `gsc-index:post:${p.postUpdateId}`, websiteId: p.websiteId, payload, runAt: now, maxAttempts: 4 });
+}
 
 /** Queue one request for a published keyword (once; a repeat call finds the same job). */
 export async function queueIndexingRequest(p: IndexingJobPayload, now = new Date()) {
@@ -125,21 +134,30 @@ export async function claimIndexingRequest(installId: string, now = new Date()):
     const job = await db.queueJob.findFirst({ where: { queue: GSC_QUEUE, OR: [{ status: 'WAITING', runAt: { lte: now } }, { status: 'ACTIVE', leaseUntil: { lt: now } }] }, orderBy: { runAt: 'asc' } });
     if (!job) return null;
     const p = JSON.parse(job.payload) as IndexingJobPayload;
-    // Already on Google, or the keyword was deleted: nothing to request.
-    const kw = await db.workflowKeyword.findUnique({ where: { id: p.keywordId }, select: { status: true } });
-    if (!kw || kw.status === 'INDEXED') {
-      await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'CANCELLED', finishedAt: now, leaseUntil: null, error: kw ? 'Google already shows the URL as indexed.' : 'The keyword was deleted.' } });
-      continue;
+    if (p.postUpdateId) {
+      // After an update: only while the update is still in place.
+      const u = await db.postUpdate.findUnique({ where: { id: p.postUpdateId }, select: { status: true } });
+      if (u?.status !== 'APPLIED') {
+        await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'CANCELLED', finishedAt: now, leaseUntil: null, error: 'The update was undone or removed.' } });
+        continue;
+      }
+    } else {
+      // Already on Google, or the keyword was deleted: nothing to request.
+      const kw = await db.workflowKeyword.findUnique({ where: { id: p.keywordId }, select: { status: true } });
+      if (!kw || kw.status === 'INDEXED') {
+        await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'CANCELLED', finishedAt: now, leaseUntil: null, error: kw ? 'Google already shows the URL as indexed.' : 'The keyword was deleted.' } });
+        continue;
+      }
     }
     // Owner rule: one request per article per day, whichever way it was asked for (automatic, again, by the owner).
-    const allowed = job.status === 'ACTIVE' ? null : await nextRequestAllowedAt(p.keywordId);
+    const allowed = job.status === 'ACTIVE' || p.postUpdateId ? null : await nextRequestAllowedAt(p.keywordId);
     if (allowed && allowed > now) {
       await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { runAt: allowed } });
       continue;
     }
     const taken = await db.queueJob.updateMany({ where: { id: job.id, updatedAt: job.updatedAt }, data: { status: 'ACTIVE', lockedBy: `extension:${installId}`, leaseUntil: new Date(now.getTime() + LEASE_MS), attempts: { increment: 1 }, startedAt: now } });
     if (!taken.count) return null;
-    await setKeyword(p.keywordId, { indexingStatus: `${maker(installId)} is requesting indexing in Search Console (URL Inspection → Request indexing) · ${now.toISOString()}` });
+    await noteRequest(p, { indexingStatus: `${maker(installId)} is requesting indexing in Search Console (URL Inspection → Request indexing) · ${now.toISOString()}` });
     // As the owner does it (owner's video): the property's page, where the URL is typed into “Inspect any URL in …”;
     // Google's own inspection link as the fallback.
     return { id: job.id, url: p.url, property: p.property, inspectUrl: searchConsoleHome(p.property), altUrl: p.inspectLink ?? null };
@@ -163,18 +181,18 @@ export async function reportIndexingRequest(input: { jobId: string; installId: s
   const retry = async (inMs: number, why: string) => {
     if (job.attempts >= job.maxAttempts && input.outcome === 'ERROR') {
       await db.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: now, leaseUntil: null, error: why.slice(0, 1000), errorCode: input.outcome } });
-      await setKeyword(p.keywordId, { indexingStatus: `Indexing could not be requested after ${job.attempts} tries: ${why} Request it yourself in Search Console (URL Inspection → Request indexing).` });
+      await noteRequest(p, { indexingStatus: `Indexing could not be requested after ${job.attempts} tries: ${why} Request it yourself in Search Console (URL Inspection → Request indexing).` });
       return;
     }
     await db.queueJob.update({ where: { id: job.id }, data: { status: 'WAITING', runAt: new Date(now.getTime() + inMs), leaseUntil: null, lockedBy: null, error: why.slice(0, 1000), errorCode: input.outcome } });
-    await setKeyword(p.keywordId, { indexingStatus: `${why} Asked again ${new Date(now.getTime() + inMs).toISOString()}.` });
+    await noteRequest(p, { indexingStatus: `${why} Asked again ${new Date(now.getTime() + inMs).toISOString()}.` });
     await log({ level: 'warn', category: 'search', message: `Indexing not requested yet for ${p.url}: ${why}` });
   };
   switch (input.outcome) {
     case 'REQUESTED':
       await db.queueJob.update({ where: { id: job.id }, data: { status: 'COMPLETED', finishedAt: now, leaseUntil: null, error: null, errorCode: null } });
       // Owner: Google search is checked 24 hours after the request; not on Google → requested again.
-      await setKeyword(p.keywordId, { status: 'INDEXING_REQUESTED', indexingRequestedAt: now, indexCheckAt: new Date(now.getTime() + REQUEST_EVERY_MS), indexingStatus: `Indexing requested in Search Console (URL Inspection → Request indexing) at ${now.toISOString()}.${said} A request is not proof of indexing; Google search is checked 24 hours later (${new Date(now.getTime() + REQUEST_EVERY_MS).toISOString()}).` }, true);
+      await noteRequest(p, { status: 'INDEXING_REQUESTED', indexingRequestedAt: now, indexCheckAt: new Date(now.getTime() + REQUEST_EVERY_MS), indexingStatus: `Indexing requested in Search Console (URL Inspection → Request indexing) at ${now.toISOString()}.${said} A request is not proof of indexing; Google search is checked 24 hours later (${new Date(now.getTime() + REQUEST_EVERY_MS).toISOString()}).` }, true);
       await log({ category: 'search', message: `Indexing requested in Search Console for ${p.url}.` });
       // Google is signed in now: requests that waited for the sign-in (or a check) are made next, not an hour later.
       await db.queueJob.updateMany({ where: { queue: GSC_QUEUE, status: 'WAITING', errorCode: { in: ['NOT_SIGNED_IN', 'HUMAN_CHECK'] }, runAt: { gt: now } }, data: { runAt: now } });
@@ -191,13 +209,22 @@ export async function reportIndexingRequest(input: { jobId: string; installId: s
       break;
     case 'NO_ACCESS':
       await db.queueJob.update({ where: { id: job.id }, data: { status: 'FAILED', finishedAt: now, leaseUntil: null, error: `No access to ${p.property}`, errorCode: input.outcome } });
-      await setKeyword(p.keywordId, { indexingStatus: `The Google account in ${signInPlace(input.installId)} cannot use ${p.property} in Search Console.${said} Sign in with the account that owns the property, then retry the keyword.` });
+      await noteRequest(p, { indexingStatus: `The Google account in ${signInPlace(input.installId)} cannot use ${p.property} in Search Console.${said} Sign in with the account that owns the property, then retry the keyword.` });
       break;
     default:
       // The click may have reached Google: the next try is a day later (one request per article per day).
       await retry(24 * HOUR, `Indexing could not be requested (${(input.message ?? 'unknown problem').slice(0, 200)}).`);
   }
   return { ok: true };
+}
+
+/** The state of a request, on its keyword or on the post update it is for. */
+async function noteRequest(p: IndexingJobPayload, data: { status?: string; indexingRequestedAt?: Date; indexCheckAt?: Date; indexingStatus: string }, onlyIfPublished = false) {
+  if (!p.postUpdateId) return setKeyword(p.keywordId, data, onlyIfPublished);
+  const u = await db.postUpdate.findUnique({ where: { id: p.postUpdateId }, select: { result: true } });
+  if (!u) return;
+  const result = JSON.parse(u.result || '{}') as Record<string, unknown>;
+  await db.postUpdate.update({ where: { id: p.postUpdateId }, data: { result: JSON.stringify({ ...result, indexing: data.indexingStatus.replace(/ Google search is checked 24 hours later.*$/, ''), ...(data.indexingRequestedAt ? { indexingRequestedAt: data.indexingRequestedAt.toISOString() } : {}) }) } });
 }
 
 async function setKeyword(id: string, data: { status?: string; indexingRequestedAt?: Date; indexCheckAt?: Date; indexingStatus: string }, onlyIfPublished = false) {

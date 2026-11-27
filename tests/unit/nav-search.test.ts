@@ -16,7 +16,7 @@ describe('sidebar search', () => {
   });
 
   it('a section that matches keeps all its pages', () => {
-    expect(labels('editorial')).toEqual(['Editorial Tools', '  Humanizer', '  Plagiarism Evidence', '  Research Evidence', '  Duplicate Review', '  Content Refresh']);
+    expect(labels('editorial')).toEqual(['Editorial Tools', '  Humanizer', '  Plagiarism Evidence', '  Research Evidence', '  Duplicate Review', '  Content Refresh', '  Update to Latest']);
   });
 
   it('nothing matches: an empty menu (the box then offers to search articles)', () => {
@@ -35,7 +35,7 @@ describe('top bar search and menu groups', () => {
   });
 
   it('a page with sub-pages that matches brings them too', () => {
-    expect(hits('editorial')).toEqual(['Editorial Tools', 'Editorial Tools › Humanizer', 'Editorial Tools › Plagiarism Evidence', 'Editorial Tools › Research Evidence', 'Editorial Tools › Duplicate Review', 'Editorial Tools › Content Refresh']);
+    expect(hits('editorial')).toEqual(['Editorial Tools', 'Editorial Tools › Humanizer', 'Editorial Tools › Plagiarism Evidence', 'Editorial Tools › Research Evidence', 'Editorial Tools › Duplicate Review', 'Editorial Tools › Content Refresh', 'Editorial Tools › Update to Latest']);
     expect(hits('workflow')[0]).toBe('Workflow / Calendar');
   });
 

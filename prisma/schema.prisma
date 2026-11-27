@@ -78,6 +78,7 @@ model Website {
   healthObservations       SiteHealthObservation[]
   searchSnapshots          SearchPerformanceSnapshot[]
   refreshCandidates        RefreshCandidate[]
+  sitePosts                SitePost[]
 }
 
 model Category {
@@ -267,9 +268,12 @@ model ChatGPTResponse {
   error               String?
   createdAt           DateTime      @default(now())
   completedAt         DateTime?
+  /// The post update (“Update to latest”) this prompt belongs to; null otherwise.
+  postUpdateId        String?
 
   @@index([taskId, stageKey])
   @@index([runId])
+  @@index([postUpdateId])
 }
 
 /// A Humanizer page run: a saved article or pasted text, edited paragraph by paragraph with fact locks.
@@ -937,3 +941,81 @@ model CustomWriter {
 
   @@index([status])
 }
+
+/// A post of a website as WordPress has it, read for updates (owner request 2026-11-27: bring old articles up to
+/// date, also the ones the app did not write). Reading changes nothing in WordPress; a post changes only through an
+/// approved PostUpdate.
+model SitePost {
+  id              String       @id @default(cuid())
+  websiteId       String
+  website         Website      @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  wpPostId        Int
+  /// The app's article for this post, when the app wrote it.
+  taskId          String?
+  title           String
+  url             String
+  slug            String?
+  status          String // publish | future | draft | pending | private
+  categoryIds     String       @default("[]")
+  focusKeyword    String?
+  seoTitle        String?
+  metaDescription String?
+  /// The content as WordPress stores it (blocks or classic HTML).
+  contentRaw      String
+  contentHash     String
+  editor          String // GUTENBERG | CLASSIC
+  words           Int          @default(0)
+  publishedAt     DateTime?
+  modifiedAt      DateTime?
+  importedAt      DateTime
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  updates         PostUpdate[]
+
+  @@unique([websiteId, wpPostId])
+  @@index([websiteId, modifiedAt])
+}
+
+/// “Update to latest” for one post: ChatGPT's updated version, the app's checks, the owner's approval and the write
+/// to the same WordPress post (content, title, Rank Math title and description; never the URL).
+model PostUpdate {
+  id               String    @id @default(cuid())
+  sitePostId       String
+  sitePost         SitePost  @relation(fields: [sitePostId], references: [id], onDelete: Cascade)
+  websiteId        String
+  wpPostId         Int
+  /// QUEUED | WRITING | READY | NO_CHANGE | APPROVED | APPLYING | APPLIED | CONFLICT | BLOCKED | FAILED | REJECTED | UNDONE
+  status           String    @default("QUEUED")
+  message          String?
+  /// The post when the update started (WordPress content, title, Rank Math fields).
+  baseRaw          String?
+  baseHash         String?
+  baseTitle        String?
+  baseSeoTitle     String?
+  baseMeta         String?
+  /// The editable text both ways, as HTML (the comparison).
+  baseHtml         String?
+  proposedHtml     String?
+  /// What would be written to WordPress.
+  proposedRaw      String?
+  proposedTitle    String?
+  proposedSeoTitle String?
+  proposedMeta     String?
+  /// [{ text }] what ChatGPT says it changed; [{ url, note }] its sources; [{ id, label, passed, blocking, detail }]
+  changes          String    @default("[]")
+  sources          String    @default("[]")
+  checks           String    @default("[]")
+  result           String    @default("{}")
+  /// Hash of the content WordPress stored when this update was applied (undo only while it is unchanged).
+  appliedHash      String?
+  conversationUrl  String?
+  approvedAt       DateTime?
+  appliedAt        DateTime?
+  undoneAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([sitePostId])
+  @@index([websiteId, status])
+}
+

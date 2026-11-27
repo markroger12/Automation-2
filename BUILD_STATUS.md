@@ -5507,14 +5507,15 @@ Owner request: "ek old articles ko latest per update krne vala add kren? or jin 
 - **Tests:**
   - **unit** (`tests/unit/post-updates.test.ts`, 8): block splitting; kept parts byte for byte; a block mark inside a sentence; invented marks dropped; answer parsing (bolded or spaced markers, sources with notes, "No changes needed", no format); checks (a real update passes; date-only freshness is a warning; a future year, lost structure, stuffing, chatbot remarks and another language stop it); keywordFromTitle;
   - **integration** (`tests/integration/post-updates.test.ts`, 6, fake WordPress + scripted ChatGPT): import with age and category filters and the link to the app's article; the whole path read → ChatGPT → checks → approve with the typed phrase → written to the same post → read back → indexing queued → undo; checks stopping an update; No change and a non-format answer; a conflict; a classic post;
-  - updated: `nav-search` (the new page), `prompt-seed` (17 default prompts), `wordpress` (the read-only filter).
+  - updated: `nav-search` (the new page), `prompt-seed` (17 default prompts), `wordpress` (the read-only filter);
+  - the WordPress, workflow, links, images, content refresh and migration integration files: post-updates 6, workflow-publish 16, wordpress-drafts 11, images 15, image-tools 10 + 1 skipped, wordpress-session 6, links 7, wordpress-auto-login 6, content-refresh 5, migration-upgrade 1.
 - **UI:** checked in Chromium on seeded data: the list, a ready update, a stopped update, the whole-text view, Update to latest, Read posts, Reject, and Approve turned off while live updates are off; no page errors.
 - **Not verified here:** live ChatGPT answers to the new prompt, and the owner's real websites (real WordPress posts with other plugins' blocks).
 
 **Commands run**
 ```
 npx tsc --noEmit                                   # 0 errors
-TMPDIR=/tmp/bq npx vitest run                      # UNIT_RESULT
-TMPDIR=/tmp/bq xvfb-run -a npx vitest run --config vitest.integration.config.ts <14 files>   # INTEG_RESULT
+TMPDIR=/tmp/bq npx vitest run                      # 552 tests passed
+TMPDIR=/tmp/bq xvfb-run -a npx vitest run --config vitest.integration.config.ts <10 files>   # 83 passed, 1 skipped (as before)
 npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url file:…   # No difference detected
 ```

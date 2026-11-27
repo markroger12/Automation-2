@@ -1,13 +1,11 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { listPageCopies, readPageCopy, savePageCopy } from '@/lib/page-copies';
+import { makeTempDir } from '../helpers/temp-dirs';
 
 /** Owner request: the page's structure, for the developer, when the gallery or Search Console went wrong. */
 describe('page structure copies (data/page-copies)', () => {
   beforeEach(() => {
-    process.env.BAS_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-copies-'));
+    process.env.BAS_DATA_DIR = makeTempDir('bas-copies-');
   });
 
   it('keeps only JSON copies of the expected kind, newest first, and gives them back by name only', () => {

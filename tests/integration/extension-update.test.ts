@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
@@ -8,6 +7,7 @@ import { createTask, createWebsite } from '../helpers/fixtures';
 import { configureTestBrowser } from '../helpers/browser';
 import { startAgentServer } from '../helpers/agent-server';
 import { launchWithExtension, waitFor } from '../helpers/extension';
+import { makeTempDir } from '../helpers/temp-dirs';
 
 declare const chrome: { runtime: { getManifest: () => { version: string } }; storage: { local: { get: (k: string) => Promise<Record<string, unknown>> } }; tabs: { query: (q: object) => Promise<{ id?: number; url?: string }[]> } };
 
@@ -42,7 +42,7 @@ let key: string;
 let jobs: typeof import('@/lib/chatgpt/jobs');
 let siteId: string;
 let browser: Awaited<ReturnType<typeof launchWithExtension>> | null = null;
-const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-ext-folder-'));
+const folder = makeTempDir('bas-ext-folder-');
 
 beforeAll(async () => {
   configureTestBrowser();

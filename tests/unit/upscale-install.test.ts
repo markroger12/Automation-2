@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
+import { makeTempDir } from '../helpers/temp-dirs';
 
 /**
  * Owner report (a blurry two-photo featured image; the Images tab said “Upscayl (remacri-4x) is not installed — the
@@ -90,7 +91,7 @@ describe('Upscayl is installed automatically (pinned, checksums verified)', () =
   it('downloads the release and the remacri-4x model, checks every SHA-256, and the app then finds the tool', async () => {
     const { installUpscayl } = await import('../../scripts/install-tools');
     const { findEnhancer } = await import('@/images/upscale');
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-upscayl-'));
+    const dir = makeTempDir('bas-upscayl-');
     expect(findEnhancer(dir)).toBeNull();
     expect(await installUpscayl({ dir, source: source() })).toMatch(/installed/);
     expect(fs.readFileSync(path.join(dir, exe))).toEqual(binary);
@@ -106,7 +107,7 @@ describe('Upscayl is installed automatically (pinned, checksums verified)', () =
 
   it('a download whose SHA-256 differs is refused and nothing is kept', async () => {
     const { installUpscayl } = await import('../../scripts/install-tools');
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-upscayl-'));
+    const dir = makeTempDir('bas-upscayl-');
     await expect(installUpscayl({ dir, source: { ...source(), zipSha256: 'a'.repeat(64) } })).rejects.toThrow(/SHA-256 .* does not match/);
     expect(fs.existsSync(path.join(dir, exe))).toBe(false);
     await expect(installUpscayl({ dir, source: { ...source(), models: { ...source().models, 'remacri-4x.bin': 'b'.repeat(64) } } })).rejects.toThrow(/remacri-4x\.bin.*does not match/);

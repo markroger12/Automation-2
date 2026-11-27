@@ -1,11 +1,11 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { askGemini } from '@/lib/assistant/gemini';
 import { DEFAULT_MODEL, assistantApiKey, assistantSettings, removeAssistantKey, saveAssistantSettings } from '@/lib/assistant/settings';
 import { redactString } from '@/lib/redact';
 import { ASSISTANT_SYSTEM, assistantInstructions } from '@/lib/assistant/context';
+import { makeTempDir } from '../helpers/temp-dirs';
 
 const KEY = 'AIzaSyTESTkey0123456789abcdefghijklmnopq';
 
@@ -13,7 +13,7 @@ const KEY = 'AIzaSyTESTkey0123456789abcdefghijklmnopq';
 describe('help assistant key (data/credentials)', () => {
   let dir: string;
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-assistant-'));
+    dir = makeTempDir('bas-assistant-');
     process.env.BAS_DATA_DIR = dir;
   });
 

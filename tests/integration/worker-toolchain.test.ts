@@ -1,10 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { configureTestBrowser } from '../helpers/browser';
+import { makeTempDir } from '../helpers/temp-dirs';
 import { startFakeWordPress, type FakeWp } from '../fixtures/fake-wordpress';
 
 /**
@@ -21,7 +20,7 @@ describe('worker toolchain (tsx)', () => {
   it('functions evaluated in WordPress pages work under tsx; without the app shim they would fail', async () => {
     configureTestBrowser();
     wp = await startFakeWordPress();
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-toolchain-'));
+    const dataDir = makeTempDir('bas-toolchain-');
     const root = path.resolve(__dirname, '..', '..');
     // Async: the fake WordPress runs in this process and must keep serving while tsx runs.
     const { stdout: out } = await promisify(execFile)(path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'), [path.join(root, 'tests', 'fixtures', 'in-page-names.mts'), wp.url], {

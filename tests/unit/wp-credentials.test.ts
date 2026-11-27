@@ -1,14 +1,14 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { deleteLogin, loginFor, recordLoginResult, saveLogin, savedLogin } from '@/lib/wp-credentials';
+import { makeTempDir } from '../helpers/temp-dirs';
 
 /** Owner request: the WordPress password with the website, for automatic login — encrypted, never shown again. */
 describe('saved WordPress sign-ins (data/credentials)', () => {
   let dir: string;
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bas-wp-cred-'));
+    dir = makeTempDir('bas-wp-cred-');
     process.env.BAS_DATA_DIR = dir;
   });
 

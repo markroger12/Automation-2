@@ -5462,26 +5462,29 @@ Owner report (screenshot): three keywords stayed "scheduled" with "Could not che
 ## Owner report: test runs filled the temp folder (about 25 GB) in a cloud session
 
 - **Cause:** every test file made folders in the system temp folder and nothing removed them:
-  - `bas-isolated-*` (setup file), `bas-test-*` (`setupTestDb`), `bas-ext-*` (one Chromium profile per extension test), and `bas-lock-*` / `bas-toolchain-*` in two test files;
+  - `bas-isolated-*` (setup file), `bas-test-*` (`setupTestDb`), `bas-ext-*` (one Chromium profile per extension test), and folders made in test files (`bas-lock-*`, `bas-toolchain-*`, `bas-upscayl-*`, `bas-wp-cred-*`, `bas-assistant-*`, `bas-copies-*`, `bas-ext-folder-*`);
   - a WordPress browser left open by `seo-brief.test.ts` kept writing into its profile in the data folder;
   - `playwright-artifacts-*`: Playwright makes this folder before it checks that the browser exists. In this cloud image the hard-coded `/opt/pw-browsers/chromium-1194` is gone, so every extension launch failed and left one.
-- **Fix:** `tests/helpers/temp-dirs.ts` records the exact folders `mkdtempSync` returned.
+- **Fix:** each test file now removes its own folders when it ends. This adds to `tests/helpers/run-tmp.ts`, which removes the whole run's temp folder when the run ends: disk is freed during long runs, open files are closed first, and a run that is stopped early leaves little behind.
+  - `tests/helpers/temp-dirs.ts` records the exact folders `mkdtempSync` returned. Only those are removed.
   - The setup file removes them in an `afterAll` that runs after the test file's own hooks, also after failing tests. A process exit hook would not run: vitest ends each worker with SIGTERM.
   - Before removing, it disconnects the Prisma clients (the app's `db` and the test client) and closes WordPress and extension browsers (Windows cannot delete open files).
   - The extension helper's `close()` removes its profile at once.
   - `configureTestBrowser()` also uses `/opt/pw-browsers/chromium`.
   - Set `BAS_KEEP_TEST_DATA=1` to keep the folders; the output lists them.
-- **Verified:** before/after listings of the temp folder: no new `bas-*` or `playwright-*` folder and no Chrome process left after the unit and integration suites. Also checked: a failing test, a failing `beforeAll`, and `BAS_KEEP_TEST_DATA=1`.
+- **Verified:** before/after listings of the temp folder, with the repo's configs and with `run-tmp.ts` switched off (to see each file's own cleanup). Also checked: a failing test, a failing `beforeAll`, and `BAS_KEEP_TEST_DATA=1`.
+- **Left to `run-tmp.ts`:** a file whose tests are all skipped runs no hooks, so its empty `bas-isolated-*` folder stays until the run ends (here: `desktop-chatgpt.test.ts` without Electron).
 
 **Not verified here**
 - Windows (file locks); a locked folder is retried for about 10 s, then a warning names it.
+- Two extension tests, with this container's Chromium 1243: `extension-update.test.ts` (no new service worker after the reload) and “3 tiles … viewer with filmstrip” (2 of 5 photos). Both fail the same way on `main` with that browser; the other 55 tests in `extension.test.ts` pass.
 
-**Commands run** (Node 26.13.0)
+**Commands run** (Node 26.13.0, after merging main)
 ```
 npx tsc --noEmit                    # 0 errors
-npx vitest run                      # 42 of 43 files, 292 of 293 tests; workflow-scheduler fails without this change too
-                                    #   (its calendar asks for free slots in 2026-10-20…23, which are now in the past)
-npx vitest run --config vitest.integration.config.ts   # 10 files, 74 tests pass, 1 skipped (MediaPipe needs BAS_TEST_MEDIAPIPE_DIR)
-npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts   # 9/9
-# before: unit run left 76 folders (43 bas-isolated, 29 bas-test, 4 bas-lock); images run left 2. After: none.
+npx vitest run                      # 78 files, 544 tests pass; no new folder in /tmp (also without run-tmp.ts)
+npx vitest run --config vitest.integration.config.ts tests/integration/images.test.ts   # 15/15; no new folder in /tmp
+integration suite without run-tmp.ts: 133 pass, 2 fail (the two above), 6 skipped (desktop-chatgpt needs Electron,
+  MediaPipe needs BAS_TEST_MEDIAPIPE_DIR); left only the skipped file's empty bas-isolated-* folder; no Chrome left
+# before (first round, 43 unit files): the unit run left 76 folders (43 bas-isolated, 29 bas-test, 4 bas-lock); the images run left 2.
 ```
